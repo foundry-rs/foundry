@@ -47,7 +47,8 @@ fn showmap_counts(path: &std::path::Path) -> BTreeMap<String, u64> {
 // Generate a corpus by running an invariant + fuzz test, then replay it via
 // `--showmap-out` and verify that showmap files are produced under the
 // expected `<approach>__<suite>__<test>/<trial>.txt` layout with hex-prefixed IDs.
-forgetest_init!(showmap_replay_emits_files, |prj, cmd| {
+#[forgetest_init]
+fn showmap_replay_emits_files(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 5;
@@ -144,10 +145,11 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
-});
+}
 
 // Per-input mode emits one file per corpus entry.
-forgetest_init!(showmap_replay_per_input_emits_one_file_per_entry, |prj, cmd| {
+#[forgetest_init]
+fn showmap_replay_per_input_emits_one_file_per_entry(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 5;
@@ -194,9 +196,10 @@ contract ShowmapCounterTest is Test {
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("txt"))
         .collect();
     assert!(!entries.is_empty(), "expected per-entry files in {}", approach_dir.display());
-});
+}
 
-forgetest_init!(showmap_replay_merges_unsynced_stateless_worker_corpora, |prj, cmd| {
+#[forgetest_init]
+fn showmap_replay_merges_unsynced_stateless_worker_corpora(prj: _, cmd: _) {
     const WORKERS: usize = 3;
 
     prj.add_test(
@@ -320,11 +323,12 @@ contract ShowmapParallelWorkersTest {
         aggregate_counts, merged_counts,
         "aggregate showmap should contain the summed worker coverage"
     );
-});
+}
 
 // Reruns with distinct `--showmap-trial` values must accumulate side-by-side
 // instead of overwriting each other.
-forgetest_init!(showmap_replay_distinct_trials_accumulate, |prj, cmd| {
+#[forgetest_init]
+fn showmap_replay_distinct_trials_accumulate(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 5;
@@ -364,7 +368,14 @@ contract ShowmapCounterTest is Test {
                 "--showmap-trial",
                 trial,
             ])
-            .assert_success();
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ShowmapCounter.t.sol:ShowmapCounterTest
+[PASS] invariant_counter_called() (replay: 1 entries, 1 files)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     }
 
     // Distinct trials become side-by-side files inside the same per-test approach dir.
@@ -391,9 +402,10 @@ contract ShowmapCounterTest is Test {
     let stdout = String::from_utf8(retry.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("pick a different --showmap-trial"), "{stdout}");
     assert_eq!(std::fs::read_to_string(&t1).unwrap(), before);
-});
+}
 
-forgetest_init!(showmap_replay_rejects_path_component_names, |prj, cmd| {
+#[forgetest_init]
+fn showmap_replay_rejects_path_component_names(prj: _, cmd: _) {
     prj.add_test(
         "ShowmapCounter.t.sol",
         r#"
@@ -427,9 +439,10 @@ contract ShowmapCounterTest {
         let stderr = String::from_utf8(result.get_output().stderr.clone()).unwrap();
         assert!(stderr.contains("expected a single file-name component"), "{stderr}");
     }
-});
+}
 
-forgetest_init!(showmap_replay_rejects_empty_corpus_dir, |prj, cmd| {
+#[forgetest_init]
+fn showmap_replay_rejects_empty_corpus_dir(prj: _, cmd: _) {
     prj.add_test(
         "ShowmapCounter.t.sol",
         r#"
@@ -455,4 +468,4 @@ contract ShowmapCounterTest {
         .assert_failure();
     let stdout = String::from_utf8(result.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("corpus directory not found: empty_corpus"), "{stdout}");
-});
+}

@@ -5,8 +5,8 @@ use alloy_primitives::{
     B256, U256,
     map::{B256Map, IndexMap},
 };
+use foundry_evm_traces::{CallTraceStep, StorageChangeReason};
 use revm::{bytecode::opcode, interpreter::InstructionResult};
-use revm_inspectors::tracing::types::{CallTraceStep, StorageChangeReason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageAccessKind {

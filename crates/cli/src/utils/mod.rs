@@ -266,17 +266,45 @@ pub fn install_crypto_provider() {
 }
 
 /// Fetches the ABI of a contract from Etherscan.
+///
+/// If `follow_proxy` is set and Etherscan reports the contract as a proxy, the ABI of its
+/// implementation is appended after the proxy's own. Failing to fetch the implementation only
+/// produces a warning.
 pub async fn fetch_abi_from_etherscan(
     address: Address,
     config: &foundry_config::Config,
+    follow_proxy: bool,
 ) -> Result<Vec<(JsonAbi, String)>> {
     let chain = config.chain.unwrap_or_default();
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
         .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-    let source = client.contract_source_code(address).await?;
-    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
+    let fetch_abis = async |address| -> Result<_> {
+        let source = client.contract_source_code(address).await?;
+        let implementation = source
+            .items
+            .first()
+            .filter(|item| item.proxy != 0)
+            .and_then(|item| item.implementation);
+        let abis = source
+            .abis()?
+            .into_iter()
+            .zip(source.items.into_iter().map(|item| item.contract_name))
+            .collect::<Vec<_>>();
+        Ok((abis, implementation))
+    };
+    let (mut abis, implementation) = fetch_abis(address).await?;
+    if follow_proxy && let Some(implementation) = implementation {
+        sh_status!(
+            "Contract at {address} is a proxy, fetching implementation at {implementation}..."
+        )?;
+        match fetch_abis(implementation).await {
+            Ok((implementation, _)) => abis.extend(implementation),
+            Err(err) => sh_warn!("Could not fetch implementation ABI: {err}")?,
+        }
+    }
+    Ok(abis)
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -365,25 +393,6 @@ impl<'a> Git<'a> {
             .args(["rev-parse", "--show-toplevel"])
             .get_stdout_lossy()?;
         Ok(PathBuf::from(output))
-    }
-
-    pub fn clone_with_branch(
-        shallow: bool,
-        from: impl AsRef<OsStr>,
-        branch: impl AsRef<OsStr>,
-        to: Option<impl AsRef<OsStr>>,
-    ) -> Result<()> {
-        Self::cmd_no_root()
-            .stderr(Stdio::inherit())
-            .args(["clone", "--recurse-submodules"])
-            .args(shallow.then_some("--depth=1"))
-            .args(shallow.then_some("--shallow-submodules"))
-            .arg("-b")
-            .arg(branch)
-            .arg(from)
-            .args(to)
-            .exec()
-            .map(drop)
     }
 
     pub fn clone(
@@ -1329,10 +1338,9 @@ mod tests {
 
     #[test]
     fn deserialize_submodule() {
-        let submodule: Submodule = serde_json::from_str(
-            r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#,
-        )
-        .unwrap();
+        let submodule: Submodule =
+            parse_json(r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#)
+                .unwrap();
         assert_eq!(submodule.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
         assert_eq!(submodule.path(), Path::new("lib/dep"));
         assert_eq!(

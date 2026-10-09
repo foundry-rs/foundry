@@ -204,12 +204,14 @@ end_of_record
     );
 }
 
-forgetest_init!(basic, |prj, cmd| {
+#[forgetest_init]
+fn basic(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     basic_base(prj, cmd);
-});
+}
 
-forgetest_init!(basic_crlf, |prj, cmd| {
+#[forgetest_init]
+fn basic_crlf(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Manually replace `\n` with `\r\n` in the source file.
     let make_crlf = |path: &Path| {
@@ -220,9 +222,10 @@ forgetest_init!(basic_crlf, |prj, cmd| {
 
     // Should have identical stdout and lcov output.
     basic_base(prj, cmd);
-});
+}
 
-forgetest!(setup, |prj, cmd| {
+#[forgetest]
+fn setup(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -274,9 +277,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(setup_md, |prj, cmd| {
+#[forgetest]
+fn setup_md(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -325,9 +329,10 @@ contract AContractTest is DSTest {
 | Total             | 100.00% (4/4) | 100.00% (2/2) | N/A (0/0)  | 100.00% (2/2) |
 
 "#]]);
-});
+}
 
-forgetest!(no_match, |prj, cmd| {
+#[forgetest]
+fn no_match(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -419,12 +424,13 @@ contract BContractTest is DSTest {
 
 "#
     ]]);
-});
+}
 
 // `[profile.default.coverage] skip_files` should exclude matching sources from
 // the coverage report just like `--no-match-coverage`, but using glob patterns
 // from `foundry.toml`.
-forgetest!(skip_files_via_config, |prj, cmd| {
+#[forgetest]
+fn skip_files_via_config(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -520,9 +526,10 @@ contract BContractTest is DSTest {
 ╰-------------------+---------------+---------------+------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(assert, |prj, cmd| {
+#[forgetest]
+fn assert(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -592,9 +599,10 @@ contract AContractTest is DSTest {
 
 "#]],
     );
-});
+}
 
-forgetest!(require, |prj, cmd| {
+#[forgetest]
+fn require(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -675,9 +683,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(line_hit_not_doubled, |prj, cmd| {
+#[forgetest]
+fn line_hit_not_doubled(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -728,9 +737,10 @@ end_of_record
 
 "#]],
     );
-});
+}
 
-forgetest!(branch, |prj, cmd| {
+#[forgetest]
+fn branch(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -987,9 +997,10 @@ contract FooTest is DSTest {
 ╰-------------+-----------------+-----------------+-----------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(function_call, |prj, cmd| {
+#[forgetest]
+fn function_call(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1060,9 +1071,10 @@ contract AContractTest is DSTest {
 ╰-------------------+-----------------+---------------+------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(try_catch, |prj, cmd| {
+#[forgetest]
+fn try_catch(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -1179,9 +1191,10 @@ contract FooTest is DSTest {
 ╰-------------+-----------------+-----------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(yul, |prj, cmd| {
+#[forgetest]
+fn yul(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -1283,9 +1296,10 @@ contract FooTest is DSTest {
 ╰-------------+-----------------+-----------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(misc, |prj, cmd| {
+#[forgetest]
+fn misc(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -1374,10 +1388,11 @@ contract FooTest is DSTest {
 ╰-------------+-----------------+---------------+------------+---------------╯
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/8605
-forgetest!(single_statement, |prj, cmd| {
+#[forgetest]
+fn single_statement(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1463,9 +1478,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(single_statement_loop, |prj, cmd| {
+#[forgetest]
+fn single_statement_loop(prj: _, cmd: _) {
     // TODO(dani): the specific case of `if (x) continue/break` is not properly covered.
     prj.insert_ds_test();
     prj.add_source(
@@ -1549,10 +1565,11 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+-----------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/8604
-forgetest!(branch_with_calldata_reads, |prj, cmd| {
+#[forgetest]
+fn branch_with_calldata_reads(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1640,10 +1657,11 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/10792
-forgetest!(branch_with_storage_bytes_reads, |prj, cmd| {
+#[forgetest]
+fn branch_with_storage_bytes_reads(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1723,9 +1741,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(branch_with_code_free_else, |prj, cmd| {
+#[forgetest]
+fn branch_with_code_free_else(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1772,9 +1791,10 @@ contract AContractTest is DSTest {
 ╰-------------------+--------------+--------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(ternary_return, |prj, cmd| {
+#[forgetest]
+fn ternary_return(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1812,9 +1832,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(ternary_array_copy, |prj, cmd| {
+#[forgetest]
+fn ternary_array_copy(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1859,9 +1880,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(ternary_nested_partial, |prj, cmd| {
+#[forgetest]
+fn ternary_nested_partial(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1900,9 +1922,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(ternary_nested_outer_only, |prj, cmd| {
+#[forgetest]
+fn ternary_nested_outer_only(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1940,9 +1963,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(ternary_nested_false_partial, |prj, cmd| {
+#[forgetest]
+fn ternary_nested_false_partial(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1981,9 +2005,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(ternary_expression_contexts, |prj, cmd| {
+#[forgetest]
+fn ternary_expression_contexts(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2040,9 +2065,10 @@ contract AContractTest is DSTest {
 ╰-------------------+-----------------+-----------------+---------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(ternary_modifier, |prj, cmd| {
+#[forgetest]
+fn ternary_modifier(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2084,9 +2110,10 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(identical_bytecodes, |prj, cmd| {
+#[forgetest]
+fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2154,9 +2181,10 @@ contract AContractTest is DSTest {
 ╰-------------------+-----------------+---------------+------------+---------------╯
 
 "#]]);
-});
+}
 
-forgetest!(constructors, |prj, cmd| {
+#[forgetest]
+fn constructors(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2205,13 +2233,14 @@ contract AContractTest is DSTest {
 ╰-------------------+---------------+---------------+------------+---------------╯
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/9270,
 // https://github.com/foundry-rs/foundry/issues/9444,
 // https://github.com/foundry-rs/foundry/issues/9458
 // Test coverage for functions with no statements.
-forgetest!(empty_functions, |prj, cmd| {
+#[forgetest]
+fn empty_functions(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2286,10 +2315,11 @@ end_of_record
 ╰-------------------+---------------+--------------+------------+---------------╯
 
 "#]]);
-});
+}
 
 // Test empty shared-memory calldata used by nested calls with isolation disabled.
-forgetest!(empty_shared_calldata, |prj, cmd| {
+#[forgetest]
+fn empty_shared_calldata(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2338,10 +2368,11 @@ end_of_record
 "#]];
     assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
     assert_lcov(cmd.forge_fuse().arg("coverage").args(["--no-isolate", "--ir-minimum"]), expected);
-});
+}
 
 // Test that inherited empty constructors, receive functions, and fallbacks have distinct anchors.
-forgetest!(empty_special_functions_are_distinct, |prj, cmd| {
+#[forgetest]
+fn empty_special_functions_are_distinct(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2403,10 +2434,11 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // Test that a fallback without a receive uses the same anchor for empty and non-empty calldata.
-forgetest!(empty_fallback_without_receive, |prj, cmd| {
+#[forgetest]
+fn empty_fallback_without_receive(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2455,10 +2487,11 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // Test that a nonpayable fallback is not covered by a rejected value-bearing call.
-forgetest!(empty_nonpayable_fallback_rejects_value, |prj, cmd| {
+#[forgetest]
+fn empty_nonpayable_fallback_rejects_value(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2503,10 +2536,11 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // Test coverage for `receive` functions.
-forgetest!(receive, |prj, cmd| {
+#[forgetest]
+fn receive(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2583,10 +2617,11 @@ end_of_record
 ╰-------------------+--------------+---------------+------------+--------------╯
 
 "#]]);
-});
+}
 
 // Test empty constructor coverage when via-IR source maps contain no matching span.
-forgetest!(empty_constructor_ir_minimum, |prj, cmd| {
+#[forgetest]
+fn empty_constructor_ir_minimum(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2629,11 +2664,12 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/9322
 // Test coverage with `--ir-minimum` for solidity < 0.8.5.
-forgetest!(ir_minimum_early, |prj, cmd| {
+#[forgetest]
+fn ir_minimum_early(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2665,9 +2701,10 @@ contract AContract {
 ╰-------------------+-------------+--------------+------------+-------------╯
 
 "#]]);
-});
+}
 
-forgetest!(no_artifacts_written, |prj, cmd| {
+#[forgetest]
+fn no_artifacts_written(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2723,9 +2760,10 @@ contract AContractTest is DSTest {
     let files = files_with_ext(prj.artifacts(), "json").collect::<Vec<_>>();
 
     assert!(files.is_empty());
-});
+}
 
-forgetest!(attribution_report, |prj, cmd| {
+#[forgetest]
+fn attribution_report(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2815,9 +2853,10 @@ contract AContractTest is DSTest {
             && item["kind"] == "function"
             && item["function"] == "bar"
     }));
-});
+}
 
-forgetest!(attribution_report_keeps_items_aligned_after_filtering_sources, |prj, cmd| {
+#[forgetest]
+fn attribution_report_keeps_items_aligned_after_filtering_sources(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "sub/WContract.sol",
@@ -2922,9 +2961,10 @@ contract AttributionFilterTest is DSTest {
             "{test_name} should retain coverage for {contract_name}.hit"
         );
     }
-});
+}
 
-forgetest!(attribution_report_with_lcov_uses_default_paths, |prj, cmd| {
+#[forgetest]
+fn attribution_report_with_lcov_uses_default_paths(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -2974,10 +3014,11 @@ contract AContractTest is DSTest {
     assert!(prj.root().join("coverage-attribution.json").exists());
     assert!(prj.root().join("lcov.info").exists());
     assert!(!prj.root().join("combined.out").exists());
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10172>
-forgetest!(constructor_with_args, |prj, cmd| {
+#[forgetest]
+fn constructor_with_args(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "ArrayCondition.sol",
@@ -3064,11 +3105,12 @@ contract ArrayConditionTest is DSTest {
 ╰------------------------+---------------+---------------+---------------+---------------╯
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/11432
 // Test coverage for linked libraries.
-forgetest!(linked_library, |prj, cmd| {
+#[forgetest]
+fn linked_library(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -3116,11 +3158,12 @@ contract CounterTest is DSTest {
 ╰-----------------+---------------+---------------+------------+---------------╯
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10422>
 // Test that line hits are properly recorded in lcov report.
-forgetest!(do_while_lcov, |prj, cmd| {
+#[forgetest]
+fn do_while_lcov(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -3180,11 +3223,12 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11183>
 // Test that overridden functions are disambiguated in the LCOV report.
-forgetest!(disambiguate_functions, |prj, cmd| {
+#[forgetest]
+fn disambiguate_functions(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -3244,10 +3288,11 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // Test that functions of abstract contracts and interfaces should not count in coverage report.
-forgetest!(abstract_contract_and_interface, |prj, cmd| {
+#[forgetest]
+fn abstract_contract_and_interface(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -3311,12 +3356,13 @@ contract CounterTest is DSTest {
 ╰-----------------+---------------+---------------+------------+---------------╯
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11548>
 // Test BRDA hit values follow LCOV spec: "-" when line never executed, "0" when line hit but
 // branch not taken.
-forgetest!(brda_lcov_consistency, |prj, cmd| {
+#[forgetest]
+fn brda_lcov_consistency(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -3395,11 +3441,12 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // A false condition still executes its line, even when the true body is the first
 // coverage item on that line. Unreached nested conditions must remain uncovered.
-forgetest!(lcov_false_condition_lines, |prj, cmd| {
+#[forgetest]
+fn lcov_false_condition_lines(prj: _, cmd: _) {
     prj.add_source(
         "Branches.sol",
         r#"contract Branches {
@@ -3458,11 +3505,12 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // Keep no-else conditions snapshot-only until implicit false branches are reported:
 // strict genhtml validation rejects hit lines with no evaluated branches.
-forgetest!(lcov_false_condition_lines_without_else, |prj, cmd| {
+#[forgetest]
+fn lcov_false_condition_lines_without_else(prj: _, cmd: _) {
     prj.add_source(
         "Branches.sol",
         r#"contract Branches {
@@ -3510,10 +3558,11 @@ BRH:0
 end_of_record
 
 "#]]);
-});
+}
 
 // A hit assembly condition must include the outcome that skips its body, even without via-IR.
-forgetest!(yul_if_lcov, |prj, cmd| {
+#[forgetest]
+fn yul_if_lcov(prj: _, cmd: _) {
     prj.add_source(
         "Guard.sol",
         r#"
@@ -3593,10 +3642,11 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // Test that coverage files are written even when tests fail.
-forgetest!(coverage_with_failing_tests, |prj, cmd| {
+#[forgetest]
+fn coverage_with_failing_tests(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -3656,9 +3706,10 @@ contract CounterTest is DSTest {
     assert!(lcov_content.contains("SF:src/Counter.sol"), "Coverage should include Counter.sol");
     assert!(lcov_content.contains("FN:"), "Coverage should include function data");
     assert!(lcov_content.contains("DA:"), "Coverage should include line hit data");
-});
+}
 
-forgetest_init!(coverage_rejects_mutation_mode_before_compile, |prj, cmd| {
+#[forgetest_init]
+fn coverage_rejects_mutation_mode_before_compile(prj: _, cmd: _) {
     prj.add_source(
         "Broken.sol",
         r#"
@@ -3684,9 +3735,10 @@ contract Broken {
         !stderr.contains("Compiler run failed"),
         "mutation/coverage conflict should be reported before compile errors:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(coverage_rejects_test_only_modes_before_compile, |prj, cmd| {
+#[forgetest_init]
+fn coverage_rejects_test_only_modes_before_compile(prj: _, cmd: _) {
     prj.add_source(
         "Broken.sol",
         r#"
@@ -3726,9 +3778,10 @@ contract Broken {
             "coverage conflict should be reported before compile errors for {args:?}:\n{stderr}"
         );
     }
-});
+}
 
-forgetest_init!(coverage_match_path_compiles_selected_tests, |prj, cmd| {
+#[forgetest_init]
+fn coverage_match_path_compiles_selected_tests(prj: _, cmd: _) {
     prj.add_test(
         "Shared.t.sol",
         r#"
@@ -3792,10 +3845,11 @@ contract ReportScript {
         !output.contains("test/Unselected.t.sol"),
         "unselected tests should be omitted from coverage reports:\n{output}"
     );
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16084>
-forgetest!(coverage_separates_compiler_builds, |prj, cmd| {
+#[forgetest]
+fn coverage_separates_compiler_builds(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.additional_compiler_profiles = vec![SettingsOverrides {
             name: "via-ir".to_owned(),
@@ -3871,12 +3925,13 @@ end_of_record
 
 "#]],
     );
-});
+}
 
 // A file-level (free) function declared after a contract must be attributed at file level, not
 // leaked into the earlier contract's scope, and its deferred call must carry the same scope.
 // Regression for https://github.com/foundry-rs/foundry/issues/16085
-forgetest!(coverage_reports_free_functions, |prj, cmd| {
+#[forgetest]
+fn coverage_reports_free_functions(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Mixed.sol",
@@ -3959,12 +4014,13 @@ contract MixedTest is DSTest {
         2,
         "the return statement and its deferred call must retain the contract scope:\n{attribution}"
     );
-});
+}
 
 // A file whose only code is a file-level (free) function must still be reported, with the
 // function named at file level. Before the fix such a file was dropped from coverage entirely.
 // Regression for https://github.com/foundry-rs/foundry/issues/16085
-forgetest!(coverage_reports_free_only_functions, |prj, cmd| {
+#[forgetest]
+fn coverage_reports_free_only_functions(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Free.sol",
@@ -4005,11 +4061,12 @@ contract FreeTest is DSTest {
     // Exactly one function, found and hit.
     assert!(free_block.contains("FNF:1"), "exactly one function found:\n{free_block}");
     assert!(free_block.contains("FNH:1"), "exactly one function hit:\n{free_block}");
-});
+}
 
 // A contract method and a file-level function that share a name live in different scopes, so
 // neither should be renamed as if it were an overload of the other.
-forgetest!(coverage_disambiguates_functions_by_scope, |prj, cmd| {
+#[forgetest]
+fn coverage_disambiguates_functions_by_scope(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Same.sol",
@@ -4058,7 +4115,7 @@ contract SameTest is DSTest {
         !lcov.contains("value.0") && !lcov.contains("value.1"),
         "same-named functions in different scopes must not be disambiguated as overloads:\n{lcov}"
     );
-});
+}
 
 #[test]
 fn coverage_help_renders_notes() {
@@ -4077,7 +4134,8 @@ fn coverage_help_renders_notes() {
 }
 
 // Coverage must retain enum bounds and artifact paths across source edits and filtered requests.
-forgetest!(coverage_cache_preserves_reports_and_analysis, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_preserves_reports_and_analysis(prj: _, cmd: _) {
     for dynamic_test_linking in [false, true] {
         prj.clear_cache_dir();
         prj.update_config(|config| {
@@ -4146,11 +4204,12 @@ contract BTest {
             }
         }
     }
-});
+}
 
 // The compiler can prune a build containing only free functions because it has no contract
 // artifacts. A warm coverage run must still report that source.
-forgetest!(coverage_cache_preserves_free_only_builds, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_preserves_free_only_builds(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.additional_compiler_profiles = vec![SettingsOverrides {
             name: "via-ir".to_owned(),
@@ -4186,9 +4245,10 @@ forgetest!(coverage_cache_preserves_free_only_builds, |prj, cmd| {
             reference = Some(report);
         }
     }
-});
+}
 
-forgetest!(coverage_cache_isolated_and_cleaned, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_isolated_and_cleaned(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.cache_path = "custom-cache".into();
         config.out = "custom-out".into();
@@ -4227,9 +4287,10 @@ No files changed, compilation skipped
     prj.update_config(|config| config.cache = false);
     cmd.forge_fuse().arg("coverage").assert_success();
     assert!(!cache.exists());
-});
+}
 
-forgetest!(coverage_cache_respects_warning_denial, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_respects_warning_denial(prj: _, cmd: _) {
     prj.add_test(
         "Warning.t.sol",
         "contract WarningTest { function testWarning() public { uint256 unused = 1; } }",
@@ -4237,9 +4298,10 @@ forgetest!(coverage_cache_respects_warning_denial, |prj, cmd| {
     cmd.forge_fuse().arg("coverage").assert_success();
     // Warning denial must compile again because cached artifacts do not retain diagnostics.
     cmd.forge_fuse().args(["coverage", "--deny", "warnings"]).assert_failure();
-});
+}
 
-forgetest!(coverage_cache_preserves_artifact_names_after_deletion, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_preserves_artifact_names_after_deletion(prj: _, cmd: _) {
     prj.update_config(|config| config.out = "custom-out".into());
     prj.add_source(
         "A.sol",
@@ -4274,10 +4336,11 @@ contract NamesTest {{
             cmd.forge_fuse().arg("coverage").assert_success();
         }
     }
-});
+}
 
 // Read-only restored cache files must not turn successful coverage into an error.
-forgetest!(coverage_cache_read_only_files, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_read_only_files(prj: _, cmd: _) {
     prj.add_source(
         "A.sol",
         "contract A { function value() public pure returns (uint256) { return 1; } }",
@@ -4326,9 +4389,10 @@ forgetest!(coverage_cache_read_only_files, |prj, cmd| {
 No files changed, compilation skipped
 ...
 "#]]);
-});
+}
 
-forgetest!(coverage_cache_clean_respects_lock, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_clean_respects_lock(prj: _, cmd: _) {
     prj.add_test("A.t.sol", "contract ATest { function testPass() public {} }");
     cmd.forge_fuse().arg("coverage").assert_success();
     let cache = prj.root().join("cache/coverage");
@@ -4346,9 +4410,10 @@ No files changed, compilation skipped
 "#]]);
     cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
     assert!(!cache.exists());
-});
+}
 
-forgetest!(coverage_cache_prunes_obsolete_files, |prj, cmd| {
+#[forgetest]
+fn coverage_cache_prunes_obsolete_files(prj: _, cmd: _) {
     prj.update_config(|config| config.build_info = true);
     prj.add_source("Removed.sol", "contract Removed {}");
     prj.add_test("A.t.sol", "contract ATest { function testPass() public {} }");
@@ -4371,4 +4436,4 @@ forgetest!(coverage_cache_prunes_obsolete_files, |prj, cmd| {
         builds = files_with_ext(&cache.join("build-info"), "json").collect();
         assert_eq!(builds.len(), 1);
     }
-});
+}

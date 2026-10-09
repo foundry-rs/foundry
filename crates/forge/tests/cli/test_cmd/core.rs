@@ -1,9 +1,11 @@
 //! Core test functionality tests
 
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_test_utils::str;
 use serde_json::Value;
 
-forgetest_init!(failing_test_after_failed_setup, |prj, cmd| {
+#[forgetest_init]
+fn failing_test_after_failed_setup(prj: _, cmd: _) {
     prj.add_test(
         "FailingTestAfterFailedSetup.t.sol",
         r#"
@@ -43,9 +45,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
-forgetest_init!(legacy_assertions, |prj, cmd| {
+#[forgetest_init]
+fn legacy_assertions(prj: _, cmd: _) {
     prj.add_test(
         "LegacyAssertions.t.sol",
         r#"
@@ -62,44 +65,124 @@ contract NoAssertionsRevertTest is Test {
 contract LegacyAssertionsTest {
     bool public failed;
 
+    function setFailed() external {
+        failed = true;
+    }
+
     function testFlagNotSetSuccess() public {}
 
     function testFlagSetFailure() public {
         failed = true;
     }
+
+    function testFlagSetInCallFailure() public {
+        this.setFailed();
+    }
 }
+
+/// forge-config: default.legacy_assertions = true
+/// forge-config: default.isolate = false
+contract LegacyAssertionsNonIsolatedTest is LegacyAssertionsTest {}
+
+// Non-view on purpose: calls into it must be CALLs, which run isolated.
+contract Asserter {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function fail() external {
+        vm.assertTrue(false);
+    }
+
+    function failThenRevert() external {
+        vm.assertTrue(false);
+        revert();
+    }
+}
+
+/// forge-config: default.assertions_revert = false
+contract NonRevertingAssertionsTest is Test {
+    Asserter asserter = new Asserter();
+
+    function testBodyFailure() public {
+        vm.assertTrue(false);
+    }
+
+    function testCallFailure() public {
+        asserter.fail();
+    }
+
+    function testRevertedCallFailureIsDropped() public {
+        try asserter.failThenRevert() {} catch {}
+    }
+}
+
+/// forge-config: default.assertions_revert = false
+/// forge-config: default.isolate = false
+contract NonRevertingAssertionsNonIsolatedTest is NonRevertingAssertionsTest {}
 "#,
     );
 
     cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/LegacyAssertions.t.sol:LegacyAssertionsTest
+Ran 3 tests for test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
 [PASS] testFlagNotSetSuccess() ([GAS])
 [FAIL] testFlagSetFailure() ([GAS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL] testFlagSetInCallFailure() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 3 tests for test/LegacyAssertions.t.sol:LegacyAssertionsTest
+[PASS] testFlagNotSetSuccess() ([GAS])
+[FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 2 test suites [ELAPSED]: 1 tests passed, 2 failed, 0 skipped (3 total tests)
+Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+[PASS] testRevertedCallFailureIsDropped() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+[PASS] testRevertedCallFailureIsDropped() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 5 test suites [ELAPSED]: 4 tests passed, 9 failed, 0 skipped (13 total tests)
 
 Failing tests:
-Encountered 1 failing test in test/LegacyAssertions.t.sol:LegacyAssertionsTest
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
 [FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
+
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsTest
+[FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
 
 Encountered 1 failing test in test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 
-Encountered a total of 2 failing tests, 1 tests succeeded
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
 
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+
+Encountered a total of 9 failing tests, 4 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 9 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
-forgetest_init!(evm_profile_no_open_writes_profile_and_exits, |prj, cmd| {
+#[forgetest_init]
+fn evm_profile_no_open_writes_profile_and_exits(prj: _, cmd: _) {
     prj.add_test(
         "EvmProfileNoOpen.t.sol",
         r#"
@@ -122,9 +205,10 @@ Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
         .expect("profile should be valid JSON");
     assert_eq!(profile["exporter"], "foundry");
     assert_eq!(profile["profiles"][0]["type"], "evented");
-});
+}
 
-forgetest_init!(evm_profile_conflicts_with_early_return_outputs, |_prj, cmd| {
+#[forgetest_init]
+fn evm_profile_conflicts_with_early_return_outputs(cmd: _) {
     cmd.args(["test", "--evm-profile", "--json"]).assert_failure().stderr_eq(str![[r#"
 error: the argument '--evm-profile [<FORMAT>]' cannot be used with '--json'
 
@@ -155,9 +239,10 @@ For more information, try '--help'.
 
 "#
     ]]);
-});
+}
 
-forgetest_init!(flame_outputs_conflict_with_early_return_outputs, |_prj, cmd| {
+#[forgetest_init]
+fn flame_outputs_conflict_with_early_return_outputs(cmd: _) {
     cmd.args(["test", "--flamegraph", "--json"]).assert_failure().stderr_eq(str![[r#"
 error: the argument '--flamegraph' cannot be used with '--json'
 
@@ -177,9 +262,10 @@ For more information, try '--help'.
 
 "#
     ]]);
-});
+}
 
-forgetest_init!(test_list_outputs_matching_tests, |prj, cmd| {
+#[forgetest_init]
+fn test_list_outputs_matching_tests(prj: _, cmd: _) {
     prj.add_test(
         "ListTests.t.sol",
         r#"
@@ -224,9 +310,45 @@ test/ListTests.t.sol
         .arg("test/ListTests.t.sol")
         .assert_success()
         .stdout_eq("{\"test/ListTests.t.sol\":{\"ListTests\":[\"test_alpha\"]}}\n");
-});
+}
 
-forgetest_init!(evm_profile_requires_execution_trace, |prj, cmd| {
+// Listing tests must not write ABI-only artifacts that later cached builds treat as fresh.
+#[forgetest]
+fn test_list_does_not_poison_build_cache(prj: _, cmd: _) {
+    let artifact = prj.root().join("out/ListCache.t.sol/ListCacheTest.json");
+    let cache = prj.root().join("cache/solidity-files-cache.json");
+    // Extra output files bypass the ABI cache and exercise the uncached fallback.
+    for extra_output_files in [vec![], vec![ContractOutputSelection::Metadata]] {
+        prj.update_config(|config| config.extra_output_files = extra_output_files.clone());
+        prj.add_test(
+            "ListCache.t.sol",
+            "contract ListCacheTest { function test_value() public pure { require(1 == 1); } }",
+        );
+        cmd.forge_fuse().arg("build").assert_success();
+        let artifact_before = std::fs::read_to_string(&artifact).unwrap();
+        let cache_before = std::fs::read_to_string(&cache).unwrap();
+
+        prj.add_test(
+            "ListCache.t.sol",
+            "contract ListCacheTest { function test_value() public pure { require(1 == 2); } }",
+        );
+        cmd.forge_fuse().args(["test", "--list"]).assert_success();
+        assert_eq!(std::fs::read_to_string(&artifact).unwrap(), artifact_before);
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), cache_before);
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ListCache.t.sol:ListCacheTest
+[FAIL: EvmError: Revert] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
+fn evm_profile_requires_execution_trace(prj: _, cmd: _) {
     prj.add_test(
         "EvmProfileNoExecutionTrace.t.sol",
         r#"
@@ -246,9 +368,10 @@ contract EvmProfileNoExecutionTraceTest {
 Error: cannot generate EVM profile for EvmProfileNoExecutionTraceTest::setUp: no execution trace (test may have failed in setUp/constructor or been skipped)
 
 "#]]);
-});
+}
 
-forgetest_init!(evm_profile_errors_when_no_tests_match, |prj, cmd| {
+#[forgetest_init]
+fn evm_profile_errors_when_no_tests_match(prj: _, cmd: _) {
     prj.add_test(
         "EvmProfileNoMatch.t.sol",
         r#"
@@ -265,9 +388,10 @@ contract EvmProfileNoMatchTest {
 Error: cannot generate EVM profile: no tests were executed
 
 "#]]);
-});
+}
 
-forgetest_init!(flamegraph_requires_execution_trace, |prj, cmd| {
+#[forgetest_init]
+fn flamegraph_requires_execution_trace(prj: _, cmd: _) {
     prj.add_test(
         "FlamegraphNoExecutionTrace.t.sol",
         r#"
@@ -287,9 +411,10 @@ contract FlamegraphNoExecutionTraceTest {
 Error: cannot generate flamegraph for FlamegraphNoExecutionTraceTest::setUp: no execution trace (test may have failed in setUp/constructor or been skipped)
 
 "#]]);
-});
+}
 
-forgetest_init!(flame_outputs_profile_test_after_before_test_setup, |prj, cmd| {
+#[forgetest_init]
+fn flame_outputs_profile_test_after_before_test_setup(prj: _, cmd: _) {
     prj.add_test(
         "FlameBeforeTestSetup.t.sol",
         r#"
@@ -329,9 +454,10 @@ contract FlameBeforeTestSetupTest {
     .unwrap();
     assert!(flamechart.contains("FlameBeforeTestSetupTest.testProfile()"));
     assert!(!flamechart.contains("FlameBeforeTestSetupTest.beforeOnly()"));
-});
+}
 
-forgetest_init!(payment_failure, |prj, cmd| {
+#[forgetest_init]
+fn payment_failure(prj: _, cmd: _) {
     prj.add_test(
         "PaymentFailure.t.sol",
         r#"
@@ -372,9 +498,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
-forgetest_init!(rerun_filters_same_named_tests_by_contract, |prj, cmd| {
+#[forgetest_init]
+fn rerun_filters_same_named_tests_by_contract(prj: _, cmd: _) {
     prj.add_test(
         "RerunSameName.t.sol",
         r#"
@@ -418,9 +545,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(rerun_with_only_setup_failure_runs_all_tests, |prj, cmd| {
+#[forgetest_init]
+fn rerun_with_only_setup_failure_runs_all_tests(prj: _, cmd: _) {
     prj.add_test(
         "RerunSetupFail.t.sol",
         r#"
@@ -462,9 +590,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(rerun_cache_tracks_completed_invocation, |prj, cmd| {
+#[forgetest_init]
+fn rerun_cache_tracks_completed_invocation(prj: _, cmd: _) {
     let failures_file = prj.root().join("cache/test-failures");
     let recorded_failure = r#"{"version":1,"failures":[{"contract":"test/RerunLifecycle.t.sol:RerunLifecycleTest","test":"testBroken"}]}"#;
     let passing_test = r#"
@@ -515,9 +644,10 @@ contract RerunLifecycleTest {
     );
     cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success();
     assert!(!failures_file.exists());
-});
+}
 
-forgetest_init!(rerun_cache_merges_network_pass_failures, |prj, cmd| {
+#[forgetest_init]
+fn rerun_cache_merges_network_pass_failures(prj: _, cmd: _) {
     prj.add_test(
         "RerunNetworks.t.sol",
         r#"
@@ -566,4 +696,4 @@ contract RerunNetworksTest {
     assert_eq!(failed_tests.len(), 2);
     assert!(failed_tests.contains(&"testDefaultFailure"));
     assert!(failed_tests.contains(&"testTempoFailure"));
-});
+}

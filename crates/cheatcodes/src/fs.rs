@@ -14,11 +14,8 @@ use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
-use revm::{
-    context::{Cfg, ContextTr, CreateScheme, JournalTr},
-    interpreter::CreateInputs,
-};
-use revm_inspectors::tracing::types::CallKind;
+use foundry_evm_traces::CallKind;
+use revm::{context::CreateScheme, interpreter::CreateInputs};
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
@@ -518,7 +515,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
 
-    let depth = ccx.ecx.journal().depth();
+    let depth = ccx.depth();
 
     // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
     // depth, as for native creates.
@@ -539,28 +536,21 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
     // original depth just as the native create inspector would.
     let mut caller = ccx.caller;
-    if let Some(prank) = ccx.state.get_prank(depth).copied()
-        && depth >= prank.depth
-        && caller == prank.prank_caller
+    if let Some(prank) = ccx.state.get_prank(depth)
+        && let Some(changes) = prank.changes_for(depth, caller)
     {
-        let prank_applied = if depth == prank.depth {
-            caller = prank.new_caller;
-            true
-        } else {
-            false
-        };
-        let prank_applied = if let Some(new_origin) = prank.new_origin {
+        if let Some(new_caller) = changes.caller {
+            caller = new_caller;
+        }
+        if let Some(new_origin) = changes.origin {
             ccx.ecx.tx_mut().set_caller(new_origin);
-            true
-        } else {
-            prank_applied
-        };
-
-        if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-            ccx.state.pranks.insert(depth, applied_prank);
+        }
+        if let Some(used) = changes.used {
+            ccx.state.pranks.insert(depth, used);
         }
     }
 
+    ccx.state.deploy_code_depth = Some(depth);
     let outcome = exec_create(
         executor,
         CreateInputs::new(
@@ -573,6 +563,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         ),
         ccx,
     );
+    ccx.state.deploy_code_depth = None;
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.
@@ -1098,7 +1089,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.cfg().chain_id();
+        let chain_id = ccx.chain_id();
 
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
@@ -1211,7 +1202,7 @@ where
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{Bloom, address, b256};
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
         ArtifactId,
@@ -1660,7 +1651,7 @@ mod tests {
         let block_hash = "0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66";
         let from = "0xa70ab0448e66cd77995bfbba5c5b64b41a85f3fd";
         let contract_address = "0x20c0000000000000000000000000000000000000";
-        let zero_bloom = format!("0x{}", "0".repeat(512));
+        let zero_bloom = format!("{:#x}", Bloom::ZERO);
 
         let sequence = serde_json::json!({
             "transactions": [{

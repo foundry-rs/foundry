@@ -106,7 +106,7 @@ async fn test_simulate_block_access_list_hash_rpc() {
     for (address, index) in
         [(HISTORY_STORAGE_ADDRESS, 0), (WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, 2)]
     {
-        expected.iter_mut().find(|account| account.address == address).unwrap().storage_changes =
+        expected.iter_mut().find(|account| account.address() == address).unwrap().storage_changes =
             vec![SlotChanges::new(
                 U256::ZERO,
                 vec![StorageChange::new(BlockAccessIndex::new(index), U256::from(42))],
@@ -119,13 +119,13 @@ async fn test_simulate_block_access_list_hash_rpc() {
     expected.push(AccountChanges {
         storage_reads: vec![U256::ZERO],
         storage_changes: vec![SlotChanges::new(
-            U256::from(1),
+            U256::ONE,
             vec![StorageChange::new(BlockAccessIndex::new(1), U256::from(42))],
         )],
         ..AccountChanges::new(contract)
     });
     expected.push(AccountChanges::new(beneficiary));
-    expected.sort_by_key(|account| account.address);
+    expected.sort_by_key(|account| account.address());
     let expected_hash = compute_block_access_list_hash(&expected);
 
     for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
@@ -198,13 +198,13 @@ async fn test_fork_simulate_native_transfers_rpc() {
                 TransactionRequest {
                     from: Some(from),
                     to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000001"))),
-                    value: Some(U256::from(1)),
+                    value: Some(U256::ONE),
                     ..Default::default()
                 },
                 TransactionRequest {
                     from: Some(from),
                     to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000002"))),
-                    value: Some(U256::from(1)),
+                    value: Some(U256::ONE),
                     ..Default::default()
                 },
             ],
@@ -1502,7 +1502,7 @@ async fn test_simulate_discards_candidate_after_post_block_failure_rpc() {
 async fn test_simulate_empty_state_override_preserves_root_rpc() {
     let (_, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
-    let account = address!("0000000000000000000000000000000000000042").to_string();
+    let account = Address::with_last_byte(0x42).to_string();
     let without_override =
         rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}])).await;
     let with_empty_override = rpc_request(
@@ -1546,8 +1546,8 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
     code.push(0xff);
 
     api.anvil_set_code(contract, code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
     api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
@@ -1600,7 +1600,7 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
         .send_transaction(WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(contract)),
-            value: Some(U256::from(1)),
+            value: Some(U256::ONE),
             gas: Some(21_000),
             gas_price: Some(0),
             ..Default::default()
@@ -1647,7 +1647,7 @@ async fn test_simulate_storage_written_after_selfdestruct_rpc() {
         .get_receipt()
         .await
         .unwrap();
-    api.anvil_set_storage_at(contract, U256::from(1), B256::from(U256::from(5))).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ONE, B256::with_last_byte(5)).await.unwrap();
 
     let transfer = json!({"calls": [{"from": sender, "to": contract, "value": "0x1"}]});
     let single =
@@ -1681,8 +1681,8 @@ async fn test_simulate_state_override_preserves_selfdestructed_storage_rpc() {
     selfdestruct_code.push(0xff);
 
     api.anvil_set_code(contract, selfdestruct_code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
     api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
@@ -1757,7 +1757,7 @@ async fn test_simulate_historical_tombstone_matches_latest_rpc() {
     code.push(0xff);
 
     api.anvil_set_code(contract, code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
     api.mine_one().await.unwrap();
     handle
         .http_provider()
@@ -1854,7 +1854,7 @@ async fn test_simulate_executes_on_pending_state_rpc() {
         .send_transaction(WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(receiver)),
-            value: Some(U256::from(1)),
+            value: Some(U256::ONE),
             ..Default::default()
         }))
         .await
@@ -1879,7 +1879,7 @@ async fn test_simulate_executes_on_pending_state_rpc() {
     assert!(response.get("error").is_none(), "{response}");
     assert_eq!(
         response["result"][0]["calls"][0]["returnData"],
-        B256::from(U256::from(1)).to_string()
+        B256::with_last_byte(1).to_string()
     );
 }
 

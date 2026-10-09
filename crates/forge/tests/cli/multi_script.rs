@@ -17,7 +17,8 @@ use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
-forgetest_async!(can_deploy_multi_chain_script_without_lib, |prj, cmd| {
+#[forgetest]
+async fn can_deploy_multi_chain_script_without_lib(prj: _, cmd: _) {
     let (api1, handle1) = spawn(NodeConfig::test()).await;
     let (api2, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -34,9 +35,10 @@ forgetest_async!(can_deploy_multi_chain_script_without_lib, |prj, cmd| {
 
     assert_eq!(api2.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 2);
     assert_eq!(api2.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 3);
-});
+}
 
-forgetest_async!(can_not_deploy_multi_chain_script_with_lib, |prj, cmd| {
+#[forgetest]
+async fn can_not_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
     let (_, handle1) = spawn(NodeConfig::test()).await;
     let (_, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -48,9 +50,10 @@ forgetest_async!(can_not_deploy_multi_chain_script_with_lib, |prj, cmd| {
         .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
         .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::UnsupportedLibraries);
-});
+}
 
-forgetest_async!(can_not_change_fork_during_broadcast, |prj, cmd| {
+#[forgetest]
+async fn can_not_change_fork_during_broadcast(prj: _, cmd: _) {
     let (_, handle1) = spawn(NodeConfig::test()).await;
     let (_, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -62,9 +65,10 @@ forgetest_async!(can_not_change_fork_during_broadcast, |prj, cmd| {
         .add_sig("MultiChainBroadcastNoLink", "deployError(string memory,string memory)")
         .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::ErrorSelectForkOnBroadcast);
-});
+}
 
-forgetest_async!(can_resume_multi_chain_script, |prj, cmd| {
+#[forgetest]
+async fn can_resume_multi_chain_script(prj: _, cmd: _) {
     let (_, handle1) = spawn(NodeConfig::test()).await;
     let (_, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -77,9 +81,10 @@ forgetest_async!(can_resume_multi_chain_script, |prj, cmd| {
         .await
         .arg("--multi")
         .resume(ScriptOutcome::OkBroadcast);
-});
+}
 
-forgetest_async!(resume_multi_chain_does_not_replay_completed_chain, |prj, cmd| {
+#[forgetest]
+async fn resume_multi_chain_does_not_replay_completed_chain(prj: _, cmd: _) {
     let (api1, handle1) = spawn(NodeConfig::test()).await;
     let (api2, handle2) = spawn(NodeConfig::test()).await;
     let (rpc1, chain1_submissions) =
@@ -187,9 +192,10 @@ forgetest_async!(resume_multi_chain_does_not_replay_completed_chain, |prj, cmd| 
             assert!(!provider.get_code_at(address).await.unwrap().is_empty());
         }
     }
-});
+}
 
-forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
+#[forgetest]
+async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
     let (api1, handle1) = spawn(NodeConfig::test()).await;
     let (api2, handle2) = spawn(NodeConfig::test()).await;
     let (rpc1, chain1_submissions) =
@@ -236,12 +242,22 @@ forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
         .await
         .expect("Forge did not submit to chain 2");
 
-    // Chain 2 accepted the first submission, but Forge never received the response.
+    // Chain 2 accepted and mined the first submission, but Forge never received the response.
     let accepted = chain2_submissions.lock().unwrap()[0][0].clone();
     let accepted_hash = keccak256(hex::decode(accepted.as_str().unwrap()).unwrap());
-    assert!(
-        handle2.http_provider().get_transaction_by_hash(accepted_hash).await.unwrap().is_some()
-    );
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while handle2
+            .http_provider()
+            .get_transaction_receipt(accepted_hash)
+            .await
+            .unwrap()
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("chain 2 did not mine the accepted submission");
     assert_eq!(chain1_submissions.lock().unwrap().len(), 2);
     let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
         .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
@@ -279,9 +295,10 @@ forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
         .arg("--resume");
     tester.cmd.assert_success();
 
-    // Chain 1 is not resubmitted, and chain 2 never rebuilds its accepted operation: any replay
-    // uses the accepted bytes, so exactly one distinct payload exists per operation.
+    // Chain 1 is not resubmitted, and chain 2 reconciles its mined operation instead of resending
+    // it, so exactly one payload is submitted per operation.
     assert_eq!(chain1_submissions.lock().unwrap().len(), 2);
+    assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
     let chain2_payloads = chain2_submissions
         .lock()
         .unwrap()
@@ -313,4 +330,4 @@ forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
             assert!(!provider.get_code_at(address).await.unwrap().is_empty());
         }
     }
-});
+}

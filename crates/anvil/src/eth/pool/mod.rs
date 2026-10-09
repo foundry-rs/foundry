@@ -109,10 +109,7 @@ impl<T> Pool<T> {
     #[cfg(feature = "base")]
     pub fn all_transactions(&self) -> Vec<Arc<PoolTransaction<T>>> {
         let pool = self.inner.read();
-        pool.pending_transactions
-            .transactions()
-            .chain(pool.ready_transactions.get_transactions())
-            .collect()
+        pool.pending_transactions.transactions().chain(pool.ready_transactions()).collect()
     }
 
     /// Returns the number of tx that are ready and queued for further execution
@@ -246,8 +243,16 @@ impl<T: Transaction> Pool<T> {
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
     ///
     /// This will remove the transactions from the pool.
-    pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
+    ///
+    /// Returns `true` if ready transactions left behind by the block can be included by mining
+    /// again right away, e.g. because the block hit `max_transactions` or ran out of gas.
+    pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> bool {
         let MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid } = outcome;
+        // Requiring txs to leave the pool keeps this retry from mining empty blocks for txs that
+        // can never be included. Not-yet-valid txs and their dependents are retried by the delayed
+        // re-notify.
+        let made_progress = !included.is_empty() || !stale.is_empty() || !invalid.is_empty();
+        let retry_ready = made_progress && not_yet_valid.is_empty();
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
@@ -273,7 +278,7 @@ impl<T: Transaction> Pool<T> {
             });
         }
 
-        res
+        retry_ready && !self.inner.read().ready_transactions.is_empty()
     }
 
     /// Removes ready transactions for the given iterator of identifying markers.
@@ -312,7 +317,7 @@ impl<T: Typed2718> Pool<T> {
             let pool = self.inner.read();
             pool.pending_transactions
                 .transactions()
-                .chain(pool.ready_transactions.get_transactions())
+                .chain(pool.ready_transactions())
                 .filter_map(|tx| {
                     (tx.pending_transaction.transaction.ty() == tx_type).then_some(tx.hash())
                 })

@@ -4,11 +4,11 @@ use std::borrow::Cow;
 
 use alloy_chains::Chain;
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
-use alloy_primitives::{Address, Bytes, U256, address, hex};
+use alloy_primitives::{Address, Bytes, U256, hex};
 use revm::precompile::{PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult};
 
 /// ArbSys system contract address.
-pub const ARB_SYS_ADDRESS: Address = address!("0000000000000000000000000000000000000064");
+pub const ARB_SYS_ADDRESS: Address = Address::with_last_byte(0x64);
 
 /// `ArbSys.arbBlockNumber()` selector.
 pub const ARB_BLOCK_NUMBER_SELECTOR: [u8; 4] = hex!("a3b1b31d");
@@ -27,7 +27,7 @@ pub fn is_arbitrum_chain(chain_id: u64) -> bool {
 
 /// Returns the ABI-encoded result for `ArbSys.arbBlockNumber()`.
 pub fn arb_block_number_output(block_number: u64) -> Bytes {
-    Bytes::copy_from_slice(&U256::from(block_number).to_be_bytes::<32>())
+    U256::from(block_number).to_be_bytes::<32>().into()
 }
 
 /// Returns the gas cost and ABI-encoded result for `ArbSys.arbBlockNumber()`.
@@ -51,7 +51,7 @@ fn arb_sys_precompile_call(input: PrecompileInput<'_>, block_number: u64) -> Pre
         ));
     }
 
-    let Some((gas_cost, output)) = arb_block_number_call(input.gas, block_number) else {
+    let Some((gas_cost, output)) = arb_block_number_call(input.gas(), block_number) else {
         return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, input.reservoir));
     };
 

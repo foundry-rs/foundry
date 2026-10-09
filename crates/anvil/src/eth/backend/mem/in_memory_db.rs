@@ -121,7 +121,7 @@ impl HistoricalStateCache {
         if is_next {
             let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
             if min_number > U256::ZERO {
-                state.block_hashes.remove(&(min_number - U256::from(1)));
+                state.block_hashes.remove(&(min_number - U256::ONE));
             }
             state.block_hashes.insert(number, hash);
             return;
@@ -178,7 +178,7 @@ impl HistoricalStateCache {
 
             let info = account_info_with_code(&account.info, &db.inner.cache.contracts);
             if let Some(code) = &info.code {
-                state.contracts.insert(info.code_hash, code.clone());
+                state.contracts.insert(info.code_hash(), code.clone());
             }
             state.accounts.insert(
                 address,
@@ -290,7 +290,7 @@ impl PersistentStateDb {
 fn account_info_with_code(info: &AccountInfo, contracts: &B256Map<Bytecode>) -> AccountInfo {
     let mut info = info.clone();
     if info.code.is_none() {
-        info.code = contracts.get(&info.code_hash).cloned();
+        info.code = contracts.get(&info.code_hash()).cloned();
     }
     info
 }
@@ -353,7 +353,7 @@ impl MaybeFullDatabase for PersistentStateDb {
             .into_iter()
             .map(|(address, info)| {
                 if let Some(code) = &info.code {
-                    contracts.insert(info.code_hash, code.clone());
+                    contracts.insert(info.code_hash(), code.clone());
                 }
                 let storage = storage
                     .remove(&address)
@@ -436,11 +436,11 @@ impl Db for StateRootDb {
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
         let is_next =
-            self.block_hash_head.is_some_and(|head| number == head.saturating_add(U256::from(1)));
+            self.block_hash_head.is_some_and(|head| number == head.saturating_add(U256::ONE));
         if is_next {
             let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
             if min_number > U256::ZERO {
-                self.inner.inner.cache.block_hashes.remove(&(min_number - U256::from(1)));
+                self.inner.inner.cache.block_hashes.remove(&(min_number - U256::ONE));
             }
             self.inner.inner.cache.block_hashes.insert(number, hash);
             self.block_hash_head = Some(number);
@@ -480,6 +480,10 @@ impl Db for StateRootDb {
             self.block_hash_head = self.inner.inner.cache.block_hashes.keys().copied().max();
         }
         reverted
+    }
+
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        Db::delete_state_snapshot(&mut self.inner, id)
     }
 
     fn maybe_state_root(&self) -> Option<B256> {
@@ -575,7 +579,7 @@ impl Db for MemDb {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    self.inner.code_by_hash_ref(v.info.code_hash)?
+                    self.inner.code_by_hash_ref(v.info.code_hash())?
                 };
                 Ok((
                     k,
@@ -622,6 +626,10 @@ impl Db for MemDb {
             warn!(target: "backend::memdb", "No state snapshot to revert for {}", id);
             false
         }
+    }
+
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        self.state_snapshots.remove_at(id).is_some()
     }
 
     fn maybe_state_root(&self) -> Option<B256> {
@@ -695,9 +703,7 @@ mod tests {
                 account_id: None,
             },
         );
-        dump_db
-            .set_storage_at(test_addr, U256::from(1234567).into(), U256::from(1).into())
-            .unwrap();
+        dump_db.set_storage_at(test_addr, U256::from(1234567).into(), U256::ONE.into()).unwrap();
 
         // blocks dumping/loading tested in storage.rs
         let state = dump_db
@@ -712,9 +718,9 @@ mod tests {
         let loaded_account = load_db.basic_ref(test_addr).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, U256::from(123456));
-        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
-        assert_eq!(load_db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::from(1));
+        assert_eq!(load_db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
     }
 
     // verifies that multiple accounts can be loaded at a time, and storage is merged within those
@@ -739,7 +745,7 @@ mod tests {
             },
         );
 
-        db.set_storage_at(test_addr, U256::from(1234567).into(), U256::from(1).into()).unwrap();
+        db.set_storage_at(test_addr, U256::from(1234567).into(), U256::ONE.into()).unwrap();
         db.set_storage_at(test_addr, U256::from(1234568).into(), U256::from(2).into()).unwrap();
 
         let mut new_state = SerializableState::default();
@@ -761,7 +767,7 @@ mod tests {
             test_addr,
             SerializableAccountRecord {
                 balance: U256::from(100100),
-                code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
+                code: contract_code.original_bytes(),
                 nonce: 100,
                 storage: new_storage,
             },
@@ -775,9 +781,9 @@ mod tests {
         assert_eq!(loaded_account2.nonce, 1);
 
         assert_eq!(loaded_account.balance, U256::from(100100));
-        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
-        assert_eq!(db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::from(1));
+        assert_eq!(db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
         assert_eq!(db.storage_ref(test_addr, U256::from(1234568)).unwrap(), U256::from(5));
     }
 
@@ -787,7 +793,7 @@ mod tests {
         let deleted = Address::with_last_byte(1);
         let mut db = StateRootDb::default();
         db.insert_account(address, AccountInfo::default());
-        db.insert_account(deleted, AccountInfo::from_balance(U256::from(1)));
+        db.insert_account(deleted, AccountInfo::from_balance(U256::ONE));
 
         assert_eq!(db.maybe_state_root(), Some(state_root(&db.inner.inner.cache.accounts)));
 
@@ -902,18 +908,18 @@ mod tests {
     #[test]
     fn historical_states_are_persistent_and_isolated() {
         let address = address!("0000000000000000000000000000000000002935");
-        let slot = U256::from(1);
+        let slot = U256::ONE;
         let mut db = StateRootDb::default();
-        db.insert_account(address, AccountInfo::from_balance(U256::from(1)));
+        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
 
         let first = db.current_state();
         assert!(first.is_persistent());
 
         db.set_balance(address, U256::from(2)).unwrap();
-        db.set_storage_at(address, slot.into(), B256::from(U256::from(3))).unwrap();
+        db.set_storage_at(address, slot.into(), B256::with_last_byte(3)).unwrap();
         let second = db.current_state();
 
-        assert_eq!(first.basic_ref(address).unwrap().unwrap().balance, U256::from(1));
+        assert_eq!(first.basic_ref(address).unwrap().unwrap().balance, U256::ONE);
         assert_eq!(first.storage_ref(address, slot).unwrap(), U256::ZERO);
         assert_eq!(second.basic_ref(address).unwrap().unwrap().balance, U256::from(2));
         assert_eq!(second.storage_ref(address, slot).unwrap(), U256::from(3));
@@ -930,7 +936,7 @@ mod tests {
         assert_eq!(live_account, Some(AccountInfo::default()));
         assert_eq!(historical.basic_ref(missing).unwrap(), live_account);
 
-        db.insert_account(deleted, AccountInfo::from_balance(U256::from(1)));
+        db.insert_account(deleted, AccountInfo::from_balance(U256::ONE));
         db.inner.inner.cache.accounts.get_mut(&deleted).unwrap().account_state =
             AccountState::NotExisting;
         db.history.get_mut().record_account(deleted);
@@ -940,7 +946,7 @@ mod tests {
         assert!(!historical.read_as_state_snapshot().accounts.contains_key(&deleted));
 
         let mut fresh = StateRootDb::default();
-        fresh.insert_account(deleted, AccountInfo::from_balance(U256::from(1)));
+        fresh.insert_account(deleted, AccountInfo::from_balance(U256::ONE));
         fresh.inner.inner.cache.accounts.get_mut(&deleted).unwrap().account_state =
             AccountState::NotExisting;
         let historical = fresh.current_state();
@@ -951,11 +957,11 @@ mod tests {
     #[test]
     fn disabled_history_tracking_records_nothing() {
         let address = address!("0000000000000000000000000000000000002935");
-        let slot = U256::from(1);
+        let slot = U256::ONE;
         let mut db = StateRootDb::new(false);
 
-        db.insert_account(address, AccountInfo::from_balance(U256::from(1)));
-        db.set_storage_at(address, slot.into(), B256::from(U256::from(2))).unwrap();
+        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
+        db.set_storage_at(address, slot.into(), B256::with_last_byte(2)).unwrap();
         db.basic(address).unwrap();
         db.storage(address, slot).unwrap();
         db.maybe_state_root().unwrap();
@@ -965,7 +971,7 @@ mod tests {
 
         // `current_state` must still produce a correct snapshot without caching it.
         let historical = db.current_state();
-        assert_eq!(historical.basic_ref(address).unwrap().unwrap().balance, U256::from(1));
+        assert_eq!(historical.basic_ref(address).unwrap().unwrap().balance, U256::ONE);
         assert_eq!(historical.storage_ref(address, slot).unwrap(), U256::from(2));
         assert!(db.history.get_mut().state.is_none());
     }

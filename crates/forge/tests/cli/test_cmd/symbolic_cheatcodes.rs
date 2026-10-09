@@ -1,11 +1,13 @@
-use super::symbolic_helpers::{assert_relevant_lines, json_test_result};
+use super::symbolic_helpers::{
+    assert_symbolic, assert_symbolic_witness, json_test_result, z3_available,
+};
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
 
-use super::symbolic_helpers::z3_available;
 use crate::skip_unless_z3;
 
-forgetest_init!(symbolic_cheatcodes_accept_symbolic_address_targets, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_symbolic_address_targets(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_symbolic_address_targets because z3 is not available"
@@ -50,30 +52,31 @@ contract SymbolicAddressCheatcodes is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicAddressCheatcodes"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicAddressCheatcodes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAddressCheatcodes.t.sol:SymbolicAddressCheatcodes
+[PASS] checkSymbolicDealStoreLoadAndNonce(address,bytes32) ([METRICS])
+[PASS] checkSymbolicEtch(address) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicDealStoreLoadAndNonce(address,bytes32)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicEtch(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.store target"), "{stdout}");
     assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_prank_accepts_symbolic_sender, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_prank_accepts_symbolic_sender(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_prank_accepts_symbolic_sender because z3 is not available"
@@ -154,41 +157,32 @@ contract SymbolicPrankSender is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicPrankSender"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrankSender",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+[PASS] checkSymbolicPrank(address) ([METRICS])
+[PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
+[PASS] checkSymbolicStartPrank(address) ([METRICS])
+[PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicPrank(address)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicStartPrank(address)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicPrankOrigin(address,address)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicStartPrankOrigin(address,address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.prank"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.startPrank"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_balance_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_balance_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_balance_accepts_symbolic_target because z3 is not available"
@@ -213,22 +207,28 @@ contract SymbolicBalance is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicBalance"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicBalance",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicBalance.t.sol:SymbolicBalance
+[PASS] checkSymbolicBalance(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicBalance(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodesize_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodesize_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodesize_accepts_symbolic_target because z3 is not available"
@@ -253,22 +253,28 @@ contract SymbolicExtcodeSize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicExtcodeSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExtcodeSize",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeSize.t.sol:SymbolicExtcodeSize
+[PASS] checkSymbolicCodeLength(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicCodeLength(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodehash_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodehash_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodehash_accepts_symbolic_target because z3 is not available"
@@ -293,22 +299,28 @@ contract SymbolicExtcodeHash is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicExtcodeHash"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExtcodeHash",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeHash.t.sol:SymbolicExtcodeHash
+[PASS] checkSymbolicCodeHash(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicCodeHash(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic EXTCODEHASH target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodecopy_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodecopy_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_accepts_symbolic_target because z3 is not available"
@@ -339,28 +351,30 @@ contract SymbolicExtcodeCopy is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicExtcodeCopy"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExtcodeCopy",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeCopy.t.sol:SymbolicExtcodeCopy
+[PASS] checkSymbolicExtcodeCopy(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicExtcodeCopy(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic EXTCODECOPY target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_prank_propagates_callers, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_prank_propagates_callers because z3 is not available"
-        );
-        return;
-    }
+// Cheatcodes that shape external calls: prank, expectRevert, mockFunction and assumeNoRevert.
+#[forgetest_init]
+fn symbolic_call_shaping_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_shaping_cheatcodes");
 
     prj.add_test(
         "SymbolicPrank.t.sol",
@@ -405,22 +419,167 @@ contract SymbolicPrank is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkPrank"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    prj.add_test(
+        "SymbolicExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkPrank(uint256)
-"#]],
+contract SymbolicExpectedReverter {
+    error Custom(uint256 value);
+
+    function failWithCustom(uint256 value) external pure {
+        revert Custom(value);
+    }
+
+    function failPanic() external pure {
+        assert(false);
+    }
+}
+
+contract SymbolicExpectRevert is Test {
+    SymbolicExpectedReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedReverter();
+    }
+
+    function checkExpectRevert(uint256) public {
+        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        helper.failWithCustom(7);
+
+        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedReverter.Custom.selector, uint256(9)));
+        helper.failWithCustom(9);
+
+        vm.expectRevert(bytes4(0x4e487b71));
+        helper.failPanic();
+    }
+}
+"#,
     );
-    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
 
-forgetest_init!(symbolic_vm_assert_cheatcodes_find_counterexample, |prj, cmd| {
+    prj.add_test(
+        "SymbolicMockFunction.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IFunctionMock {
+    function value(uint256 input) external returns (uint256);
+    function who(uint256 input) external returns (address);
+}
+
+contract FunctionCallee {
+    function value(uint256 input) external pure returns (uint256) {
+        return input + 1;
+    }
+
+    function who(uint256) external view returns (address) {
+        return address(this);
+    }
+}
+
+contract FunctionTarget {
+    function value(uint256 input) external pure returns (uint256) {
+        return input ^ 0x55;
+    }
+
+    function who(uint256) external view returns (address) {
+        return address(this);
+    }
+}
+
+contract SymbolicMockFunction is Test {
+    FunctionCallee callee;
+    FunctionTarget target;
+
+    function setUp() public {
+        callee = new FunctionCallee();
+        target = new FunctionTarget();
+    }
+
+    function checkMockFunction(uint256 input) public {
+        vm.mockFunction(
+            address(callee),
+            address(target),
+            abi.encodePacked(IFunctionMock.value.selector)
+        );
+        assertEq(IFunctionMock(address(callee)).value(input), input ^ 0x55);
+
+        vm.mockFunction(
+            address(callee),
+            address(target),
+            abi.encodePacked(IFunctionMock.who.selector)
+        );
+        assertEq(IFunctionMock(address(callee)).who(input), address(callee));
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicAssumeNoRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAssumeNoRevertTarget {
+    function maybeRevert(uint256 x) external pure {
+        require(x != 7, "seven");
+    }
+}
+
+contract SymbolicAssumeNoRevert is Test {
+    SymbolicAssumeNoRevertTarget target;
+
+    function setUp() public {
+        target = new SymbolicAssumeNoRevertTarget();
+    }
+
+    function checkAssumeNoRevertPrunes(uint256 x) public {
+        vm.assumeNoRevert();
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.maybeRevert.selector, x));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkPrank|checkExpectRevert|checkMockFunction|checkAssumeNoRevertPrunes)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicMockFunction.t.sol:SymbolicMockFunction
+[PASS] checkMockFunction(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicPrank.t.sol:SymbolicPrank
+[PASS] checkPrank(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicExpectRevert.t.sol:SymbolicExpectRevert
+[PASS] checkExpectRevert(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicAssumeNoRevert.t.sol:SymbolicAssumeNoRevert
+[PASS] checkAssumeNoRevertPrunes(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic Foundry cheatcode", "symbolic vm.assumeNoRevert"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_vm_assert_cheatcodes_find_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_assert_cheatcodes_find_counterexample because z3 is not available"
@@ -441,34 +600,23 @@ contract SymbolicVmAssert is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkVmAssert"])
-        .assert_failure()
+    let stdout = assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVmAssert"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+[FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
         .get_output()
         .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkVmAssert(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[42]
-"#]],
-    );
     assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_recorded_logs_round_trip, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_recorded_logs_round_trip(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_recorded_logs_round_trip because z3 is not available"
@@ -569,35 +717,31 @@ contract SymbolicRecordedLogs is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicRecordedLogs"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicRecordedLogs",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicRecordedLogs.t.sol:SymbolicRecordedLogs
+[PASS] checkRecordedLogs(uint256,bytes) ([METRICS])
+[PASS] checkRecordedLogsJson(uint256,bytes) ([METRICS])
+[PASS] checkRecordedRevertedCreate() ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRecordedLogs(uint256,bytes)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRecordedLogsJson(uint256,bytes)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRecordedRevertedCreate()
-"#]],
-    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.getRecordedLogsJson"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_env_crypto_and_console_helpers, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_env_crypto_and_console_helpers(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_env_crypto_and_console_helpers because z3 is not available"
@@ -712,46 +856,32 @@ contract SymbolicEnvCryptoConsole is Test {
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRINGS", "alpha,beta");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_BYTES_ARRAY", "12,cafe");
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicEnvCryptoConsole"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEnvCryptoConsole",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+[PASS] checkBase64Utilities() ([METRICS])
+[PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkKeyUtilities() ([METRICS])
+[PASS] checkParseToStringUtilities() ([METRICS])
+[PASS] checkStringUtilities() ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkEnvCryptoConsole(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkKeyUtilities()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBase64Utilities()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkParseToStringUtilities()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkStringUtilities()
-"#]],
-    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_ffi_is_config_gated, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_ffi_is_config_gated(prj: _, cmd: _) {
     if !z3_available() {
         let _ =
             sh_eprintln!("skipping symbolic_vm_ffi_is_config_gated because z3 is not available");
@@ -773,21 +903,19 @@ contract SymbolicFfiDisabled is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkFfiDisabled"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkFfiDisabled"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFfiDisabled.t.sol:SymbolicFfiDisabled
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic ffi disabled] checkFfiDisabled(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic ffi disabled
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_ffi_success_when_enabled, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_ffi_success_when_enabled(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_ffi_success_when_enabled because z3 is not available"
@@ -816,22 +944,29 @@ contract SymbolicFfiEnabled is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--ffi", "--match-test", "checkFfiEnabled"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--ffi",
+        "--match-test",
+        "checkFfiEnabled",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFfiEnabled.t.sol:SymbolicFfiEnabled
+[PASS] checkFfiEnabled(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkFfiEnabled(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic ffi disabled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_etch_and_get_deployed_code, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_etch_and_get_deployed_code(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_etch_and_get_deployed_code because z3 is not available"
@@ -884,36 +1019,33 @@ contract SymbolicEtch is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicEtch"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEtch",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicEtch.t.sol:SymbolicEtch
+[PASS] checkEtch(uint256) ([METRICS])
+[PASS] checkEtchSymbolicBytes(uint8) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkEtch(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkEtchSymbolicBytes(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.etch"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.getCode artifact"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodehash_distinguishes_empty_existing_account, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_extcodehash_distinguishes_empty_existing_account because z3 is not available"
-        );
-        return;
-    }
+// EXTCODEHASH, CODECOPY and EXTCODECOPY with symbolic offsets and bounded sizes are modeled.
+#[forgetest_init]
+fn symbolic_code_ops_accept_symbolic_operands(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_code_ops_accept_symbolic_operands");
 
     prj.add_test(
         "SymbolicCodeHash.t.sol",
@@ -933,28 +1065,6 @@ contract SymbolicCodeHash is Test {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCodeHash"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCodeHash(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_extcodecopy_pads_partial_code_ranges, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_extcodecopy_pads_partial_code_ranges because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicExtcodeCopy.t.sol",
@@ -981,28 +1091,6 @@ contract SymbolicExtcodeCopy is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExtcodeCopy"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExtcodeCopy(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_codecopy_accepts_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_codecopy_accepts_symbolic_offset because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicCodeCopy.t.sol",
         r#"
@@ -1023,29 +1111,6 @@ contract SymbolicCodeCopy {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCodeCopy"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCodeCopy(uint16)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CODECOPY offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_extcodecopy_accepts_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_extcodecopy_accepts_symbolic_offset because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicExtcodeCopyOffset.t.sol",
@@ -1073,29 +1138,6 @@ contract SymbolicExtcodeCopyOffset is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExtcodeCopyOffset"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExtcodeCopyOffset(uint16)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic EXTCODECOPY offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_codecopy_accepts_bounded_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_codecopy_accepts_bounded_symbolic_size because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicCodeCopySize.t.sol",
         r#"
@@ -1118,29 +1160,6 @@ contract SymbolicCodeCopySize {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCodeCopySize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCodeCopySize(uint8)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CODECOPY size"), "{stdout}");
-});
-
-forgetest_init!(symbolic_extcodecopy_accepts_bounded_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_extcodecopy_accepts_bounded_symbolic_size because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicExtcodeCopySize.t.sol",
@@ -1168,22 +1187,54 @@ contract SymbolicExtcodeCopySize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExtcodeCopySize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkCodeHash|checkExtcodeCopy|checkCodeCopy|checkExtcodeCopyOffset|checkCodeCopySize|checkExtcodeCopySize)\\(",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeCopy.t.sol:SymbolicExtcodeCopy
+[PASS] checkExtcodeCopy(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExtcodeCopySize(uint8)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic EXTCODECOPY size"), "{stdout}");
-});
+Ran 1 test for test/SymbolicExtcodeCopySize.t.sol:SymbolicExtcodeCopySize
+[PASS] checkExtcodeCopySize(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-forgetest_init!(symbolic_selfdestruct_updates_account_overlay, |prj, cmd| {
+Ran 1 test for test/SymbolicCodeHash.t.sol:SymbolicCodeHash
+[PASS] checkCodeHash(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCodeCopySize.t.sol:SymbolicCodeCopySize
+[PASS] checkCodeCopySize(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicExtcodeCopyOffset.t.sol:SymbolicExtcodeCopyOffset
+[PASS] checkExtcodeCopyOffset(uint16) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCodeCopy.t.sol:SymbolicCodeCopy
+[PASS] checkCodeCopy(uint16) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in [
+        "symbolic CODECOPY offset",
+        "symbolic CODECOPY size",
+        "symbolic EXTCODECOPY offset",
+        "symbolic EXTCODECOPY size",
+    ] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_selfdestruct_updates_account_overlay(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_updates_account_overlay because z3 is not available"
@@ -1229,41 +1280,40 @@ contract SymbolicSelfdestruct is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--evm-version",
-            "shanghai",
-            "--match-test",
-            "checkSelfdestruct",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "shanghai",
+        "--match-test",
+        "checkSelfdestruct",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
+[PASS] checkSelfdestruct(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSelfdestruct(uint256)
-"#]],
-    );
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(
-    symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete,
-    |prj, cmd| {
-        if !z3_available() {
-            let _ = sh_eprintln!(
-                "skipping symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete because z3 is not available"
-            );
-            return;
-        }
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
 
-        prj.add_test(
-            "SymbolicSelfdestructBeneficiary.t.sol",
-            r#"
+    prj.add_test(
+        "SymbolicSelfdestructBeneficiary.t.sol",
+        r#"
 import "forge-std/Test.sol";
 
 /// forge-config: default.evm_version = "cancun"
@@ -1294,32 +1344,33 @@ contract SymbolicSelfdestructBeneficiary is Test {
     }
 }
 "#,
-        );
+    );
 
-        let stdout = cmd
-            .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
-            .assert_failure()
-            .get_output()
-            .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSelfdestructBeneficiary",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestructBeneficiary.t.sol:SymbolicSelfdestructBeneficiary
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructBeneficiary(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-        assert_relevant_lines(
-            &stdout,
-            foundry_test_utils::str![[r#"
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructBeneficiary(address)
-"#]],
-        );
-        assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-        assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
-    }
-);
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+    assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+}
 
-forgetest_init!(symbolic_selfdestruct_cancun_existing_preserves_account, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_selfdestruct_cancun_existing_preserves_account because z3 is not available"
-        );
-        return;
-    }
+// SELFDESTRUCT under Cancun keeps existing accounts and deletes same-transaction ones.
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_semantics(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_selfdestruct_cancun_semantics");
 
     prj.add_test(
         "SymbolicSelfdestructCancunExisting.t.sol",
@@ -1364,29 +1415,6 @@ contract SymbolicSelfdestructCancunExisting is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCancunSelfdestructExisting"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCancunSelfdestructExisting(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
-
-forgetest_init!(symbolic_selfdestruct_cancun_same_transaction_deletes_account, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_selfdestruct_cancun_same_transaction_deletes_account because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicSelfdestructCancunSameTx.t.sol",
         r#"
@@ -1419,22 +1447,34 @@ contract SymbolicSelfdestructCancunSameTx is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCancunSelfdestructSameTransaction"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkCancunSelfdestructExisting|checkCancunSelfdestructSameTransaction)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestructCancunExisting.t.sol:SymbolicSelfdestructCancunExisting
+[PASS] checkCancunSelfdestructExisting(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCancunSelfdestructSameTransaction(uint256)
-"#]],
-    );
+Ran 1 test for test/SymbolicSelfdestructCancunSameTx.t.sol:SymbolicSelfdestructCancunSameTx
+[PASS] checkCancunSelfdestructSameTransaction(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_selfdestruct_cancun_wrong_delete_assertion_fails, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_wrong_delete_assertion_fails(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_cancun_wrong_delete_assertion_fails because z3 is not available"
@@ -1491,13 +1531,12 @@ contract SymbolicSelfdestructCancunWrongDelete is Test {
     assert!(!stdout.contains("[PASS] checkCancunSelfdestructDoesNotDeleteExisting"), "{stdout}");
     assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_set_blockhash, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!("skipping symbolic_vm_set_blockhash because z3 is not available");
-        return;
-    }
+// BLOCKHASH with symbolic block numbers and `vm.setBlockhash` with concrete and symbolic hashes.
+#[forgetest_init]
+fn symbolic_blockhash_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_blockhash_cheatcodes");
 
     prj.add_test(
         "SymbolicBlockhash.t.sol",
@@ -1520,28 +1559,6 @@ contract SymbolicBlockhash is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSetBlockhash"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSetBlockhash(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_blockhash_accepts_symbolic_number, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_blockhash_accepts_symbolic_number because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicBlockhashNumber.t.sol",
         r#"
@@ -1562,29 +1579,6 @@ contract SymbolicBlockhashNumber is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicBlockhashNumber"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicBlockhashNumber(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic BLOCKHASH number"), "{stdout}");
-});
-
-forgetest_init!(symbolic_vm_set_blockhash_accepts_symbolic_hash, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_set_blockhash_accepts_symbolic_hash because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicBlockhashValue.t.sol",
         r#"
@@ -1601,28 +1595,42 @@ contract SymbolicBlockhashValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicBlockhashValue"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkSetBlockhash|checkSymbolicBlockhashNumber|checkSymbolicBlockhashValue)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicBlockhashValue.t.sol:SymbolicBlockhashValue
+[PASS] checkSymbolicBlockhashValue(bytes32) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicBlockhashValue(bytes32)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic vm.setBlockhash hash"), "{stdout}");
-});
+Ran 1 test for test/SymbolicBlockhash.t.sol:SymbolicBlockhash
+[PASS] checkSetBlockhash(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-forgetest_init!(symbolic_vm_block_environment_breadth, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_block_environment_breadth because z3 is not available"
-        );
-        return;
+Ran 1 test for test/SymbolicBlockhashNumber.t.sol:SymbolicBlockhashNumber
+[PASS] checkSymbolicBlockhashNumber(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic BLOCKHASH number", "symbolic vm.setBlockhash hash"] {
+        assert!(!stdout.contains(reason), "{stdout}");
     }
+}
+
+// Block environment cheatcodes and the prepared executor environment.
+#[forgetest_init]
+fn symbolic_block_environment_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_block_environment_cheatcodes");
 
     prj.add_test(
         "SymbolicBlockEnvironment.t.sol",
@@ -1665,28 +1673,6 @@ contract SymbolicBlockEnvironment is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBlockEnvironment"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBlockEnvironment(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_uses_prepared_executor_environment, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_uses_prepared_executor_environment because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicPreparedEnvironment.t.sol",
         r#"
@@ -1718,21 +1704,31 @@ contract SymbolicPreparedEnvironment is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkPreparedEnvironment"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkBlockEnvironment|checkPreparedEnvironment)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
+[PASS] checkBlockEnvironment(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkPreparedEnvironment(uint256)
-"#]],
+Ran 1 test for test/SymbolicPreparedEnvironment.t.sol:SymbolicPreparedEnvironment
+[PASS] checkPreparedEnvironment(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
     );
-});
+}
 
-forgetest_init!(symbolic_vm_state_snapshots, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_state_snapshots(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_vm_state_snapshots because z3 is not available");
         return;
@@ -1782,25 +1778,26 @@ contract SymbolicStateSnapshots is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkStateSnapshots"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkStateSnapshots",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicStateSnapshots.t.sol:SymbolicStateSnapshots
+[PASS] checkStateSnapshots(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkStateSnapshots(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_random_bytes, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!("skipping symbolic_vm_random_bytes because z3 is not available");
-        return;
-    }
+// `vm.randomBytes` with concrete and bounded symbolic lengths.
+#[forgetest_init]
+fn symbolic_vm_random_bytes_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_random_bytes_cheatcodes");
 
     prj.add_test(
         "SymbolicRandomBytes.t.sol",
@@ -1824,28 +1821,6 @@ contract SymbolicRandomBytes is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkRandomBytes"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRandomBytes(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_random_bytes_accepts_bounded_symbolic_length, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_random_bytes_accepts_bounded_symbolic_length because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicRandomBytesLength.t.sol",
         r#"
@@ -1864,23 +1839,36 @@ contract SymbolicRandomBytesLength is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkRandomBytesSymbolicLength"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkRandomBytes|checkRandomBytesSymbolicLength)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicRandomBytes.t.sol:SymbolicRandomBytes
+[PASS] checkRandomBytes(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRandomBytesSymbolicLength(uint8)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
-    assert!(!stdout.contains("symbolic randomBytes length"), "{stdout}");
-});
+Ran 1 test for test/SymbolicRandomBytesLength.t.sol:SymbolicRandomBytesLength
+[PASS] checkRandomBytesSymbolicLength(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic randomBytes len", "symbolic randomBytes length"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
 
-forgetest_init!(symbolic_cheatcodes_accept_constrained_scalar_args, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_constrained_scalar_args(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_constrained_scalar_args because z3 is not available"
@@ -1940,42 +1928,33 @@ contract SymbolicConstrainedCheatcodes is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicConstrainedCheatcodes"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicConstrainedCheatcodes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicConstrainedCheatcodes.t.sol:SymbolicConstrainedCheatcodes
+[PASS] checkConstrainedDeal(address,uint256) ([METRICS])
+[PASS] checkConstrainedRandomBytes(uint16) ([METRICS])
+[PASS] checkSymbolicDealInsufficientFunds(uint256) ([METRICS])
+[PASS] checkSymbolicDealValueFundsCall(uint256) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkConstrainedDeal(address,uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicDealValueFundsCall(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicDealInsufficientFunds(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkConstrainedRandomBytes(uint16)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.deal value"), "{stdout}");
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_address_inputs_may_alias, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_address_inputs_may_alias(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_address_inputs_may_alias");
 
     prj.add_test(
@@ -2001,27 +1980,20 @@ contract SymbolicAddressAlias is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicAddressAlias"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicAddressAlias"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5b3b1d1100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address) ([METRICS])
+[PASS] checkDistinctDealsAreIndependent(address,address) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkDistinctDealsAreIndependent(address,address)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_cheatcode_state_survives_reverting_call, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcode_state_survives_reverting_call(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
 
     prj.add_test(
@@ -2072,34 +2044,29 @@ contract SymbolicRevertKeepsCheatcodes is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicRevertKeepsCheatcodes"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicRevertKeepsCheatcodes",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[1000]] checkWarpSurvivesRevertingCall(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL: panic: assertion failed (0x01); counterexample:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMockSurvivesRevertingCall(address)
-"#]],
-    );
     assert!(!stdout.contains("[PASS]"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_expect_call_follows_function_mock_redirect, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_expect_call_follows_function_mock_redirect(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_expect_call_follows_function_mock_redirect");
 
     prj.add_test(
@@ -2144,33 +2111,25 @@ contract SymbolicExpectCallRedirect is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicExpectCallRedirect"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectCallRedirect",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCallRedirect.t.sol:SymbolicExpectCallRedirect
+[PASS] checkExpectCallOnRedirectTarget() ([METRICS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x5c36b186 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallOnRedirectedSource() ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-to be called 1 time, but was called 0 times; counterexample:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkExpectCallOnRedirectedSource()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectCallOnRedirectTarget()
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_reject_gas_deal_value(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
 
     prj.add_test(
@@ -2190,21 +2149,19 @@ contract SymbolicDealGasValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkGasDealValue"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkGasDealValue"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicDealGasValue.t.sol:SymbolicDealGasValue
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasDealValue() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_cheatcodes_reject_derived_gas_deal_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_reject_derived_gas_deal_value(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcodes_reject_derived_gas_deal_value");
 
     prj.add_test(
@@ -2220,21 +2177,24 @@ contract SymbolicDerivedDealGasValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkDerivedGasDealValue"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDerivedGasDealValue",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicDerivedDealGasValue.t.sol:SymbolicDerivedDealGasValue
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkDerivedGasDealValue() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_cheatcodes_accept_bounded_symbolic_input_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_bounded_symbolic_input_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_bounded_symbolic_input_size because z3 is not available"
@@ -2266,22 +2226,28 @@ contract SymbolicCheatcodeInputSize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkLowLevelAssumeSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkLowLevelAssumeSize",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCheatcodeInputSize.t.sol:SymbolicCheatcodeInputSize
+[PASS] checkLowLevelAssumeSize(uint256,bool) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkLowLevelAssumeSize(uint256,bool)
-"#]],
-    );
     assert!(!stdout.contains("symbolic cheatcode CALL input size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_svm_creator_breadth, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_svm_creator_breadth(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_svm_creator_breadth because z3 is not available");
         return;
@@ -2324,81 +2290,27 @@ contract SymbolicSvmCreators {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSvmCreators"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSvmCreators",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSvmCreators.t.sol:SymbolicSvmCreators
+[PASS] checkSvmCreators(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSvmCreators(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
-});
-forgetest_init!(symbolic_vm_expect_revert_matches_external_reverts, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_expect_revert_matches_external_reverts because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicExpectRevert.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicExpectedReverter {
-    error Custom(uint256 value);
-
-    function failWithCustom(uint256 value) external pure {
-        revert Custom(value);
-    }
-
-    function failPanic() external pure {
-        assert(false);
-    }
 }
-
-contract SymbolicExpectRevert is Test {
-    SymbolicExpectedReverter helper;
-
-    function setUp() public {
-        helper = new SymbolicExpectedReverter();
-    }
-
-    function checkExpectRevert(uint256) public {
-        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
-        helper.failWithCustom(7);
-
-        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedReverter.Custom.selector, uint256(9)));
-        helper.failWithCustom(9);
-
-        vm.expectRevert(bytes4(0x4e487b71));
-        helper.failPanic();
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExpectRevert"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectRevert(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_expect_revert_double_registration_is_rejected, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_double_registration_is_rejected(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_vm_expect_revert_double_registration_is_rejected");
 
     prj.add_test(
@@ -2430,27 +2342,24 @@ contract DoubleExpectRevert is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkDoubleExpectRevert"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDoubleExpectRevert",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DoubleExpectRevert.t.sol:DoubleExpectRevert
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkDoubleExpectRevert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkDoubleExpectRevert(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_expect_revert_missing_is_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_missing_is_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_missing_is_counterexample because z3 is not available"
@@ -2482,27 +2391,24 @@ contract SymbolicExpectRevertMissing is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMissingExpectedRevert"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMissingExpectedRevert",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertMissing.t.sol:SymbolicExpectRevertMissing
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMissingExpectedRevert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMissingExpectedRevert(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_expect_revert_mismatch_is_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_mismatch_is_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_mismatch_is_counterexample because z3 is not available"
@@ -2538,27 +2444,24 @@ contract SymbolicExpectRevertMismatch is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMismatchedExpectedRevert"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectedRevert",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertMismatch.t.sol:SymbolicExpectRevertMismatch
+[FAIL: Error != expected error: Custom(2) != Custom(1); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectedRevert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMismatchedExpectedRevert(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_expect_revert_accepts_symbolic_data, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_accepts_symbolic_data(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_accepts_symbolic_data because z3 is not available"
@@ -2617,7 +2520,7 @@ contract SymbolicExpectRevertSymbolicData is Test {
 "#,
     );
 
-    let stdout = cmd
+    let stdout = assert_symbolic_witness(cmd
         .args([
             "test",
             "--symbolic",
@@ -2625,33 +2528,25 @@ contract SymbolicExpectRevertSymbolicData is Test {
             "SymbolicExpectRevertSymbolicData",
             "--match-test",
             "checkSymbolicExpectedRevertPayload|checkSymbolicExpectedRevertSelector|checkSymbolicExpectedReverter",
-        ])
-        .assert_success()
+        ]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicExpectRevertSymbolicData.t.sol:SymbolicExpectRevertSymbolicData
+[PASS] checkSymbolicExpectedRevertPayload(uint256) ([METRICS])
+[PASS] checkSymbolicExpectedRevertSelector(bytes4) ([METRICS])
+[PASS] checkSymbolicExpectedReverter(address) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
         .get_output()
         .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicExpectedRevertPayload(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicExpectedRevertSelector(bytes4)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicExpectedReverter(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_revert_symbolic_data_mismatch_fails, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_symbolic_data_mismatch_fails(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_symbolic_data_mismatch_fails because z3 is not available"
@@ -2692,49 +2587,47 @@ contract SymbolicExpectRevertSymbolicMismatch is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicExpectedRevertMismatch"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicExpectedRevertMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertSymbolicMismatch.t.sol:SymbolicExpectRevertSymbolicMismatch
+[FAIL: Error != expected error: Custom(0) != Custom(7); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicExpectedRevertMismatch(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkSymbolicExpectedRevertMismatch(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic expected revert data"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicExpectedReverterMismatch"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicExpectedReverterMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertSymbolicMismatch.t.sol:SymbolicExpectRevertSymbolicMismatch
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicExpectedReverterMismatch(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkSymbolicExpectedReverterMismatch(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_emit_matches_external_logs, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_emit_matches_external_logs because z3 is not available"
@@ -2803,34 +2696,30 @@ contract SymbolicExpectEmit is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExpectEmit"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectEmit",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
+[PASS] checkExpectEmit(uint256) ([METRICS])
+[PASS] checkExpectEmitCountOverloads(uint256) ([METRICS])
+[PASS] checkExpectEmitSymbolicEmitter(address) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectEmit(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectEmitSymbolicEmitter(address)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectEmitCountOverloads(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_emit_mismatch_is_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_emit_mismatch_is_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_emit_mismatch_is_counterexample because z3 is not available"
@@ -2875,48 +2764,44 @@ contract SymbolicExpectEmitMismatch is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMismatchedExpectEmit"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectEmit",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
+[FAIL: Seen param mismatch at id: expected=7, got=8; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmit(uint256) ([METRICS])
+[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMismatchedExpectEmit(uint256)
-"#]],
-    );
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectEmitSymbolicEmitter",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
+[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMismatchedExpectEmitSymbolicEmitter"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMismatchedExpectEmitSymbolicEmitter(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_call_matches_and_reports_missing, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_call_matches_and_reports_missing(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_call_matches_and_reports_missing because z3 is not available"
@@ -3057,130 +2942,141 @@ contract SymbolicExpectCall is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallMatches"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallMatches",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallMatches(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectCallMatches(uint256)
-"#]],
-    );
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallGasUnsupported",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expected call gas] checkExpectCallGasUnsupported(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallGasUnsupported"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallSymbolicCallee",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallSymbolicCallee(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expected call gas] checkExpectCallGasUnsupported(uint256)
-"#]],
-    );
-
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallSymbolicCallee"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectCallSymbolicCallee(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallMissing"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallMissing",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x773acdef000000000000000000000000000000000000000000000000000000000000000b to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallMissing(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkExpectCallMissing(uint256)
-"#]],
-    );
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicCalleeExpectedCallMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: expected call to 0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF with data 0x773acdef0000000000000000000000000000000000000000000000000000000000000007 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicCalleeExpectedCallMismatch(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicCalleeExpectedCallMismatch"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkSymbolicCalleeExpectedCallMismatch(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallMinGasMissing"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallMinGasMissing",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkExpectCallMinGasMissing(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallAdditive",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallAdditive(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkExpectCallCountedDuplicateReverts|checkExpectCallNonCountedOverCountedReverts)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallCountedDuplicateReverts(uint256) ([METRICS])
+[PASS] checkExpectCallNonCountedOverCountedReverts(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
     );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkExpectCallMinGasMissing(uint256)
-"#]],
-    );
+}
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallAdditive"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectCallAdditive(uint256)
-"#]],
-    );
-
-    for test in
-        ["checkExpectCallCountedDuplicateReverts", "checkExpectCallNonCountedOverCountedReverts"]
-    {
-        prj.forge_command().args(["test", "--symbolic", "--match-test", test]).assert_success();
-    }
-});
-
-forgetest_init!(symbolic_vm_mock_call_returns_and_reverts, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_mock_call_returns_and_reverts(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_mock_call_returns_and_reverts because z3 is not available"
@@ -3305,97 +3201,106 @@ contract SymbolicMockCall is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMockCall"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkMockCall"]))
+            .success()
+            .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkMockCall(uint256) ([METRICS])
+[PASS] checkMockCallRemockReplacesStaleValue(uint256) ([METRICS])
+[PASS] checkMockCallSymbolicCallee(address) ([METRICS])
+[PASS] checkMockCallsAcceptsSymbolicData(address,uint256) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCall(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCallSymbolicCallee(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkSelectorMockCallsAndClear"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSelectorMockCallsAndClear",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkSelectorMockCallsAndClear(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSelectorMockCallsAndClear(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMockCallsAcceptsSymbolicData"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallsAcceptsSymbolicData",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkMockCallsAcceptsSymbolicData(address,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCallsAcceptsSymbolicData(address,uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCalls"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicCalleeMockMismatch"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicCalleeMockMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[FAIL: assertion failed: 0 != 99; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicCalleeMockMismatch(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkSymbolicCalleeMockMismatch(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMockCallRemockReplacesStaleValue"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallRemockReplacesStaleValue",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkMockCallRemockReplacesStaleValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCallRemockReplacesStaleValue(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned because z3 is not available"
@@ -3453,29 +3358,30 @@ contract SymbolicUnpinnedCallValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicUnpinnedCallValue"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicUnpinnedCallValue",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicUnpinnedCallValue.t.sol:SymbolicUnpinnedCallValue
+[PASS] checkExpectCallAllowsSymbolicValue(uint8) ([METRICS])
+[PASS] checkMockCallAllowsSymbolicValue(uint8) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectCallAllowsSymbolicValue(uint8)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCallAllowsSymbolicValue(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic expected call value"), "{stdout}");
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_call_expectations_branch_symbolic_pinned_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_call_expectations_branch_symbolic_pinned_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_call_expectations_branch_symbolic_pinned_value because z3 is not available"
@@ -3557,64 +3463,66 @@ contract SymbolicPinnedCallValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallPinnedValueFindsMismatch"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallPinnedValueFindsMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPinnedCallValue.t.sol:SymbolicPinnedCallValue
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x773acdef0000000000000000000000000000000000000000000000000000000000000007, value 1 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallPinnedValueFindsMismatch(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkExpectCallPinnedValueFindsMismatch(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic expected call value"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMockCallPinnedValueMatches"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallPinnedValueMatches",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPinnedCallValue.t.sol:SymbolicPinnedCallValue
+[PASS] checkMockCallPinnedValueMatches(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCallPinnedValueMatches(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMockCallPinnedValueFindsMismatch"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallPinnedValueFindsMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPinnedCallValue.t.sol:SymbolicPinnedCallValue
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockCallPinnedValueFindsMismatch(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMockCallPinnedValueFindsMismatch(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_and_mock_call_accept_symbolic_data, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_and_mock_call_accept_symbolic_data(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_and_mock_call_accept_symbolic_data because z3 is not available"
@@ -3710,48 +3618,34 @@ contract SymbolicCallDataCheatcodes is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicCallDataCheatcodes"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicCallDataCheatcodes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicCallDataCheatcodes.t.sol:SymbolicCallDataCheatcodes
+[PASS] checkExpectCallAcceptsSymbolicData(uint256) ([METRICS])
+[PASS] checkMockCallAcceptsSymbolicBytes4Selector(bytes4) ([METRICS])
+[PASS] checkMockCallAcceptsSymbolicDataAndReturn(uint256) ([METRICS])
+[PASS] checkMockFunctionAcceptsSymbolicCallee(address,uint256) ([METRICS])
+[PASS] checkMockFunctionAcceptsSymbolicData(uint256) ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectCallAcceptsSymbolicData(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCallAcceptsSymbolicDataAndReturn(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockCallAcceptsSymbolicBytes4Selector(bytes4)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockFunctionAcceptsSymbolicData(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockFunctionAcceptsSymbolicCallee(address,uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockFunction"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_call_data_match_branches_find_mismatch, |prj, _cmd| {
+#[forgetest_init]
+fn symbolic_vm_call_data_match_branches_find_mismatch(prj: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_call_data_match_branches_find_mismatch because z3 is not available"
@@ -3849,114 +3743,32 @@ contract SymbolicCallDataMismatch is Test {
 "#,
     );
 
-    for test in [
-        "checkExpectCallSymbolicDataFindsMismatch",
-        "checkMockCallSymbolicDataFindsMismatch",
-        "checkMockFunctionSymbolicDataFindsMismatch",
-        "checkMockFunctionSymbolicCalleeFindsMismatch",
-    ] {
-        let stdout = prj
-            .forge_command()
-            .args(["test", "--symbolic", "--match-test", test])
-            .assert_failure()
-            .get_output()
-            .stdout_lossy();
-
-        assert_relevant_lines(
-            &stdout,
-            foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-        );
-        assert_relevant_lines(&stdout, test);
-        assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
-        assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
-        assert!(!stdout.contains("symbolic vm.mockFunction"), "{stdout}");
-    }
-});
-
-forgetest_init!(symbolic_vm_mock_function_routes_to_target, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_mock_function_routes_to_target because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicMockFunction.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-interface IFunctionMock {
-    function value(uint256 input) external returns (uint256);
-    function who(uint256 input) external returns (address);
-}
-
-contract FunctionCallee {
-    function value(uint256 input) external pure returns (uint256) {
-        return input + 1;
-    }
-
-    function who(uint256) external view returns (address) {
-        return address(this);
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkExpectCallSymbolicDataFindsMismatch|checkMockCallSymbolicDataFindsMismatch|checkMockFunctionSymbolicDataFindsMismatch|checkMockFunctionSymbolicCalleeFindsMismatch)\\(",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicCallDataMismatch.t.sol:SymbolicCallDataMismatch
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc5a46ee60000000000000000000000000000000000000000000000000000000000000001 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallSymbolicDataFindsMismatch(uint256,uint256) ([METRICS])
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockCallSymbolicDataFindsMismatch(uint256,uint256) ([METRICS])
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionSymbolicCalleeFindsMismatch(address) ([METRICS])
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionSymbolicDataFindsMismatch(uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic vm.expectCall", "symbolic vm.mockCall", "symbolic vm.mockFunction"] {
+        assert!(!stdout.contains(reason), "{stdout}");
     }
 }
 
-contract FunctionTarget {
-    function value(uint256 input) external pure returns (uint256) {
-        return input ^ 0x55;
-    }
-
-    function who(uint256) external view returns (address) {
-        return address(this);
-    }
-}
-
-contract SymbolicMockFunction is Test {
-    FunctionCallee callee;
-    FunctionTarget target;
-
-    function setUp() public {
-        callee = new FunctionCallee();
-        target = new FunctionTarget();
-    }
-
-    function checkMockFunction(uint256 input) public {
-        vm.mockFunction(
-            address(callee),
-            address(target),
-            abi.encodePacked(IFunctionMock.value.selector)
-        );
-        assertEq(IFunctionMock(address(callee)).value(input), input ^ 0x55);
-
-        vm.mockFunction(
-            address(callee),
-            address(target),
-            abi.encodePacked(IFunctionMock.who.selector)
-        );
-        assertEq(IFunctionMock(address(callee)).who(input), address(callee));
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMockFunction"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMockFunction(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
-
-forgetest_init!(symbolic_vm_record_accesses_tracks_symbolic_slots, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_record_accesses_tracks_symbolic_slots(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_record_accesses_tracks_symbolic_slots because z3 is not available"
@@ -4075,30 +3887,26 @@ contract SymbolicRecordAccesses is Test {
     cmd.args(["test", "--match-test", "testRecordRevertedChildAccesses"]).assert_success();
     cmd.forge_fuse();
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkRecordAccesses"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkRecordAccesses",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
+[PASS] checkRecordAccesses(bytes32,bytes32) ([METRICS])
+[PASS] checkRecordAccessesRevertedChild() ([METRICS])
+[PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32) ([METRICS])
+[PASS] checkRecordAccessesSymbolicTargetBranches(address,bytes32,bytes32) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRecordAccesses(bytes32,bytes32)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRecordAccessesRevertedChild()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32)
-"#]],
-    );
     assert!(
         stdout
             .contains("[PASS] checkRecordAccessesSymbolicTargetBranches(address,bytes32,bytes32)"),
@@ -4106,9 +3914,10 @@ contract SymbolicRecordAccesses is Test {
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.accesses address"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_bound_skip_and_gas_noops, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_bound_skip_and_gas_noops(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_bound_skip_and_gas_noops because z3 is not available"
@@ -4244,34 +4053,30 @@ contract SymbolicBoundSkip is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicBoundSkip"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicBoundSkip",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicBoundSkip.t.sol:SymbolicBoundSkip
+[PASS] checkBoundSkipAndGasNoops(uint256,int256) ([METRICS])
+[PASS] checkRuntimeNoopsAndArrayAssertions() ([METRICS])
+[PASS] checkVmCompatibilityTail() ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBoundSkipAndGasNoops(uint256,int256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkVmCompatibilityTail()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRuntimeNoopsAndArrayAssertions()
-"#]],
-    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_bound_invalid_range_fails_without_stuck, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_bound_invalid_range_fails_without_stuck(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_bound_invalid_range_fails_without_stuck because z3 is not available"
@@ -4296,86 +4101,30 @@ contract SymbolicBoundInvalid is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicBoundInvalid"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicBoundInvalid",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+[FAIL: vm.bound: cannot bound 0 in [3, -3] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidSignedBound(int256) ([METRICS])
+[FAIL: vm.bound: cannot bound 0 in [12, 10] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidUnsignedBound(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkInvalidUnsignedBound(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkInvalidSignedBound(int256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.bound range"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
-
-forgetest_init!(symbolic_vm_assume_no_revert_prunes_reverting_call, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_assume_no_revert_prunes_reverting_call because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicAssumeNoRevert.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicAssumeNoRevertTarget {
-    function maybeRevert(uint256 x) external pure {
-        require(x != 7, "seven");
-    }
 }
 
-contract SymbolicAssumeNoRevert is Test {
-    SymbolicAssumeNoRevertTarget target;
-
-    function setUp() public {
-        target = new SymbolicAssumeNoRevertTarget();
-    }
-
-    function checkAssumeNoRevertPrunes(uint256 x) public {
-        vm.assumeNoRevert();
-        (bool ok,) = address(target).call(abi.encodeWithSelector(target.maybeRevert.selector, x));
-        assertTrue(ok);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkAssumeNoRevertPrunes"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkAssumeNoRevertPrunes(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
-    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
-
-forgetest_init!(symbolic_vm_assume_no_revert_filters_revert_matches, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_assume_no_revert_filters_revert_matches(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_assume_no_revert_filters_revert_matches because z3 is not available"
@@ -4486,52 +4235,58 @@ contract SymbolicAssumeNoRevertFilters is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkAssumeNoRevert.*Prunes"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkAssumeNoRevert.*Prunes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[PASS] checkAssumeNoRevertArrayFilterPrunes(uint256) ([METRICS])
+[PASS] checkAssumeNoRevertExactFilterPrunes(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkAssumeNoRevertExactFilterPrunes(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkAssumeNoRevertArrayFilterPrunes(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 
-    for test in ["checkAssumeNoRevertWrongDataFails", "checkAssumeNoRevertWrongReverterFails"] {
-        let stdout = prj
-            .forge_command()
-            .args(["test", "--symbolic", "--match-test", test])
-            .assert_failure()
-            .get_output()
-            .stdout_lossy();
-
-        assert_relevant_lines(
-            &stdout,
-            foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-        );
-        assert_relevant_lines(&stdout, test);
-        assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
-        assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+    let stdout = assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkAssumeNoRevertWrongDataFails|checkAssumeNoRevertWrongReverterFails)\\(",
+    ]))
+    .failure()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongDataFails(uint256) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongReverterFails(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic vm.assumeNoRevert", "symbolic Foundry cheatcode"] {
+        assert!(!stdout.contains(reason), "{stdout}");
     }
-});
+}
 
 // The `vm.prank(address, bool delegateCall)` overload diverges from concrete
 // Forge semantics when `delegateCall == true`: the engine does not model
 // pranking through a delegatecall frame, so this branch must fail closed as
 // Unsupported rather than silently behaving like the address-only overload.
-forgetest_init!(symbolic_vm_prank_delegatecall_overload_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_prank_delegatecall_overload_reports_unsupported(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_prank_delegatecall_overload_reports_unsupported because z3 is not available"
@@ -4565,21 +4320,24 @@ contract SymbolicPrankDelegateCall is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkPrankDelegateCall"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkPrankDelegateCall",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPrankDelegateCall.t.sol:SymbolicPrankDelegateCall
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.prank delegatecall] checkPrankDelegateCall(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-unsupported symbolic execution feature: symbolic vm.prank delegatecall
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_deploy_code_models_constructor_outcomes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_deploy_code_models_constructor_outcomes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_deploy_code_models_constructor_outcomes because z3 is not available"
@@ -4662,41 +4420,32 @@ contract SymbolicDeployCodeCheatcode is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicDeployCodeCheatcode"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicDeployCodeCheatcode",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicDeployCodeCheatcode.t.sol:SymbolicDeployCodeCheatcode
+[PASS] checkDeployCodeBranchingConstructor() ([METRICS])
+[PASS] checkDeployCodeExpectedRevert() ([METRICS])
+[PASS] checkDeployCodeSelfDestructConstructor() ([METRICS])
+[PASS] checkDeployCodeStaticContext() ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkDeployCodeExpectedRevert()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkDeployCodeBranchingConstructor()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkDeployCodeStaticContext()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkDeployCodeSelfDestructConstructor()
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.deployCode"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(storage_hook_cheatcodes_concrete_and_symbolic, |prj, cmd| {
+#[forgetest_init]
+fn storage_hook_cheatcodes_concrete_and_symbolic(prj: _, cmd: _) {
     prj.add_test(
         "StorageHooks.t.sol",
         r#"
@@ -4959,8 +4708,8 @@ contract StorageHooksTest is Test {
 
         (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (11)));
         assertFalse(ok);
-        assertEq(target.value(), 7);
         assertEq(ghostValue, 7);
+        assertEq(target.value(), 7);
 
         target.storeTwice(9, 12);
         assertEq(ghostValue, 12);
@@ -5030,8 +4779,8 @@ contract StorageHooksTest is Test {
     function testIsolateEnclosingRevertRollsBackTargetAndGhost() public {
         (bool ok,) = address(this).call(abi.encodeCall(this.storeAndRevert, (37)));
         assertFalse(ok);
-        assertEq(target.value(), 0);
         assertEq(ghostValue, 0);
+        assertEq(target.value(), 0);
     }
 
     function storeAndRevert(uint256 newValue) external {
@@ -5056,6 +4805,7 @@ contract StorageHooksTest is Test {
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (1)));
 
         assertFalse(ok);
+        assertEq(ghostValue, 0);
         assertEq(target.value(), 0);
     }
 
@@ -5145,8 +4895,10 @@ contract StorageHooksTest is Test {
         StorageHookDepthTarget hooked = new StorageHookDepthTarget();
         hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
 
-        assertTrue(baseline.recurse(1024));
-        assertFalse(hooked.recurse(1024));
+        // Without isolation the test contract's frame takes one more call-depth slot.
+        uint256 depth = vm.isIsolateMode() ? 1024 : 1023;
+        assertTrue(baseline.recurse(depth));
+        assertFalse(hooked.recurse(depth));
     }
 
     function testConcreteTraceSuccess() public {
@@ -5165,17 +4917,17 @@ contract StorageHooksTest is Test {
 
     function revertingStoreHook(address, bytes32, bytes32, bytes32)
         external
-        view
         onlyStorageHook
     {
+        ghostValue = 99;
         revert("replacement hook");
     }
 
     function panickingStoreHook(address, bytes32, bytes32, bytes32)
         external
-        view
         onlyStorageHook
     {
+        ghostValue = 99;
         assert(false);
     }
 
@@ -5250,22 +5002,23 @@ contract StorageHooksTest is Test {
     function checkSymbolicRollback(uint256 newValue) public {
         (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (newValue)));
         assertFalse(ok);
-        assertEq(target.value(), 0);
         assertEq(ghostValue, 0);
+        assertEq(target.value(), 0);
     }
 
     function checkSymbolicCallbackRevert(uint256 newValue) public {
         hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
         assertFalse(ok);
-        assertEq(target.value(), 0);
         assertEq(ghostValue, 0);
+        assertEq(target.value(), 0);
     }
 
     function checkSymbolicCallbackPanic(uint256 newValue) public {
         hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
         assertFalse(ok);
+        assertEq(ghostValue, 0);
         assertEq(target.value(), 0);
     }
 
@@ -5337,93 +5090,90 @@ contract StorageHooksTest is Test {
 "#,
     );
 
-    cmd.forge_fuse()
-        .args([
-            "test",
-            "--match-contract",
-            "StorageHooksTest",
-            "--match-test",
-            "testConcrete",
-            "--gas-limit",
-            "10000000000000",
-            "--disable-block-gas-limit",
-        ])
-        .assert_success();
+    let args = [
+        "test",
+        "--match-contract",
+        "StorageHooksTest",
+        "--match-test",
+        "test(Concrete|Isolate)",
+        "--gas-limit",
+        "10000000000000",
+        "--disable-block-gas-limit",
+    ];
+    cmd.forge_fuse().args(args).arg("--isolate").assert_success();
+    cmd.forge_fuse().args(args).arg("--no-isolate").assert_success();
 
-    cmd.forge_fuse()
-        .args([
-            "test",
-            "--isolate",
-            "--match-contract",
-            "StorageHooksTest",
-            "--match-test",
-            "testIsolateEnclosingRevertRollsBackTargetAndGhost",
-        ])
-        .assert_success();
+    for isolate in ["--isolate", "--no-isolate"] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "StorageHooksTest",
+                "--match-test",
+                "testConcreteTrace",
+                "-vvvvv",
+                "--json",
+            ])
+            .arg(isolate)
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        let suite = output.as_object().unwrap().values().next().unwrap();
 
-    let output = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--match-contract",
-            "StorageHooksTest",
-            "--match-test",
-            "testConcreteTrace",
-            "-vvvvv",
-            "--json",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout
-        .clone();
-    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    let suite = output.as_object().unwrap().values().next().unwrap();
-
-    let success = &suite["test_results"]["testConcreteTraceSuccess()"];
-    let success_target = success["traces"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
-        .find(|node| {
-            node["trace"]["address"].as_str().is_some_and(|address| {
-                address.ends_with("00000000000000000000000000000000000a11ce")
+        let success = &suite["test_results"]["testConcreteTraceSuccess()"];
+        let success_target = success["traces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+            .find(|node| {
+                node["trace"]["address"].as_str().is_some_and(|address| {
+                    address.ends_with("00000000000000000000000000000000000a11ce")
+                })
             })
-        })
-        .unwrap();
-    let resumed_step = success_target["trace"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|step| step["pc"] == 5)
-        .unwrap();
-    let sstore_step = success_target["trace"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|step| step["pc"] == 4)
-        .unwrap();
-    assert_eq!(
-        resumed_step["gas_remaining"].as_u64().unwrap(),
-        sstore_step["gas_remaining"].as_u64().unwrap() - sstore_step["gas_cost"].as_u64().unwrap()
-    );
-    assert_eq!(resumed_step["gas_cost"], 3);
+            .unwrap();
+        let resumed_step = success_target["trace"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["pc"] == 5)
+            .unwrap();
+        let sstore_step = success_target["trace"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["pc"] == 4)
+            .unwrap();
+        assert_eq!(
+            resumed_step["gas_remaining"].as_u64().unwrap(),
+            sstore_step["gas_remaining"].as_u64().unwrap()
+                - sstore_step["gas_cost"].as_u64().unwrap()
+        );
+        assert_eq!(resumed_step["gas_cost"], 3);
 
-    let reverted = &suite["test_results"]["testConcreteTraceRevert()"];
-    let reverted_target = reverted["traces"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
-        .find(|node| {
-            node["trace"]["address"].as_str().is_some_and(|address| {
-                address.ends_with("0000000000000000000000000000000000000b0b")
+        let reverted = &suite["test_results"]["testConcreteTraceRevert()"];
+        let reverted_target = reverted["traces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+            .find(|node| {
+                node["trace"]["address"].as_str().is_some_and(|address| {
+                    address.ends_with("0000000000000000000000000000000000000b0b")
+                })
             })
-        })
-        .unwrap();
-    assert!(
-        reverted_target["trace"]["steps"].as_array().unwrap().iter().all(|step| step["pc"] != 5)
-    );
+            .unwrap();
+        assert!(
+            reverted_target["trace"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|step| step["pc"] != 5)
+        );
+    }
 
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -5432,43 +5182,41 @@ contract StorageHooksTest is Test {
         return;
     }
 
-    let stdout = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--symbolic",
-            "--match-contract",
-            "StorageHooksTest",
-            "--match-test",
-            "checkSymbolic",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicMapping(address,uint256)
-[PASS] checkSymbolicAliasedMappingWrites(address,address,uint256,uint256)
-[PASS] checkSymbolicPreexistingMappingWrites(uint256,uint256)
-[PASS] checkSymbolicLoad(uint256)
-[PASS] checkSymbolicMultipleWritesAndNestedCall(uint256,uint256)
-[PASS] checkSymbolicDelegatecall(uint256)
-[PASS] checkSymbolicRollback(uint256)
-[PASS] checkSymbolicCallbackRevert(uint256)
-[PASS] checkSymbolicCallbackPanic(uint256)
-[PASS] checkSymbolicCallbackSuppressesRecursiveHooks(uint256)
-[PASS] checkSymbolicCallbackPreservesPendingExpectations(uint256)
-[PASS] checkSymbolicCallbackPreservesReturnData(uint256)
-[PASS] checkSymbolicCallbackInspectorStateIsIsolated(uint256)
-[PASS] checkSymbolicCallbackCanWriteUnderStaticcall(uint256)
-[PASS] checkSymbolicConstructorRegistration(uint256)
-[PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256)
-"#]],
-    );
-});
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "StorageHooksTest",
+        "--match-test",
+        "checkSymbolic",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 16 tests for test/StorageHooks.t.sol:StorageHooksTest
+[PASS] checkSymbolicAliasedMappingWrites(address,address,uint256,uint256) ([METRICS])
+[PASS] checkSymbolicCallbackCanWriteUnderStaticcall(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackInspectorStateIsIsolated(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackPanic(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackPreservesPendingExpectations(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackPreservesReturnData(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackRevert(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackSuppressesRecursiveHooks(uint256) ([METRICS])
+[PASS] checkSymbolicConstructorRegistration(uint256) ([METRICS])
+[PASS] checkSymbolicDelegatecall(uint256) ([METRICS])
+[PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256) ([METRICS])
+[PASS] checkSymbolicLoad(uint256) ([METRICS])
+[PASS] checkSymbolicMapping(address,uint256) ([METRICS])
+[PASS] checkSymbolicMultipleWritesAndNestedCall(uint256,uint256) ([METRICS])
+[PASS] checkSymbolicPreexistingMappingWrites(uint256,uint256) ([METRICS])
+[PASS] checkSymbolicRollback(uint256) ([METRICS])
+Suite result: ok. 16 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest_init!(storage_hook_callbacks_do_not_leak_fuzz_guidance, |prj, cmd| {
+#[forgetest_init]
+fn storage_hook_callbacks_do_not_leak_fuzz_guidance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.runs = 32;
         config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
@@ -5632,9 +5380,10 @@ contract StorageHookFuzzGuidanceTest is Test {
     }
     assert!(showmap_files > 0, "no showmap files were produced");
     assert!(saw_target_coverage, "showmap did not contain target coverage");
-});
+}
 
-forgetest_init!(symbolic_mapping_storage_hooks, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mapping_storage_hooks(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_mapping_storage_hooks");
     prj.update_config(|config| config.invariant.runs = 0);
     prj.add_test(
@@ -6322,4 +6071,4 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
         "{}",
         result["symbolic"]
     );
-});
+}

@@ -1,12 +1,13 @@
 //! CLI tests for shared Tempo transaction options.
 
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, U256, address, b256, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolEvent, SolValue};
 use anvil::NodeConfig;
+use foundry_cli::utils::parse_json;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
 use tempo_contracts::precompiles::{
@@ -17,13 +18,13 @@ use tempo_contracts::precompiles::{
 use tempo_hardfork::TempoHardfork;
 
 fn json_success_data(output: &str) -> serde_json::Value {
-    let envelope: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("command emits JSON");
+    let envelope: serde_json::Value = parse_json(output.trim()).expect("command emits JSON");
     assert_eq!(envelope["success"], true, "unexpected JSON envelope: {envelope}");
     envelope["data"].clone()
 }
 
-casttest!(tempo_state_changing_help_includes_expires, |_prj, cmd| {
+#[casttest]
+fn tempo_state_changing_help_includes_expires(cmd: _) {
     let cases: &[(&str, &[&str])] = &[
         ("batch-mktx", &["batch-mktx", "--help"]),
         ("batch-send", &["batch-send", "--help"]),
@@ -45,9 +46,10 @@ casttest!(tempo_state_changing_help_includes_expires, |_prj, cmd| {
             "expected {name} help to expose --tempo.expires, got:\n{output}",
         );
     }
-});
+}
 
-casttest!(receive_policy_receipt_json_and_claim_flow, async |_prj, cmd| {
+#[casttest]
+async fn receive_policy_receipt_json_and_claim_flow(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -59,7 +61,7 @@ casttest!(receive_policy_receipt_json_and_claim_flow, async |_prj, cmd| {
     let claim_target = accounts[3];
     let recovery_wallet = handle.dev_wallets().nth(2).unwrap();
     assert_eq!(recovery_wallet.address(), recovery);
-    let recovery_pk = format!("0x{}", hex::encode(recovery_wallet.credential().to_bytes()));
+    let recovery_pk = hex::encode_prefixed(recovery_wallet.credential().to_bytes());
     let amount = U256::from(77_000u64);
     let path_usd = PATH_USD_ADDRESS.to_string();
     let sender_arg = sender.to_string();
@@ -230,16 +232,17 @@ casttest!(receive_policy_receipt_json_and_claim_flow, async |_prj, cmd| {
     let claimed_balance_output = json_success_data(&claimed_balance_output);
     assert_eq!(claimed_balance_output["held_balance"], "0");
     assert_eq!(claimed_balance_output["delivery_state"], "not_held");
-});
+}
 
 // The ReceivePolicyGuard precompile is only active from T6, so claim/burn must fail early on a
 // pre-T6 RPC instead of submitting a transaction that would silently succeed as a no-op.
-casttest!(receive_policy_claim_and_burn_require_t6, async |_prj, cmd| {
+#[casttest]
+async fn receive_policy_claim_and_burn_require_t6(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
 
     let receipt = IReceivePolicyGuard::ClaimReceiptV1::new(
         PATH_USD_ADDRESS,
@@ -253,7 +256,7 @@ casttest!(receive_policy_claim_and_burn_require_t6, async |_prj, cmd| {
         B256::ZERO,
     )
     .abi_encode();
-    let receipt_arg = format!("0x{}", hex::encode(&receipt));
+    let receipt_arg = hex::encode_prefixed(&receipt);
 
     let claim_err = cmd
         .cast_fuse()
@@ -297,15 +300,16 @@ casttest!(receive_policy_claim_and_burn_require_t6, async |_prj, cmd| {
         ),
         "{burn_err}"
     );
-});
+}
 
 // Exercises the full TIP-403 policy lifecycle: create, inspect, check, and modify membership.
-casttest!(tip403_policy_lifecycle, async |_prj, cmd| {
+#[casttest]
+async fn tip403_policy_lifecycle(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -378,14 +382,14 @@ casttest!(tip403_policy_lifecycle, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(json_success_data(&allow_all)["builtin"], "allow-all");
-});
+}
 
-casttest!(tip403_create_warns_on_virtual_member, async |_prj, cmd| {
+#[casttest]
+async fn tip403_create_warns_on_virtual_member(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
-    let pk =
-        format!("0x{}", hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes()));
+    let pk = hex::encode_prefixed(handle.dev_wallets().next().unwrap().credential().to_bytes());
 
     // A TIP-1022 virtual address (bytes [4:14] == 0xFD) is rejected on-chain on T3+; cast warns
     // and lets the chain enforce rather than hard-failing client-side.
@@ -409,14 +413,15 @@ casttest!(tip403_create_warns_on_virtual_member, async |_prj, cmd| {
         .get_output()
         .stderr_lossy();
     assert!(err.contains("looks like a TIP-1022 virtual address"), "{err}");
-});
+}
 
-casttest!(tip403_blacklist_semantics, async |_prj, cmd| {
+#[casttest]
+async fn tip403_blacklist_semantics(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -484,14 +489,15 @@ casttest!(tip403_blacklist_semantics, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(json_success_data(&restored)["authorized"], true);
-});
+}
 
-casttest!(tip403_create_with_members, async |_prj, cmd| {
+#[casttest]
+async fn tip403_create_with_members(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -519,15 +525,16 @@ casttest!(tip403_create_with_members, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(json_success_data(&check)["authorized"], true);
-});
+}
 
-casttest!(tip403_works_pre_t6, async |_prj, cmd| {
+#[casttest]
+async fn tip403_works_pre_t6(cmd: _) {
     // TIP-403 is a Genesis precompile, so the base policy commands work before T6 activates.
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -572,14 +579,15 @@ casttest!(tip403_works_pre_t6, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(json_success_data(&check)["authorized"], true);
-});
+}
 
-casttest!(storage_credits_reads_and_writes, async |_prj, cmd| {
+#[casttest]
+async fn storage_credits_reads_and_writes(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let account = wallet.address();
 
     // A fresh account starts with no credits, the default `refund` mode, and a zero budget.
@@ -632,17 +640,17 @@ casttest!(storage_credits_reads_and_writes, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(json_success_data(&budget)["budget"], 0);
-});
+}
 
-casttest!(storage_credits_require_t7, async |_prj, cmd| {
+#[casttest]
+async fn storage_credits_require_t7(cmd: _) {
     // The StorageCredits precompile only activates at T7, so reads must fail cleanly before then.
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
     let account = handle.dev_wallets().next().unwrap().address();
 
-    let pk =
-        format!("0x{}", hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes()));
+    let pk = hex::encode_prefixed(handle.dev_wallets().next().unwrap().credential().to_bytes());
     let expected = "requires a Tempo T7-capable StorageCredits RPC";
 
     let read_err = cmd
@@ -669,9 +677,10 @@ casttest!(storage_credits_require_t7, async |_prj, cmd| {
         .get_output()
         .stderr_lossy();
     assert!(set_budget_err.contains(expected), "{set_budget_err}");
-});
+}
 
-casttest!(current_committee_cast_run_decoding, async |_prj, cmd| {
+#[casttest]
+async fn current_committee_cast_run_decoding(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T8.into()))).await;
     let provider = handle.http_provider();
@@ -736,9 +745,10 @@ casttest!(current_committee_cast_run_decoding, async |_prj, cmd| {
         .stdout_lossy();
     assert!(setter_stdout.contains("CurrentCommittee::setCommitteeMembers(1"), "{setter_stdout}");
     assert!(setter_stdout.contains("← [Revert] Unauthorized()"), "{setter_stdout}");
-});
+}
 
-casttest!(tip20_logo_create_help_includes_logo_uri, |_prj, cmd| {
+#[casttest]
+fn tip20_logo_create_help_includes_logo_uri(cmd: _) {
     let output = cmd
         .cast_fuse()
         .args(["tip20", "create", "--help"])
@@ -750,9 +760,10 @@ casttest!(tip20_logo_create_help_includes_logo_uri, |_prj, cmd| {
         output.contains("--logo-uri <URI>"),
         "expected tip20 create help to expose --logo-uri, got:\n{output}",
     );
-});
+}
 
-casttest!(tip20_logo_commands_expose_browser_and_remote_sponsor_options, |_prj, cmd| {
+#[casttest]
+fn tip20_logo_commands_expose_browser_and_remote_sponsor_options(cmd: _) {
     for args in [["tip20", "create", "--help"], ["tip20", "logo-set", "--help"]] {
         let output = cmd.cast_fuse().args(args).assert_success().get_output().stdout_lossy();
         assert!(output.contains("--browser"), "expected --browser in help, got:\n{output}");
@@ -761,9 +772,10 @@ casttest!(tip20_logo_commands_expose_browser_and_remote_sponsor_options, |_prj, 
             "expected --sponsor-url in help, got:\n{output}"
         );
     }
-});
+}
 
-casttest!(mktx_rejects_remote_sponsor_instead_of_ignoring_it, |_prj, cmd| {
+#[casttest]
+fn mktx_rejects_remote_sponsor_instead_of_ignoring_it(cmd: _) {
     let stderr = cmd
         .cast_fuse()
         .args([
@@ -779,9 +791,10 @@ casttest!(mktx_rejects_remote_sponsor_instead_of_ignoring_it, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("--sponsor-url is not supported by cast mktx"), "{stderr}");
-});
+}
 
-casttest!(send_with_presigned_sponsor_signature_keeps_digest_stable, async |_prj, cmd| {
+#[casttest]
+async fn send_with_presigned_sponsor_signature_keeps_digest_stable(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -792,10 +805,10 @@ casttest!(send_with_presigned_sponsor_signature_keeps_digest_stable, async |_prj
     let recipient = accounts[3];
     let sender_wallet = handle.dev_wallets().next().unwrap();
     assert_eq!(sender_wallet.address(), sender);
-    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sender_pk = hex::encode_prefixed(sender_wallet.credential().to_bytes());
     let sponsor_wallet = handle.dev_wallets().nth(1).unwrap();
     assert_eq!(sponsor_wallet.address(), sponsor);
-    let sponsor_pk = format!("0x{}", hex::encode(sponsor_wallet.credential().to_bytes()));
+    let sponsor_pk = hex::encode_prefixed(sponsor_wallet.credential().to_bytes());
     let token = PATH_USD_ADDRESS.to_string();
     let recipient_arg = recipient.to_string();
     let sponsor_arg = sponsor.to_string();
@@ -827,6 +840,8 @@ casttest!(send_with_presigned_sponsor_signature_keeps_digest_stable, async |_prj
         "--rpc-url",
         &rpc,
         "--tempo.print-sponsor-hash",
+        "--tempo.sponsor",
+        &sponsor_arg,
     ];
     mktx_args.extend(pinned);
     let hash = cmd
@@ -892,14 +907,15 @@ casttest!(send_with_presigned_sponsor_signature_keeps_digest_stable, async |_prj
     );
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.stdout_lossy().trim()).expect("receipt should be JSON");
+        parse_json(output.stdout_lossy().trim()).expect("receipt should be JSON");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
     let fee_payer: Address =
         receipt["feePayer"].as_str().expect("receipt has feePayer").parse().unwrap();
     assert_eq!(fee_payer, sponsor, "receipt fee payer should be the sponsor");
-});
+}
 
-casttest!(send_with_presigned_sponsor_signature_rejects_stale_digest, async |_prj, cmd| {
+#[casttest]
+async fn send_with_presigned_sponsor_signature_rejects_stale_digest(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -909,10 +925,10 @@ casttest!(send_with_presigned_sponsor_signature_rejects_stale_digest, async |_pr
     let recipient = accounts[2];
     let sender_wallet = handle.dev_wallets().next().unwrap();
     assert_eq!(sender_wallet.address(), sender);
-    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sender_pk = hex::encode_prefixed(sender_wallet.credential().to_bytes());
     let sponsor_wallet = handle.dev_wallets().nth(1).unwrap();
     assert_eq!(sponsor_wallet.address(), sponsor);
-    let sponsor_pk = format!("0x{}", hex::encode(sponsor_wallet.credential().to_bytes()));
+    let sponsor_pk = hex::encode_prefixed(sponsor_wallet.credential().to_bytes());
     let token = PATH_USD_ADDRESS.to_string();
     let recipient_arg = recipient.to_string();
     let sponsor_arg = sponsor.to_string();
@@ -952,7 +968,7 @@ casttest!(send_with_presigned_sponsor_signature_rejects_stale_digest, async |_pr
     let bump_tx = TransactionRequest::default()
         .from(sender)
         .to(PATH_USD_ADDRESS)
-        .with_input(tip20.transfer(recipient, U256::from(1u64)).calldata().clone())
+        .with_input(tip20.transfer(recipient, U256::ONE).calldata().clone())
         .with_gas_limit(10_000_000);
     let bump_receipt = provider
         .send_transaction(WithOtherFields::new(bump_tx))
@@ -986,9 +1002,10 @@ casttest!(send_with_presigned_sponsor_signature_rejects_stale_digest, async |_pr
 
     assert!(stderr.contains("Tempo sponsor signature recovered"), "{stderr}");
     assert!(stderr.contains("--tempo.print-sponsor-hash"), "{stderr}");
-});
+}
 
-casttest!(send_with_sponsor_url_uses_anvil_builtin_fee_payer, async |_prj, cmd| {
+#[casttest]
+async fn send_with_sponsor_url_uses_anvil_builtin_fee_payer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -998,7 +1015,7 @@ casttest!(send_with_sponsor_url_uses_anvil_builtin_fee_payer, async |_prj, cmd| 
     let recipient = accounts[3];
     let sender_wallet = handle.dev_wallets().next().unwrap();
     assert_eq!(sender_wallet.address(), sender);
-    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sender_pk = hex::encode_prefixed(sender_wallet.credential().to_bytes());
     let token = PATH_USD_ADDRESS.to_string();
     let recipient_arg = recipient.to_string();
     let amount = U256::from(1000u64);
@@ -1051,15 +1068,17 @@ casttest!(send_with_sponsor_url_uses_anvil_builtin_fee_payer, async |_prj, cmd| 
         "sender must only pay the transfer amount, fees are sponsored"
     );
     assert!(sponsor_after < sponsor_before, "sponsor must pay the transaction fee");
-});
+}
 
-casttest!(tip20_logo_check_accepts_valid_values, |_prj, cmd| {
+#[casttest]
+fn tip20_logo_check_accepts_valid_values(cmd: _) {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {
         cmd.cast_fuse().args(["tip20", "logo-check", uri]).assert_success();
     }
-});
+}
 
-casttest!(tip20_logo_check_rejects_invalid_values, |_prj, cmd| {
+#[casttest]
+fn tip20_logo_check_rejects_invalid_values(cmd: _) {
     let invalid = cmd
         .cast_fuse()
         .args(["tip20", "logo-check", "ftp://example.com/logo.png"])
@@ -1076,9 +1095,10 @@ casttest!(tip20_logo_check_rejects_invalid_values, |_prj, cmd| {
         .get_output()
         .stderr_lossy();
     assert!(output.contains("LogoURITooLong"), "got:\n{output}");
-});
+}
 
-casttest!(tip20_create_validates_logo_uri_before_network_setup, |_prj, cmd| {
+#[casttest]
+fn tip20_create_validates_logo_uri_before_network_setup(cmd: _) {
     let output = cmd
         .cast_fuse()
         .args([
@@ -1098,9 +1118,10 @@ casttest!(tip20_create_validates_logo_uri_before_network_setup, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(output.contains("client-side validation failed: InvalidLogoURI"), "got:\n{output}");
-});
+}
 
-casttest!(tip20_logo_set_validates_logo_uri_before_network_setup, |_prj, cmd| {
+#[casttest]
+fn tip20_logo_set_validates_logo_uri_before_network_setup(cmd: _) {
     let output = cmd
         .cast_fuse()
         .args([
@@ -1114,9 +1135,10 @@ casttest!(tip20_logo_set_validates_logo_uri_before_network_setup, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(output.contains("client-side validation failed: InvalidLogoURI"), "got:\n{output}");
-});
+}
 
-casttest!(channel_id_defaults, async |_prj, cmd| {
+#[casttest]
+async fn channel_id_defaults(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let provider = handle.http_provider();
@@ -1124,7 +1146,7 @@ casttest!(channel_id_defaults, async |_prj, cmd| {
 
     let payer = address!("0000000000000000000000000000000000000101");
     let payee = address!("0000000000000000000000000000000000000202");
-    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
+    let salt = B256::with_last_byte(0x42);
     let expected = keccak256(
         (
             payer,
@@ -1151,9 +1173,10 @@ casttest!(channel_id_defaults, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(format!("{expected:#x}\n"));
-});
+}
 
-casttest!(tempo_options_reject_conflicting_network, |prj, cmd| {
+#[casttest]
+fn tempo_options_reject_conflicting_network(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = foundry_evm_networks::NetworkVariant::Ethereum.into();
     });
@@ -1174,9 +1197,10 @@ Error: Tempo transaction options conflict with configured network `ethereum`
 
 "#]]);
     }
-});
+}
 
-casttest!(tempo_sessions_reject_conflicting_network, |prj, cmd| {
+#[casttest]
+fn tempo_sessions_reject_conflicting_network(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = foundry_evm_networks::NetworkVariant::Ethereum.into();
     });
@@ -1197,9 +1221,10 @@ Error: Tempo transaction options conflict with configured network `ethereum`
 
 "#]]);
     }
-});
+}
 
-casttest!(tempo_mktx_selects_network_without_tempo_options, async |prj, cmd| {
+#[casttest]
+async fn tempo_mktx_selects_network_without_tempo_options(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(4217u64))).await;
     let rpc = handle.http_endpoint();
     for network in [
@@ -1234,9 +1259,60 @@ casttest!(tempo_mktx_selects_network_without_tempo_options, async |prj, cmd| {
             .assert_success()
             .stdout_eq(expected);
     }
-});
+}
 
-casttest!(tempo_zone_rejects_zero_amount, |_prj, cmd| {
+// A local Tempo node runs on chain 31337; once Tempo is selected, fee tokens must resolve as they
+// do on a canonical Tempo chain ID.
+#[casttest]
+async fn tempo_selected_network_ignores_local_chain_id(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkVariant::Tempo.into();
+    });
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sponsor_key =
+        "private-key://0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
+    for chain_id in [Some(4217u64), None] {
+        let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(chain_id)).await;
+        let rpc = handle.http_endpoint();
+        let mktx = ["mktx", "0x0000000000000000000000000000000000000001", "--private-key"];
+
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args(mktx)
+            .args([private_key, "--rpc-url", &rpc])
+            .assert_success()
+            .stdout_eq(str![[r#"
+0x76[..]
+
+"#]])
+            .stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args(mktx)
+            .args([private_key, "--rpc-url", &rpc])
+            .args(["--tempo.sponsor", "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"])
+            .args(["--tempo.sponsor-signer", sponsor_key])
+            .assert_success()
+            .stdout_eq(str![[r#"
+0x76[..]
+
+"#]])
+            .stderr_eq(str![[r#"
+Tempo sponsor: 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+Tempo fee token: 0x20C0000000000000000000000000000000000000
+Tempo validity: after none, before none
+Tempo sponsor digest: 0x[..]
+
+"#]]);
+    }
+}
+
+#[casttest]
+fn tempo_zone_rejects_zero_amount(cmd: _) {
     for args in [
         vec!["tempo", "zone", "deposit", "--portal", "0x1111111111111111111111111111111111111111"],
         vec!["tempo", "zone", "withdraw", "--zone-id", "42", "--zone-chain-id", "1337"],
@@ -1251,9 +1327,10 @@ Error: amount must be greater than zero
 
 "#]]);
     }
-});
+}
 
-casttest!(tempo_zone_rejects_callback_without_gas, |_prj, cmd| {
+#[casttest]
+fn tempo_zone_rejects_callback_without_gas(cmd: _) {
     cmd.args([
         "tempo",
         "zone",
@@ -1273,12 +1350,12 @@ casttest!(tempo_zone_rejects_callback_without_gas, |_prj, cmd| {
 Error: --callback-data requires a nonzero --callback-gas-limit
 
 "#]]);
-});
+}
 
 /// Returns the address and private key of the dev account at `index`.
 fn dev_account(handle: &anvil::NodeHandle, index: usize) -> (Address, String) {
     let wallet = handle.dev_wallets().nth(index).unwrap();
-    (wallet.address(), format!("0x{}", hex::encode(wallet.credential().to_bytes())))
+    (wallet.address(), hex::encode_prefixed(wallet.credential().to_bytes()))
 }
 
 /// Creates a TIP-20 token administered by the first dev account and returns its address.
@@ -1337,7 +1414,8 @@ fn has_role_json(
 
 // A freshly created token only assigns `DEFAULT_ADMIN_ROLE`, so minting is gated on granting
 // `ISSUER_ROLE` and stops working again once the role is revoked.
-casttest!(tip20_issuer_role_grant_and_revoke_gate_minting, async |_prj, cmd| {
+#[casttest]
+async fn tip20_issuer_role_grant_and_revoke_gate_minting(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1398,10 +1476,11 @@ Error: Failed to estimate gas: server returned an error response: error code 3: 
         .assert_json_stdout(has_role_json(token, issuer_role, Some("ISSUER_ROLE"), admin, false));
     cmd.cast_fuse().args(mint).args(["--rpc-url", &rpc]).assert_failure();
     assert_eq!(tip20.balanceOf(admin).call().await.unwrap(), U256::from(1000));
-});
+}
 
 // T12 activates TIP-1006 `burnAt`, which only accounts holding `BURN_AT_ROLE` may call.
-casttest!(tip20_burn_at_role_enables_burn_at_on_t12, async |_prj, cmd| {
+#[casttest]
+async fn tip20_burn_at_role_enables_burn_at_on_t12(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1458,11 +1537,12 @@ Error: Failed to estimate gas: server returned an error response: error code 3: 
         .assert_success();
     assert_eq!(tip20.balanceOf(holder).call().await.unwrap(), U256::from(600));
     assert_eq!(tip20.totalSupply().call().await.unwrap(), U256::from(600));
-});
+}
 
 // Role updates are rejected before a transaction is sent when the sender does not hold the
 // role's admin role, including an admin role reconfigured to a role the precompile does not name.
-casttest!(tip20_role_updates_require_role_admin, async |_prj, cmd| {
+#[casttest]
+async fn tip20_role_updates_require_role_admin(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1546,11 +1626,12 @@ Has role: true
     cmd.cast_fuse()
         .args(["--json", "tip20", "has-role", &token_arg, "issuer", &admin_arg, "--rpc-url", &rpc])
         .assert_json_stdout(has_role_json(token, issuer_role, Some("ISSUER_ROLE"), admin, true));
-});
+}
 
 // Roles are plain hashes, so `BURN_AT_ROLE` can be granted ahead of T12 even though the `burnAt`
 // selector it guards is not active yet.
-casttest!(tip20_burn_at_role_can_be_granted_before_t12, async |_prj, cmd| {
+#[casttest]
+async fn tip20_burn_at_role_can_be_granted_before_t12(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T11.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1587,9 +1668,10 @@ casttest!(tip20_burn_at_role_can_be_granted_before_t12, async |_prj, cmd| {
 Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0xaa4bc69a: 9803f21600000000000000000000000000000000000000000000000000000000, data: "0xaa4bc69a9803f21600000000000000000000000000000000000000000000000000000000": UnknownFunctionSelector(0x9803f216)
 
 "#]]);
-});
+}
 
-casttest!(tip20_role_commands_reject_unknown_role_names, |_prj, cmd| {
+#[casttest]
+fn tip20_role_commands_reject_unknown_role_names(cmd: _) {
     cmd.cast_fuse()
         .args(["tip20", "has-role", &PATH_USD_ADDRESS.to_string(), "minter"])
         .arg("0x0000000000000000000000000000000000000001")
@@ -1600,4 +1682,4 @@ error: invalid value 'minter' for '<ROLE>': unknown TIP-20 role `minter`; expect
 For more information, try '--help'.
 
 "#]]);
-});
+}

@@ -42,7 +42,8 @@ ensure_svm_releases!(
 );
 
 // Ensures we can always test with the latest solc build
-forgetest_init!(can_test_with_latest_solc, |prj, cmd| {
+#[forgetest_init]
+fn can_test_with_latest_solc(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "Counter.2.t.sol",
@@ -80,9 +81,10 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
-});
+}
 
-forgetest_init!(can_test_with_solc_0_8_37_amsterdam, |prj, cmd| {
+#[forgetest_init]
+fn can_test_with_solc_0_8_37_amsterdam(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "StateGas.t.sol",
@@ -105,6 +107,8 @@ interface VmGas {
     function lastFrameGas() external view returns (Gas memory gas);
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
     function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+    function startSnapshotGas(string calldata name) external;
+    function stopSnapshotGas() external returns (uint256 gasUsed);
 }
 
 contract StateGasTarget {
@@ -132,6 +136,16 @@ contract LargeRuntime {
     }
 }
 
+contract StateGasRefundTarget {
+    uint256 value;
+    uint256 cleared = 1;
+
+    function setValueAndClear() external {
+        value = 1;
+        cleared = 0;
+    }
+}
+
 contract StateGasTest is Test {
     uint64 constant STORAGE_SET_STATE_GAS = 64 * 1530;
     uint64 constant LARGE_RUNTIME_STATE_GAS = 12_000 * 1530;
@@ -143,10 +157,12 @@ contract StateGasTest is Test {
     function testReportsStateGas() public {
         StateGasTarget target = new StateGasTarget();
         VmGas.Gas memory createGas = VM_GAS.lastFrameGas();
-        assertEq(
+        // Like every isolated frame, the snapshot is the deployment's receipt gas, which also
+        // includes the account-creation state gas that the CREATE opcode charges outside the frame.
+        assertGt(
             VM_GAS.snapshotGasLastFrame("stateGasCreate"),
             createGas.gasLimit - createGas.gasRemaining,
-            "create snapshot changed"
+            "create snapshot excludes account creation"
         );
         target.setValue();
 
@@ -203,6 +219,51 @@ contract StateGasTest is Test {
         assertEq(gas.gasStateUsed, int64(STORAGE_SET_STATE_GAS), "wrong state gas");
     }
 
+    /// forge-config: default.isolate = true
+    function testValueTransferWithLowGas() public {
+        uint256 section = snapshotValueTransfer(address(0xBEEF1), 1_000_000);
+        uint256 snapshot = VM_GAS.snapshotGasLastCall("valueTransfer");
+
+        // Creating the recipient charges state gas, which must not turn a low gas limit or the
+        // 2300 gas stipend into a zero snapshot or a region refund.
+        assertEq(snapshotValueTransfer(address(0xBEEF2), 50_000), section, "low gas region changed");
+        assertEq(VM_GAS.snapshotGasLastCall("lowGasValueTransfer"), snapshot, "low gas snapshot changed");
+        assertEq(snapshotValueTransfer(address(0xBEEF3), 0), section, "stipend region changed");
+        assertEq(VM_GAS.snapshotGasLastCall("stipendValueTransfer"), snapshot, "stipend snapshot changed");
+    }
+
+    /// forge-config: default.isolate = true
+    function testStateGasSnapshotIncludesRefund() public {
+        StateGasRefundTarget target = new StateGasRefundTarget();
+        target.setValueAndClear();
+
+        VmGas.Gas memory gas = VM_GAS.lastCallGas();
+        assertEq(gas.gasStateUsed, int64(STORAGE_SET_STATE_GAS), "wrong state gas");
+        assertGt(gas.gasRefunded, 0, "storage clear was not refunded");
+        assertEq(
+            VM_GAS.snapshotGasLastCall("stateGasRefund"),
+            gas.gasTotalUsed + uint64(gas.gasStateUsed) - uint64(gas.gasRefunded),
+            "snapshot ignored the refund"
+        );
+    }
+
+    /// forge-config: default.isolate = true
+    function testCalldataFloorWithLowGas() public {
+        bytes memory data = new bytes(CALLDATA_SIZE);
+        uint256 floorGas = CALL_FLOOR_BASE_GAS + data.length * CALLDATA_FLOOR_GAS_PER_BYTE;
+        // The calldata floor exceeds both the forwarded gas and the intrinsic gas.
+        (bool success,) = address(0xCA11).call{gas: 1_000}(data);
+        assertTrue(success, "low gas call failed");
+        assertEq(VM_GAS.snapshotGasLastCall("calldataFloorLowGas"), floorGas, "wrong calldata floor gas");
+    }
+
+    function snapshotValueTransfer(address to, uint256 gasLimit) internal returns (uint256 section) {
+        VM_GAS.startSnapshotGas("valueTransferSection");
+        (bool success,) = to.call{value: 1, gas: gasLimit}("");
+        section = VM_GAS.stopSnapshotGas();
+        assertTrue(success, "value transfer failed");
+    }
+
     function assertStorageWriteGas(VmGas.Gas memory gas) internal pure {
         assertGt(gas.gasTotalUsed, 0, "regular gas was not recorded");
         assertLt(gas.gasTotalUsed, STORAGE_SET_STATE_GAS, "state gas counted as regular gas");
@@ -226,9 +287,10 @@ contract StateGasTest is Test {
         config.enable_tx_gas_limit = true;
     });
     cmd.forge_fuse().args(args).assert_success();
-});
+}
 
-forgetest_init!(can_test_slot_number_amsterdam, |prj, cmd| {
+#[forgetest_init]
+fn can_test_slot_number_amsterdam(prj: _, cmd: _) {
     prj.add_test(
         "SlotNumber.t.sol",
         r#"
@@ -267,4 +329,4 @@ contract SlotNumberTest is Test {
     cmd.args(args).assert_success();
     cmd.forge_fuse().args(args).args(["--optimize", "--via-ir"]).assert_success();
     cmd.forge_fuse().args(args).arg("--isolate").assert_success();
-});
+}

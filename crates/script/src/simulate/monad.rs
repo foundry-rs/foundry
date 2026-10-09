@@ -3,7 +3,7 @@
 use super::{PreSimulationState, RpcContexts, RpcSimulationContext, context_for_rpc};
 use crate::{
     ScriptResult,
-    runner::{GasSearch, ScriptRunner},
+    runner::{GasSearch, ScriptRunner, needs_more_gas},
     simulate::FilledTransactionsState,
     transaction::ScriptTransactionBuilder,
 };
@@ -114,7 +114,7 @@ impl MonadSimulation {
                 let (env, tx) = self.prepare_call(from, to, calldata.clone(), value, None);
                 let context = self.context(&tx)?;
                 let result = self.runner.executor.call_with_env_and_context(env, tx, context)?;
-                search.record(limit, result.exit_reason);
+                search.record(limit, needs_more_gas(result.exit_reason));
             }
             gas_used = search.gas_used();
             self.runner.executor.tx_env_mut().set_gas_limit(initial_limit);
@@ -132,7 +132,7 @@ impl MonadSimulation {
             cursor.advance_block();
         }
         let block = &mut self.runner.executor.evm_env_mut().block_env;
-        block.set_number(block.number + U256::from(1));
+        block.set_number(block.number + U256::ONE);
     }
 }
 
@@ -205,8 +205,9 @@ impl PreSimulationState<MonadEvmNetwork> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::bytes;
     use foundry_evm::{backend::Backend, executors::ExecutorBuilder, opts::EvmOpts};
     use foundry_evm_networks::NetworkConfigs;
 
@@ -247,7 +248,7 @@ mod tests {
 
         simulation.advance_block();
         assert_transaction_count(&simulation, 0);
-        assert_eq!(simulation.runner.executor.evm_env().block_env.number, U256::from(1));
+        assert_eq!(simulation.runner.executor.evm_env().block_env.number, U256::ONE);
         assert_transaction_count(&other, 0);
     }
 
@@ -257,7 +258,7 @@ mod tests {
         let sender = Address::with_last_byte(0x42);
         simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
         // Deploy runtime code that always reverts.
-        let initcode = Bytes::from_static(&hex!("6005600c60003960056000f360006000fd"));
+        let initcode = bytes!("6005600c60003960056000f360006000fd");
         let deployment = simulation.simulate(sender, None, Some(initcode), None, None).unwrap();
         assert!(deployment.success);
         assert_transaction_count(&simulation, 1);

@@ -4,6 +4,7 @@ use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
     progress::ScriptProgress,
+    receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{ScriptSequenceKind, completed_transaction_prefix},
     session::{
@@ -46,11 +47,12 @@ use foundry_common::{
     tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Config;
-use foundry_evm::core::{
-    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
-    evm::{FoundryEvmNetwork, TempoEvmNetwork},
-    fork::ResolvedFork,
-    opts::EvmOpts,
+use foundry_evm::{
+    core::{
+        constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+        evm::{FoundryEvmNetwork, TempoEvmNetwork},
+    },
+    traces::CallKind,
 };
 use foundry_wallets::{
     TempoAccountsWallet,
@@ -58,7 +60,6 @@ use foundry_wallets::{
 };
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
-use revm_inspectors::tracing::types::CallKind;
 use tempo_alloy::{
     TempoNetwork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
@@ -123,9 +124,8 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
-        chain: Option<Chain>,
     ) -> Result<()> {
-        let tempo_browser = matches!(self, Self::Browser(..)) && chain.is_some_and(Chain::is_tempo);
+        let browser = matches!(self, Self::Browser(..));
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
@@ -170,10 +170,10 @@ where
         }
 
         let fee_token = if let Some(sponsor) = tempo_sponsor {
-            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+            sponsor.resolve_and_set_fee_token(Some(provider), tx).await?;
             None
         } else {
-            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
+            resolve_and_set_fee_token(Some(provider), tx, tx.from()).await?
         };
 
         // A fee token, sponsor, validity window, or other Tempo field selects
@@ -184,7 +184,7 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
+            estimate_gas(tx, provider, estimate_multiplier, browser).await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -255,7 +255,6 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
-        chain: Option<Chain>,
     ) -> Result<Self> {
         self.prepare(
             provider,
@@ -264,7 +263,6 @@ where
             estimate_via_rpc,
             estimate_multiplier,
             tempo_sponsor,
-            chain,
         )
         .await?;
         if let Self::Unlocked(tx) = &mut self {
@@ -877,7 +875,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     seq_progress.inner.write().set_status(&format!(
@@ -898,7 +895,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     estimate_via_rpc,
                                     self.args.gas_estimate_multiplier,
                                     tempo_sponsor.as_deref(),
-                                    Some(sequence_chain.into()),
                                 )
                                 .await?;
                             if let SendTransactionKind::PreparedRaw(payload, hash) = &mut kind {
@@ -1060,15 +1056,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 }
             }
 
-            let (total_gas, total_gas_price, total_paid) =
-                sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
-                    let gas_used = receipt.gas_used();
-                    let gas_price = receipt.effective_gas_price() as u64;
-                    (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
-                });
+            let (total_gas, avg_gas_price, total_paid) = fee_totals(
+                sequence.receipts.iter().map(|r| (r.gas_used(), r.effective_gas_price())),
+            );
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = total_gas_price
-                .checked_div(sequence.receipts.len() as u64)
+            let avg_gas_price = avg_gas_price
                 .and_then(|avg| format_units(avg, 9).ok())
                 .unwrap_or_else(|| "N/A".to_string());
 
@@ -1424,11 +1416,8 @@ impl BundledState<TempoEvmNetwork> {
 
         // CREATE2 deployer must exist on-chain for any rewritten CREATEs.
         let create2_deployer = self.script_config.evm_opts.create2_deployer;
-        let needs_factory = sequence
-            .transactions
-            .iter()
-            .skip(batch_start)
-            .any(|tx| matches!(tx.call_kind, CallKind::Create | CallKind::Create2));
+        let needs_factory =
+            sequence.transactions.iter().skip(batch_start).any(|tx| tx.call_kind.is_any_create());
         if needs_factory {
             let code = provider.get_code_at(create2_deployer).await?;
             if keccak256(&code) != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
@@ -1480,22 +1469,10 @@ impl BundledState<TempoEvmNetwork> {
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
         let fee_token = if let Some(sponsor) = &tempo_sponsor {
-            sponsor
-                .resolve_and_set_fee_token(
-                    Some(provider.as_ref()),
-                    Some(Chain::from_named(NamedChain::Tempo)),
-                    &mut batch_tx,
-                )
-                .await?;
+            sponsor.resolve_and_set_fee_token(Some(provider.as_ref()), &mut batch_tx).await?;
             None
         } else {
-            resolve_and_set_fee_token(
-                Some(provider.as_ref()),
-                Some(Chain::from_named(NamedChain::Tempo)),
-                &mut batch_tx,
-                Some(sender),
-            )
-            .await?
+            resolve_and_set_fee_token(Some(provider.as_ref()), &mut batch_tx, Some(sender)).await?
         };
 
         if let BatchSigner::TempoKeychain(wallet) = &mut batch_signer {
@@ -1660,8 +1637,8 @@ impl BundledState<TempoEvmNetwork> {
         sequences.save(true, false)?;
 
         let total_gas = receipt.gas_used();
-        let gas_price = receipt.effective_gas_price() as u64;
-        let total_paid = total_gas * gas_price;
+        let gas_price = receipt.effective_gas_price();
+        let total_paid = u128::from(total_gas).saturating_mul(gas_price);
         let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
         let gas_price_gwei = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".to_string());
 
@@ -1722,6 +1699,7 @@ async fn wait_for_batch_receipt<N: Network>(
 ) -> Result<Option<N::ReceiptResponse>> {
     loop {
         if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await?
+            && is_mined_receipt_for(&receipt, tx_hash)
             && let Some(receipt_block) = receipt.block_number()
         {
             let latest_block = provider.get_block_number().await?;
@@ -1742,7 +1720,7 @@ pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
-    tempo_browser: bool,
+    browser: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -1751,23 +1729,13 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
-    let request =
-        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
     tx.set_gas_limit(
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
             / 100,
     );
     Ok(())
-}
-
-/// Returns `caller`'s nonce at an already resolved fork block.
-pub(super) async fn next_nonce_resolved(
-    caller: Address,
-    evm_opts: &EvmOpts,
-    fork: &ResolvedFork,
-) -> eyre::Result<u64> {
-    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
 }
 
 fn reject_access_key_create<N: Network>(
@@ -1792,16 +1760,33 @@ where
     }
 }
 
+/// Returns the total gas used, the average gas price and the total fee paid in wei for the given
+/// `(gas_used, effective_gas_price)` receipt pairs.
+fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u128>, u128) {
+    let (count, total_gas, total_gas_price, total_paid) =
+        receipts.into_iter().fold((0u128, 0u64, 0u128, 0u128), |acc, (gas_used, gas_price)| {
+            (
+                acc.0 + 1,
+                acc.1 + gas_used,
+                acc.2.saturating_add(gas_price),
+                acc.3.saturating_add(u128::from(gas_used).saturating_mul(gas_price)),
+            )
+        });
+    (total_gas, total_gas_price.checked_div(count), total_paid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
-    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
+    use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
+    use foundry_common::tempo::PATH_USD_ADDRESS;
+    use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -1823,11 +1808,7 @@ mod tests {
 
         let receipt = provider
             .send_transaction(
-                TransactionRequest::default()
-                    .from(sender)
-                    .to(recipient)
-                    .value(U256::from(1))
-                    .into(),
+                TransactionRequest::default().from(sender).to(recipient).value(U256::ONE).into(),
             )
             .await
             .unwrap()
@@ -1840,23 +1821,18 @@ mod tests {
             fork_block_number: Some(block_number),
             ..Default::default()
         };
-        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
-        assert_eq!(next_nonce_resolved(sender, &evm_opts, &fork).await.unwrap(), 1);
+        let backend =
+            Backend::<EthEvmNetwork>::spawn(evm_opts.get_fork(&Config::default(), 31337, None))
+                .unwrap();
+        assert_eq!(backend.transaction_count(sender).await.unwrap(), 1);
 
         provider
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
             .await
             .unwrap();
-        assert_eq!(
-            provider
-                .get_transaction_count(sender)
-                .block_id(BlockId::number(block_number))
-                .await
-                .unwrap(),
-            0
-        );
+        assert_eq!(provider.get_transaction_count(sender).number(block_number).await.unwrap(), 0);
 
-        match next_nonce_resolved(sender, &evm_opts, &fork).await {
+        match backend.transaction_count(sender).await {
             Ok(0) => panic!("the exact lookup fell back to the replacement block"),
             Ok(1) | Err(_) => {}
             Ok(nonce) => panic!("unexpected nonce: {nonce}"),
@@ -1938,7 +1914,7 @@ mod tests {
     #[test]
     fn recovered_batch_attempt_does_not_require_a_signer() {
         let dir = tempfile::tempdir().unwrap();
-        let sender = address!("0x2222222222222222222222222222222222222222");
+        let sender = Address::repeat_byte(0x22);
         let mut deployment = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [script_tx(sender)].into(),
@@ -1978,7 +1954,7 @@ mod tests {
     #[test]
     fn recovered_sender_still_requires_sequential_ordering() {
         let dir = tempfile::tempdir().unwrap();
-        let unsigned = address!("0x2222222222222222222222222222222222222222");
+        let unsigned = Address::repeat_byte(0x22);
         let mut sequence = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [planned_tx(SIGNED_TX), script_tx(unsigned)].into(),
@@ -2050,7 +2026,7 @@ mod tests {
     #[test]
     fn externally_signed_completion_uses_the_persisted_hash() {
         let dir = tempfile::tempdir().unwrap();
-        let sender = address!("0x1111111111111111111111111111111111111111");
+        let sender = Address::repeat_byte(0x11);
         let mut deployment = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [script_tx(sender), script_tx(sender)].into(),
@@ -2101,15 +2077,17 @@ mod tests {
 
     #[tokio::test]
     async fn access_key_sets_key_id_before_estimation() {
-        let root_address = address!("0x1111111111111111111111111111111111111111");
+        let root_address = Address::repeat_byte(0x11);
         let access_key =
             foundry_wallets::utils::create_local_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
         let access_key_address = access_key.address();
         let access_key_wallet =
             TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217);
+        // An explicit fee token keeps preparation from querying the unreachable endpoint.
         let mut sender = SendTransactionKind::<TempoNetwork>::AccessKey(
             TempoTransactionRequest {
                 inner: TransactionRequest { from: Some(root_address), ..Default::default() },
+                fee_token: Some(PATH_USD_ADDRESS),
                 ..Default::default()
             },
             Box::new(access_key_wallet),
@@ -2117,18 +2095,7 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender
-            .prepare(
-                &provider,
-                false,
-                true,
-                false,
-                100,
-                None,
-                Some(Chain::from_named(NamedChain::Mainnet)),
-            )
-            .await
-            .unwrap();
+        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _) => {
@@ -2159,8 +2126,8 @@ mod tests {
         let sender = signer.address();
         let wallet = EthereumWallet::new(signer);
         let calls = vec![Call {
-            to: TxKind::Call(address!("0x1111111111111111111111111111111111111111")),
-            value: U256::from(1),
+            to: TxKind::Call(Address::repeat_byte(0x11)),
+            value: U256::ONE,
             input: Bytes::new(),
         }];
         let request = TempoTransactionRequest {
@@ -2179,10 +2146,8 @@ mod tests {
         let payload = request.clone().build(&wallet).await.unwrap().encoded_2718();
 
         assert!(validate_tempo_batch_payload(&request, &payload, sender, 4217, &calls).is_ok());
-        let other_calls = vec![Call {
-            to: TxKind::Call(address!("0x2222222222222222222222222222222222222222")),
-            ..calls[0].clone()
-        }];
+        let other_calls =
+            vec![Call { to: TxKind::Call(Address::repeat_byte(0x22)), ..calls[0].clone() }];
         assert!(
             validate_tempo_batch_payload(&request, &payload, sender, 4217, &other_calls).is_err()
         );
@@ -2210,6 +2175,56 @@ mod tests {
         let error = reject_access_key_create::<TempoNetwork>(&tx, true).unwrap_err();
 
         assert!(error.to_string().contains("Tempo access-key transactions cannot use CREATE"));
+    }
+
+    #[test]
+    fn fee_totals_do_not_overflow_u64() {
+        let gwei = 1_000_000_000;
+        let receipts = [(30_000_000, 1_000 * gwei), (30_000_000, 2_000 * gwei)];
+
+        assert_eq!(
+            fee_totals(receipts),
+            (60_000_000, Some(1_500 * gwei), 90_000_000_000_000_000_000)
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_receipt_watcher_rejects_foreign_or_incomplete_receipts() {
+        let hash = B256::repeat_byte(0x42);
+        let receipt = |field: &str, value: serde_json::Value| {
+            let mut receipt = serde_json::json!({
+                "type": "0x02", "status": "0x1", "cumulativeGasUsed": "0x5208", "logs": [],
+                "transactionHash": hash, "logsBloom": format!("{:#x}", Bloom::ZERO),
+                "transactionIndex": "0x0", "blockHash": B256::ZERO, "blockNumber": "0x10",
+                "gasUsed": "0x5208", "effectiveGasPrice": "0x1",
+                "from": Address::ZERO, "to": Address::ZERO, "contractAddress": null
+            });
+            receipt[field] = value;
+            receipt
+        };
+        // Bad receipts fall through to the transaction lookup; valid ones to the block number.
+        let wait = async |receipt: serde_json::Value, next: serde_json::Value| {
+            let asserter = Asserter::new();
+            let provider: RootProvider<Ethereum> =
+                alloy_provider::ProviderBuilder::default().connect_mocked_client(asserter.clone());
+            asserter.push_success(&receipt);
+            asserter.push_success(&next);
+            wait_for_batch_receipt(&provider, hash, 1).await.unwrap()
+        };
+
+        for (field, value) in [
+            ("transactionHash", serde_json::json!(B256::repeat_byte(0x99))),
+            ("blockHash", serde_json::Value::Null),
+            ("transactionIndex", serde_json::Value::Null),
+            ("blockNumber", serde_json::Value::Null),
+        ] {
+            let result = wait(receipt(field, value), serde_json::Value::Null).await;
+            assert!(result.is_none(), "accepted receipt with bad {field}");
+        }
+        let accepted =
+            wait(receipt("status", serde_json::json!("0x1")), serde_json::json!("0x10")).await;
+        let accepted = accepted.unwrap();
+        assert_eq!(accepted.transaction_hash(), hash);
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {

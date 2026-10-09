@@ -2,7 +2,8 @@
 
 use foundry_test_utils::str;
 
-forgetest_init!(debug_logs, |prj, cmd| {
+#[forgetest_init]
+fn debug_logs(prj: _, cmd: _) {
     prj.add_test(
         "DebugLogs.t.sol",
         r#"
@@ -235,9 +236,10 @@ Suite result: ok. 19 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 19 tests passed, 0 failed, 0 skipped (19 total tests)
 
 "#]]);
-});
+}
 
-forgetest_init!(hardhat_logs, |prj, cmd| {
+#[forgetest_init]
+fn hardhat_logs(prj: _, cmd: _) {
     prj.add_test(
         "HardhatLogs.t.sol",
         r#"
@@ -751,9 +753,10 @@ Suite result: ok. 52 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 52 tests passed, 0 failed, 0 skipped (52 total tests)
 
 "#]]);
-});
+}
 
-forgetest_init!(test_can_run_with_live_logs_flag, |prj, cmd| {
+#[forgetest_init]
+fn test_can_run_with_live_logs_flag(prj: _, cmd: _) {
     prj.add_test(
         "Foo.t.sol",
         r#"
@@ -788,9 +791,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
-forgetest_init!(test_can_run_with_live_logs_config, |prj, cmd| {
+#[forgetest_init]
+fn test_can_run_with_live_logs_config(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.live_logs = true;
     });
@@ -828,9 +832,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#
     ]]);
-});
+}
 
-forgetest_init!(test_can_run_with_live_logs_flag_race_condition, |prj, cmd| {
+#[forgetest_init]
+fn test_can_run_with_live_logs_flag_race_condition(prj: _, cmd: _) {
     prj.add_test(
         "Foo.t.sol",
         r#"
@@ -893,4 +898,4 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
     }
-});
+}

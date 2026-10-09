@@ -8,15 +8,9 @@ use foundry_common::{
     tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
 };
 use foundry_evm::hardfork::TempoHardfork;
-use std::{
-    num::NonZeroU64,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{num::NonZeroU64, path::PathBuf, str::FromStr, sync::Arc};
 
-use crate::utils::parse_fee_token_address;
+use crate::utils::{now, parse_fee_token_address};
 
 mod session;
 pub use session::TEMPO_SESSION_ID_ENV;
@@ -199,8 +193,7 @@ impl TempoOpts {
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
         let secs = self.expires?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-        Some(now.as_secs() + secs)
+        Some(now().as_secs() + secs)
     }
 
     /// Resolves `--tempo.expires` into concrete expiring-nonce fields.
@@ -376,13 +369,11 @@ mod tests {
 
     #[test]
     fn resolve_expires_materializes_valid_before() {
-        let before =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let before = now().as_secs();
         let mut opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
 
         let resolved = opts.resolve_expires().unwrap();
-        let after =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let after = now().as_secs();
 
         assert!(resolved >= before + 10);
         assert!(resolved <= after + 10);
@@ -437,7 +428,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert_eq!(opts.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
         assert!(opts.sponsor_sig.is_none());
         assert!(opts.is_tempo());
@@ -462,7 +453,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert!(opts.sponsor_sig.is_some());
     }
 
@@ -477,7 +468,7 @@ mod tests {
         .unwrap();
 
         assert!(opts.print_sponsor_hash);
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
     }
 
     #[test]

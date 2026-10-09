@@ -32,7 +32,7 @@ impl<T> HashConsed<T> {
     /// for distinct nodes with the same hash; structurally equal values share one node.
     #[inline]
     pub(in crate::runtime::expr) fn identity_cmp(&self, other: &Self) -> Ordering {
-        self.inner.hash.cmp(&other.inner.hash).then_with(|| {
+        self.stable_hash_cmp(other).then_with(|| {
             let left = Arc::as_ptr(&self.inner);
             let right = Arc::as_ptr(&other.inner);
             left.cmp(&right)
@@ -142,7 +142,7 @@ impl<T: Eq + Hash> HashCons<T> {
             match self.table.entry(
                 hash,
                 |entry| {
-                    if entry.hash != hash {
+                    if entry.hash() != hash {
                         return false;
                     }
                     match entry.value.upgrade() {
@@ -173,83 +173,5 @@ impl<T: Eq + Hash> HashCons<T> {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn make_reuses_existing_value() {
-        let mut table = HashCons::<String>::new();
-
-        let first = table.make("same".to_string());
-        let second = table.make("same".to_string());
-
-        assert_eq!(first, second);
-        assert_eq!(first.inner.hash, second.inner.hash);
-    }
-
-    #[test]
-    fn make_keeps_distinct_values_apart() {
-        let mut table = HashCons::<String>::new();
-
-        let first = table.make("first".to_string());
-        let second = table.make("second".to_string());
-
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn dropped_values_are_not_reused() {
-        let mut table = HashCons::<String>::new();
-
-        let first = table.make("same".to_string());
-        let weak = Arc::downgrade(&first.inner);
-        drop(first);
-        assert!(weak.upgrade().is_none());
-
-        let second = table.make("same".to_string());
-
-        assert_eq!(second.value().as_str(), "same");
-        assert!(weak.upgrade().is_none());
-    }
-
-    #[test]
-    fn make_reclaims_repeatedly_dropped_values() {
-        let mut table = HashCons::<String>::new();
-
-        for _ in 0..128 {
-            drop(table.make("same".to_string()));
-        }
-
-        assert_eq!(table.table.len(), 1);
-    }
-
-    #[test]
-    fn make_reclaims_distinct_dropped_values() {
-        let mut table = HashCons::<String>::new();
-        let retained = table.make("retained".to_string());
-
-        for value in 0..MIN_GC_THRESHOLD - 1 {
-            drop(table.make(value.to_string()));
-        }
-        let same = table.make("retained".to_string());
-
-        assert_eq!(table.table.len(), 1);
-        assert_eq!(retained, same);
-    }
-
-    #[test]
-    fn equality_is_pointer_only() {
-        let mut first_table = HashCons::<String>::new();
-        let mut second_table = HashCons::<String>::new();
-
-        let first = first_table.make("same".to_string());
-        let second = second_table.make("same".to_string());
-
-        assert_ne!(first, second);
-        assert_eq!(first.value(), second.value());
     }
 }

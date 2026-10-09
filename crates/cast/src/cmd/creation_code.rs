@@ -105,7 +105,7 @@ pub(crate) async fn load_abi(
     if let Some(path) = abi_path {
         return load_abi_from_file(path);
     }
-    let abis = fetch_abi_from_etherscan(contract, config).await?;
+    let abis = fetch_abi_from_etherscan(contract, config, false).await?;
     abis.into_iter().next().map(|(abi, _)| abi).ok_or_eyre("No ABI found.")
 }
 
@@ -221,7 +221,7 @@ mod tests {
         let args = DynSolValue::Tuple(vec![
             DynSolValue::Address(Address::repeat_byte(0x11)),
             DynSolValue::FixedArray(vec![
-                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::ONE, 256),
                 DynSolValue::Uint(U256::from(2), 256),
             ]),
         ])

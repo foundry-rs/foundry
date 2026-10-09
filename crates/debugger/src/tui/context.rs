@@ -12,11 +12,10 @@ use alloy_primitives::{
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use foundry_evm_traces::debug::SourceData;
+use foundry_evm_traces::{CallKind, CallTraceStep, debug::SourceData};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::{fmt::Write, ops::ControlFlow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +239,13 @@ impl<'a> TUIContext<'a> {
         if space != StorageSpace::Persistent {
             return None;
         }
+        // Storage layouts are keyed by address identity, so skip them for frames that executed
+        // different code than the address was identified as.
+        if self.debug_call().contract_name.as_ref()
+            != self.debugger_context.identified_contracts.get(self.address())
+        {
+            return None;
+        }
         let identifier = self.debugger_context.slot_identifiers.as_ref()?.get(self.address())?;
         let slot = B256::from(slot);
         identifier
@@ -284,9 +290,8 @@ impl<'a> TUIContext<'a> {
 
     /// Returns source map, source code and source name of the current line.
     pub(crate) fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
-        let address = self.address();
-        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
-            return Err(format!("Unknown contract at address {address}"));
+        let Some(contract_name) = &self.debug_call().contract_name else {
+            return Err(format!("Unknown contract at address {}", self.address()));
         };
 
         self.debugger_context
@@ -294,7 +299,7 @@ impl<'a> TUIContext<'a> {
             .find_source_mapping(
                 contract_name,
                 self.current_step().pc as u32,
-                self.debug_call().kind.is_any_create(),
+                self.call_kind().is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
@@ -837,11 +842,10 @@ impl TUIContext<'_> {
                 return;
             };
             let contract_name = self
-                .debugger_context
-                .identified_contracts
-                .get(self.address())
-                .expect("source mapping requires an identified contract")
-                .clone();
+                .debug_call()
+                .contract_name
+                .clone()
+                .expect("source mapping requires an identified contract");
             (source.path.clone(), source_line, contract_name)
         };
 
@@ -1087,10 +1091,7 @@ impl TUIContext<'_> {
     fn cycle_layout(&mut self) {
         let layout = self.debugger_context.layout.next();
         self.debugger_context.layout = layout;
-        self.status = Some(StatusMessage {
-            kind: StatusKind::Info,
-            text: format!("Debugger layout: {}", layout.as_str()),
-        });
+        self.set_info(format!("Debugger layout: {}", layout.as_str()));
     }
 }
 
@@ -1623,7 +1624,9 @@ fn source_line_range(source: &str, line: usize) -> Option<std::ops::Range<usize>
 }
 
 fn same_code_context(a: &DebugNode, b: &DebugNode) -> bool {
-    a.address == b.address && a.kind.is_any_create() == b.kind.is_any_create()
+    a.address == b.address
+        && a.kind.is_any_create() == b.kind.is_any_create()
+        && a.contract_name == b.contract_name
 }
 
 fn pc_exists_outside_code_context(arena: &[DebugNode], current: &DebugNode, pc: usize) -> bool {
@@ -1684,7 +1687,7 @@ pub(super) fn pretty_opcode(step: &CallTraceStep) -> String {
 
 pub(super) fn write_pretty_opcode(buf: &mut String, step: &CallTraceStep) {
     if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
-        write!(buf, "{}(0x{})", step.op, hex::encode(immediate)).unwrap();
+        write!(buf, "{}({})", step.op, hex::encode_prefixed(immediate)).unwrap();
     } else {
         write!(buf, "{}", step.op).unwrap();
     }
@@ -1722,9 +1725,11 @@ mod tests {
     use foundry_common::slot_identifier::{ENCODING_BYTES, SlotIdentifier};
     use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType, sourcemap::Parser};
     use foundry_evm_core::{Breakpoints, ic::PcIcMap};
-    use foundry_evm_traces::debug::{ArtifactData, ContractSources};
+    use foundry_evm_traces::{
+        StorageChange, StorageChangeReason,
+        debug::{ArtifactData, ContractSources},
+    };
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{StorageChange, StorageChangeReason};
     use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
     fn step(pc: usize) -> CallTraceStep {
@@ -1786,7 +1791,9 @@ mod tests {
     }
 
     fn context_with_source_lines(address: Address) -> DebuggerContext {
-        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[0, 1, 2])]);
+        let mut node = node(address, CallKind::Call, &[0, 1, 2]);
+        node.contract_name = Some("Test".to_string());
+        let mut context = context_with_arena(vec![node]);
         context.identified_contracts.insert(address, "Test".to_string());
 
         let build_id = "test-build".to_string();
@@ -1831,18 +1838,18 @@ mod tests {
         let mut tui = TUIContext::new(&mut context);
         tui.init();
 
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Auto);
+        assert_eq!(tui.layout(), DebuggerLayout::Auto);
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.layout(), DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Vertical);
+        assert_eq!(tui.layout(), DebuggerLayout::Vertical);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: vertical");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.layout(), DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
     }
 
@@ -2359,7 +2366,7 @@ mod tests {
                 },
             )]),
         }));
-        let data_slot = U256::from_be_bytes(keccak256(B256::ZERO).0);
+        let data_slot = keccak256(B256::ZERO).into();
         let mut data_access = step(1);
         data_access.storage_change = Some(Box::new(StorageChange {
             key: data_slot,
@@ -2413,7 +2420,7 @@ mod tests {
         }));
         let mut store = step(42);
         store.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: Some(U256::from(7)),
             reason: StorageChangeReason::SSTORE,
@@ -2432,7 +2439,7 @@ mod tests {
         tui.run_command_from_input("storage 1");
 
         assert_eq!(tui.current_step, 2);
-        assert_eq!(tui.active_storage, Some(StorageSpace::Persistent));
+        assert_eq!(tui.active_storage(), Some(StorageSpace::Persistent));
         assert_eq!(tui.storage_accesses(StorageSpace::Persistent).len(), 2);
         assert_eq!(
             tui.status.as_ref().unwrap().text,
@@ -2458,7 +2465,7 @@ mod tests {
         tui.run_command_from_input("transient 2a");
 
         assert_eq!(tui.current_step, 1);
-        assert_eq!(tui.active_storage, Some(StorageSpace::Transient));
+        assert_eq!(tui.active_storage(), Some(StorageSpace::Transient));
         assert_eq!(
             tui.status.as_ref().unwrap().text,
             "Jumped to transient storage TSTORE slot 0x2a = 0xbeef at PC 0x2a (42)"
@@ -2477,7 +2484,7 @@ mod tests {
         let address = Address::repeat_byte(1);
         let mut store = step(42);
         store.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: None,
             reason: StorageChangeReason::SSTORE,
@@ -2613,7 +2620,7 @@ mod tests {
         let address = Address::repeat_byte(1);
         let mut store = step_with_stack(42, OpCode::SSTORE, &[42, 1]);
         store.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: Some(U256::ZERO),
             reason: StorageChangeReason::SSTORE,

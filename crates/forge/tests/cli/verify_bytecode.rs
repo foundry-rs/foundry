@@ -6,18 +6,18 @@ use alloy_provider::Provider;
 use axum::{Json, Router, extract::Query};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand, TestProject,
     etherscan::fetch_etherscan_source_flattened,
-    forgetest_async,
     rpc::{next_etherscan_api_key, next_http_archive_rpc_url},
     util::OutputExt,
 };
 use std::{collections::HashMap, fs};
 use tokio::net::TcpListener;
 
-forgetest_async!(can_verify_bytecode_with_local_creation_data_fork, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_verify_bytecode_with_local_creation_data_fork(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.forge_fuse().arg("build").assert_success();
 
@@ -104,7 +104,7 @@ forgetest_async!(can_verify_bytecode_with_local_creation_data_fork, |prj, cmd| {
     ]"#,
     );
     server.abort();
-});
+}
 
 #[expect(clippy::too_many_arguments)]
 async fn test_verify_bytecode(
@@ -232,7 +232,8 @@ async fn test_verify_bytecode_with_ignore(
     }
 }
 
-forgetest_async!(flaky_verify_bytecode_no_metadata, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_no_metadata(prj: _, cmd: _) {
     test_verify_bytecode(
         prj,
         cmd,
@@ -253,9 +254,10 @@ forgetest_async!(flaky_verify_bytecode_no_metadata, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
-});
+}
 
-forgetest_async!(flaky_verify_bytecode_with_metadata, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_with_metadata(prj: _, cmd: _) {
     test_verify_bytecode(
         prj,
         cmd,
@@ -274,10 +276,11 @@ forgetest_async!(flaky_verify_bytecode_with_metadata, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
-});
+}
 
 // Test non-CREATE2 deployed contract with blockscout
-forgetest_async!(flaky_verify_bytecode_with_blockscout, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_with_blockscout(prj: _, cmd: _) {
     test_verify_bytecode(
         prj,
         cmd,
@@ -296,10 +299,11 @@ forgetest_async!(flaky_verify_bytecode_with_blockscout, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
-});
+}
 
 // Test CREATE2 deployed contract with blockscout
-forgetest_async!(flaky_verify_bytecode_create2_with_blockscout, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_create2_with_blockscout(prj: _, cmd: _) {
     test_verify_bytecode(
         prj,
         cmd,
@@ -320,10 +324,11 @@ forgetest_async!(flaky_verify_bytecode_create2_with_blockscout, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
-});
+}
 
 // Test `--constructor-args`
-forgetest_async!(flaky_verify_bytecode_with_constructor_args, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_with_constructor_args(prj: _, cmd: _) {
     let constructor_args = vec![
         "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
         "0x91E677b07F7AF907ec9a428aafA9fc14a0d3A338",
@@ -347,11 +352,12 @@ forgetest_async!(flaky_verify_bytecode_with_constructor_args, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
-});
+}
 
 // Wrong `--constructor-args` used to verify clean, because supplied args that were not the tail
 // of the creation code were silently replaced by the real ones.
-forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_warns_on_wrong_constructor_args(prj: _, cmd: _) {
     let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
     let addr = "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b";
@@ -434,10 +440,11 @@ forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cm
         .assert_json_stdout(
             r#"[{"bytecode_type":"runtime","match_type":null,"message":"Runtime code did not match - this may be due to varying compiler settings"}]"#,
         );
-});
+}
 
 // `--ignore` tests
-forgetest_async!(flaky_verify_bytecode_can_ignore_creation, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_can_ignore_creation(prj: _, cmd: _) {
     test_verify_bytecode_with_ignore(
         prj,
         cmd,
@@ -458,9 +465,10 @@ forgetest_async!(flaky_verify_bytecode_can_ignore_creation, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
-});
+}
 
-forgetest_async!(flaky_verify_bytecode_can_ignore_runtime, |prj, cmd| {
+#[forgetest]
+async fn flaky_verify_bytecode_can_ignore_runtime(prj: _, cmd: _) {
     test_verify_bytecode_with_ignore(
         prj,
         cmd,
@@ -481,10 +489,11 @@ forgetest_async!(flaky_verify_bytecode_can_ignore_runtime, |prj, cmd| {
         Chain::mainnet(),
     )
     .await;
-});
+}
 
 // Test that verification fails when source code doesn't match deployed bytecode
-forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| {
+#[forgetest]
+async fn flaky_can_verify_bytecode_fails_on_source_mismatch(prj: _, cmd: _) {
     let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
 
@@ -541,38 +550,13 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
     // Verify that bytecode does NOT match (recompiled with incorrect source)
     assert!(output.contains("Error: Creation code did not match".to_string().as_str()));
     assert!(output.contains("Error: Runtime code did not match".to_string().as_str()));
-});
-
-// Test predeploy contracts
-// TODO: Add test utils for base such as basescan keys and alchemy keys.
-// WETH9 Predeploy
-// forgetest_async!(can_verify_predeploys, |prj, cmd| {
-//     test_verify_bytecode_with_ignore(
-//         prj,
-//         cmd,
-//         "0x4200000000000000000000000000000000000006",
-//         "WETH9",
-//         Config {
-//             evm_version: EvmVersion::default(),
-//             optimizer: Some(true),
-//             optimizer_runs: 10000,
-//             cbor_metadata: true,
-//             bytecode_hash: BytecodeHash::Bzzr1,
-//             ..Default::default()
-//         },
-//         "etherscan",
-//         "https://api.basescan.org/api",
-//         ("ignored", "partial"),
-//         "creation",
-//         Chain::base_mainnet(),
-//     ).await;
-// });
+}
 
 // Tests that `verify-bytecode` works without any external block explorer, relying only on the
 // local project and an RPC endpoint.
 // <https://github.com/foundry-rs/foundry/issues/13479>
-forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_verify_bytecode_without_explorer(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
@@ -698,10 +682,10 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
         "this-is-not-a-url",
     ])
     .assert_failure();
-});
+}
 
-forgetest_async!(can_verify_bytecode_with_libraries, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_verify_bytecode_with_libraries(prj: _, cmd: _) {
     prj.update_config(|config| config.libraries.clear());
     prj.add_source(
         "Libraries",
@@ -875,15 +859,16 @@ contract LinkedContract {
 
     assert!(stdout.contains("Runtime code matched with status full"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
-});
+}
 
-forgetest_async!(can_verify_bytecode_tempo_aa_deployments, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_verify_bytecode_tempo_aa_deployments(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Constructor gas depends on the intrinsic gas of the whole batch, not only the creation call.
     prj.add_source("GasLeft.sol", "contract GasLeft { uint256 public immutable gas = gasleft(); }");
 
-    let (api, handle) = anvil::spawn(anvil::NodeConfig::test_tempo()).await;
+    let (api, handle) =
+        anvil::spawn(anvil::NodeConfig::test_tempo().with_chain_id(Some(31337u64))).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
     let wallet = handle.dev_wallets().next().unwrap();
@@ -973,24 +958,32 @@ forgetest_async!(can_verify_bytecode_tempo_aa_deployments, |prj, cmd| {
 
         // The runtime replay must keep the lane's own nonce and the full batch. AA creation code
         // is not read from the batched calls yet, so only runtime is compared.
-        cmd.forge_fuse()
-            .args([
-                "verify-bytecode",
-                &address,
-                contract,
-                "--rpc-url",
-                &rpc,
-                "--verifier",
-                "etherscan",
-                "--verifier-url",
-                &url,
-                "--etherscan-api-key",
-                "test",
-                "--ignore",
-                "creation",
-                "--json",
-            ])
-            .assert_json_stdout(r#"[{"bytecode_type":"runtime", "match_type":"full"}]"#);
+        for (networks, network_args) in [
+            (NetworkConfigs::default(), &[][..]),
+            (NetworkConfigs::with_tempo(), &[][..]),
+            (NetworkConfigs::with_ethereum(), &["--network", "tempo"][..]),
+        ] {
+            prj.update_config(|config| config.networks = networks);
+            cmd.forge_fuse()
+                .args([
+                    "verify-bytecode",
+                    &address,
+                    contract,
+                    "--rpc-url",
+                    &rpc,
+                    "--verifier",
+                    "etherscan",
+                    "--verifier-url",
+                    &url,
+                    "--etherscan-api-key",
+                    "test",
+                    "--ignore",
+                    "creation",
+                    "--json",
+                ])
+                .args(network_args)
+                .assert_json_stdout(r#"[{"bytecode_type":"runtime", "match_type":"full"}]"#);
+        }
         server.abort();
     }
-});
+}

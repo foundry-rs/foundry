@@ -34,7 +34,7 @@ pub(super) async fn run(
     let start = from_block.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number);
     let mut filter = Filter::new()
         .event_signature(IERC20::Transfer::SIGNATURE_HASH)
-        .topic2(addr.into_word())
+        .topic2(addr)
         .from_block(start);
     if let Some(token) = token {
         filter = filter.address(token);

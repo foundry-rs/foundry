@@ -4,13 +4,14 @@ use crate::{
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
+    receipts::is_mined_receipt_for,
     recovery::recovery_exists,
     sequence::ScriptSequenceKind,
     session::{
         RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
     },
 };
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{ContextCompat, OptionExt, Result};
@@ -19,7 +20,8 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, provider::ProviderBuilder,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
+    provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -61,8 +63,8 @@ impl BuildData {
     ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = script_config
-            .evm_opts
-            .can_use_create2_deployer_resolved(script_config.resolved_fork()?)
+            .backend
+            .can_use_create2_deployer(script_config.evm_opts.create2_deployer)
             .await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
@@ -209,13 +211,13 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         // If we've received correct path, use it as target_path
         // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
         // present.
-        let target_path = if let Ok(path) = dunce::canonicalize(&args.path) {
+        let target_path = if let Ok(path) = canonicalize_path(&args.path) {
             path
         } else {
             let contract = ContractInfo::from_str(&args.path)?;
             target_name = Some(contract.name.clone());
             if let Some(path) = contract.path {
-                dunce::canonicalize(path)?
+                canonicalize_path(path)?
             } else {
                 project.find_contract_path(contract.name.as_str())?
             }
@@ -348,15 +350,28 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
             let progress = ScriptProgress::default();
             for index in 0..sequence.sequences().len() {
-                if sequence.sequences()[index].pending.is_empty() {
-                    continue;
-                }
-                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
-                let provider = ProviderBuilder::from_config_with_url(
+                let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
                     &self.script_config.config,
                     sequence.sequences()[index].rpc_url(),
                 )?
                 .build()?;
+                // A saved signed attempt whose response was lost before its hash was recorded is
+                // reconciled before requesting signers when its receipt shows it was mined.
+                for operation in 0..sequence.sequences()[index].transactions.len() {
+                    let deployment = &sequence.sequences()[index];
+                    if let Some(hash) = sequence.signed_payload(index, operation).map(|s| s.hash)
+                        && !deployment.pending.contains(&hash)
+                        && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
+                        && let Some(receipt) = provider.get_transaction_receipt(hash).await?
+                        && is_mined_receipt_for(&receipt, hash)
+                    {
+                        sequence.sequences_mut()[index].add_pending(operation, hash);
+                    }
+                }
+                if sequence.sequences()[index].pending.is_empty() {
+                    continue;
+                }
+                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
                 let result = progress
                     .wait_for_pending(
                         index,

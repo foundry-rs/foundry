@@ -2,7 +2,7 @@ use crate::sequence::{SequenceData, completed_transaction_prefix};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
@@ -848,23 +848,9 @@ where
     transaction.rpc.clear();
     let transaction =
         serde_json::from_value::<TransactionWithMetadata<N>>(serde_json::to_value(transaction)?)?;
-    Ok(keccak256(serde_json::to_vec(&canonicalize(serde_json::to_value(transaction)?))?))
-}
-
-fn canonicalize(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.into_iter().map(canonicalize).collect())
-        }
-        serde_json::Value::Object(values) => {
-            let mut values = values.into_iter().collect::<Vec<_>>();
-            values.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-            serde_json::Value::Object(
-                values.into_iter().map(|(key, value)| (key, canonicalize(value))).collect(),
-            )
-        }
-        value => value,
-    }
+    let mut value = serde_json::to_value(transaction)?;
+    value.sort_all_objects();
+    Ok(keccak256(serde_json::to_vec(&value)?))
 }
 
 fn load_plan<N: Network>(path: &Path) -> Result<RecoveryPlan<N>>
@@ -975,8 +961,10 @@ where
         || planned.chain_id() != Some(chain)
         || transaction.nonce() != planned.nonce().context("delegated request has no nonce")?
         || planned_tempo_aa != resolved_tempo_aa
+        // A missing `to` and `TxKind::Create` both describe a contract creation.
         || (!planned_tempo_aa
-            && (resolved.kind() != planned.kind()
+            && (resolved.kind().unwrap_or(TxKind::Create)
+                != planned.kind().unwrap_or(TxKind::Create)
                 || resolved.value().unwrap_or_default() != planned.value().unwrap_or_default()
                 || resolved.input().unwrap_or_default() != planned.input().unwrap_or_default()))
         || transaction.authorization_list().unwrap_or_default()
@@ -1070,14 +1058,15 @@ where
 mod tests {
     use super::*;
     use alloy_consensus::{
-        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, transaction::Recovered,
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
+        TxEnvelope, transaction::Recovered,
     };
     use alloy_network::Ethereum;
-    use alloy_primitives::{Bloom, TxKind, U256, hex};
+    use alloy_primitives::{Bloom, Signature, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{TempoSignature, TempoTxEnvelope, transaction::Call};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1134,10 +1123,8 @@ mod tests {
         request: TempoTransactionRequest,
         from: Address,
     ) -> RpcTransaction<TempoTxEnvelope> {
-        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-            request.build_aa().unwrap(),
-            TempoSignature::default(),
-        ));
+        let envelope =
+            TempoTxEnvelope::AA(request.build_aa().unwrap().into_signed(TempoSignature::default()));
         RpcTransaction {
             inner: Recovered::new_unchecked(envelope, from),
             block_hash: None,
@@ -1289,8 +1276,8 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into()).is_err());
             hash
         };
 
@@ -1305,8 +1292,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into()).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into()).is_err());
     }
 
     #[test]
@@ -1349,6 +1336,111 @@ mod tests {
     }
 
     #[test]
+    fn delegated_resolution_matches_creations_by_kind() {
+        let from = Address::repeat_byte(0x11);
+        let transaction = |to: TxKind| {
+            let envelope = TxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 1,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    max_priority_fee_per_gas: 1,
+                    to,
+                    input: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            RpcTransaction {
+                inner: Recovered::new_unchecked(envelope, from),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }
+        };
+        // Serialize the planned request the same way the recovery snapshot stores it.
+        let planned = |to: TxKind| {
+            let mut request: TransactionRequest = transaction(to).inner.into_inner().into();
+            request.from = Some(from);
+            serde_json::from_value::<TransactionRequest>(serde_json::to_value(request).unwrap())
+                .unwrap()
+        };
+        let validate = |transaction: &RpcTransaction, planned: &TransactionRequest| {
+            validate_delegated_transaction::<Ethereum>(
+                transaction,
+                planned,
+                1,
+                transaction.tx_hash(),
+            )
+        };
+        let create = transaction(TxKind::Create);
+        let call = transaction(TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(planned(TxKind::Create).to, None);
+
+        validate(&create, &planned(TxKind::Create)).unwrap();
+        validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x22)))).unwrap();
+        assert!(validate(&create, &planned(TxKind::Call(Address::repeat_byte(0x22)))).is_err());
+        assert!(validate(&call, &planned(TxKind::Create)).is_err());
+        assert!(validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x33)))).is_err());
+    }
+
+    #[test]
+    fn delegated_tempo_resolution_matches_creations_by_kind() {
+        let from = Address::repeat_byte(0x11);
+        let transaction = |to: TxKind| {
+            let envelope = TempoTxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 4217,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    max_priority_fee_per_gas: 1,
+                    to,
+                    input: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            RpcTransaction {
+                inner: Recovered::new_unchecked(envelope, from),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }
+        };
+        // Serialize the planned request the same way the recovery snapshot stores it.
+        let planned = |to: TxKind| {
+            let mut request = <TempoTransactionRequest as From<_>>::from(transaction(to));
+            request.inner.from = Some(from);
+            serde_json::from_value::<TempoTransactionRequest>(
+                serde_json::to_value(request).unwrap(),
+            )
+            .unwrap()
+        };
+        let validate = |transaction: &RpcTransaction<TempoTxEnvelope>,
+                        planned: &TempoTransactionRequest| {
+            validate_delegated_transaction::<TempoNetwork>(
+                transaction,
+                planned,
+                4217,
+                transaction.tx_hash(),
+            )
+        };
+        let create = transaction(TxKind::Create);
+        let call = transaction(TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(planned(TxKind::Create).inner.to, None);
+        assert!(!planned(TxKind::Create).is_tempo_aa());
+
+        validate(&create, &planned(TxKind::Create)).unwrap();
+        validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x22)))).unwrap();
+        assert!(validate(&create, &planned(TxKind::Call(Address::repeat_byte(0x22)))).is_err());
+        assert!(validate(&call, &planned(TxKind::Create)).is_err());
+    }
+
+    #[test]
     fn delegated_tempo_resolution_checks_nonce_domain_and_calls() {
         let from = Address::repeat_byte(0x11);
         let resolved = TempoTransactionRequest {
@@ -1365,7 +1457,7 @@ mod tests {
             calls: vec![
                 Call {
                     to: TxKind::Call(Address::repeat_byte(0x22)),
-                    value: U256::from(1),
+                    value: U256::ONE,
                     input: Bytes::from_static(&[0x12]),
                 },
                 Call {
@@ -1517,10 +1609,8 @@ mod tests {
         let request = TransactionRequest::default();
         {
             let mut store = RecoveryStore::create(data, true).unwrap();
-            store
-                .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
-                .unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into()).is_err());
         }
 
         let store = load(&paths, true).unwrap();
@@ -1545,7 +1635,7 @@ mod tests {
                         0,
                         0,
                         TransactionRequest::default(),
-                        SIGNED_TX.to_vec().into(),
+                        SIGNED_TX.into(),
                     )
                     .unwrap();
                 let deployment = &mut store.data_mut().sequences_mut()[0];

@@ -368,14 +368,12 @@ impl SourcifyVerificationProvider {
                     let creation_exact = contract_response
                         .creation_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     let runtime_exact = contract_response
                         .runtime_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     Ok(creation_exact && runtime_exact)
                 } else {
@@ -449,7 +447,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_config::Config;
-    use foundry_test_utils::forgetest_async;
+    use foundry_test_utils::{forgetest, util::SOLC_VERSION};
     use serde_json::json;
     use std::{
         io::{Read, Write},
@@ -589,7 +587,8 @@ mod tests {
         assert_eq!(response, "redirected");
     }
 
-    forgetest_async!(creates_correct_verify_request_body, |prj, _cmd| {
+    #[forgetest]
+    async fn creates_correct_verify_request_body(prj: _) {
         prj.add_source("Counter", "contract Counter {}");
 
         let args = VerifyArgs::parse_from([
@@ -597,7 +596,7 @@ mod tests {
             "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
             "src/Counter.sol:Counter",
             "--compiler-version",
-            "0.8.19",
+            SOLC_VERSION,
             "--root",
             &prj.root().to_string_lossy(),
         ]);
@@ -606,7 +605,7 @@ mod tests {
         let provider = SourcifyVerificationProvider::default();
         let request = provider.prepare_verify_request(&args, &context).await.unwrap();
 
-        assert_eq!(request.compiler_version, "0.8.19+commit.7dd6d404");
+        assert_eq!(request.compiler_version, "0.8.35+commit.47b9dedd");
         assert_eq!(request.contract_identifier, "src/Counter.sol:Counter");
         assert!(request.creation_transaction_hash.is_none());
 
@@ -620,5 +619,5 @@ mod tests {
         let counter_source = sources.get("src/Counter.sol").unwrap().as_object().unwrap();
         let content = counter_source.get("content").unwrap().as_str().unwrap();
         assert!(content.contains("contract Counter {}"));
-    });
+    }
 }

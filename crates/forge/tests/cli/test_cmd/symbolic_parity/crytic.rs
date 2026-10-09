@@ -8,7 +8,8 @@ use foundry_test_utils::{forgetest_init, str};
 // The reference invariant from https://github.com/crytic/properties is
 // `sum(balanceOf) == totalSupply`. We use a buggy `_transfer` that mints on
 // transfer to a specific address — symbolic execution should expose it.
-forgetest_init!(crytic_properties_erc20_sum_invariant_buggy, |prj, cmd| {
+#[forgetest_init]
+fn crytic_properties_erc20_sum_invariant_buggy(prj: _, cmd: _) {
     skip_unless_z3!("crytic_properties_erc20_sum_invariant_buggy");
 
     prj.add_test(
@@ -86,4 +87,4 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}

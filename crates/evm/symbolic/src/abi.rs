@@ -40,7 +40,7 @@ impl SymbolicCalldata {
         prefix: &str,
     ) -> Result<Vec<Self>, SymbolicError> {
         let variant_limit = calldata_variant_limit(config);
-        let mut builder = SymbolicAbiBuilder::new(config, cx);
+        let mut builder = SymbolicAbiBuilder { config, cx };
         let mut variants = vec![(SymbolicAbiState::default(), Vec::new())];
         for (idx, input) in function.inputs.iter().enumerate() {
             let ty = input.selector_type();
@@ -219,11 +219,6 @@ pub(super) struct SymbolicAbiBuilder<'a, 'cx> {
 }
 
 impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
-    /// Constructs a new instance.
-    pub(super) const fn new(config: &'a SymbolicConfig, cx: &'cx mut SymCx) -> Self {
-        Self { config, cx }
-    }
-
     pub(super) fn value(
         &mut self,
         state: &mut SymbolicAbiState,
@@ -593,7 +588,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                 self.cx,
                 SymCmpOp::Ult,
                 word,
-                U256::from(1) << bits,
+                U256::ONE << bits,
             ));
         }
     }

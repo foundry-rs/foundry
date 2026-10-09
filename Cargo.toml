@@ -30,13 +30,14 @@ members = [
     "crates/script-sequence/",
     "crates/solar/",
     "crates/test-utils/",
+    "crates/test-utils/macros/",
     "crates/cli-markdown/",
     "crates/tui/",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "1.8.4"
+version = "1.8.6"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -330,6 +331,7 @@ foundry-evm-symbolic = { path = "crates/evm/symbolic", default-features = false 
 foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils", default-features = false }
+foundry-test-macros = { path = "crates/test-utils/macros" }
 foundry-wallets = { version = "0.1.0", default-features = false }
 foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }
@@ -557,7 +559,9 @@ base-common-genesis = { git = "https://github.com/foundry-rs/base", rev = "2aa8b
 base-common-network = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-common-precompiles = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
+base-consensus-upgrades = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-execution-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
+base-protocol = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -570,10 +574,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "4cc64e740c8be767e750c92750722a96164bca51" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "4cc64e740c8be767e750c92750722a96164bca51" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "4cc64e740c8be767e750c92750722a96164bca51" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "4cc64e740c8be767e750c92750722a96164bca51" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "d802713119e7db405adb305e6f575f2e25ec58b4" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "d802713119e7db405adb305e6f575f2e25ec58b4" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "d802713119e7db405adb305e6f575f2e25ec58b4" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "d802713119e7db405adb305e6f575f2e25ec58b4" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "39c03a49ade2f74a6e97e2af308283a42d78d302" }

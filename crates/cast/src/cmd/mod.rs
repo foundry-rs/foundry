@@ -210,8 +210,6 @@ mod tests {
     use super::*;
 
     #[cfg(feature = "base")]
-    use alloy_chains::NamedChain;
-    #[cfg(feature = "base")]
     use foundry_config::Chain;
 
     #[tokio::test]
@@ -277,8 +275,7 @@ mod tests {
     #[cfg(feature = "base")]
     #[tokio::test]
     async fn resolve_network_infers_base_from_chain_id() {
-        let config =
-            Config { chain: Some(Chain::from_named(NamedChain::Base)), ..Default::default() };
+        let config = Config { chain: Some(Chain::base_mainnet()), ..Default::default() };
         assert_eq!(
             resolve_transaction_network(&config, false).await.unwrap(),
             NetworkVariant::Base

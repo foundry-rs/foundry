@@ -1,4 +1,7 @@
-use std::{fmt::Display, path::PathBuf};
+use std::{
+    fmt::Display,
+    path::{Component, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use solar::{
@@ -296,7 +299,8 @@ impl MutationResult {
 /// A given mutation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mutant {
-    /// The path to the project root where this mutant (tries to) live
+    /// The source path relative to the project root, or the absolute path if the source is
+    /// outside the root.
     pub path: PathBuf,
     #[serde(serialize_with = "serialize_span", deserialize_with = "deserialize_span")]
     pub span: Span,
@@ -344,29 +348,29 @@ where
 }
 
 impl Mutant {
-    /// Returns a relative path string.
+    /// Returns the mutant path with `/` separators.
     ///
-    /// Walks ancestor components looking for a well-known directory root
-    /// (`src`, `test`, `lib`, `contracts`) so the output is cross-platform and
-    /// does not rely on OS-specific path separators.
+    /// Mutant paths are relative to the project root, so this returns the full path. If the
+    /// source is outside the project root, the path is absolute: this then starts at the first
+    /// well-known directory (`src`, `test`, `script`, `lib`, `contracts`), or uses the file name.
     pub fn relative_path(&self) -> String {
-        let components: Vec<_> = self.path.components().collect();
-        for (i, comp) in components.iter().enumerate() {
-            if let std::path::Component::Normal(name) = comp {
-                let s = name.to_string_lossy();
-                if matches!(s.as_ref(), "src" | "test" | "script" | "lib" | "contracts") {
-                    let parts: Vec<_> = components[i..]
-                        .iter()
-                        .filter_map(|c| match c {
-                            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
-                            _ => None,
-                        })
-                        .collect();
-                    return parts.join("/");
-                }
-            }
-        }
-        self.path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string()
+        let components = self
+            .path
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s.to_string_lossy()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let start = if self.path.is_relative() {
+            0
+        } else {
+            components
+                .iter()
+                .position(|s| matches!(s.as_ref(), "src" | "test" | "script" | "lib" | "contracts"))
+                .unwrap_or(components.len().saturating_sub(1))
+        };
+        components[start..].join("/")
     }
 
     /// Returns a concise one-line description of the mutation (full original code)

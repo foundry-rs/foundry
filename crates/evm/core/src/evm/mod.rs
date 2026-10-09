@@ -6,7 +6,6 @@ use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
-    refresh_chain_journal,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap};
@@ -144,6 +143,12 @@ pub trait FoundryEvmFactory:
     ) -> NestedEvmFor<'db, Self>
     where
         I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db;
+
+    /// Updates the execution spec and gas parameters using this family's configuration.
+    /// This does not reconstruct the instruction table or precompile registry.
+    fn set_execution_spec(context: &mut Self::FoundryContext<'_>, spec: Self::Spec) {
+        context.set_spec_and_gas_params(spec);
+    }
 }
 
 /// Object-safe EVM operations used by nested execution and fork replay.
@@ -293,8 +298,10 @@ where
     ecx.set_evm(evm_env);
     *ecx.chain_mut() = chain_context;
     #[cfg(feature = "monad")]
-    FoundryJournal::restore_reserve_balance(ecx.journal_mut(), reserve_balance);
-    refresh_chain_journal(ecx);
+    {
+        FoundryJournal::restore_reserve_balance(ecx.journal_mut(), reserve_balance);
+        refresh_chain_journal(ecx);
+    }
     Ok(())
 }
 
@@ -311,7 +318,7 @@ pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
         }
         for slot in account.storage.values_mut() {
             slot.is_cold = true;
-            slot.original_value = slot.present_value;
+            slot.original_value = slot.present_value();
         }
     }
     state
@@ -350,7 +357,7 @@ pub fn merge_child_state(parent: &mut EvmState, child: EvmState, remove_absent: 
                 parent_account.storage.insert(key, slot);
                 continue;
             };
-            parent_slot.present_value = slot.present_value;
+            parent_slot.present_value = slot.present_value();
             parent_slot.is_cold &= slot.is_cold;
         }
     }
@@ -391,7 +398,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
     Ok(CallInputs {
         caller: inputs.caller(),
         bytecode_address: deployer,
-        known_bytecode: (account.info.code_hash, account.info.code.clone().unwrap_or_default()),
+        known_bytecode: (account.info.code_hash(), account.info.code.clone().unwrap_or_default()),
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value()),

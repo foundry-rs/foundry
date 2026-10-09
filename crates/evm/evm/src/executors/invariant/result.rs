@@ -21,9 +21,9 @@ use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
+use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::TestError;
 use revm::interpreter::InstructionResult;
-use revm_inspectors::tracing::CallTraceArena;
 use std::{borrow::Cow, collections::HashMap};
 
 /// The outcome of an invariant fuzz test
@@ -60,6 +60,8 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_value: Option<I256>,
     /// For optimization mode: the call sequence that produced the best value.
     pub optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Whether fail-fast or Ctrl-C stopped the campaign before its timeout or planned runs.
+    pub interrupted: bool,
 }
 
 impl InvariantFuzzTestResult {
@@ -103,6 +105,7 @@ impl InvariantFuzzTestResult {
             fork_block_number,
             optimization_best_value,
             optimization_best_sequence,
+            interrupted: false,
         }
     }
 }
@@ -405,7 +408,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             for (invariant, fail_on_revert) in failing_invariants {
                 let mut data = base.clone();
                 data.fail_on_revert = *fail_on_revert;
-                data.calldata = invariant.selector().to_vec().into();
+                data.calldata = invariant.selector().into();
                 data.test_error = TestError::Fail(
                     format!("{}, reason: {}", invariant.name, data.revert_reason).into(),
                     invariant_run.inputs.clone(),

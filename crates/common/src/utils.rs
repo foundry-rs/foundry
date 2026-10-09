@@ -46,7 +46,7 @@ pub fn block_on_handle<F: std::future::Future>(
 /// );
 /// ```
 pub fn erc7201(id: &str) -> B256 {
-    let x = U256::from_be_bytes(keccak256(id).0) - U256::from(1);
+    let x = Into::<U256>::into(keccak256(id)) - U256::ONE;
     keccak256(x.to_be_bytes::<32>()) & B256::from(!U256::from(0xff))
 }
 
@@ -72,6 +72,18 @@ pub fn ignore_metadata_hash(bytecode: &[u8]) -> &[u8] {
     } else {
         bytecode
     }
+}
+
+/// Returns whether the CBOR metadata at the end of the bytecode contains a metadata hash
+/// (`ipfs`, `bzzr0` or `bzzr1`), which commits to the contract's sources and compiler settings.
+pub fn has_metadata_hash(bytecode: &[u8]) -> bool {
+    let Some(start) = find_metadata_start(bytecode) else { return false };
+    let Ok(ciborium::Value::Map(entries)) =
+        ciborium::from_reader::<ciborium::Value, _>(&bytecode[start..bytecode.len() - 2])
+    else {
+        return false;
+    };
+    entries.iter().any(|(key, _)| matches!(key.as_text(), Some("ipfs" | "bzzr0" | "bzzr1")))
 }
 
 /// Strips all __$xxx$__ placeholders from the bytecode if it's an unlinked bytecode.
