@@ -9,7 +9,7 @@ use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
-    Address, B256, U256, hex, keccak256,
+    Address, B256, Bytes, U256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -2145,6 +2145,77 @@ fn get_state_diff<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>) -> Result
             .flatten(),
     );
     Ok(res.abi_encode())
+}
+
+/// Marks a reverted frame's account accesses, including their storage accesses, as reverted.
+pub(crate) fn mark_account_accesses_reverted(accesses: &mut [AccountAccess]) {
+    for access in accesses {
+        access.reverted = true;
+        for storage_access in &mut access.storageAccesses {
+            storage_access.reverted = true;
+        }
+    }
+}
+
+/// Moves a finished frame's account accesses into the enclosing recorded frame, or back onto the
+/// stack when no enclosing frame was recorded, preserving the order of the accesses.
+pub(crate) fn merge_recorded_frame(
+    stack: &mut Vec<Vec<AccountAccess>>,
+    mut accesses: Vec<AccountAccess>,
+) {
+    if let Some(parent) = stack.last_mut() {
+        parent.append(&mut accesses);
+    } else {
+        stack.push(accesses);
+    }
+}
+
+/// Appends an AccountAccess that resumes the recording of the current context.
+pub(crate) fn append_storage_access(
+    last: &mut Vec<AccountAccess>,
+    storage_access: crate::Vm::StorageAccess,
+    storage_depth: u64,
+) {
+    // Assert that there's an existing record for the current context.
+    if !last.is_empty() && last.first().unwrap().depth < storage_depth {
+        // Three cases to consider:
+        // 1. If there hasn't been a context switch since the start of this context, then add the
+        //    storage access to the current context record.
+        // 2. If there's an existing Resume record, then add the storage access to it.
+        // 3. Otherwise, create a new Resume record based on the current context.
+        if last.len() == 1 {
+            last.first_mut().unwrap().storageAccesses.push(storage_access);
+        } else {
+            let last_record = last.last_mut().unwrap();
+            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
+                last_record.storageAccesses.push(storage_access);
+            } else {
+                let entry = last.first().unwrap();
+                let resume_record = crate::Vm::AccountAccess {
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: entry.chainInfo.forkId,
+                        chainId: entry.chainInfo.chainId,
+                    },
+                    accessor: entry.accessor,
+                    account: entry.account,
+                    kind: crate::Vm::AccountAccessKind::Resume,
+                    initialized: entry.initialized,
+                    storageAccesses: vec![storage_access],
+                    reverted: entry.reverted,
+                    // The remaining fields are defaults
+                    oldBalance: U256::ZERO,
+                    newBalance: U256::ZERO,
+                    oldNonce: 0,
+                    newNonce: 0,
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                    deployedCode: Bytes::new(),
+                    depth: entry.depth,
+                };
+                last.push(resume_record);
+            }
+        }
+    }
 }
 
 /// Helper function that creates a `GenesisAccount` from a regular `Account`.
