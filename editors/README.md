@@ -113,7 +113,7 @@ Zed's tree-sitter grammar remains pinned in `extension.toml`.
 
 Public identities are retained: Solidity language ID, `solarLsp.*` settings and
 commands, server-returned `solar.*` commands, and Zed extension/server ID
-`solar`. The VS Code extension ID is `paradigm.foundry`. In particular,
+`solar`. The VS Code extension ID is `paradigm.forge-lsp`. In particular,
 `solar.copySelector`, `solar.showReferences` and `solar.showTypeHierarchy`
 remain registered by the VS Code client.
 

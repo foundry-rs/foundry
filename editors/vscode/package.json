@@ -1,5 +1,5 @@
 {
-  "name": "foundry",
+  "name": "forge-lsp",
   "displayName": "Solar LSP",
   "description": "Solidity language support powered by the Foundry toolchain: diagnostics, hover, references and CodeLens from forge lsp, formatting with forge fmt, and linting with forge lint",
   "version": "0.1.0",
@@ -221,7 +221,7 @@
     "bundle": "node scripts/bundle.mjs",
     "bundle:check": "node scripts/bundle.mjs --check",
     "test": "npm run compile && node --test test/*.test.cjs",
-    "package": "npm run compile && node scripts/package.mjs",
+    "package": "npm run bundle:check && node scripts/package.mjs",
     "test:host": "npm run compile && node scripts/test-host.cjs",
     "test:launcher": "node scripts/test-host.cjs --launcher"
   },
