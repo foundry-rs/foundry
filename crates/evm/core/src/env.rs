@@ -1544,7 +1544,7 @@ mod tests {
         );
         // Expiring nonces are replay-protected by this sender-scoped identifier.
         assert_eq!(
-            tx_env.unique_tx_identifier(),
+            tx_env.channel_open_context_hash(),
             Some(b256!("0xadb35ee9830a691a8dbd8f42208a1553d9a242b8750a218d841cc78a0dea20ca"))
         );
 
@@ -1625,7 +1625,7 @@ mod tests {
         );
         // Expiring nonces are replay-protected by this sender-scoped identifier.
         assert_eq!(
-            tx_env.unique_tx_identifier(),
+            tx_env.channel_open_context_hash(),
             Some(b256!("0xdb2722c83d8893c1637bbabfe2ad924bcc044653f6c9fa91d472d70ddfa97de3"))
         );
 

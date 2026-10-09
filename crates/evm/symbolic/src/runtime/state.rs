@@ -2344,7 +2344,11 @@ impl SymbolicWorld {
 }
 
 fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> Symbol {
-    stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes())
+    stable_symbol(
+        cx,
+        "storage",
+        format!("{address:?}:{:?}", ExpressionDigests::identity([key])).as_bytes(),
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -2387,7 +2391,7 @@ impl SymbolicBlock {
             .cheatcodes
             .as_ref()
             .and_then(|cheats| cheats.block.as_ref())
-            .unwrap_or(&evm_env.block_env);
+            .unwrap_or(evm_env.block_env());
         let difficulty = block.prevrandao().map(Into::into).unwrap_or_else(|| block.difficulty());
 
         Self {

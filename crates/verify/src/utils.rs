@@ -466,7 +466,7 @@ where
     trace!(transact_result = ?result.exit_reason);
 
     if result.reverted {
-        let decoded_reason = RevertDecoder::default().decode(&result.result, result.exit_reason);
+        let decoded_reason = RevertDecoder::new().decode(&result.result, result.exit_reason);
         eyre::bail!(
             "Failed to deploy contract on fork at block: {decoded_reason}.\n\
             This typically happens when your local bytecode differs from what was actually deployed.\n\
@@ -580,10 +580,11 @@ pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 mod tests {
     use super::*;
     use crate::verify::VerifierArgs;
+    use alloy_json_abi::JsonAbi;
     use foundry_cli::opts::EtherscanOpts;
     use foundry_compilers::PathStyle;
     use foundry_config::NamedChain;
-    use foundry_test_utils::TestProject;
+    use foundry_test_utils::{TestProject, util::SOLC_VERSION};
 
     #[cfg(feature = "monad")]
     fn monad_env(timestamp: u64) -> EvmEnvFor<foundry_evm::core::evm::MonadEvmNetwork> {
@@ -620,7 +621,7 @@ mod tests {
     #[test]
     fn typed_constructor_args_require_a_constructor() {
         let artifact = CompactContractBytecode {
-            abi: Some(alloy_json_abi::JsonAbi::default()),
+            abi: Some(JsonAbi::new()),
             bytecode: None,
             deployed_bytecode: None,
         };
@@ -690,7 +691,7 @@ mod tests {
         prj.add_source(
             "Counter.sol",
             r#"
-pragma solidity 0.8.16;
+pragma solidity ^0.8.0;
 
 contract Counter {
     uint256 public number;
@@ -700,7 +701,7 @@ contract Counter {
         prj.add_source(
             "Broken.sol",
             r#"
-pragma solidity 0.8.16;
+pragma solidity ^0.8.0;
 
 contract Broken {
     this is not valid Solidity
@@ -709,7 +710,7 @@ contract Broken {
         );
 
         let mut config = Config::load_with_root(prj.root()).unwrap();
-        config.solc = Some("0.8.16".into());
+        config.solc = Some(SOLC_VERSION.into());
         let args = VerifyBytecodeArgs {
             address: Address::ZERO,
             contract: "src/Counter.sol:Counter".parse().unwrap(),

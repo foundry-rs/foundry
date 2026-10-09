@@ -170,7 +170,7 @@ use revm::{
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::hardfork::SpecId,
+    primitives::{eip2780, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
@@ -1459,6 +1459,11 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
+    /// Returns whether Celo compatibility is enabled.
+    pub const fn is_celo(&self) -> bool {
+        self.networks.is_celo()
+    }
+
     /// Returns true if Monad network mode is active
     pub const fn is_monad(&self) -> bool {
         self.networks.is_monad()
@@ -1840,6 +1845,16 @@ impl<N: Network> Backend<N> {
             return Ok(());
         }
         Err(BlockchainError::TempoTransactionUnsupported)
+    }
+
+    /// Returns an error unless CIP-64 native-fee compatibility is active.
+    pub fn ensure_cip64_active(&self) -> Result<(), BlockchainError> {
+        if !self.is_celo() {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "CIP-64 transactions require Celo mode (--celo)".into(),
+            ));
+        }
+        self.ensure_eip1559_active()
     }
 
     /// Builds the [`InspectorTxConfig`] from the backend's current settings.
@@ -3337,6 +3352,11 @@ impl<N: Network> Backend<N> {
             CallTxEnv::Op(tx) => tx.tx_type() != DEPOSIT_TX_TYPE_ID,
             _ => true,
         };
+        let min_gas = if prepared.evm_env.cfg_env.enable_amsterdam_eip2780 {
+            eip2780::TX_BASE_COST
+        } else {
+            MIN_TRANSACTION_GAS as u64
+        };
         let tx_env = prepared.tx_env.base_mut();
         if gas_omitted && cap_by_balance && tx_env.gas_price > 0 {
             let balance =
@@ -3347,7 +3367,7 @@ impl<N: Network> Backend<N> {
             if let Some(allowance) = balance
                 .checked_sub(upfront)
                 .map(|available| available / U256::from(tx_env.gas_price))
-                && allowance >= U256::from(MIN_TRANSACTION_GAS)
+                && allowance >= U256::from(min_gas)
             {
                 tx_env.gas_limit = tx_env.gas_limit.min(allowance.saturating_to());
             }
@@ -3440,6 +3460,13 @@ impl<N: Network> Backend<N> {
             return Err(BlockchainError::ConflictingFeeFields);
         }
         let transaction_type = request.transaction_type;
+        if transaction_type == Some(foundry_primitives::CIP64_TX_TYPE)
+            || request.other.get("feeCurrency").is_some_and(|value| !value.is_null())
+        {
+            self.ensure_cip64_active()?;
+            return FoundryTransactionRequest::new(request)
+                .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()));
+        }
         #[cfg(feature = "base")]
         if self.is_base() {
             let parsed = FoundryTransactionRequest::try_from(request.clone()).map_err(
@@ -3478,7 +3505,7 @@ impl<N: Network> Backend<N> {
         }
 
         let parsed: FoundryTransactionRequest =
-            request.try_into().map_err(|err: serde_json::Error| {
+            FoundryTransactionRequest::new(request).map_err(|err: serde_json::Error| {
                 BlockchainError::InvalidTransactionRequest(err.to_string())
             })?;
         if parsed.is_tempo() {
@@ -3646,7 +3673,11 @@ impl<N: Network> Backend<N> {
                     simulated_envelope,
                 })
             }
-            FoundryTransactionRequest::Ethereum(mut request) => {
+            FoundryTransactionRequest::Ethereum(mut request)
+            | FoundryTransactionRequest::Celo(foundry_primitives::Cip64TransactionRequest {
+                inner: mut request,
+                ..
+            }) => {
                 // Tempo charges the account-creation cost for nonce 0, so an omitted nonce must
                 // not default to it.
                 if self.is_tempo() && request.nonce.is_none() {
@@ -3947,7 +3978,7 @@ impl<N: Network> Backend<N> {
         let code = if let Some(code) = account.code {
             code
         } else {
-            state.code_by_hash_ref(account.code_hash)?
+            state.code_by_hash_ref(account.code_hash())?
         };
         Ok(code.original_bytes())
     }
@@ -5390,7 +5421,7 @@ impl<N: Network> Backend<N> {
         let genesis_base_fee =
             if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
-        let mut staged_cfg = CfgEnv::default();
+        let mut staged_cfg = CfgEnv::new();
         staged_cfg.set_spec_and_mainnet_gas_params(local_spec);
         staged_cfg.chain_id = local_chain_id;
         staged_cfg.limit_contract_code_size = staged_config.code_size_limit;
@@ -5819,7 +5850,7 @@ where
                 arbitrum_replay_block_number(&replay.source_block),
             )
         });
-        let prepared = prepare_fork_transaction_replay(replay, self.is_monad())?;
+        let prepared = prepare_fork_transaction_replay(replay, self.is_monad(), self.is_celo())?;
         let fallback_execution_chain_id = self
             .get_fork()
             .map(|fork| fork.execution_chain_id())
@@ -7310,7 +7341,7 @@ where
             let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
             let account = db.get(&address).cloned().unwrap_or_default();
             let storage_root = storage_root(&account.storage);
-            let code_hash = account.info.code_hash;
+            let code_hash = account.info.code_hash();
             let balance = account.info.balance;
             let nonce = account.info.nonce;
             Ok(TrieAccount { balance, nonce, code_hash, storage_root })
@@ -7376,7 +7407,7 @@ where
                     .json_result(
                         result,
                         &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
-                        &evm_env.block_env,
+                        evm_env.block_env(),
                         &cache_db,
                     )
                     .map_err(|e| BlockchainError::Message(e.to_string()))
@@ -7422,7 +7453,7 @@ where
                 address,
                 balance: account.info.balance,
                 nonce: account.info.nonce,
-                code_hash: account.info.code_hash,
+                code_hash: account.info.code_hash(),
                 storage_hash,
                 account_proof: proof,
                 storage_proof: keys
@@ -7453,7 +7484,7 @@ where
     ) -> Result<Option<TransactionOpcodeGas>, BlockchainError> {
         match self.replay_tx_with_inspector(
             hash,
-            OpcodeGasInspector::default(),
+            OpcodeGasInspector::new(),
             move |_, _, inspector, _, _| TransactionOpcodeGas {
                 transaction_hash: hash,
                 opcode_gas: inspector.opcode_gas_iter().collect(),
@@ -7520,7 +7551,7 @@ where
             let monad_context = self.active_monad_context_for_mined_block(block)?;
 
             for tx_envelope in &block.body.transactions {
-                let mut inspector = OpcodeGasInspector::default();
+                let mut inspector = OpcodeGasInspector::new();
                 let pending_tx = self.pending_mined_transaction(tx_envelope.clone())?;
                 let transaction_context =
                     monad_execution_context_at(monad_context.as_ref(), transactions.len());
@@ -7612,10 +7643,11 @@ where
                 for slot in account.storage.keys() {
                     keys.push(Bytes::from(slot.to_be_bytes::<32>()));
                 }
-                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash) {
+                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash())
+                {
                     let code = match &account.info.code {
                         Some(code) => code.original_bytes(),
-                        None => state.code_by_hash_ref(account.info.code_hash)?.original_bytes(),
+                        None => state.code_by_hash_ref(account.info.code_hash())?.original_bytes(),
                     };
                     codes.push(code);
                 }
@@ -8251,6 +8283,12 @@ where
 
         // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
         let mut inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
+        if let FoundryTxEnvelope::Celo(tx) = &*transaction {
+            inner
+                .0
+                .other
+                .insert("feeCurrency".into(), serde_json::to_value(tx.tx().fee_currency).unwrap());
+        }
         if self.is_tempo() {
             let fee_payer = match &*transaction {
                 FoundryTxEnvelope::Tempo(tx) => match tx.tx().recover_fee_payer(info.from) {
@@ -8521,6 +8559,17 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let transactions = std::mem::take(&mut state.transactions);
         let mut storage = self.blockchain.storage.read().clone();
         storage.load_blocks(blocks, fork_block_boundary);
+        if !self.is_celo()
+            && storage.blocks.values().any(|block| {
+                block
+                    .body
+                    .transactions
+                    .iter()
+                    .any(|tx| matches!(tx.as_ref(), FoundryTxEnvelope::Celo(_)))
+            })
+        {
+            self.ensure_cip64_active()?;
+        }
         storage.load_transactions(transactions, fork_block_boundary);
         if let Some(checkpoint) = checkpoint {
             storage.insert_block(checkpoint);
@@ -10190,8 +10239,14 @@ where
 
         // Balance and fee related checks
         if !self.disable_pool_balance_checks {
-            // Gas limit validation
-            if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
+            // Gas limit validation. Under EIP-2780 a transaction's intrinsic gas starts at a lower
+            // base, which execution then checks in full.
+            let min_gas = if evm_env.cfg_env.enable_amsterdam_eip2780 {
+                eip2780::TX_BASE_COST
+            } else {
+                MIN_TRANSACTION_GAS as u64
+            };
+            if tx.gas_limit() < min_gas {
                 debug!(target: "backend", "[{:?}] gas too low", tx.hash());
                 return Err(InvalidTransactionError::GasTooLow);
             }
@@ -10428,6 +10483,23 @@ pub fn transaction_build(
         return build_rpc_transaction(envelope, from, block, info.as_ref(), None);
     }
 
+    if let FoundryTxEnvelope::Celo(tx) = eth_transaction.as_ref() {
+        let mut fields =
+            OtherFields::try_from(serde_json::to_value(tx).expect("valid CIP-64 transaction"))
+                .expect("CIP-64 transaction serializes to an object");
+        fields.remove("hash");
+        let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+            hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
+            inner: UnknownTypedTransaction {
+                ty: AnyTxType(foundry_primitives::CIP64_TX_TYPE),
+                fields,
+                memo: Default::default(),
+            },
+        });
+        let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
+        let effective_gas_price = block.map(|_| eth_transaction.effective_gas_price(base_fee));
+        return build_rpc_transaction(envelope, from, block, info.as_ref(), effective_gas_price);
+    }
     if let FoundryTxEnvelope::Tempo(tempo_tx) = eth_transaction.as_ref() {
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let ser = serde_json::to_value(tempo_tx).expect("could not serialize Tempo transaction");
@@ -10538,7 +10610,7 @@ fn commit_cache(db: &mut dyn Db, cache: revm::database::Cache) -> Result<(), Blo
             continue;
         }
         if info.code.is_none() {
-            info.code = contracts.get(&info.code_hash).cloned();
+            info.code = contracts.get(&info.code_hash()).cloned();
         }
         let mut account = Account::from(info);
         account.mark_touch();

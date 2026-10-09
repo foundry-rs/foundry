@@ -61,7 +61,6 @@ tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
 yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
-dunce.workspace = true
 
 tracing-tracy = { version = "0.12", optional = true, features = ["demangle"] }
 

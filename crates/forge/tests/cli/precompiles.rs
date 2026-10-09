@@ -148,7 +148,7 @@ contract PrecompileTraceTest is Test {
         vm.mockFunction(address(0x100), address(0x02), callData);
         (bool success, bytes memory result) = address(0x100).call(callData);
         assertTrue(success);
-        assertEq(result.length, 0);
+        assertEq(result, abi.encodePacked(sha256(callData)));
     }
 
     function test_mocked_p256_call() public {
@@ -277,7 +277,7 @@ Traces:
         .stdout_eq(str![[r#"
 ...
     ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
-    │   └─ ← [Return]
+    │   └─ ← [Return] true
 ...
 "#]]);
 

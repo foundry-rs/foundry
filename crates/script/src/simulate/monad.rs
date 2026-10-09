@@ -3,7 +3,7 @@
 use super::{PreSimulationState, RpcContexts, RpcSimulationContext, context_for_rpc};
 use crate::{
     ScriptResult,
-    runner::{GasSearch, ScriptRunner},
+    runner::{GasSearch, ScriptRunner, needs_more_gas},
     simulate::FilledTransactionsState,
     transaction::ScriptTransactionBuilder,
 };
@@ -114,7 +114,7 @@ impl MonadSimulation {
                 let (env, tx) = self.prepare_call(from, to, calldata.clone(), value, None);
                 let context = self.context(&tx)?;
                 let result = self.runner.executor.call_with_env_and_context(env, tx, context)?;
-                search.record(limit, result.exit_reason);
+                search.record(limit, needs_more_gas(result.exit_reason));
             }
             gas_used = search.gas_used();
             self.runner.executor.tx_env_mut().set_gas_limit(initial_limit);

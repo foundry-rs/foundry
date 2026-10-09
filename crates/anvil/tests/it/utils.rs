@@ -1,6 +1,6 @@
 use alloy_network::{Ethereum, EthereumWallet};
 use alloy_provider::{
-    Identity, RootProvider,
+    Identity, RootProvider, builder,
     fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
 };
 use foundry_common::provider::{
@@ -31,7 +31,7 @@ pub fn ws_provider_with_signer(
 
 /// Currently required to get around <https://github.com/alloy-rs/alloy/issues/296>
 pub async fn connect_pubsub(conn_str: &str) -> RootProvider {
-    alloy_provider::ProviderBuilder::default().connect(conn_str).await.unwrap()
+    builder().connect(conn_str).await.unwrap()
 }
 
 type PubsubSigner = FillProvider<
