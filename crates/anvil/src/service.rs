@@ -203,7 +203,7 @@ where
                         }
                         trace!(target: "miner", "creating new block");
                         let result =
-                            backend.mine_block_locked(transactions, None).await.map(|outcome| {
+                            backend.mine_block_locked(transactions, false).await.map(|outcome| {
                                 let block_number = outcome.block_number;
                                 if pool.on_mined_block(outcome) {
                                     miner.retry_ready_transactions();

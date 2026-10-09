@@ -215,20 +215,19 @@ impl TimeManager {
     fn compute_next_timestamp(
         state: &TimeState,
         current: i128,
-        temporary_interval: Option<u64>,
+        pin_timestamp: bool,
     ) -> (u64, Option<u64>, Option<i128>) {
         let exact_timestamp = state.next_exact_timestamp;
         let last_timestamp = state.last_timestamp;
-        let interval = temporary_interval.or(state.interval);
 
         let (mut next_timestamp, update_offset) = if let Some(next) = exact_timestamp {
             (next.timestamp, true)
-        } else if let Some(interval) = interval {
-            // A temporary zero interval (`anvil_mine(n, 0)`) pins to the last timestamp, but must
+        } else if pin_timestamp {
+            // An explicit zero interval (`anvil_mine(n, 0)`) pins to the last timestamp, but must
             // still honour a pending `evm_increaseTime`.
-            let pending_increase =
-                if temporary_interval.is_some() { state.time_increase } else { 0 };
-            (last_timestamp.saturating_add(interval).saturating_add(pending_increase), false)
+            (last_timestamp.saturating_add(state.time_increase), false)
+        } else if let Some(interval) = state.interval {
+            (last_timestamp.saturating_add(interval), false)
         } else {
             // A burst of blocks within one wall-clock second leaves `last_timestamp` ahead of
             // `wall + offset`; keep a pending explicit increase on top of the logical clock so the
@@ -239,7 +238,7 @@ impl TimeManager {
         // Equal timestamps are only allowed when explicitly requested (exact override or
         // interval, e.g. `anvil_setBlockTimestampInterval(0)`). On the default path timestamps must
         // strictly increase.
-        let allow_equal = exact_timestamp.is_some() || interval.is_some();
+        let allow_equal = exact_timestamp.is_some() || pin_timestamp || state.interval.is_some();
         let too_low = if allow_equal {
             next_timestamp < last_timestamp
         } else {
@@ -253,11 +252,8 @@ impl TimeManager {
     }
 
     /// Prepares the next timestamp without consuming a one-shot override.
-    pub(crate) fn prepare_next_timestamp(
-        &self,
-        temporary_interval: Option<u64>,
-    ) -> PendingBlockTimestamp {
-        self.prepare_next_timestamp_inner(None, temporary_interval)
+    pub(crate) fn prepare_next_timestamp(&self, pin_timestamp: bool) -> PendingBlockTimestamp {
+        self.prepare_next_timestamp_inner(None, pin_timestamp)
     }
 
     /// Prepares a logical block clock, using explicit controls instead of elapsed wall time.
@@ -270,13 +266,13 @@ impl TimeManager {
         increment: u64,
         minimum: u64,
     ) -> PendingBlockTimestamp {
-        self.prepare_next_timestamp_inner(Some((increment, minimum)), None)
+        self.prepare_next_timestamp_inner(Some((increment, minimum)), false)
     }
 
     fn prepare_next_timestamp_inner(
         &self,
         schedule: Option<(u64, u64)>,
-        temporary_interval: Option<u64>,
+        pin_timestamp: bool,
     ) -> PendingBlockTimestamp {
         let current = duration_since_unix_epoch().as_secs() as i128;
         let state = self.state.read();
@@ -300,7 +296,7 @@ impl TimeManager {
                     Some(timestamp as i128 - current),
                 )
             } else {
-                Self::compute_next_timestamp(&state, current, temporary_interval)
+                Self::compute_next_timestamp(&state, current, pin_timestamp)
             };
         PendingBlockTimestamp {
             timestamp,
@@ -334,7 +330,7 @@ impl TimeManager {
 
     /// Returns the current timestamp and updates the underlying offset and interval accordingly
     pub fn next_timestamp(&self) -> u64 {
-        let pending = self.prepare_next_timestamp(None);
+        let pending = self.prepare_next_timestamp(false);
         self.commit_next_timestamp(pending);
         pending.timestamp
     }
@@ -347,7 +343,7 @@ impl TimeManager {
 
     /// Returns the current timestamp for a call that does _not_ update the value
     pub fn current_call_timestamp(&self) -> u64 {
-        self.prepare_next_timestamp(None).timestamp
+        self.prepare_next_timestamp(false).timestamp
     }
 }
 
@@ -372,7 +368,7 @@ mod tests {
     fn candidate_consumes_only_its_timestamp_override() {
         let time = TimeManager::new(1);
         time.set_next_block_timestamp(100).unwrap();
-        let pending = time.prepare_next_timestamp(None);
+        let pending = time.prepare_next_timestamp(false);
 
         time.set_next_block_timestamp(100).unwrap();
         time.commit_next_timestamp(pending);
@@ -386,7 +382,7 @@ mod tests {
     fn candidate_commit_preserves_concurrent_time_increase() {
         let time = TimeManager::new(1);
         time.set_next_block_timestamp(100).unwrap();
-        let pending = time.prepare_next_timestamp(None);
+        let pending = time.prepare_next_timestamp(false);
 
         time.increase_time(10);
         time.commit_next_timestamp(pending);
@@ -400,7 +396,7 @@ mod tests {
     fn candidate_commit_preserves_concurrent_time_reset() {
         let time = TimeManager::new(1);
         time.set_next_block_timestamp(100).unwrap();
-        let pending = time.prepare_next_timestamp(None);
+        let pending = time.prepare_next_timestamp(false);
 
         time.reset(1_000);
         let reset_offset = time.offset();
@@ -427,16 +423,16 @@ mod tests {
     fn default_path_timestamps_strictly_increase() {
         let state = TimeState { last_timestamp: 1_000, ..Default::default() };
 
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 999, None).0, 1_001);
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, None).0, 1_001);
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_002, None).0, 1_002);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 999, false).0, 1_001);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 1_001);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_002, false).0, 1_002);
     }
 
     #[test]
     fn default_path_advances_after_time_increase() {
         let state = TimeState { offset: 10_000, last_timestamp: 11_000, ..Default::default() };
 
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, None).0, 11_001);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 11_001);
     }
 
     #[test]
@@ -449,7 +445,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, None).0, 1_109);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 1_109);
     }
 
     #[test]
@@ -479,14 +475,14 @@ mod tests {
     fn explicit_zero_interval_honours_pending_time_increase() {
         let state = TimeState { last_timestamp: 1_000, time_increase: 3_600, ..Default::default() };
 
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_001, Some(0)).0, 4_600);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_001, true).0, 4_600);
     }
 
     #[test]
     fn explicit_zero_interval_allows_equal_timestamp() {
         let state = TimeState { last_timestamp: 1_000, ..Default::default() };
 
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_001, Some(0)).0, 1_000);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_001, true).0, 1_000);
     }
 
     #[test]

@@ -4220,6 +4220,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.saturating_to::<u64>());
+        let pin_timestamp = interval == Some(0);
         let blocks = num_blocks.unwrap_or(U256::ONE);
         if blocks.is_zero() {
             return Ok(());
@@ -4231,9 +4232,7 @@ impl EthApi<FoundryNetwork> {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) =
-                    this.mine_one_with_interval(interval.filter(|interval| *interval == 0)).await
-                {
+                if let Err(error) = this.mine_one_with_timestamp_pinning(pin_timestamp).await {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -5005,13 +5004,13 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
-        self.mine_one_with_interval(None).await
+        self.mine_one_with_timestamp_pinning(false).await
     }
 
-    async fn mine_one_with_interval(&self, temporary_interval: Option<u64>) -> Result<()> {
+    async fn mine_one_with_timestamp_pinning(&self, pin_timestamp: bool) -> Result<()> {
         let _mining = self.backend.lock_mining().await;
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block_locked(transactions, temporary_interval).await?;
+        let outcome = self.backend.mine_block_locked(transactions, pin_timestamp).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         if self.pool.on_mined_block(outcome) {
