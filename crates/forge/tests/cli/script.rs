@@ -7387,6 +7387,100 @@ Error: resolved transaction does not match its delegated submission attempt
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
 }
 
+// A resolved delegated hash survives interruption during receipt waiting, so plain resume
+// reconciles the transaction without submitting it again.
+#[forgetest_init]
+async fn resume_resolves_pending_delegated_outcome_across_interruption(prj: _, cmd: _) {
+    prj.update_config(|config| config.transaction_timeout = 120);
+    let script = prj.add_script("DelegatedResume.s.sol", DELEGATED_RESUME_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (receipt_rpc, receipt_requests) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getTransactionReceipt").await;
+    let (rpc, submissions, reached, release) =
+        spawn_rpc_proxy_blocking_first_submission(receipt_rpc, "eth_sendTransaction", true).await;
+    let sender = handle.dev_accounts().next().unwrap();
+    let provider = handle.http_provider();
+
+    let attempt =
+        interrupt_delegated_submission(&prj, &mut cmd, &script, &rpc, sender, &reached, &release)
+            .await;
+    let block = provider.get_block_by_number("pending".parse().unwrap()).await.unwrap().unwrap();
+    let hashes = block.transactions.hashes().collect::<Vec<_>>();
+    assert_eq!(hashes.len(), 1);
+    let accepted = hashes[0];
+    assert!(provider.get_transaction_receipt(accepted).await.unwrap().is_none());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    receipt_requests.lock().unwrap().clear();
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        &rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--resume",
+        "--resume-attempt",
+        &attempt,
+        "--resume-tx-hash",
+        &accepted.to_string(),
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let snapshot =
+        prj.root().join("cache/DelegatedResume.s.sol/31337/run-latest.json.recovery.json");
+    let accepted_json = serde_json::to_value(accepted).unwrap();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Ok(recovery) = foundry_common::fs::read_json_file::<Value>(&snapshot)
+                && recovery["deployments"][0]["attempts"][0]["kind"]["status"]
+                    == serde_json::json!({ "status": "pending", "hash": accepted_json })
+                && !snapshot.with_extension("pending").exists()
+                && !receipt_requests.lock().unwrap().is_empty()
+            {
+                break;
+            }
+            assert!(child.is_running(), "forge exited before checkpointing the resolved hash");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not checkpoint the resolved hash and start waiting for its receipt");
+    assert!(child.is_running(), "forge exited before it could be interrupted");
+    drop(child.kill_and_wait());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    assert!(provider.get_transaction_receipt(accepted).await.unwrap().is_none());
+
+    api.mine_one().await.unwrap();
+    // The attempt is already resolved; no resolution flags are needed on the next invocation.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        &rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--resume",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/DelegatedResume.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["transactionHash"], accepted_json);
+    assert_eq!(receipts[0]["status"], "0x1");
+    let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    assert!(!provider.get_code_at(address.parse().unwrap()).await.unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
 // A delegated submission that never reached the node is retried once after the operator
 // explicitly allows it.
 #[forgetest_init]
