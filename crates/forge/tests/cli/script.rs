@@ -6896,6 +6896,70 @@ contract FundViaRpc is Script {
     assert_eq!(balance, U256::from(500) * U256::from(10).pow(U256::from(18)));
 }
 
+// The on-chain simulation replays only the broadcast transactions, so cheatcode state from script
+// execution must not reach it, with or without isolation.
+#[forgetest_init]
+async fn simulation_ignores_execution_only_state_on_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "ExecutionOnlyState.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract Vault {
+    function withdraw() external {
+        payable(msg.sender).transfer(1 ether);
+    }
+}
+
+contract ExecutionOnlyState is Script {
+    function run() external {
+        vm.broadcast();
+        Vault vault = new Vault();
+
+        // Funds the vault for script execution only; this is not a broadcast transaction. The
+        // extra ether stays unspent, so leaked execution state would let the withdrawal succeed.
+        vm.deal(address(vault), 2 ether);
+
+        vm.broadcast();
+        vault.withdraw();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    for isolation in ["--isolate", "--no-isolate"] {
+        cmd.forge_fuse()
+            .args([
+                "script",
+                "ExecutionOnlyState",
+                "--rpc-url",
+                endpoint.as_str(),
+                "--sender",
+                "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                "--unlocked",
+                isolation,
+            ])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+  [..] Vault::withdraw()
+    ├─ [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::receive{value: 1000000000000000000}()
+    │   └─ ← [OutOfFunds] EvmError: OutOfFunds
+    └─ ← [Revert] EvmError: Revert
+...
+"#]])
+            .stderr_eq(str![[r#"
+Error: Simulated execution failed.
+
+"#]]);
+    }
+}
+
 // Regression test for https://github.com/foundry-rs/foundry/issues/13312: an account loaded before
 // `anvil_setCode` must be refreshed before the next call in the same script execution.
 #[forgetest]
