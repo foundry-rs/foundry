@@ -150,6 +150,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
                         transaction: TransactionMaybeSigned::new(tx_req),
+                        contract_address: None,
                     })
                 }
             }
@@ -195,6 +196,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
                         transaction: TransactionMaybeSigned::new(tx_req),
+                        contract_address: None,
                     });
                 }
 

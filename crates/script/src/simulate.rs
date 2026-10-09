@@ -182,7 +182,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         self.script_config.evm_opts.create2_deployer,
                     )?;
                 } else {
-                    builder.set_create(false, sender.create(nonce), &address_to_abi)?;
+                    builder.set_create(
+                        false,
+                        tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
+                        &address_to_abi,
+                    )?;
                 }
 
                 Ok(builder.build())

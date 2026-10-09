@@ -34,7 +34,7 @@ use alloy_provider::{
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::Signature;
 use eyre::{Context, ContextCompat, Result, bail};
-use forge_script_sequence::ScriptSequence;
+use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::{
     opts::TempoOpts,
@@ -48,7 +48,7 @@ use foundry_common::{
     },
     shell,
     tempo::{
-        TempoSponsor, is_tempo_hardfork_active, maybe_print_fee_token, resolve_and_set_fee_token,
+        TempoSponsor, active_tempo_hardfork, maybe_print_fee_token, resolve_and_set_fee_token,
     },
 };
 use foundry_config::Config;
@@ -298,9 +298,9 @@ where
     async fn validate_expiring_create_nonce(
         &self,
         provider: &RootProvider<N>,
-        planned: &TransactionMaybeSigned<N>,
+        planned: &TransactionWithMetadata<N>,
     ) -> Result<()> {
-        if planned.to().is_some() {
+        if planned.tx().to().is_some() {
             return Ok(());
         }
         let nonce_key = match self {
@@ -317,14 +317,29 @@ where
             .nonce_key(),
         };
         if nonce_key == Some(TEMPO_EXPIRING_NONCE_KEY) {
-            let expected =
-                planned.nonce().context("CREATE is missing its planned account nonce")?;
-            let sender = planned.from().context("CREATE is missing its planned sender")?;
+            let sender = planned.tx().from().context("CREATE is missing its planned sender")?;
             let actual = provider.get_transaction_count(sender).await?;
-            if actual != expected {
-                bail!(
-                    "EOA nonce changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider."
-                );
+            match planned.tx() {
+                TransactionMaybeSigned::Signed { .. } => {
+                    let expected = planned
+                        .contract_address
+                        .context("CREATE is missing its planned address")?;
+                    let actual = sender.create(actual);
+                    if actual != expected {
+                        bail!(
+                            "CREATE address changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider nonce."
+                        );
+                    }
+                }
+                TransactionMaybeSigned::Unsigned(tx) => {
+                    let expected =
+                        tx.nonce().context("CREATE is missing its planned account nonce")?;
+                    if actual != expected {
+                        bail!(
+                            "EOA nonce changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider."
+                        );
+                    }
+                }
             }
         }
         Ok(())
@@ -858,11 +873,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // otherwise identical transactions keep distinct signing and replay
                 // hashes. Earlier hardforks only accept 0, which is also the
                 // fallback when the hardfork cannot be determined.
+                let tempo_hardfork = if self.script_config.evm_opts.networks.is_tempo() {
+                    active_tempo_hardfork(provider.as_ref()).await.ok()
+                } else {
+                    None
+                };
                 let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
                     && !all_signed
-                    && is_tempo_hardfork_active(provider.as_ref(), TempoHardfork::T12)
-                        .await
-                        .unwrap_or(false);
+                    && tempo_hardfork.is_some_and(|fork| fork >= TempoHardfork::T12);
 
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
@@ -955,7 +973,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         for (kind, is_fixed_gas_limit, index) in batch {
                             kind.validate_expiring_create_nonce(
                                 &provider,
-                                self.sequence.sequences()[i].transactions[*index].tx(),
+                                &self.sequence.sequences()[i].transactions[*index],
                             )
                             .await?;
                             let mut kind = kind
@@ -974,6 +992,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     i,
                                     *index,
                                     payload.clone(),
+                                    tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
                                 )?;
                             }
                             prepared.push((kind, *is_fixed_gas_limit, *index));
@@ -1898,7 +1917,6 @@ mod tests {
     use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
-    use forge_script_sequence::TransactionWithMetadata;
     use foundry_common::tempo::PATH_USD_ADDRESS;
     use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
@@ -2020,7 +2038,7 @@ mod tests {
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
         let payload = Bytes::from_static(SIGNED_TX);
-        sequence.persist_signed_payload(0, 0, payload).unwrap();
+        sequence.persist_signed_payload(0, 0, payload, true).unwrap();
 
         assert!(remaining_unsigned_transactions_for_recovery(&sequence).is_empty());
     }
@@ -2076,7 +2094,7 @@ mod tests {
         };
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
-        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
 
         let required = remaining_unsigned_transactions_for_recovery(&sequence);
         assert_eq!(required.iter().map(|tx| tx.from).collect::<Vec<_>>(), [unsigned]);
@@ -2127,9 +2145,10 @@ mod tests {
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
-        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
-        let second_hash =
-            sequence.persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX)).unwrap();
+        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
+        let second_hash = sequence
+            .persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX), true)
+            .unwrap();
         let mut second_receipt = receipt();
         second_receipt.transaction_hash = second_hash;
         sequence.sequences_mut()[0].receipts.push(second_receipt);
@@ -2165,7 +2184,7 @@ mod tests {
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
         let first_hash =
-            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
         let mut first_receipt = receipt();
         first_receipt.transaction_hash = first_hash;
         sequence.sequences_mut()[0].receipts = vec![first_receipt.clone(), first_receipt];
@@ -2471,7 +2490,9 @@ mod tests {
             valid_before: NonZeroU64::new(100),
             ..Default::default()
         };
-        let planned = TransactionMaybeSigned::<TempoNetwork>::new(request.clone());
+        let planned = TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<
+            TempoNetwork,
+        >::new(request.clone()));
         let mut request = request;
         // The discriminator differs from the planned protocol nonce.
         request.inner.nonce = Some(0);
@@ -2490,22 +2511,37 @@ mod tests {
                 envelope.trie_hash(),
             ),
         ];
+        let sender = request.inner.from.unwrap();
+        let mut signed_plan =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Signed {
+                tx: envelope,
+                from: sender,
+            });
+        signed_plan.contract_address = Some(sender.create(7));
         for kind in kinds {
-            for actual in [6, 7, 8] {
-                let asserter = Asserter::new();
-                let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
-                    .connect_mocked_client(asserter.clone());
-                asserter.push_success(&format!("{actual:#x}"));
-                let result = kind.validate_expiring_create_nonce(&provider, &planned).await;
-                if actual == 7 {
-                    result.unwrap();
-                } else {
-                    assert_eq!(
-                        result.unwrap_err().to_string(),
-                        format!(
-                            "EOA nonce changed unexpectedly while sending transactions. Expected 7 got {actual} from provider."
-                        )
-                    );
+            for planned in [&planned, &signed_plan] {
+                for actual in [6, 7, 8] {
+                    let asserter = Asserter::new();
+                    let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
+                        .connect_mocked_client(asserter.clone());
+                    asserter.push_success(&format!("{actual:#x}"));
+                    let result = kind.validate_expiring_create_nonce(&provider, planned).await;
+                    if actual == 7 {
+                        result.unwrap();
+                    } else {
+                        let expected = if planned.tx().is_unsigned() {
+                            format!(
+                                "EOA nonce changed unexpectedly while sending transactions. Expected 7 got {actual} from provider."
+                            )
+                        } else {
+                            format!(
+                                "CREATE address changed unexpectedly while sending transactions. Expected {} got {} from provider nonce.",
+                                sender.create(7),
+                                sender.create(actual)
+                            )
+                        };
+                        assert_eq!(result.unwrap_err().to_string(), expected);
+                    }
                 }
             }
         }
@@ -2514,7 +2550,10 @@ mod tests {
         let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
             .connect_mocked_client(Asserter::new());
         SendTransactionKind::Unlocked(request.clone())
-            .validate_expiring_create_nonce(&provider, &TransactionMaybeSigned::new(request))
+            .validate_expiring_create_nonce(
+                &provider,
+                &TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request)),
+            )
             .await
             .unwrap();
     }

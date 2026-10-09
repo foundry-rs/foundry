@@ -271,6 +271,7 @@ where
         sequence: usize,
         index: usize,
         payload: Bytes,
+        sender_scoped_replay: bool,
     ) -> Result<B256>
     where
         N::TxEnvelope: SignerRecoverable,
@@ -294,10 +295,10 @@ where
             operation_ordinal(self.plan.data.sequences(), sequence, index),
         )?;
         let id = operation.id;
-        // Expiring replay identities exclude sponsor signatures, so different envelopes can
-        // still be replays. Compare identities across all sequences of the same chain before
+        // From T1B, expiring replay identities exclude sponsor signatures, so different envelopes
+        // can still be replays. Compare identities across all sequences of the same chain before
         // recording an attempt the node would reject. Keep envelope hashes for receipt tracking.
-        let replay_hash = expiring_replay_hash(&signed.payload)?;
+        let replay_hash = expiring_replay_hash(&signed.payload, sender_scoped_replay)?;
         for attempt in self
             .plan
             .deployments
@@ -311,7 +312,9 @@ where
             if !attempt.members.contains(&id)
                 && let AttemptKind::Signed { payload, .. } = &attempt.kind
                 && match replay_hash {
-                    Some(hash) => expiring_replay_hash(&payload.payload)? == Some(hash),
+                    Some(hash) => {
+                        expiring_replay_hash(&payload.payload, sender_scoped_replay)? == Some(hash)
+                    }
                     None => payload.hash == signed.hash,
                 }
             {
@@ -1105,12 +1108,16 @@ where
     Ok(())
 }
 
-/// Tempo replay protection excludes sponsor signatures from the transaction identity.
-fn expiring_replay_hash(payload: &[u8]) -> Result<Option<B256>> {
+/// Tempo replay protection excludes sponsor signatures from T1B onward.
+fn expiring_replay_hash(payload: &[u8], sender_scoped_replay: bool) -> Result<Option<B256>> {
     if let Ok(TempoTxEnvelope::AA(tx)) = TempoTxEnvelope::decode_2718_exact(payload)
         && tx.tx().is_expiring_nonce_tx()
     {
-        return Ok(Some(tx.expiring_nonce_hash(tx.recover_signer()?)));
+        return Ok(Some(if sender_scoped_replay {
+            tx.expiring_nonce_hash(tx.recover_signer()?)
+        } else {
+            *tx.hash()
+        }));
     }
     Ok(None)
 }
@@ -1245,9 +1252,9 @@ mod tests {
         let payload = sign_tempo_payload(expiring_request(signer.address(), 4217, 0), &signer);
 
         let mut store = RecoveryStore::create(data, false).unwrap();
-        let hash = store.persist_signed_payload(0, 0, payload.clone()).unwrap();
+        let hash = store.persist_signed_payload(0, 0, payload.clone(), true).unwrap();
         assert_eq!(
-            store.persist_signed_payload(2, 0, payload).unwrap_err().to_string(),
+            store.persist_signed_payload(2, 0, payload, true).unwrap_err().to_string(),
             format!(
                 "transaction 0 is identical to an earlier transaction of this script ({hash}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)"
             )
@@ -1395,8 +1402,8 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into()).is_err());
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into(), true).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into(), true).is_err());
             hash
         };
 
@@ -1411,8 +1418,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into()).is_err());
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into(), true).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into(), true).is_err());
     }
 
     #[test]
@@ -1729,7 +1736,7 @@ mod tests {
         {
             let mut store = RecoveryStore::create(data, true).unwrap();
             store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into()).is_err());
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into(), true).is_err());
         }
 
         let store = load(&paths, true).unwrap();
@@ -1897,16 +1904,16 @@ mod tests {
             signed_payload_hash::<TempoNetwork>(&duplicate).unwrap()
         );
         assert_eq!(
-            expiring_replay_hash(&first).unwrap(),
-            expiring_replay_hash(&duplicate).unwrap()
+            expiring_replay_hash(&first, true).unwrap(),
+            expiring_replay_hash(&duplicate, true).unwrap()
         );
         let mut store = RecoveryStore::create(data, false).unwrap();
-        let first_hash = store.persist_signed_payload(0, 0, first).unwrap();
+        let first_hash = store.persist_signed_payload(0, 0, first, true).unwrap();
         assert_eq!(store.signed_payload(0, 0).unwrap().hash, first_hash);
         let snapshot = std::fs::read(&store.path).unwrap();
         let duplicate_hash = signed_payload_hash::<TempoNetwork>(&duplicate).unwrap();
         assert_eq!(
-            store.persist_signed_payload(1, 0, duplicate.clone()).unwrap_err().to_string(),
+            store.persist_signed_payload(1, 0, duplicate.clone(), true).unwrap_err().to_string(),
             format!(
                 "transaction 0 is identical to an earlier transaction of this script ({duplicate_hash}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)"
             )
@@ -1923,12 +1930,15 @@ mod tests {
                 payload: SignedPayload { payload: duplicate.clone(), hash: duplicate_hash },
             },
         });
-        assert!(store.persist_signed_payload(1, 0, duplicate).is_err());
+        assert!(store.persist_signed_payload(1, 0, duplicate.clone(), true).is_err());
+        store.plan.deployments[1].attempts.clear();
+        // T1/T1A use envelope hashes, so the differently sponsored payload is executable.
+        assert_eq!(store.persist_signed_payload(1, 0, duplicate, false).unwrap(), duplicate_hash);
         store.plan.deployments[1].attempts.clear();
         // T12 discriminators distinguish the second operation despite the sponsor change.
         let distinct = payload(1, &sponsor);
         let distinct_hash = signed_payload_hash::<TempoNetwork>(&distinct).unwrap();
-        assert_eq!(store.persist_signed_payload(1, 0, distinct).unwrap(), distinct_hash);
+        assert_eq!(store.persist_signed_payload(1, 0, distinct, true).unwrap(), distinct_hash);
         assert_eq!(store.signed_payload(1, 0).unwrap().hash, distinct_hash);
     }
 
