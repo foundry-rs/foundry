@@ -547,7 +547,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
             FoundryTxEnvelope::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            // Anvil preserves the CIP-64 envelope but executes with native EIP-1559 fees.
+            // The generic EVM environment uses native EIP-1559 fees for CIP-64.
             FoundryTxEnvelope::Celo(signed_tx) => {
                 Self::from_recovered_tx(&signed_tx.tx().inner, caller)
             }

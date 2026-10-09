@@ -1,0 +1,134 @@
+[package]
+name = "reth-anvil"
+description = "Local ethereum node built on the reth SDK"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# foundry internal
+foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-evm-core.workspace = true
+foundry-evm-hardforks.workspace = true
+foundry-evm-networks.workspace = true
+foundry-fork-db.workspace = true
+foundry-primitives.workspace = true
+
+# reth
+reth-basic-payload-builder.workspace = true
+reth-chain-state.workspace = true
+reth-db-api.workspace = true
+reth-engine-tree.workspace = true
+reth-engine-util.workspace = true
+reth-ethereum = { workspace = true, features = ["exex", "node", "node-api"] }
+reth-ethereum-payload-builder.workspace = true
+reth-execution-cache.workspace = true
+reth-execution-types.workspace = true
+reth-node-events.workspace = true
+reth-payload-builder.workspace = true
+reth-prune-types.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-server-types.workspace = true
+reth-stages-types.workspace = true
+reth-storage-overlay.workspace = true
+reth-tokio-util.workspace = true
+
+# alloy
+alloy-consensus = { workspace = true, features = ["crypto-backend"] }
+alloy-dyn-abi.workspace = true
+alloy-eips.workspace = true
+alloy-evm.workspace = true
+alloy-genesis.workspace = true
+alloy-json-rpc.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-rlp.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types = { workspace = true, features = ["anvil", "debug", "txpool"] }
+alloy-rpc-types-beacon.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-serde.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+alloy-sol-types.workspace = true
+
+# revm
+revm.workspace = true
+ethereum_ssz.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+
+# base
+base-common-consensus = { workspace = true, optional = true, features = ["evm", "k256", "serde", "std"] }
+base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
+
+# optimism
+op-alloy-consensus = { workspace = true, features = ["serde"], optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
+
+# misc
+chrono.workspace = true
+eyre.workspace = true
+flate2.workspace = true
+futures.workspace = true
+interprocess = { version = "2.4.4", features = ["tokio"] }
+jsonrpsee = { version = "0.26", features = ["server", "macros"] }
+k256.workspace = true
+parking_lot.workspace = true
+rand_08.workspace = true
+rocksdb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio-stream.workspace = true
+tokio-util = { workspace = true, features = ["codec", "rt"] }
+tower.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
+tracing.workspace = true
+yansi.workspace = true
+
+[features]
+default = ["asm-keccak", "js-tracer"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
+js-tracer = ["reth-ethereum/js-tracer"]
+base = [
+    "foundry-evm-networks/base",
+    "foundry-evm-hardforks/base",
+    "dep:base-common-consensus",
+    "dep:base-common-precompiles",
+    "dep:op-alloy-consensus",
+    "foundry-primitives/base",
+]
+optimism = [
+    "foundry-evm-networks/optimism",
+    "foundry-evm-hardforks/optimism",
+    "dep:op-alloy-consensus",
+    "dep:op-alloy-rpc-types",
+    "foundry-primitives/optimism",
+]
+
+[dev-dependencies]
+alloy-chains.workspace = true
+alloy-contract = { workspace = true, features = ["pubsub"] }
+alloy-provider = { workspace = true, features = ["txpool-api", "trace-api"] }
+axum.workspace = true
+alloy-pubsub.workspace = true
+alloy-sol-types = { workspace = true, features = ["json"] }
+alloy-transport.workspace = true
+alloy-trie.workspace = true
+foundry-test-utils.workspace = true
+futures.workspace = true
+jsonrpsee = { version = "0.26", features = ["http-client", "ws-client"] }
+rand.workspace = true
+reqwest.workspace = true

@@ -634,6 +634,10 @@ impl NetworkConfigs {
     ///
     /// For OP Stack networks, returns Canyon parameters if the Canyon hardfork is active at the
     /// given timestamp, otherwise returns pre-Canyon parameters.
+    #[cfg_attr(
+        not(any(feature = "base", feature = "optimism")),
+        expect(unused_variables, clippy::missing_const_for_fn)
+    )]
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
         #[cfg(feature = "base")]
         if self.is_base() {

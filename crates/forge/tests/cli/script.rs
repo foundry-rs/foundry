@@ -8,7 +8,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, TempoConfigExt, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::{PathStyle, artifacts::EvmVersion};

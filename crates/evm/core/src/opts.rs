@@ -1428,6 +1428,7 @@ mod tests {
     use alloy_primitives::bytes;
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
+    use anvil::TempoConfigExt;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
         spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after,

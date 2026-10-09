@@ -3,6 +3,7 @@ use alloy_chains::Chain;
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{Address, B256, Bytes, hex};
 use alloy_provider::Provider;
+use anvil::TempoConfigExt;
 use axum::{Json, Router, extract::Query};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;

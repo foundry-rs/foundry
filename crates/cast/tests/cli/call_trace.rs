@@ -2,6 +2,7 @@
 
 use super::*;
 use alloy_primitives::bytes;
+use anvil::TempoConfigExt;
 
 // https://github.com/foundry-rs/foundry/issues/9476
 #[forgetest]

@@ -77,6 +77,7 @@ Virtual addresses:
 
 mod vaddr_e2e {
     use super::*;
+    use anvil::TempoConfigExt;
     use foundry_cli::utils::parse_json;
     use std::{
         io::{BufRead, BufReader},

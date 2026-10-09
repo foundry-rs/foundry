@@ -59,7 +59,7 @@ pub enum FoundryTransactionRequest {
     Celo(Cip64TransactionRequest),
 }
 
-/// Celo CIP-64 request fields. Anvil currently charges native fees.
+/// Celo CIP-64 request fields.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cip64TransactionRequest {
@@ -702,14 +702,10 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         if let Self::Celo(_) = self {
             return self.check_type(FoundryTxType::Celo).is_ok();
         }
-        if self.as_ref().can_build() || self.complete_tempo().is_ok() {
-            return true;
-        }
+        let can_build = self.as_ref().can_build() || self.complete_tempo().is_ok();
         #[cfg(any(feature = "base", feature = "optimism"))]
-        if self.complete_deposit().is_ok() {
-            return true;
-        }
-        false
+        let can_build = can_build || self.complete_deposit().is_ok();
+        can_build
     }
 
     fn output_tx_type(&self) -> FoundryTxType {

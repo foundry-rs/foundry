@@ -6,7 +6,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolEvent, SolValue};
-use anvil::NodeConfig;
+use anvil::{NodeConfig, TempoConfigExt};
 use foundry_cli::utils::parse_json;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;

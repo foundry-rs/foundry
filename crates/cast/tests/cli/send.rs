@@ -1,6 +1,7 @@
 //! CLI tests for send commands.
 
 use super::*;
+use anvil::TempoConfigExt;
 use std::{process::Stdio, time::Duration};
 
 #[casttest]

@@ -1,6 +1,7 @@
 //! CLI tests for mktx commands.
 
 use super::*;
+use anvil::TempoConfigExt;
 
 #[casttest]
 fn mktx(cmd: _) {

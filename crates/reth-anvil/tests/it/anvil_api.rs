@@ -1,0 +1,2082 @@
+//! tests for custom anvil endpoints
+
+use crate::{
+    abi::{self, BUSD, Greeter, Multicall},
+    fork::fork_config,
+    utils::http_provider_with_signer,
+};
+use alloy_chains::NamedChain;
+use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_eips::eip4788::BEACON_ROOTS_ADDRESS;
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
+use alloy_provider::{Provider, ext::TxPoolApi};
+use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionRequest,
+    anvil::{
+        ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    },
+    trace::parity::TraceType,
+};
+use alloy_serde::WithOtherFields;
+use foundry_common::{
+    provider::redact_url,
+    version::{COMMIT_SHA, SEMVER_VERSION},
+};
+use foundry_evm_networks::NetworkConfigs;
+use reth_anvil::{
+    CLIENT_VERSION, EthApi, EthereumHardfork, INITIAL_BASE_FEE, NodeConfig, ReorgOptions,
+    TransactionData, spawn,
+};
+
+use std::{
+    str::FromStr,
+    time::{Duration, SystemTime},
+};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_resets_allow_celo_as_a_non_monad_source() {
+    let (_ethereum_api, ethereum_origin) = spawn(NodeConfig::test()).await;
+    let (_celo_api, celo_origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Celo as u64))
+            .with_networks(NetworkConfigs::with_celo()),
+    )
+    .await;
+
+    let (ethereum_fork, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(ethereum_origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    ethereum_fork
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(celo_origin.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap();
+    let node_info = ethereum_fork.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("ethereum"));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&celo_origin.http_endpoint())));
+
+    let (celo_fork, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(celo_origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    celo_fork
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(ethereum_origin.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap();
+    let node_info = celo_fork.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("celo"));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&ethereum_origin.http_endpoint())));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nested_custom_chain_celo_fork_preserves_execution_profile() {
+    let custom_chain_id = 98_765_432u64;
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(custom_chain_id))
+            .with_networks(NetworkConfigs::with_celo()),
+    )
+    .await;
+    assert_eq!(origin_api.anvil_node_info().await.unwrap().network.as_deref(), Some("celo"));
+
+    let (nested_api, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    assert_eq!(nested_api.anvil_node_info().await.unwrap().network.as_deref(), Some("celo"));
+    assert_eq!(
+        nested_api.config().await.unwrap().current.precompiles.get("celo transfer"),
+        Some(&Address::with_last_byte(0xfd))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_fee_rules_follow_exact_endpoint_hardfork() {
+    let (_origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    let info = fork_api.anvil_node_info().await.unwrap();
+    assert_eq!(info.hard_fork, "Berlin");
+    assert_eq!(info.environment.base_fee, 0);
+    assert_eq!(fork_api.base_fee().await.unwrap(), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_set_gas_price() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+    let provider = handle.http_provider();
+
+    let gas_price = U256::from(1337);
+    api.anvil_set_min_gas_price(gas_price).await.unwrap();
+    assert_eq!(gas_price.to::<u128>(), provider.get_gas_price().await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_set_block_gas_limit() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+
+    let block_gas_limit = U256::from(1337);
+    assert!(api.evm_set_block_gas_limit(block_gas_limit).await.unwrap());
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await.unwrap();
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block_gas_limit.to::<u64>(), latest_block.header.gas_limit);
+}
+
+// Ref <https://github.com/foundry-rs/foundry/issues/2341>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_set_storage() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let addr = address!("0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56");
+    let slot = U256::from_str("0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49")
+        .unwrap();
+    let val = b256!("0x0000000000000000000000000000000000000000000000000000000000003039");
+    let mut params = jsonrpsee::core::params::ArrayParams::new();
+    params.insert(addr).unwrap();
+    params.insert(slot).unwrap();
+    params.insert(val).unwrap();
+    assert!(api.request::<bool>("hardhat_setStorageAt", params).await.unwrap());
+
+    let storage_value = api.storage_at(addr, slot, None).await.unwrap();
+    assert_eq!(val, storage_value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_account() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.http_provider();
+
+    let impersonate = Address::random();
+    let to = Address::random();
+    let val = U256::from(1337);
+    let funding = U256::from(1e18 as u64);
+    // fund the impersonated account
+    api.anvil_set_balance(impersonate, funding).await.unwrap();
+
+    let balance = api.balance(impersonate, None).await.unwrap();
+    assert_eq!(balance, funding);
+
+    let tx = TransactionRequest::default().with_from(impersonate).with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let res = provider.send_transaction(tx.clone()).await;
+    res.unwrap_err();
+
+    api.anvil_impersonate_account(impersonate).await.unwrap();
+    assert!(api.accounts().await.unwrap().contains(&impersonate));
+
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(res.from, impersonate);
+
+    let nonce = provider.get_transaction_count(impersonate).await.unwrap();
+    assert_eq!(nonce, 1);
+
+    let balance = provider.get_balance(to).await.unwrap();
+    assert_eq!(balance, val);
+
+    api.anvil_stop_impersonating_account(impersonate).await.unwrap();
+    let res = provider.send_transaction(tx).await;
+    res.unwrap_err();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_auto_impersonate_account() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.http_provider();
+
+    let impersonate = Address::random();
+    let to = Address::random();
+    let val = U256::from(1337);
+    let funding = U256::from(1e18 as u64);
+    // fund the impersonated account
+    api.anvil_set_balance(impersonate, funding).await.unwrap();
+
+    let balance = api.balance(impersonate, None).await.unwrap();
+    assert_eq!(balance, funding);
+
+    let tx = TransactionRequest::default().with_from(impersonate).with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let res = provider.send_transaction(tx.clone()).await;
+    res.unwrap_err();
+
+    api.anvil_auto_impersonate_account(true).await.unwrap();
+
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(res.from, impersonate);
+
+    let nonce = provider.get_transaction_count(impersonate).await.unwrap();
+    assert_eq!(nonce, 1);
+
+    let balance = provider.get_balance(to).await.unwrap();
+    assert_eq!(balance, val);
+
+    api.anvil_auto_impersonate_account(false).await.unwrap();
+    let res = provider.send_transaction(tx).await;
+    res.unwrap_err();
+
+    // explicitly impersonated accounts get returned by `eth_accounts`
+    api.anvil_impersonate_account(impersonate).await.unwrap();
+    assert!(api.accounts().await.unwrap().contains(&impersonate));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_contract() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.http_provider();
+
+    let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
+    let impersonate = greeter_contract.address().to_owned();
+
+    let to = Address::random();
+    let val = U256::from(1337);
+
+    // // fund the impersonated account
+    api.anvil_set_balance(impersonate, U256::from(1e18 as u64)).await.unwrap();
+
+    let tx = TransactionRequest::default().with_from(impersonate).to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let res = provider.send_transaction(tx.clone()).await;
+    res.unwrap_err();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    api.anvil_impersonate_account(impersonate).await.unwrap();
+
+    let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(res.from, impersonate);
+
+    let balance = provider.get_balance(to).await.unwrap();
+    assert_eq!(balance, val);
+
+    api.anvil_stop_impersonating_account(impersonate).await.unwrap();
+    let res = provider.send_transaction(tx).await;
+    res.unwrap_err();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_gnosis_safe() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
+    let safe = address!("0xA063Cb7CFd8E57c30c788A0572CBbf2129ae56B6");
+
+    let code = provider.get_code_at(safe).await.unwrap();
+    assert!(!code.is_empty());
+
+    api.anvil_impersonate_account(safe).await.unwrap();
+
+    let code = provider.get_code_at(safe).await.unwrap();
+    assert!(!code.is_empty());
+
+    let balance = U256::from(1e18 as u64);
+    // fund the impersonated account
+    api.anvil_set_balance(safe, balance).await.unwrap();
+
+    let on_chain_balance = provider.get_balance(safe).await.unwrap();
+    assert_eq!(on_chain_balance, balance);
+
+    api.anvil_stop_impersonating_account(safe).await.unwrap();
+
+    let code = provider.get_code_at(safe).await.unwrap();
+    // code is added back after stop impersonating
+    assert!(!code.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_multiple_accounts() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let impersonate0 = Address::random();
+    let impersonate1 = Address::random();
+    let to = Address::random();
+
+    let val = U256::from(1337);
+    let funding = U256::from(1e18 as u64);
+    // fund the impersonated accounts
+    api.anvil_set_balance(impersonate0, funding).await.unwrap();
+    api.anvil_set_balance(impersonate1, funding).await.unwrap();
+
+    let tx = TransactionRequest::default().with_from(impersonate0).to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    api.anvil_impersonate_account(impersonate0).await.unwrap();
+    api.anvil_impersonate_account(impersonate1).await.unwrap();
+
+    let res0 = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(res0.from, impersonate0);
+
+    let nonce = provider.get_transaction_count(impersonate0).await.unwrap();
+    assert_eq!(nonce, 1);
+
+    let receipt = provider.get_transaction_receipt(res0.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(res0.inner, receipt.inner);
+
+    let res1 = provider
+        .send_transaction(tx.with_from(impersonate1))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert_eq!(res1.from, impersonate1);
+
+    let nonce = provider.get_transaction_count(impersonate1).await.unwrap();
+    assert_eq!(nonce, 1);
+
+    let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(res1.inner, receipt.inner);
+
+    assert_ne!(res0.inner, res1.inner);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_manually() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let start_num = provider.get_block_number().await.unwrap();
+
+    for (idx, _) in std::iter::repeat_n((), 10).enumerate() {
+        api.evm_mine(None).await.unwrap();
+        let num = provider.get_block_number().await.unwrap();
+        assert_eq!(num, start_num + idx as u64 + 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_last_block_wall_time_updates_after_mining() {
+    let before_spawn =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let genesis_wall_time: u64 =
+        provider.raw_request("anvil_getLastBlockWallTime".into(), ()).await.unwrap();
+    let after_spawn =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    assert!((before_spawn..=after_spawn).contains(&genesis_wall_time));
+
+    let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    api.evm_set_time(latest.header.timestamp + 60).await.unwrap();
+    let unchanged_wall_time: u64 =
+        provider.raw_request("anvil_getLastBlockWallTime".into(), ()).await.unwrap();
+    assert_eq!(unchanged_wall_time, genesis_wall_time);
+
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    let before_mining =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    api.mine_one().await.unwrap();
+
+    let block_wall_time: u64 =
+        provider.raw_request("anvil_getLastBlockWallTime".into(), ()).await.unwrap();
+    let after_mining =
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+    assert!((before_mining..=after_mining).contains(&block_wall_time));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let next_timestamp = now + Duration::from_secs(60);
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(next_timestamp.as_secs()).await.unwrap();
+
+    api.evm_mine(None).await.unwrap();
+
+    let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+    assert_eq!(block.header.number, 1);
+    assert_eq!(block.header.timestamp, next_timestamp.as_secs());
+
+    api.evm_mine(None).await.unwrap();
+
+    let next = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+    assert_eq!(next.header.number, 2);
+
+    assert!(next.header.timestamp >= block.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now + Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).await.unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+    assert!(block.header.timestamp >= timestamp.as_secs());
+
+    api.evm_mine(None).await.unwrap();
+    let next = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+    assert!(next.header.timestamp >= block.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time_in_past() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now - Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).await.unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+    assert!(block.header.timestamp >= timestamp.as_secs());
+    assert!(block.header.timestamp < now.as_secs());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_timestamp_interval() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.evm_mine(None).await.unwrap();
+    let interval = 10;
+
+    for _ in 0..5 {
+        let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+        // mock timestamp
+        api.evm_set_block_timestamp_interval(interval).await.unwrap();
+        api.evm_mine(None).await.unwrap();
+
+        let new_block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+        assert_eq!(new_block.header.timestamp, block.header.timestamp + interval);
+    }
+
+    let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+    let next_timestamp = block.header.timestamp + 50;
+    api.evm_set_next_block_timestamp(next_timestamp).await.unwrap();
+
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, next_timestamp);
+
+    api.evm_mine(None).await.unwrap();
+
+    let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+    // interval also works after setting the next timestamp manually
+    assert_eq!(block.header.timestamp, next_timestamp + interval);
+
+    assert!(api.evm_remove_block_timestamp_interval().await.unwrap());
+
+    api.evm_mine(None).await.unwrap();
+    let new_block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+
+    // offset is applied correctly after resetting the interval
+    assert!(new_block.header.timestamp > block.header.timestamp);
+
+    api.evm_mine(None).await.unwrap();
+    let another_block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+    // check interval is disabled
+    assert!(another_block.header.timestamp - new_block.header.timestamp < interval);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/2341>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_set_storage_bsc_fork() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+    let provider = handle.http_provider();
+
+    let busd_addr = address!("0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56");
+    let idx = U256::from_str("0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49")
+        .unwrap();
+    let value = fixed_bytes!("0000000000000000000000000000000000000000000000000000000000003039");
+
+    api.anvil_set_storage_at(busd_addr, idx, value).await.unwrap();
+    let storage = api.storage_at(busd_addr, idx, None).await.unwrap();
+    assert_eq!(storage, value);
+
+    let busd_contract = BUSD::new(busd_addr, &provider);
+
+    let balance = busd_contract.balanceOf(Address::ZERO).call().await.unwrap();
+    assert_eq!(balance, U256::from(12345u64));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+    let hard_fork = NodeConfig::test().get_hardfork().unwrap().name().to_string();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: 0_u64,
+        current_block_timestamp: block.header.timestamp,
+        current_block_hash: block.header.hash,
+        hard_fork,
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: U256::from_str("0x3b9aca00").unwrap().to(),
+            chain_id: 0x7a69,
+            gas_limit: U256::from_str("0x1c9c380").unwrap().to(),
+            gas_price: U256::from_str("0x77359400").unwrap().to(),
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+        network: Some("ethereum".to_string()),
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_metadata = Metadata {
+        latest_block_hash: block.header.hash,
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION.to_string(),
+        client_semver: Some(SEMVER_VERSION.to_string()),
+        client_commit_sha: Some(COMMIT_SHA.to_string()),
+        instance_id: api.instance_id(),
+        forked_network: None,
+        snapshots: Default::default(),
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata_on_fork() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+    let provider = handle.http_provider();
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_metadata = Metadata {
+        latest_block_hash: block.header.hash,
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION.to_string(),
+        client_semver: Some(SEMVER_VERSION.to_string()),
+        client_commit_sha: Some(COMMIT_SHA.to_string()),
+        instance_id: api.instance_id(),
+        forked_network: Some(ForkedNetwork {
+            chain_id,
+            fork_block_number: block_number,
+            fork_block_hash: block.header.hash,
+        }),
+        snapshots: Default::default(),
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_changes_on_reset() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+    let instance_id = metadata.instance_id;
+
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: None })).await.unwrap();
+
+    let new_metadata = api.anvil_metadata().await.unwrap();
+    let new_instance_id = new_metadata.instance_id;
+
+    assert_ne!(instance_id, new_instance_id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_transaction_receipt() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // set the base fee
+    let new_base_fee = U256::from(1000);
+    api.anvil_set_next_block_base_fee_per_gas(new_base_fee).await.unwrap();
+
+    // send a EIP-1559 transaction
+    let to = Address::random();
+    let val = U256::from(1337);
+    let tx = TransactionRequest::default().with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let receipt = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+
+    // the block should have the new base fee
+    let block = provider.get_block(BlockId::default()).await.unwrap().unwrap();
+    assert_eq!(block.header.base_fee_per_gas.unwrap(), new_base_fee.to::<u64>());
+
+    // mine blocks
+    api.evm_mine(None).await.unwrap();
+
+    // the transaction receipt should have the original effective gas price
+    let new_receipt = provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap();
+    assert_eq!(receipt.effective_gas_price, new_receipt.unwrap().effective_gas_price);
+}
+
+// test can set chain id
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_chain_id() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id, 31337);
+
+    let chain_id = 1234;
+    api.anvil_set_chain_id(chain_id).await.unwrap();
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    assert_eq!(chain_id, 1234);
+
+    let from = handle.dev_accounts().next().unwrap();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+}
+
+// <https://github.com/foundry-rs/foundry/issues/6096>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_next_block_timestamp() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await.unwrap();
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    api.evm_revert(state_snapshot).await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block, latest_block);
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert!(block.header.timestamp >= latest_block.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_invalidates_newer_snapshots() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let first_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    let second_snapshot = api.evm_snapshot().await.unwrap();
+
+    assert!(api.evm_revert(first_snapshot).await.unwrap());
+    assert!(!api.evm_revert(second_snapshot).await.unwrap());
+
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(latest_block, initial_block);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_restores_time_offset() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    api.evm_increase_time(U256::from(100)).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.evm_increase_time(U256::from(200)).await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert!(block.header.timestamp >= initial.header.timestamp + 100);
+    assert!(block.header.timestamp < initial.header.timestamp + 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_restores_next_block_timestamp() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let next_timestamp = initial.header.timestamp + 1_000;
+
+    api.evm_set_next_block_timestamp(next_timestamp).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, next_timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_restores_next_block_base_fee() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let base_fee = api.base_fee().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+
+    api.mine_one().await.unwrap();
+    let first_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(api.base_fee().await.unwrap(), base_fee);
+    api.evm_revert(state_snapshot).await.unwrap();
+    assert_eq!(api.base_fee().await.unwrap(), base_fee);
+
+    api.mine_one().await.unwrap();
+    let remined_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(remined_block.header.base_fee_per_gas, first_block.header.base_fee_per_gas);
+}
+
+// Tests that `anvil_setNextBlockPrevRandao` overrides the `prevrandao` (block header `mixHash`) of
+// the next mined block, and that the override is one-shot: subsequent blocks fall back to anvil's
+// default per-block `prevrandao` derivation.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, prevrandao);
+
+    // the override only applies to a single block: the next block uses the default derivation
+    api.mine_one().await.unwrap();
+    let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(next.header.mix_hash, prevrandao);
+}
+
+// Tests that the `prevrandao` set via `anvil_setNextBlockPrevRandao` is observed by the EVM: the
+// `PREVRANDAO` opcode (exposed through `Multicall::getCurrentBlockDifficulty`) returns the manually
+// set value for the overridden block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_evm() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // deploying the contract auto-mines a block
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+
+    let prevrandao = b256!("0x00000000000000000000000000000000000000000000000000000000deadbeef");
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
+    let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
+    assert_eq!(difficulty, Into::<U256>::into(prevrandao));
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, prevrandao);
+}
+
+// Tests that a `prevrandao` override set via `anvil_setNextBlockPrevRandao` but not yet mined is
+// dropped by `anvil_reset`, so the pending value cannot leak into a block mined after the reset.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_cleared_on_reset() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    // resetting must drop the pending override before it is consumed by a block
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(block.header.mix_hash, prevrandao);
+}
+
+// Tests that a `prevrandao` override set via `anvil_setNextBlockPrevRandao` but not yet mined is
+// dropped by `evm_revert`, so the pending value cannot leak into a block mined after the revert.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_cleared_on_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    // reverting must drop the pending override before it is consumed by a block
+    api.evm_revert(state_snapshot).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(block.header.mix_hash, prevrandao);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_restored_on_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, prevrandao);
+}
+
+// Tests that `anvil_setNextBlockParentBeaconBlockRoot` sets the parent beacon block root of the
+// next mined block only, and that the EIP-4788 contract stores it for that block's timestamp.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, Some(root));
+    let stored = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .to(BEACON_ROOTS_ADDRESS)
+                .input(U256::from(block.header.timestamp).to_be_bytes::<32>().to_vec().into()),
+        ))
+        .block(BlockId::latest())
+        .await
+        .unwrap();
+    assert_eq!(stored, Bytes::from(root.0));
+
+    api.mine_one().await.unwrap();
+    let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(next.header.parent_beacon_block_root, Some(B256::ZERO));
+}
+
+// Tests that the pending block sees a parent beacon block root override without consuming it, so
+// pending calls observe the root the next mined block will use.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_pending() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    // Pin the next timestamp: the pending block and the pending call each read it, and the
+    // EIP-4788 contract stores the root under it.
+    let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    api.evm_set_next_block_timestamp(latest.header.timestamp + 100).await.unwrap();
+
+    let pending = api.block_by_number(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending.header.parent_beacon_block_root, Some(root));
+    let stored = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .to(BEACON_ROOTS_ADDRESS)
+                .input(U256::from(pending.header.timestamp).to_be_bytes::<32>().to_vec().into()),
+        ))
+        .block(BlockId::pending())
+        .await
+        .unwrap();
+    assert_eq!(stored, Bytes::from(root.0));
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, Some(root));
+}
+
+// Tests that a parent beacon block root override is dropped by `evm_revert` when set after the
+// snapshot and by `anvil_reset`, and restored by `evm_revert` when set before the snapshot.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_reset_and_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    let mined_root = async || {
+        let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        block.header.parent_beacon_block_root
+    };
+
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(B256::ZERO));
+
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(root));
+
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(B256::ZERO));
+}
+
+// Tests that blocks before Cancun have no parent beacon block root to override.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_pre_cancun() {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()));
+    let (api, _handle) = spawn(config).await;
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, None);
+}
+
+// test that after a snapshot revert, the env block is reset
+// to its correct value (block number, etc.)
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_call_latest_block_timestamp() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await.unwrap();
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    api.evm_revert(state_snapshot).await.unwrap();
+
+    let multicall_contract =
+        Multicall::new(address!("0xeefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
+
+    let timestamp = multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
+    assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
+
+    let difficulty = multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
+    assert_eq!(difficulty, latest_block.header.difficulty);
+
+    let gaslimit = multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
+    assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
+
+    let coinbase = multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
+    assert_eq!(coinbase, latest_block.header.beneficiary);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_remove_pool_transactions() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(5)))).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumWallet = wallet.clone().into();
+    let from = wallet.address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let sender = Address::random();
+    let to = Address::random();
+    let val = U256::from(1337);
+    let tx = TransactionRequest::default().with_from(sender).with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    provider.send_transaction(tx.with_from(from)).await.unwrap().register().await.unwrap();
+
+    let initial_txs = provider.txpool_inspect().await.unwrap();
+    assert_eq!(initial_txs.pending.len(), 1);
+
+    api.anvil_remove_pool_transactions(wallet.address()).await.unwrap();
+
+    let final_txs = provider.txpool_inspect().await.unwrap();
+    assert_eq!(final_txs.pending.len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn flaky_test_reorg() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+
+    // Populate with deterministic block boundaries: disable automine, batch 2 txs, mine.
+    api.anvil_set_auto_mine(false).await.unwrap();
+    for i in 0..10 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+
+        let tx = TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(i))
+            .from(accounts[2].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+
+        api.evm_mine(None).await.unwrap();
+    }
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    // Define transactions
+    let mut txs = vec![];
+    for i in 0..3 {
+        let from = accounts[i].address();
+        let to = accounts[i + 1].address();
+        for j in 0..5 {
+            let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
+            txs.push((TransactionData::JSON(tx), i as u64));
+        }
+    }
+
+    let prev_height = provider.get_block_number().await.unwrap();
+    let depth = 7u64;
+    api.anvil_reorg(ReorgOptions { depth, tx_block_pairs: txs }).await.unwrap();
+
+    let reorged_height = provider.get_block_number().await.unwrap();
+    assert_eq!(reorged_height, prev_height);
+
+    // The 3 reorged blocks (one per `tx_block_pairs` group) should each hold 5 txs.
+    let first_reorged = prev_height - depth + 1;
+    for num in first_reorged..first_reorged + 3 {
+        let block = provider.get_block_by_number(num.into()).full().await.unwrap();
+        let block = block.unwrap();
+        assert_eq!(block.transactions.len(), 5);
+    }
+
+    // Verify that historic blocks below the reorged range are still accessible
+    for num in (0..first_reorged).rev() {
+        let block = provider.get_block_by_number(num.into()).full().await.unwrap();
+        assert!(block.is_some(), "Historic block {num} should be accessible after reorg");
+    }
+
+    // Send a few more transaction to verify the chain can still progress
+    for i in 0..3 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    // Test reverting code
+    let greeter = abi::Greeter::deploy(provider.clone(), "Reorg".to_string()).await.unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 5, tx_block_pairs: vec![] }).await.unwrap();
+    let code = api.get_code(*greeter.address(), Some(BlockId::latest())).await.unwrap();
+    assert_eq!(code, Bytes::default());
+
+    // Test reverting contract storage
+    let storage =
+        abi::SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(5) })).await.unwrap();
+    let _ = storage
+        .setValue("ReorgMe".to_string())
+        .from(accounts[0].address())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
+    let value = storage.getValue().call().await.unwrap();
+    assert_eq!("initial value".to_string(), value);
+
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    // Test raw transaction data
+    let mut tx = TxEip1559 {
+        chain_id: api.chain_id().await.unwrap(),
+        to: TxKind::Call(accounts[1].address()),
+        value: U256::from(100),
+        max_priority_fee_per_gas: 1000000000000,
+        max_fee_per_gas: 10000000000000,
+        gas_limit: 21000,
+        ..Default::default()
+    };
+    let signature = accounts[5].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let mut encoded = vec![];
+    tx.eip2718_encode(&mut encoded);
+
+    let pre_bal = provider.get_balance(accounts[5].address()).await.unwrap();
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::Raw(encoded.into()), 0)],
+    })
+    .await
+    .unwrap();
+    let post_bal = provider.get_balance(accounts[5].address()).await.unwrap();
+    assert_ne!(pre_bal, post_bal);
+
+    // Test reorg depth exceeding current height
+    let res = api.anvil_reorg(ReorgOptions { depth: 100, tx_block_pairs: vec![] }).await;
+    assert!(res.is_err());
+
+    // Test reorg tx pairs exceeds chain length
+    let res = api
+        .anvil_reorg(ReorgOptions {
+            depth: 1,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 10)],
+        })
+        .await;
+    assert!(res.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Arbitrum as u64))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    api.mine_one().await.unwrap();
+
+    let recipient = accounts[1].address();
+    let value = U256::from(100);
+    let mut tx = TxEip1559 {
+        chain_id: api.chain_id().await.unwrap(),
+        to: TxKind::Call(recipient),
+        value,
+        max_priority_fee_per_gas: 3_000_000_000,
+        max_fee_per_gas: 2_000_000_000,
+        gas_limit: 21_000,
+        ..Default::default()
+    };
+    let signature = accounts[0].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let tx_hash = *tx.hash();
+    let mut encoded = vec![];
+    tx.eip2718_encode(&mut encoded);
+
+    let balance_before = provider.get_balance(recipient).await.unwrap();
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::Raw(encoded.into()), 0)],
+    })
+    .await
+    .unwrap();
+    let balance_after = provider.get_balance(recipient).await.unwrap();
+
+    assert_eq!(balance_after, balance_before + value);
+
+    let trace = api
+        .trace_replay_transaction(tx_hash, [TraceType::Trace].into_iter().collect())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!trace.trace.is_empty());
+}
+
+/// The excess blob gas of the latest block.
+async fn latest_excess_blob_gas(api: &EthApi) -> Option<u64> {
+    api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap().header.excess_blob_gas
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FinalizationFailure {
+    RevertingSystemCall,
+    MalformedDeposit,
+}
+
+async fn assert_failed_mining_is_atomic(failure: FinalizationFailure) {
+    // Both nodes share the genesis timestamp, and so the genesis hash the history contract
+    // stores in block one; nodes spawn too slowly here to share the wall clock second.
+    let genesis_timestamp = 1_700_000_000u64;
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_base_fee(Some(0))
+        .with_genesis_timestamp(Some(genesis_timestamp));
+    let clean_config = config.clone();
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let contract = match failure {
+        FinalizationFailure::RevertingSystemCall => {
+            address!("0x1000000000000000000000000000000000000000")
+        }
+        FinalizationFailure::MalformedDeposit => {
+            address!("0x00000000219ab540356cbb839cbe05303d7705fa")
+        }
+    };
+    api.anvil_set_auto_mine(false).await.unwrap();
+    api.anvil_set_code(contract, Bytes::from_static(&[0x60, 0x01, 0x5f, 0x55, 0x00]))
+        .await
+        .unwrap();
+
+    match failure {
+        FinalizationFailure::RevertingSystemCall => {
+            api.anvil_set_code(
+                address!("0x00000961ef480eb55e80d19ad83579a64c007002"),
+                Bytes::from_static(&[0x5f, 0x5f, 0xfd]),
+            )
+            .await
+            .unwrap();
+        }
+        FinalizationFailure::MalformedDeposit => {
+            let mut code = vec![0x60, 0x01, 0x5f, 0x55, 0x7f];
+            code.extend_from_slice(
+                keccak256(b"DepositEvent(bytes,bytes,bytes,bytes,bytes)").as_slice(),
+            );
+            code.extend_from_slice(&[0x5f, 0x5f, 0xa1, 0x00]);
+            api.anvil_set_code(contract, code.into()).await.unwrap();
+        }
+    }
+
+    let genesis = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let best_hash = genesis.header.hash;
+    let base_fee = api.base_fee().await.unwrap();
+    let blob_fee = latest_excess_blob_gas(&api).await;
+    let balance = provider.get_balance(sender).await.unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    let storage = provider.get_storage_at(contract, U256::ZERO).await.unwrap();
+    let request =
+        TransactionRequest::default().from(sender).to(contract).gas_price(0).gas_limit(100_000);
+    api.send_transaction(WithOtherFields::new(request.clone())).await.unwrap();
+
+    let error = api.mine_one().await.unwrap_err();
+    let message = error.to_string();
+    // Reth's payload service reports a failed build as a missing payload and keeps the EVM error
+    // to itself; anvil reports the EVM error.
+    assert!(message.contains("failed to build payload"), "{failure:?}: {message}");
+
+    let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(api.block_number().await.unwrap().to::<u64>(), 0);
+    assert_eq!(
+        api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap().header.hash,
+        best_hash
+    );
+    assert_eq!(latest.header.hash, genesis.header.hash);
+    assert_eq!(latest.header.state_root, genesis.header.state_root);
+    assert_eq!(api.base_fee().await.unwrap(), base_fee);
+    assert_eq!(latest_excess_blob_gas(&api).await, blob_fee);
+    assert_eq!(provider.get_balance(sender).await.unwrap(), balance);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
+    assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), storage);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 1);
+
+    // A successful retry must produce the same root as a node that never executed the failed
+    // candidate, proving recovery publication matches a clean execution.
+    let valid_code = Bytes::from_static(&[0x60, 0x01, 0x5f, 0x55, 0x00]);
+    api.anvil_set_code(contract, valid_code.clone()).await.unwrap();
+    if matches!(failure, FinalizationFailure::RevertingSystemCall) {
+        api.anvil_set_code(address!("0x00000961ef480eb55e80d19ad83579a64c007002"), Bytes::new())
+            .await
+            .unwrap();
+    }
+
+    let (clean_api, _clean_handle) = spawn(clean_config).await;
+    clean_api.anvil_set_auto_mine(false).await.unwrap();
+    clean_api.anvil_set_code(contract, valid_code).await.unwrap();
+    if matches!(failure, FinalizationFailure::RevertingSystemCall) {
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        clean_api
+            .anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd]))
+            .await
+            .unwrap();
+        clean_api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+    }
+    clean_api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+
+    api.evm_set_next_block_timestamp(genesis_timestamp + 12).await.unwrap();
+    clean_api.evm_set_next_block_timestamp(genesis_timestamp + 12).await.unwrap();
+    api.mine_one().await.unwrap();
+    clean_api.mine_one().await.unwrap();
+    let recovered = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let clean = clean_api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(
+        recovered.header.state_root, clean.header.state_root,
+        "{:#?} vs {:#?}",
+        recovered.header, clean.header
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reverting_prague_transition_rolls_back_mining() {
+    assert_failed_mining_is_atomic(FinalizationFailure::RevertingSystemCall).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn malformed_deposit_request_rolls_back_mining() {
+    assert_failed_mining_is_atomic(FinalizationFailure::MalformedDeposit).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mining_rpcs_preserve_controls_on_failure() {
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    for method in ["anvil_mine", "evm_mine", "evm_mine_detailed"] {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_base_fee(Some(0));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+        let genesis = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        let next_timestamp = genesis.header.timestamp + 100;
+        api.evm_set_next_block_timestamp(next_timestamp).await.unwrap();
+        api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+
+        let result: std::result::Result<serde_json::Value, _> = if method == "anvil_mine" {
+            provider.raw_request(method.into(), (U256::ONE,)).await
+        } else {
+            provider
+                .raw_request(
+                    method.into(),
+                    (MineOptions::Options { timestamp: None, blocks: Some(1) },),
+                )
+                .await
+        };
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("failed to build payload"), "{method}: {error}");
+        assert_eq!(api.block_number().await.unwrap().to::<u64>(), 0, "{method}");
+
+        api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+        api.mine_one().await.unwrap();
+        let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        assert_eq!(block.header.timestamp, next_timestamp, "{method}");
+        assert_eq!(block.header.mix_hash, prevrandao, "{method}");
+
+        api.evm_increase_time(U256::ONE).await.unwrap();
+        api.mine_one().await.unwrap();
+        let following = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        assert_ne!(following.header.mix_hash, prevrandao, "{method}");
+        // The wall clock moves on while the block builds, so at least one second passes.
+        assert!(following.header.timestamp > next_timestamp, "{method}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_anvil_mine_preserves_interval_adjustment() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_base_fee(Some(0));
+    let (api, _) = spawn(config).await;
+    let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+    api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+    let genesis = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    api.evm_set_block_timestamp_interval(17).await.unwrap();
+
+    let _error = api.anvil_mine(Some(U256::from(2)), Some(U256::from(60))).await.unwrap_err();
+    api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, genesis.header.timestamp + 17);
+    assert!(api.evm_remove_block_timestamp_interval().await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mining_reselects_from_live_pool_after_failure() {
+    for drop_failed_transaction in [false, true] {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_base_fee(Some(0));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+
+        let first = TransactionRequest::default()
+            .from(accounts[0].address())
+            .to(accounts[1].address())
+            .value(U256::ONE);
+        let first_hash = api.send_transaction(WithOtherFields::new(first)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(api.block_number().await.unwrap().to::<u64>(), 0);
+        assert!(provider.get_transaction_receipt(first_hash).await.unwrap().is_none());
+
+        if drop_failed_transaction {
+            assert_eq!(api.anvil_drop_transaction(first_hash).await.unwrap(), Some(first_hash));
+        }
+        api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+        let second = TransactionRequest::default()
+            .from(accounts[1].address())
+            .to(accounts[2].address())
+            .value(U256::ONE);
+        let second_hash = api.send_transaction(WithOtherFields::new(second)).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if provider.get_transaction_receipt(second_hash).await.unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let first_receipt = provider.get_transaction_receipt(first_hash).await.unwrap();
+        assert_eq!(first_receipt.is_some(), !drop_failed_transaction);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fixed_and_mixed_mining_failures_remain_bounded() {
+    for mixed in [false, true] {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_base_fee(Some(0))
+            .with_mixed_mining(mixed, Some(Duration::from_millis(100)));
+        let (api, _handle) = spawn(config).await;
+        let withdrawals = address!("0x00000961ef480eb55e80d19ad83579a64c007002");
+        api.anvil_set_code(withdrawals, Bytes::from_static(&[0x5f, 0x5f, 0xfd])).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(api.block_number().await.unwrap().to::<u64>(), 0, "mixed={mixed}");
+
+        api.anvil_set_code(withdrawals, Bytes::new()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while api.block_number().await.unwrap().to::<u64>() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("scheduler did not recover, mixed={mixed}"));
+        assert_eq!(api.block_number().await.unwrap().to::<u64>(), 1, "mixed={mixed}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_zero_depth_with_transactions_is_rejected() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await.unwrap();
+    let tip = api.block_number().await.unwrap();
+
+    // Nothing is mined by a reorg of depth 0, so a transaction can't be placed anywhere.
+    let err = api
+        .anvil_reorg(ReorgOptions {
+            depth: 0,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 0)],
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Reorg depth must be at least 1"), "{err}");
+
+    // Block numbers are still checked against the last reorged block.
+    let err = api
+        .anvil_reorg(ReorgOptions {
+            depth: 1,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 1)],
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("must not exceed (depth-1) 0"), "{err}");
+
+    assert_eq!(api.block_number().await.unwrap(), tip);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_blockhash_opcode_consistency() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(200) })).await.unwrap();
+
+    let tip_before_reorg = api.block_number().await.unwrap().to::<u64>();
+
+    let mut cached_hashes: Vec<(u64, alloy_primitives::B256, alloy_primitives::B256)> = Vec::new();
+    for i in 1..=10 {
+        let block_num = tip_before_reorg - i;
+        let rpc_hash =
+            provider.get_block_by_number(block_num.into()).await.unwrap().unwrap().header.hash;
+        let opcode_hash = multicall.getBlockHash(U256::from(block_num)).call().await.unwrap();
+        assert_eq!(rpc_hash, opcode_hash, "RPC and BLOCKHASH opcode should match before reorg");
+        cached_hashes.push((block_num, rpc_hash, opcode_hash));
+    }
+
+    let tx = TransactionRequest::default();
+    api.anvil_reorg(ReorgOptions {
+        depth: 5,
+        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+    })
+    .await
+    .unwrap();
+
+    api.mine_one().await.unwrap();
+
+    for (block_num, rpc_before, opcode_before) in &cached_hashes {
+        let rpc_after =
+            provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
+        let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap();
+        if *block_num <= tip_before_reorg.saturating_sub(5) {
+            assert_eq!(
+                rpc_after, *rpc_before,
+                "Block {block_num}: hash should not change for non-reorged blocks"
+            );
+            assert_eq!(
+                opcode_after, *opcode_before,
+                "Block {block_num}: BLOCKHASH should not change for non-reorged blocks"
+            );
+        }
+        assert_eq!(
+            rpc_after, opcode_after,
+            "Block {block_num}: RPC ({rpc_after}) and BLOCKHASH opcode ({opcode_after}) should match after reorg"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_deep_blockhash_consistency() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+
+    // Mine 300 blocks (more than BLOCKHASH limit of 256)
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(300) })).await.unwrap();
+
+    let tip_before_reorg = api.block_number().await.unwrap().to::<u64>();
+    assert!(tip_before_reorg > 256, "Need more than 256 blocks for this test");
+
+    // Check blocks within the 256 window before reorg
+    let mut cached_hashes: Vec<(u64, alloy_primitives::B256)> = Vec::new();
+    for i in [1, 10, 100, 200, 255] {
+        let block_num = tip_before_reorg - i;
+        let rpc_hash =
+            provider.get_block_by_number(block_num.into()).await.unwrap().unwrap().header.hash;
+        let opcode_hash = multicall.getBlockHash(U256::from(block_num)).call().await.unwrap();
+        assert_eq!(rpc_hash, opcode_hash, "RPC and BLOCKHASH opcode should match before reorg");
+        cached_hashes.push((block_num, rpc_hash));
+    }
+
+    // Perform a deep reorg (50 blocks)
+    let tx = TransactionRequest::default();
+    api.anvil_reorg(ReorgOptions {
+        depth: 50,
+        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+    })
+    .await
+    .unwrap();
+
+    api.mine_one().await.unwrap();
+
+    let tip_after_reorg = api.block_number().await.unwrap().to::<u64>();
+
+    // Verify blocks still in the 256 window have consistent hashes
+    for (block_num, rpc_before) in &cached_hashes {
+        // Skip blocks that were reorged
+        if *block_num > tip_after_reorg - 50 {
+            continue;
+        }
+        let rpc_after =
+            provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
+        let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap();
+        assert_eq!(
+            rpc_after, *rpc_before,
+            "Block {block_num}: hash should not change for non-reorged blocks"
+        );
+        assert_eq!(
+            rpc_after, opcode_after,
+            "Block {block_num}: RPC and BLOCKHASH should match after deep reorg"
+        );
+    }
+
+    // Verify BLOCKHASH returns 0 for blocks outside the 256 window
+    let old_block = tip_after_reorg.saturating_sub(257);
+    if old_block > 0 {
+        let opcode_hash = multicall.getBlockHash(U256::from(old_block)).call().await.unwrap();
+        assert_eq!(
+            opcode_hash,
+            alloy_primitives::B256::ZERO,
+            "BLOCKHASH should return 0 for blocks outside 256 window"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rollback() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Mine 5 blocks
+    for _ in 0..5 {
+        api.mine_one().await.unwrap();
+    }
+
+    // Get block 4 for later comparison
+    let block4 = provider.get_block(4.into()).await.unwrap().unwrap();
+
+    // Rollback with None should rollback 1 block
+    api.anvil_rollback(None).await.unwrap();
+
+    // Assert we're at block 4 and the block contents are kept the same
+    let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(head, block4);
+
+    // Get block 1 for comparison
+    let block1 = provider.get_block(1.into()).await.unwrap().unwrap();
+
+    // Rollback to block 1
+    let depth = 3; // from block 4 to block 1
+    api.anvil_rollback(Some(depth)).await.unwrap();
+
+    // Assert we're at block 1 and the block contents are kept the same
+    let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(head, block1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arb_get_block() {
+    let (api, _handle) = spawn(NodeConfig::test().with_chain_id(Some(421611u64))).await;
+
+    // Mine two blocks
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let best_number = api.block_number().await.unwrap().to::<u64>();
+
+    assert_eq!(best_number, 2);
+
+    let block = api.block_by_number(1.into()).await.unwrap().unwrap();
+
+    assert_eq!(block.header.number, 1);
+}
+
+// Set next_block_timestamp same as previous block
+// api.evm_set_next_block_timestamp(0).await.unwrap();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_blk_with_prev_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(init_timestamp).await.unwrap();
+
+    api.mine_one().await.unwrap();
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let next_blk_num = block.header.number;
+    let next_blk_timestamp = block.header.timestamp;
+
+    assert_eq!(next_blk_num, init_number + 1);
+    assert_eq!(next_blk_timestamp, init_timestamp);
+
+    // Sleep for 1 second
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Subsequent block should have a greater timestamp than previous block
+    api.mine_one().await.unwrap();
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let third_blk_num = block.header.number;
+    let third_blk_timestamp = block.header.timestamp;
+
+    assert_eq!(third_blk_num, init_number + 2);
+    assert_ne!(third_blk_timestamp, next_blk_timestamp);
+    assert!(third_blk_timestamp > next_blk_timestamp);
+}
+
+// increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
+#[tokio::test(flavor = "multi_thread")]
+async fn test_increase_time_by_zero() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    api.evm_set_next_block_timestamp(init_timestamp).await.unwrap();
+
+    api.mine_one().await.unwrap();
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let next_blk_num = block.header.number;
+    let next_blk_timestamp = block.header.timestamp;
+
+    assert_eq!(next_blk_num, init_number + 1);
+    assert_eq!(next_blk_timestamp, init_timestamp);
+}
+
+// evm_mine(MineOptions::Timestamp(prev_block_timestamp))
+#[tokio::test(flavor = "multi_thread")]
+async fn evm_mine_blk_with_same_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    api.evm_mine(Some(MineOptions::Timestamp(Some(init_timestamp)))).await.unwrap();
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let next_blk_num = block.header.number;
+    let next_blk_timestamp = block.header.timestamp;
+
+    assert_eq!(next_blk_num, init_number + 1);
+    assert_eq!(next_blk_timestamp, init_timestamp);
+}
+
+// mine 4 blocks instantly.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_blk_with_same_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    // Mine 4 blocks instantly
+    let _ = api.anvil_mine(Some(U256::from(4)), None).await;
+
+    let latest_blk_num = api.block_number().await.unwrap().to::<u64>();
+
+    assert_eq!(latest_blk_num, init_number + 4);
+
+    let mut blk_futs = vec![];
+    for i in 1..=4 {
+        blk_futs.push(provider.get_block(i.into()).into_future());
+    }
+
+    let timestamps = futures::future::join_all(blk_futs)
+        .await
+        .into_iter()
+        .map(|blk| blk.unwrap().unwrap().header.timestamp)
+        .collect::<Vec<_>>();
+
+    // All timestamps should be equal. The wall clock moves on while the node starts, so the
+    // blocks come any time after genesis.
+    assert!(timestamps.windows(2).all(|w| w[0] == w[1]), "{timestamps:#?}");
+    assert!(timestamps[0] >= init_timestamp, "{timestamps:#?} < {init_timestamp}");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/8962>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_first_block_with_interval() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let init_block = api.block_by_number(0.into()).await.unwrap().unwrap();
+    let init_timestamp = init_block.header.timestamp;
+
+    // Mine 2 blocks with interval of 60.
+    let _ = api.anvil_mine(Some(U256::from(2)), Some(U256::from(60))).await;
+
+    let first_block = api.block_by_number(1.into()).await.unwrap().unwrap();
+    assert_eq!(first_block.header.timestamp, init_timestamp + 60);
+
+    let second_block = api.block_by_number(2.into()).await.unwrap().unwrap();
+    assert_eq!(second_block.header.timestamp, init_timestamp + 120);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_safe_and_finalized_use_configured_slots_in_epoch() {
+    let (api, _) = spawn(NodeConfig::test().with_slots_in_an_epoch(2)).await;
+
+    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let safe_block = api.block_by_number(BlockNumberOrTag::Safe).await.unwrap().unwrap();
+    assert_eq!(safe_block.header.number, 3);
+
+    let finalized_block = api.block_by_number(BlockNumberOrTag::Finalized).await.unwrap().unwrap();
+    assert_eq!(finalized_block.header.number, 1);
+
+    let safe_history = api.fee_history(U256::ONE, BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    assert_eq!(safe_history.oldest_block, 3);
+
+    let finalized_history =
+        api.fee_history(U256::ONE, BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+    assert_eq!(finalized_history.oldest_block, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_non_fork() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Get initial state
+    let init_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let init_accounts = api.accounts().await.unwrap();
+    let init_balance = provider.get_balance(init_accounts[0]).await.unwrap();
+
+    // Store the instance id before reset
+    let instance_id_before = api.instance_id();
+
+    // Mine some blocks and make transactions
+    for _ in 0..5 {
+        api.mine_one().await.unwrap();
+    }
+
+    // Send a transaction
+    let to = Address::random();
+    let val = U256::from(1337);
+    let tx = TransactionRequest::default().with_from(init_accounts[0]).with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    // Check state has changed
+    let block_before_reset = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert!(block_before_reset.header.number > init_block.header.number);
+
+    let balance_before_reset = provider.get_balance(init_accounts[0]).await.unwrap();
+    assert!(balance_before_reset < init_balance);
+
+    let to_balance_before_reset = provider.get_balance(to).await.unwrap();
+    assert_eq!(to_balance_before_reset, val);
+
+    // Reset to fresh in-memory state (non-fork)
+    api.anvil_reset(None).await.unwrap();
+
+    // Check instance id has changed
+    let instance_id_after = api.instance_id();
+    assert_ne!(instance_id_before, instance_id_after);
+
+    // Check we're back at genesis
+    let block_after_reset = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block_after_reset.header.number, 0);
+
+    // Check accounts are restored to initial state
+    let balance_after_reset = provider.get_balance(init_accounts[0]).await.unwrap();
+    assert_eq!(balance_after_reset, init_balance);
+
+    // Check the recipient's balance is zero
+    let to_balance_after_reset = provider.get_balance(to).await.unwrap();
+    assert_eq!(to_balance_after_reset, U256::ZERO);
+
+    // Test we can continue mining after reset
+    api.mine_one().await.unwrap();
+    let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(new_block.header.number, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_fork_to_non_fork() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Verify we're in fork mode
+    let metadata = api.anvil_metadata().await.unwrap();
+    assert!(metadata.forked_network.is_some());
+
+    // Mine some blocks
+    for _ in 0..3 {
+        api.mine_one().await.unwrap();
+    }
+
+    // Reset to non-fork mode
+    api.anvil_reset(None).await.unwrap();
+
+    // Verify we're no longer in fork mode
+    let metadata_after = api.anvil_metadata().await.unwrap();
+    assert!(metadata_after.forked_network.is_none());
+
+    // Check we're at block 0
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.number, 0);
+
+    // Verify we can still mine blocks
+    api.mine_one().await.unwrap();
+    let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(new_block.header.number, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "optimism")]
+async fn can_get_node_info_optimism() {
+    let (api, _) = spawn(NodeConfig::test().with_optimism()).await;
+
+    assert_eq!(api.anvil_node_info().await.unwrap().network.as_deref(), Some("optimism"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_automine_state() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Queried over RPC so the request name, parameter handling and dispatch arm are covered too,
+    // not just the handler.
+    let automine =
+        async || provider.client().request_noparams::<bool>("anvil_getAutomine").await.unwrap();
+
+    assert!(automine().await);
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    assert!(!automine().await);
+
+    // Interval mining is a separate mode and also reports automining as disabled.
+    api.anvil_set_interval_mining(1).await.unwrap();
+    assert!(!automine().await);
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert!(automine().await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_drop_all_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+
+    for nonce in 0..3u64 {
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(Address::repeat_byte(0x22))
+                .with_value(U256::ONE)
+                .with_nonce(nonce),
+        ))
+        .await
+        .unwrap();
+    }
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 3);
+
+    let _: () = provider.client().request_noparams("anvil_dropAllTransactions").await.unwrap();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 0);
+    assert_eq!(status.queued, 0);
+
+    // Dropping an empty pool is a no-op rather than an error.
+    let _: () = provider.client().request_noparams("anvil_dropAllTransactions").await.unwrap();
+
+    // The chain did not advance as a result of dropping.
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_unsigned_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Any address can send, without a signer and without impersonating it first.
+    let sender = Address::repeat_byte(0x77);
+    let recipient = Address::repeat_byte(0x88);
+    api.anvil_set_balance(sender, U256::from(1e18 as u64)).await.unwrap();
+
+    // Mine explicitly: the handler returns as soon as the transaction is pooled.
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let hash: B256 = provider
+        .client()
+        .request(
+            "eth_sendUnsignedTransaction",
+            (WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(recipient)
+                    .with_value(U256::from(1234)),
+            ),),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+
+    let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.from, sender);
+    assert_eq!(provider.get_balance(recipient).await.unwrap(), U256::from(1234));
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_unsigned_transaction_requires_a_sender() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let err = provider
+        .client()
+        .request::<_, B256>(
+            "eth_sendUnsignedTransaction",
+            (WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_to(Address::repeat_byte(0x99))
+                    .with_value(U256::ONE),
+            ),),
+        )
+        .await
+        .unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32602);
+    assert!(err.message.contains("No Signer available"), "unexpected error: {err}");
+}
