@@ -453,6 +453,11 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                 continue;
             };
             let receipt = &mut sequence.receipts[receipt_index];
+            // A reverted transaction deployed nothing, including predicted CREATE2 addresses.
+            // Resume already warns about every reverted receipt.
+            if !receipt.status() {
+                continue;
+            }
             let malformed_create2 =
                 tx.is_create2() && tx.tx().input().is_none_or(|data| data.len() < 32);
             if malformed_create2 {

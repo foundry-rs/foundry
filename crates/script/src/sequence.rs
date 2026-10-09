@@ -457,6 +457,27 @@ where
         Ok(())
     }
 
+    /// Warns about persisted reverted receipts, whose operations resume never resubmits.
+    pub(crate) fn warn_reverted_receipts(&self) -> Result<()> {
+        for deployment in self.sequences() {
+            // Batch members share one receipt, so warn once per transaction.
+            let mut reverted = deployment
+                .receipts
+                .iter()
+                .filter(|receipt| !receipt.status())
+                .map(|receipt| receipt.transaction_hash())
+                .collect::<Vec<_>>();
+            reverted.dedup();
+            for hash in reverted {
+                sh_warn!(
+                    "transaction {hash} on chain {} reverted; resume will not resubmit it",
+                    deployment.chain
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     pub const fn is_multi(&self) -> bool {
         self.recovery.data().is_multi()
     }

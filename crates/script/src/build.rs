@@ -355,16 +355,22 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     sequence.sequences()[index].rpc_url(),
                 )?
                 .build()?;
-                // A saved signed attempt whose response was lost before its hash was recorded is
-                // reconciled before requesting signers when its receipt shows it was mined.
+                // A mined signed attempt can lack a pending hash and receipt, for example when its
+                // response was lost or an older snapshot dropped a revert. Legacy operation hashes
+                // need the same reconciliation before requesting signers or replaying anything.
                 for operation in 0..sequence.sequences()[index].transactions.len() {
                     let deployment = &sequence.sequences()[index];
-                    if let Some(hash) = sequence.signed_payload(index, operation).map(|s| s.hash)
+                    if let Some(hash) = sequence
+                        .signed_payload(index, operation)
+                        .map(|s| s.hash)
+                        .or(deployment.transactions[operation].hash)
                         && !deployment.pending.contains(&hash)
                         && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
                         && let Some(receipt) = provider.get_transaction_receipt(hash).await?
                         && is_mined_receipt_for(&receipt, hash)
                     {
+                        // Reverted receipts also wait for the requested confirmations before
+                        // they become the operation's terminal outcome.
                         sequence.sequences_mut()[index].add_pending(operation, hash);
                     }
                 }
@@ -387,6 +393,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 sequence.ensure_delegated_outcomes_known(index)?;
             }
         }
+        sequence.warn_reverted_receipts()?;
 
         if !self.args.unlocked
             && !remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
