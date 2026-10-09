@@ -8,8 +8,7 @@ use crate::{
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{ScriptSequenceKind, completed_transaction_prefix, operation_ordinal},
     session::{
-        RemainingScriptTransaction, SignerScope,
-        insert_session_access_key_for_remaining_transactions,
+        SignerScope, insert_session_access_key_for_remaining_transactions,
         script_session_expected_sender_if_configured,
     },
     verify::BroadcastedState,
@@ -86,32 +85,6 @@ where
     N::UnsignedTx: SignableTransaction<Signature>,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    const fn delegated_request(&self) -> Option<&N::TransactionRequest> {
-        match self {
-            Self::Unlocked(request) | Self::Browser(request, _) => Some(request),
-            _ => None,
-        }
-    }
-
-    fn validate_delegated_submission(&self) -> Result<()> {
-        let Self::Browser(request, signer) = self else { return Ok(()) };
-        if request.from().is_some_and(|from| from != signer.address()) {
-            bail!("Transaction `from` address does not match connected wallet address");
-        }
-        if request.chain_id().is_some_and(|chain_id| chain_id != signer.chain_id()) {
-            bail!("Transaction `chainId` does not match connected wallet chain ID");
-        }
-        Ok(())
-    }
-
-    fn is_definite_non_submission(&self, error: &eyre::Report) -> bool {
-        match self {
-            Self::Browser(..) => is_definite_browser_non_submission(error),
-            Self::Unlocked(_) => is_definite_unlocked_non_submission(error),
-            _ => false,
-        }
-    }
-
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
     ///
     /// This method performs two key operations:
@@ -202,55 +175,6 @@ where
         Ok(())
     }
 
-    /// Sends the transaction to the network.
-    ///
-    /// Depending on the transaction kind, this will either:
-    /// - Submit via `eth_sendTransaction` for unlocked accounts
-    /// - Sign and submit via `eth_sendRawTransaction` for raw transactions
-    /// - Submit pre-signed transaction via `eth_sendRawTransaction`
-    pub async fn send(self, provider: Arc<RootProvider<N>>) -> Result<TxHash> {
-        match self {
-            Self::Unlocked(tx) => {
-                debug!("sending transaction from unlocked account {:?}", tx);
-
-                // Submit the transaction
-                let pending = provider.send_transaction(tx).await?;
-                Ok(*pending.tx_hash())
-            }
-            Self::Raw(tx, signer) => {
-                debug!("sending transaction: {:?}", tx);
-                let signed = tx.build(signer).await?;
-
-                // Submit the raw transaction
-                let pending = provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?;
-                Ok(*pending.tx_hash())
-            }
-            Self::Signed(tx) => {
-                debug!("sending transaction: {:?}", tx);
-                let pending = provider.send_raw_transaction(tx.encoded_2718().as_ref()).await?;
-                Ok(*pending.tx_hash())
-            }
-            Self::Browser(tx, signer) => {
-                debug!("sending transaction: {:?}", tx);
-
-                // Sign and send the transaction via the browser wallet
-                Ok(signer.send_transaction_via_browser(tx).await?)
-            }
-            Self::AccessKey(tx, wallet) => {
-                debug!("sending transaction via tempo access key: {:?}", tx);
-
-                let raw_tx = tx.sign_with_tempo_wallet(&wallet).await?;
-
-                let pending = provider.send_raw_transaction(&raw_tx).await?;
-                Ok(*pending.tx_hash())
-            }
-            Self::PreparedRaw(payload, _) => {
-                let pending = provider.send_raw_transaction(&payload).await?;
-                Ok(*pending.tx_hash())
-            }
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     async fn prepare_for_durable_send(
         mut self,
@@ -260,7 +184,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
-    ) -> Result<Self> {
+    ) -> Result<PreparedTransaction<'a, N>> {
         self.prepare(
             provider,
             sequential_broadcast,
@@ -276,18 +200,20 @@ where
         Ok(match self {
             Self::Raw(tx, signer) => {
                 let signed = tx.build(signer).await?;
-                Self::PreparedRaw(Bytes::from(signed.encoded_2718()), signed.trie_hash())
+                PreparedTransaction::Raw(Bytes::from(signed.encoded_2718()), signed.trie_hash())
             }
             Self::Signed(tx) => {
                 let hash = tx.trie_hash();
-                Self::PreparedRaw(Bytes::from(tx.encoded_2718()), hash)
+                PreparedTransaction::Raw(Bytes::from(tx.encoded_2718()), hash)
             }
             Self::AccessKey(tx, wallet) => {
                 let payload = Bytes::from(tx.sign_with_tempo_wallet(&wallet).await?);
                 let envelope = N::TxEnvelope::decode_2718_exact(&payload)?;
-                Self::PreparedRaw(payload, envelope.trie_hash())
+                PreparedTransaction::Raw(payload, envelope.trie_hash())
             }
-            kind => kind,
+            Self::PreparedRaw(payload, hash) => PreparedTransaction::Raw(payload, hash),
+            Self::Unlocked(request) => PreparedTransaction::Unlocked(request),
+            Self::Browser(request, signer) => PreparedTransaction::Browser(request, signer),
         })
     }
 
@@ -330,6 +256,63 @@ where
             }
         }
         Ok(())
+    }
+}
+
+/// A prepared submission, with local signatures fixed before checkpointing and sending.
+#[derive(Clone)]
+enum PreparedTransaction<'a, N: Network> {
+    Raw(Bytes, TxHash),
+    Unlocked(N::TransactionRequest),
+    Browser(N::TransactionRequest, &'a BrowserSigner<N>),
+}
+
+impl<N: Network> PreparedTransaction<'_, N>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    const fn delegated_request(&self) -> Option<&N::TransactionRequest> {
+        match self {
+            Self::Unlocked(request) | Self::Browser(request, _) => Some(request),
+            _ => None,
+        }
+    }
+
+    fn validate_delegated_submission(&self) -> Result<()> {
+        let Self::Browser(request, signer) = self else { return Ok(()) };
+        if request.from().is_some_and(|from| from != signer.address()) {
+            bail!("Transaction `from` address does not match connected wallet address");
+        }
+        if request.chain_id().is_some_and(|chain_id| chain_id != signer.chain_id()) {
+            bail!("Transaction `chainId` does not match connected wallet chain ID");
+        }
+        Ok(())
+    }
+
+    fn is_definite_non_submission(&self, error: &eyre::Report) -> bool {
+        match self {
+            Self::Browser(..) => is_definite_browser_non_submission(error),
+            Self::Unlocked(_) => is_definite_unlocked_non_submission(error),
+            _ => false,
+        }
+    }
+
+    async fn send(self, provider: Arc<RootProvider<N>>) -> Result<TxHash> {
+        match self {
+            Self::Raw(payload, _) => {
+                let pending = provider.send_raw_transaction(&payload).await?;
+                Ok(*pending.tx_hash())
+            }
+            Self::Unlocked(tx) => {
+                debug!("sending transaction from unlocked account {:?}", tx);
+                let pending = provider.send_transaction(tx).await?;
+                Ok(*pending.tx_hash())
+            }
+            Self::Browser(tx, signer) => {
+                debug!("sending transaction: {:?}", tx);
+                Ok(signer.send_transaction_via_browser(tx).await?)
+            }
+        }
     }
 }
 
@@ -462,7 +445,7 @@ fn validate_tempo_batch_envelope(
 
 pub(crate) fn remaining_unsigned_transactions_for_recovery<N: Network>(
     sequence: &ScriptSequenceKind<N>,
-) -> Vec<RemainingScriptTransaction>
+) -> Vec<SignerScope>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
@@ -476,9 +459,9 @@ where
                 move |index| {
                     let tx = deployment.transactions[index].tx();
                     (tx.is_unsigned() && sequence.signed_payload(sequence_index, index).is_none())
-                        .then(|| RemainingScriptTransaction {
+                        .then(|| SignerScope {
                             chain: deployment.chain,
-                            from: tx.from().expect("missing from"),
+                            sender: tx.from().expect("missing from"),
                         })
                 },
             )
@@ -659,7 +642,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     .any(|index| self.sequence.signed_payload(sequence_index, index).is_none())
             });
         let required_addresses =
-            remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
+            remaining_transactions.iter().map(|tx| tx.sender).collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
             eyre::bail!(
@@ -716,14 +699,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .flatten();
 
             for tx in &remaining_transactions {
-                let scope = tx.scope();
-                if !signers.contains(&tx.from) && !access_keys.contains_key(&scope) {
+                let scope = *tx;
+                if !signers.contains(&tx.sender) && !access_keys.contains_key(&scope) {
                     if let Some(wallet) = accounts_wallet.as_ref()
-                        && wallet.has_account(tx.from)?
+                        && wallet.has_account(tx.sender)?
                     {
                         access_keys.insert(scope, wallet.clone().with_chain_id(tx.chain));
                     } else {
-                        missing_addresses.push(tx.from);
+                        missing_addresses.push(tx.sender);
                     }
                 }
             }
@@ -951,132 +934,106 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                     ));
 
-                    if !batch.is_empty() {
-                        let mut prepared = Vec::with_capacity(batch.len());
-                        for (kind, is_fixed_gas_limit, index) in batch {
-                            kind.validate_expiring_create_nonce(
+                    let mut prepared = Vec::with_capacity(batch.len());
+                    for (kind, is_fixed_gas_limit, index) in batch {
+                        kind.validate_expiring_create_nonce(
+                            &provider,
+                            &self.sequence.sequences()[i].transactions[*index],
+                        )
+                        .await?;
+                        let mut kind = kind
+                            .clone()
+                            .prepare_for_durable_send(
                                 &provider,
-                                &self.sequence.sequences()[i].transactions[*index],
+                                sequential_broadcast,
+                                *is_fixed_gas_limit,
+                                estimate_via_rpc,
+                                self.args.gas_estimate_multiplier,
+                                tempo_sponsor.as_deref(),
                             )
                             .await?;
-                            let mut kind = kind
-                                .clone()
-                                .prepare_for_durable_send(
-                                    &provider,
-                                    sequential_broadcast,
-                                    *is_fixed_gas_limit,
-                                    estimate_via_rpc,
-                                    self.args.gas_estimate_multiplier,
-                                    tempo_sponsor.as_deref(),
-                                )
-                                .await?;
-                            if let SendTransactionKind::PreparedRaw(payload, hash) = &mut kind {
-                                *hash = self.sequence.persist_signed_payload(
-                                    i,
-                                    *index,
-                                    payload.clone(),
-                                    tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
-                                )?;
-                            }
-                            prepared.push((kind, *is_fixed_gas_limit, *index));
+                        if let PreparedTransaction::Raw(payload, hash) = &mut kind {
+                            *hash = self.sequence.persist_signed_payload(
+                                i,
+                                *index,
+                                payload.clone(),
+                                tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
+                            )?;
                         }
+                        prepared.push((kind, *index));
+                    }
 
-                        let mut buffer = FuturesUnordered::new();
-                        for (kind, is_fixed_gas_limit, index) in prepared {
-                            if let Some(request) = kind.delegated_request() {
-                                kind.validate_delegated_submission()?;
-                                self.sequence.persist_delegated_request(
-                                    i,
-                                    index,
-                                    request.clone(),
-                                )?;
-                            }
-                            let provider = if matches!(kind, SendTransactionKind::Unlocked(_)) {
-                                unlocked_submission_provider.clone()
-                            } else {
-                                provider.clone()
-                            };
-                            let mut pending = async move {
-                                let res = kind.clone().send(provider).await;
-                                (res, kind, is_fixed_gas_limit, 0, None, index)
-                            }
-                            .boxed();
-                            if let Some(result) = pending.as_mut().now_or_never() {
-                                buffer.push(futures::future::ready(result).boxed());
-                            } else {
-                                buffer.push(pending);
-                            }
+                    let mut buffer = FuturesUnordered::new();
+                    for (kind, index) in prepared {
+                        if let Some(request) = kind.delegated_request() {
+                            kind.validate_delegated_submission()?;
+                            self.sequence.persist_delegated_request(i, index, request.clone())?;
                         }
+                        let provider = if matches!(kind, PreparedTransaction::Unlocked(_)) {
+                            unlocked_submission_provider.clone()
+                        } else {
+                            provider.clone()
+                        };
+                        let mut pending = async move {
+                            let res = kind.clone().send(provider).await;
+                            (res, kind, 0, None, index)
+                        }
+                        .boxed();
+                        if let Some(result) = pending.as_mut().now_or_never() {
+                            buffer.push(futures::future::ready(result).boxed());
+                        } else {
+                            buffer.push(pending);
+                        }
+                    }
 
-                        'send: while let Some((
-                            mut res,
-                            kind,
-                            is_fixed_gas_limit,
-                            attempt,
-                            original_res,
-                            index,
-                        )) = buffer.next().await
+                    'send: while let Some((mut res, kind, attempt, original_res, index)) =
+                        buffer.next().await
+                    {
+                        if res.is_err()
+                            && let PreparedTransaction::Raw(_, hash) = kind
+                            && provider
+                                .get_transaction_by_hash(hash)
+                                .await
+                                .is_ok_and(|transaction| transaction.is_some())
                         {
-                            if res.is_err()
-                                && let SendTransactionKind::PreparedRaw(_, hash) = kind
-                                && provider
-                                    .get_transaction_by_hash(hash)
-                                    .await
-                                    .is_ok_and(|transaction| transaction.is_some())
-                            {
-                                res = Ok(hash);
+                            res = Ok(hash);
+                        }
+                        if kind.delegated_request().is_some()
+                            && let Err(error) = res
+                        {
+                            if kind.is_definite_non_submission(&error) {
+                                self.sequence.clear_delegated_request(i, index)?;
+                                return Err(error);
                             }
-                            if kind.delegated_request().is_some()
-                                && let Err(error) = res
-                            {
-                                if kind.is_definite_non_submission(&error) {
-                                    self.sequence.clear_delegated_request(i, index)?;
-                                    return Err(error);
-                                }
-                                self.sequence.persist_delegated_status(
-                                    i,
-                                    index,
-                                    DelegatedStatus::OutcomeUnknown,
-                                )?;
-                                bail!(
-                                    "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
-                                );
-                            }
-                            if res.is_err()
-                                && self.script_config.tempo.sponsor_sig.is_some()
-                                && !matches!(kind, SendTransactionKind::PreparedRaw(..))
-                                && attempt == 0
-                            {
-                                debug!(
-                                    "not retrying transaction because --tempo.sponsor-sig is a static signature"
-                                );
-                            } else if res.is_err() && attempt <= 3 {
-                                // Try to resubmit the transaction
-                                let provider = provider.clone();
-                                let progress = seq_progress.inner.clone();
-                                buffer.push(Box::pin(async move {
-                                    debug!(err=?res, ?attempt, "retrying transaction ");
-                                    let attempt = attempt + 1;
-                                    progress.write().set_status(&format!(
-                                        "retrying transaction {res:?} (attempt {attempt})"
-                                    ));
-                                    tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
-                                    let r = kind.clone().send(provider).await;
-                                    (
-                                        r,
-                                        kind,
-                                        is_fixed_gas_limit,
-                                        attempt,
-                                        original_res.or(Some(res)),
-                                        index,
-                                    )
-                                }));
+                            self.sequence.persist_delegated_status(
+                                i,
+                                index,
+                                DelegatedStatus::OutcomeUnknown,
+                            )?;
+                            bail!(
+                                "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
+                            );
+                        }
+                        if res.is_err() && attempt <= 3 {
+                            // Try to resubmit the transaction
+                            let provider = provider.clone();
+                            let progress = seq_progress.inner.clone();
+                            buffer.push(Box::pin(async move {
+                                debug!(err=?res, ?attempt, "retrying transaction ");
+                                let attempt = attempt + 1;
+                                progress.write().set_status(&format!(
+                                    "retrying transaction {res:?} (attempt {attempt})"
+                                ));
+                                tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
+                                let r = kind.clone().send(provider).await;
+                                (r, kind, attempt, original_res.or(Some(res)), index)
+                            }));
 
-                                continue 'send;
-                            }
+                            continue 'send;
+                        }
 
-                            // Preserve the original error if any
-                            let tx_hash = res.wrap_err_with(|| {
+                        // Preserve the original error if any
+                        let tx_hash = res.wrap_err_with(|| {
                                 if let Some(original_res) = original_res {
                                     format!(
                                         "Failed to send transaction after {attempt} attempts {original_res:?}"
@@ -1085,45 +1042,44 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "Failed to send transaction".to_string()
                                 }
                             })?;
-                            if let SendTransactionKind::PreparedRaw(_, expected) = kind
-                                && expected != tx_hash
-                            {
-                                bail!("RPC returned hash {tx_hash} for signed payload {expected}");
-                            }
-                            if kind.delegated_request().is_some() {
-                                self.sequence.persist_delegated_status(
-                                    i,
-                                    index,
-                                    DelegatedStatus::Pending { hash: tx_hash },
-                                )?;
-                            }
-                            sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
-                            sequence.add_pending(index, tx_hash);
-
-                            // Checkpoint save
-                            self.sequence.save(true, false)?;
-
-                            seq_progress.inner.write().tx_sent(tx_hash);
+                        if let PreparedTransaction::Raw(_, expected) = kind
+                            && expected != tx_hash
+                        {
+                            bail!("RPC returned hash {tx_hash} for signed payload {expected}");
                         }
+                        if kind.delegated_request().is_some() {
+                            self.sequence.persist_delegated_status(
+                                i,
+                                index,
+                                DelegatedStatus::Pending { hash: tx_hash },
+                            )?;
+                        }
+                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+                        sequence.add_pending(index, tx_hash);
 
                         // Checkpoint save
                         self.sequence.save(true, false)?;
-                        let (durable_hashes, replayable_hashes) =
-                            self.sequence.submission_hashes(i);
-                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        progress
-                            .wait_for_pending(
-                                i,
-                                sequence,
-                                &provider,
-                                self.script_config.config.transaction_timeout,
-                                self.args.confirmations,
-                                (&durable_hashes, &replayable_hashes),
-                            )
-                            .await?;
-                        self.sequence.ensure_delegated_outcomes_known(i)?;
+                        seq_progress.inner.write().tx_sent(tx_hash);
                     }
+
+                    // Checkpoint save
+                    self.sequence.save(true, false)?;
+                    let (durable_hashes, replayable_hashes) = self.sequence.submission_hashes(i);
+                    sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+
+                    progress
+                        .wait_for_pending(
+                            i,
+                            sequence,
+                            &provider,
+                            self.script_config.config.transaction_timeout,
+                            self.args.confirmations,
+                            (&durable_hashes, &replayable_hashes),
+                        )
+                        .await?;
+                    self.sequence.ensure_delegated_outcomes_known(i)?;
+
                     // Checkpoint save
                     self.sequence.save(true, false)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
@@ -2072,7 +2028,7 @@ mod tests {
         sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
 
         let required = remaining_unsigned_transactions_for_recovery(&sequence);
-        assert_eq!(required.iter().map(|tx| tx.from).collect::<Vec<_>>(), [unsigned]);
+        assert_eq!(required.iter().map(|tx| tx.sender).collect::<Vec<_>>(), [unsigned]);
         assert_eq!(remaining_sender_addresses(&sequence).len(), 2);
     }
 
@@ -2506,5 +2462,28 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn preparation_preserves_signed_payload_without_rpc() {
+        let envelope = TxEnvelope::decode_2718_exact(SIGNED_TX).unwrap();
+        let hash = envelope.trie_hash();
+        let provider = alloy_provider::ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .connect_mocked_client(Asserter::new());
+        for input in [
+            SendTransactionKind::<Ethereum>::Signed(envelope),
+            SendTransactionKind::PreparedRaw(Bytes::from_static(SIGNED_TX), hash),
+        ] {
+            let prepared = input
+                .prepare_for_durable_send(&provider, true, false, true, 130, None)
+                .await
+                .unwrap();
+            let PreparedTransaction::Raw(payload, prepared_hash) = prepared else {
+                panic!("signed transactions must become fixed raw submissions");
+            };
+            assert_eq!(payload.as_ref(), SIGNED_TX);
+            assert_eq!(prepared_hash, hash);
+        }
     }
 }

@@ -7,9 +7,7 @@ use crate::{
     receipts::is_mined_receipt_for,
     recovery::recovery_exists,
     sequence::ScriptSequenceKind,
-    session::{
-        RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
-    },
+    session::{SignerScope, script_session_expected_sender_if_configured},
 };
 use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
@@ -421,7 +419,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 let remaining_transactions =
                     remaining_unsigned_transactions_for_recovery(&sequence);
                 let remaining_froms =
-                    remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
+                    remaining_transactions.iter().map(|tx| tx.sender).collect::<AddressHashSet>();
                 let expected_session_sender = script_session_expected_sender_if_configured(
                     &self.script_config.tempo,
                     &remaining_froms,
@@ -545,7 +543,7 @@ fn has_available_script_signers(
     wallets: &MultiWalletOpts,
     script_wallets: &Wallets,
     expected_sender: Option<Address>,
-    remaining: &[RemainingScriptTransaction],
+    remaining: &[SignerScope],
 ) -> Result<bool> {
     let signers = script_wallets
         .signers()
@@ -558,7 +556,7 @@ fn has_available_script_signers(
         .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
         .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
 
-    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
+    Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
 }
 
 #[cfg(test)]

@@ -186,21 +186,9 @@ where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let paths = ScriptSequence::<N>::get_paths(config, sig, target, chain, dry_run)?;
-        let lock = RecoveryLock::acquire(&paths)?;
-        let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
-            recovery
-        } else {
-            let lock = RecoveryLock::acquire(&paths)?;
-            let data =
-                SequenceData::Single(ScriptSequence::load(config, sig, target, chain, dry_run)?);
-            if data.has_recovery_generation() {
-                bail!("recovery exports reference a missing authoritative snapshot");
-            }
-            RecoveryStore::import(data, batch, lock)?
-        };
-        let sequence = Self { recovery };
-        sequence.recovery.data().publish(&paths)?;
-        Ok(sequence)
+        Self::load(paths, batch, || {
+            ScriptSequence::load(config, sig, target, chain, dry_run).map(SequenceData::Single)
+        })
     }
 
     pub fn load_multi(
@@ -215,12 +203,26 @@ where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let paths = MultiChainSequence::<N>::get_paths(config, sig, target, dry_run)?;
+        Self::load(paths, batch, || {
+            MultiChainSequence::load(config, sig, target, dry_run).map(SequenceData::Multi)
+        })
+    }
+
+    fn load(
+        paths: (PathBuf, PathBuf),
+        batch: bool,
+        load_legacy: impl FnOnce() -> Result<SequenceData<N>>,
+    ) -> Result<Self>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let lock = RecoveryLock::acquire(&paths)?;
         let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
             recovery
         } else {
             let lock = RecoveryLock::acquire(&paths)?;
-            let data = SequenceData::Multi(MultiChainSequence::load(config, sig, target, dry_run)?);
+            let data = load_legacy()?;
             if data.has_recovery_generation() {
                 bail!("recovery exports reference a missing authoritative snapshot");
             }
@@ -673,5 +675,22 @@ mod tests {
         sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
 
         assert!(sequence.delegated_status(0, 0).is_none());
+    }
+
+    #[test]
+    fn authoritative_load_does_not_read_legacy_exports() {
+        let (_dir, sequence, attempt) = unknown_delegated_sequence();
+        let paths = sequence.recovery.data().paths();
+        drop(sequence);
+        std::fs::remove_file(&paths.0).unwrap();
+        std::fs::remove_file(&paths.1).unwrap();
+
+        let loaded = ScriptSequenceKind::<Ethereum>::load(paths.clone(), false, || {
+            panic!("authoritative recovery must not load compatibility exports");
+        })
+        .unwrap();
+        assert_eq!(loaded.recovery.delegated_attempts()[0].2, attempt);
+        assert!(paths.0.exists());
+        assert!(paths.1.exists());
     }
 }
