@@ -6740,6 +6740,59 @@ Error: EOA nonce changed unexpectedly while sending transactions. Expected 0 got
 }
 
 #[forgetest_init]
+async fn tempo_presigned_expiring_create_uses_account_nonce(prj: _, cmd: _) {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let block = provider.get_block_by_number("latest".parse().unwrap()).await.unwrap().unwrap();
+    let payload = provider
+        .raw_request::<_, Bytes>(
+            "eth_signTransaction".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "nonceKey": U256::MAX,
+                "nonce": "0x7",
+                "gas": "0x1e8480",
+                "maxFeePerGas": "0x6fc23ac00",
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "validBefore": block.header.timestamp + 25,
+                "calls": [{"to": null, "value": "0x0", "input": "0x6001600c60003960016000f300"}],
+            }),),
+        )
+        .await
+        .unwrap();
+    let script = prj.add_script(
+        "PresignedExpiringCreate.s.sol",
+        &format!(
+            r#"
+import "forge-std/Script.sol";
+
+contract PresignedExpiringCreate is Script {{
+    function run() external {{
+        vm.startBroadcast();
+        vm.broadcastRawTransaction(hex"{}");
+        vm.stopBroadcast();
+    }}
+}}
+"#,
+            hex::encode(payload),
+        ),
+    );
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--network",
+        "tempo",
+        "--broadcast",
+    ]);
+    cmd.assert_success();
+    assert_eq!(provider.get_code_at(sender.create(0)).await.unwrap(), bytes!("00"));
+    assert!(provider.get_code_at(sender.create(7)).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
 async fn tempo_sponsored_resume_needs_no_credentials(prj: _, cmd: _) {
     let script = prj.add_script(
         "DeploySponsoredTempoAA.s.sol",
