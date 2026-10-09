@@ -125,10 +125,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
-    core::{
-        evm::{EvmEnvFor, TempoEvmNetwork},
-        precompiles::EC_RECOVER,
-    },
+    core::precompiles::EC_RECOVER,
     decode::RevertDecoder,
     hardfork::{EthereumHardfork, FoundryHardfork},
     inspectors::AccessListInspector,
@@ -2984,7 +2981,7 @@ impl<N: Network> Backend<N> {
     fn build_tempo_evm_env(
         evm_env: &EvmEnv,
         hardfork: TempoHardfork,
-    ) -> EvmEnvFor<TempoEvmNetwork> {
+    ) -> EvmEnv<TempoHardfork, TempoBlockEnv> {
         EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv {

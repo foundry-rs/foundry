@@ -5,9 +5,10 @@ use crate::{
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::TransactionRequest;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
@@ -7342,7 +7343,7 @@ async fn resume_resolves_unknown_delegated_outcome_with_tx_hash(prj: _, cmd: _) 
 
     // A transaction that exists but does not match the saved request is rejected.
     let other = ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
-    let unrelated = <Ethereum as Network>::TransactionRequest::default()
+    let unrelated = TransactionRequest::default()
         .with_from(other_sender)
         .with_to(other_sender)
         .with_value(U256::from(1));

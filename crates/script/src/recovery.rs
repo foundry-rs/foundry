@@ -1301,7 +1301,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let request = <Ethereum as Network>::TransactionRequest::default();
+        let request = TransactionRequest::default();
         let hash = B256::repeat_byte(0x42);
         {
             let mut store = RecoveryStore::create(data, false).unwrap();
