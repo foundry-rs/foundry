@@ -476,30 +476,17 @@ contract MultiDeploy is Script {
 async fn assert_exit_code_error_on_failure_script(prj: _, cmd: _) {
     let script = prj.add_source("FailingScript", FAILING_SCRIPT);
 
-    // set up command
-    cmd.arg("script").arg(script);
+    for json in [false, true] {
+        cmd.forge_fuse().arg("script").arg(&script);
+        if json {
+            cmd.arg("--json");
+        }
 
-    // run command and assert error exit code
-    cmd.assert_failure().stderr_eq(str![[r#"
+        cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: failed
 
 "#]]);
-}
-
-// Tests that execution throws upon encountering a revert in the script with --json option.
-// <https://github.com/foundry-rs/foundry/issues/2508>
-#[forgetest_init]
-async fn assert_exit_code_error_on_failure_script_with_json(prj: _, cmd: _) {
-    let script = prj.add_source("FailingScript", FAILING_SCRIPT);
-
-    // set up command
-    cmd.arg("script").arg(script).arg("--json");
-
-    // run command and assert error exit code
-    cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: failed
-
-"#]]);
+    }
 }
 
 // Tests that script failures surface halt reasons for empty revert data.
@@ -507,77 +494,26 @@ Error: script failed: failed
 async fn assert_exit_code_error_on_out_of_gas_script(prj: _, cmd: _) {
     let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
 
-    // Use a small block gas limit so the infinite loop exhausts gas in milliseconds rather than
-    // >25s at the default ~1B limit, which often exceeds the nextest slow-timeout window on CI.
-    cmd.arg("script").arg(script).args(["--block-gas-limit", "1000000"]);
+    for json in [false, true] {
+        // Use a small block gas limit so the infinite loop exhausts gas in milliseconds rather than
+        // >25s at the default ~1B limit, which often exceeds the nextest slow-timeout window on CI.
+        cmd.forge_fuse().arg("script").arg(&script).args(["--block-gas-limit", "1000000"]);
+        if json {
+            cmd.arg("--json");
+        }
 
-    cmd.assert_failure().stderr_eq(str![[r#"
+        cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: EvmError: OutOfGas
 
 "#]]);
-}
-
-// Tests that --json script failures also surface halt reasons for empty revert data.
-#[forgetest_init]
-async fn assert_exit_code_error_on_out_of_gas_script_with_json(prj: _, cmd: _) {
-    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
-
-    // See `assert_exit_code_error_on_out_of_gas_script`
-    cmd.arg("script").arg(script).arg("--json").args(["--block-gas-limit", "1000000"]);
-
-    cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: EvmError: OutOfGas
-
-"#]]);
+    }
 }
 
 // Tests that the manually specified gas limit is used when using the --unlocked option
 #[forgetest_init]
 async fn can_execute_script_command_with_manual_gas_limit_unlocked(prj: _, cmd: _) {
-    let deploy_script = prj.add_source(
-        "Foo",
-        r#"
-import "forge-std/Script.sol";
-
-contract GasWaster {
-    function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas, "Gas left needs to be higher");
-    }
-}
-contract DeployScript is Script {
-    function run() external {
-        vm.startBroadcast();
-        GasWaster gasWaster = new GasWaster();
-        gasWaster.wasteGas{gas: 500000}(200000);
-    }
-}
-   "#,
-    );
-
-    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
-
-    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
-    let (_api, handle) = spawn(node_config).await;
-    let dev = handle.dev_accounts().next().unwrap();
-    cmd.set_current_dir(prj.root());
-
-    cmd.args([
-        "script",
-        &deploy_contract,
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
-        "--sender",
-        format!("{dev:?}").as_str(),
-        "-vvvvv",
-        "--slow",
-        "--broadcast",
-        "--unlocked",
-        "--ignored-error-codes=2018", // `wasteGas` can be restricted to view
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+    let _handle = prepare_manual_gas_limit(&prj, &mut cmd, true).await;
+    cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -635,49 +571,8 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 // Tests that the manually specified gas limit is used.
 #[forgetest_init]
 async fn can_execute_script_command_with_manual_gas_limit(prj: _, cmd: _) {
-    let deploy_script = prj.add_source(
-        "Foo",
-        r#"
-import "forge-std/Script.sol";
-
-contract GasWaster {
-    function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas, "Gas left needs to be higher");
-    }
-}
-contract DeployScript is Script {
-    function run() external {
-        vm.startBroadcast();
-        GasWaster gasWaster = new GasWaster();
-        gasWaster.wasteGas{gas: 500000}(200000);
-    }
-}
-   "#,
-    );
-
-    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
-
-    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
-    let (_api, handle) = spawn(node_config).await;
-    let private_key =
-        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
-    cmd.set_current_dir(prj.root());
-
-    cmd.args([
-        "script",
-        &deploy_contract,
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
-        "-vvvvv",
-        "--slow",
-        "--broadcast",
-        "--private-key",
-        &private_key,
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+    let _handle = prepare_manual_gas_limit(&prj, &mut cmd, false).await;
+    cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
@@ -5621,11 +5516,7 @@ async fn tempo_batch_resume_reuses_signed_payload(prj: _, cmd: _) {
         .await
         .expect("Forge did not reach the blocked batch submission");
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let transactions = sequence["transactions"].as_array().unwrap();
     assert_eq!(transactions.len(), 3);
@@ -5719,11 +5610,7 @@ async fn tempo_batch_unlocked_crash_blocks_resubmission(prj: _, cmd: _) {
         .await
         .expect("Forge did not reach the blocked delegated batch submission");
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     assert!(sequence["transactions"].as_array().unwrap().iter().all(|tx| tx["hash"].is_null()));
     assert!(sequence["pending"].as_array().unwrap().is_empty());
@@ -5819,11 +5706,7 @@ async fn tempo_batch_reconciles_accepted_signed_submission_error(prj: _, cmd: _)
     assert!(!submissions.is_empty());
     assert!(submissions.iter().all(|submission| submission == &submissions[0]));
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     assert!(sequence["pending"].as_array().unwrap().is_empty());
     assert_eq!(sequence["receipts"].as_array().unwrap().len(), 3);
@@ -6005,11 +5888,7 @@ async fn tempo_batch_resume_waits_for_pending_hash(prj: _, cmd: _) {
         String::from_utf8_lossy(&stderr)
     );
     assert_eq!(submissions.lock().unwrap().len(), 1);
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let mut sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let pending = sequence["pending"].as_array().unwrap();
     assert_eq!(pending.len(), 1);
@@ -6397,11 +6276,7 @@ contract DeployTempoBatch is Script {
     ]);
     cmd.assert_success();
 
-    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no broadcast artifact found");
+    let run_latest = latest_broadcast_path(prj.root());
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
     let returned = |name: &str| -> Address {
         json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
@@ -6483,11 +6358,7 @@ contract TempoResume is Script {
     let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
     assert!(stderr.contains("method is not allowed"), "{stderr}");
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let transactions = sequence["transactions"].as_array().unwrap();
     assert_eq!(transactions.len(), 2);
@@ -7434,4 +7305,66 @@ async fn resume_retries_unsubmitted_delegated_outcome(prj: _, cmd: _) {
     let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
     assert!(!provider.get_code_at(address.parse().unwrap()).await.unwrap().is_empty());
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
+async fn prepare_manual_gas_limit(
+    prj: &TestProject,
+    cmd: &mut TestCommand,
+    unlocked: bool,
+) -> anvil::NodeHandle {
+    let deploy_script = prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract GasWaster {
+    function wasteGas(uint256 minGas) public {
+        require(gasleft() >= minGas, "Gas left needs to be higher");
+    }
+}
+contract DeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        GasWaster gasWaster = new GasWaster();
+        gasWaster.wasteGas{gas: 500000}(200000);
+    }
+}
+   "#,
+    );
+
+    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--slow",
+        "--broadcast",
+    ]);
+    if unlocked {
+        cmd.args(["--unlocked", "--sender", &dev.to_string(), "--ignored-error-codes=2018"]);
+    } else {
+        cmd.args([
+            "--private-key",
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ]);
+    }
+    handle
+}
+
+fn latest_broadcast_path(root: &Path) -> PathBuf {
+    foundry_common::fs::json_files(&root.join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest broadcast artifact")
 }
