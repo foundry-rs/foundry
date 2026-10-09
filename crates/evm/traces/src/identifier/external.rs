@@ -8,7 +8,7 @@ use alloy_primitives::{
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
 use foundry_common::compile::etherscan_project;
-use foundry_config::{Chain, Config, EtherscanConfigs, NamedChain};
+use foundry_config::{Chain, Config, EtherscanConfigs, NamedChain, ResolvedEtherscanConfig};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use futures::{
     future::join_all,
@@ -90,16 +90,12 @@ impl ExternalIdentifierConfig {
     /// chain that executed the recorded storage access. Sourcify is omitted because its compact
     /// response does not contain the verified sources required for compilation.
     pub fn storage_identifier(&self, chain: Chain) -> Option<ExternalIdentifier> {
-        // `etherscan_api_key` also accepts a table alias. Do not reuse an alias name as the
-        // literal API key for a different runtime chain.
-        let api_key =
-            self.etherscan_api_key.as_deref().filter(|key| !self.etherscan.contains_key(*key));
-        self.identifier_with(Some(chain), None, api_key, false)
+        self.identifier_with(Some(chain), None, self.literal_api_key(), false)
     }
 
     fn identifier_with(
         &self,
-        mut chain: Option<Chain>,
+        chain: Option<Chain>,
         etherscan_alias: Option<&str>,
         etherscan_api_key: Option<&str>,
         sourcify: bool,
@@ -108,22 +104,7 @@ impl ExternalIdentifierConfig {
             return None;
         }
 
-        let resolved =
-            self.etherscan.resolve_for(etherscan_alias, etherscan_api_key, chain.or(self.chain));
-        let etherscan = match resolved {
-            Ok(Some(config)) => {
-                chain = config.chain;
-                Some(config)
-            }
-            Ok(None) => {
-                warn!(target: "evm::traces::external", "etherscan config not found");
-                None
-            }
-            Err(err) => {
-                warn!(target: "evm::traces::external", ?err, "failed to get etherscan config");
-                None
-            }
-        };
+        let (chain, etherscan) = self.resolve_explorer(chain, etherscan_alias, etherscan_api_key);
 
         let mut fetchers = Vec::<Arc<dyn ExternalFetcherT>>::new();
         // Sourcify never indexes local development chains.
@@ -157,9 +138,47 @@ impl ExternalIdentifierConfig {
         })
     }
 
+    /// Picks the explorer config and the chain to look contracts up on.
+    fn resolve_explorer(
+        &self,
+        chain: Option<Chain>,
+        etherscan_alias: Option<&str>,
+        etherscan_api_key: Option<&str>,
+    ) -> (Option<Chain>, Option<ResolvedEtherscanConfig>) {
+        let mut resolved =
+            self.etherscan.resolve_for(etherscan_alias, etherscan_api_key, chain.or(self.chain));
+        // Only an alias can resolve to a chain other than the requested one. An alias pinned to
+        // another chain must not redirect lookups away from the traced chain.
+        if let Some(chain) = chain
+            && let Ok(Some(config)) = &resolved
+            && config.chain.is_some_and(|c| c != chain)
+        {
+            resolved = self.etherscan.resolve_for(None, self.literal_api_key(), Some(chain));
+        }
+        match resolved {
+            Ok(Some(config)) => (chain.or(config.chain), Some(config)),
+            Ok(None) => {
+                warn!(target: "evm::traces::external", "etherscan config not found");
+                (chain, None)
+            }
+            Err(err) => {
+                warn!(target: "evm::traces::external", ?err, "failed to get etherscan config");
+                (chain, None)
+            }
+        }
+    }
+
     /// Maximum time a storage-layout lookup may block.
     pub const fn storage_timeout(&self) -> Duration {
         Duration::from_secs(self.timeout)
+    }
+
+    /// Returns `etherscan_api_key` unless it names an `[etherscan]` entry.
+    ///
+    /// `etherscan_api_key` also accepts a table alias. An alias name must not be sent as the
+    /// literal API key when the alias itself is not used.
+    fn literal_api_key(&self) -> Option<&str> {
+        self.etherscan_api_key.as_deref().filter(|key| !self.etherscan.contains_key(*key))
     }
 }
 
@@ -928,11 +947,11 @@ mod tests {
     }
 
     #[test]
-    fn storage_identifier_does_not_use_an_alias_for_another_chain() {
+    fn alias_for_another_chain_does_not_redirect_lookups() {
         let config = ExternalIdentifierConfig {
             timeout: 1,
             etherscan: serde_json::from_value(serde_json::json!({
-                "mainnet": { "chain": 1, "key": "key" }
+                "mainnet": { "key": "key" }
             }))
             .unwrap(),
             etherscan_alias: Some("mainnet".to_string()),
@@ -941,6 +960,47 @@ mod tests {
         };
 
         assert!(config.storage_identifier(Chain::from(8453)).is_none());
+
+        let kinds = |identifier: ExternalIdentifier| {
+            identifier.fetchers.iter().map(|fetcher| fetcher.kind()).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(config.identifier(Some(Chain::from(8453))).unwrap()),
+            [FetcherKind::Sourcify]
+        );
+        assert_eq!(
+            kinds(config.identifier(Some(Chain::mainnet())).unwrap()),
+            [FetcherKind::Sourcify, FetcherKind::Etherscan]
+        );
+
+        // The traced chain's own entry is used instead of the foreign alias.
+        let config = ExternalIdentifierConfig {
+            etherscan: serde_json::from_value(serde_json::json!({
+                "mainnet": { "key": "key" },
+                "base": { "key": "key" }
+            }))
+            .unwrap(),
+            ..config
+        };
+        let (chain, etherscan) =
+            config.resolve_explorer(Some(Chain::from(8453)), Some("mainnet"), Some("mainnet"));
+        assert_eq!(chain, Some(Chain::from(8453)));
+        assert_eq!(etherscan.unwrap().chain, Some(Chain::from(8453)));
+
+        // A chainless alias keeps its explorer URL without clearing the traced chain.
+        let config = ExternalIdentifierConfig {
+            etherscan: serde_json::from_value(serde_json::json!({
+                "custom": { "key": "key", "url": "https://explorer.invalid/api" }
+            }))
+            .unwrap(),
+            etherscan_alias: Some("custom".to_string()),
+            etherscan_api_key: Some("custom".to_string()),
+            ..config
+        };
+        assert_eq!(
+            kinds(config.identifier(Some(Chain::from(8453))).unwrap()),
+            [FetcherKind::Sourcify, FetcherKind::Etherscan]
+        );
     }
 
     /// Fetcher that returns a transient Cloudflare block the first time it sees an address, then
