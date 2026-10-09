@@ -1452,7 +1452,7 @@ impl<N: Network> Backend<N> {
 
     /// Increases the balance of the given address, saturating at `U256::MAX`.
     pub(crate) async fn add_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
-        let mut db = self.db.write().await;
+        let mut db = self.db_for_head_override().await;
         let current_balance = db.basic(address)?.unwrap_or_default().balance;
         db.set_balance(address, current_balance.saturating_add(balance))
     }

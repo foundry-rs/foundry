@@ -206,7 +206,7 @@ async fn historical_account_ignores_later_overrides() {
     let block = api.block_number().unwrap().to::<u64>();
     let state_root = api.block_by_number(block.into()).await.unwrap().unwrap().header.state_root;
 
-    api.anvil_set_balance(target, U256::from(2)).await.unwrap();
+    api.anvil_add_balance(target, U256::from(1)).await.unwrap();
     api.anvil_set_nonce(target, U256::from(2)).await.unwrap();
     api.anvil_set_code(target, Bytes::from_static(&[0x01])).await.unwrap();
 
