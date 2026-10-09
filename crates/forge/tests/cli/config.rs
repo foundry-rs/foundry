@@ -3457,7 +3457,7 @@ fn contextual_remapping_bytecode_is_independent_of_project_root(prj: _, cmd: _) 
             r#"
 [profile.default]
 auto_detect_remappings = false
-remappings = ["lib/dependency/:unused/=lib/dependency/"]
+remappings = ["lib/dependency:unused/=lib/dependency/"]
 "#,
         )
         .unwrap();
@@ -3476,7 +3476,7 @@ remappings = ["lib/dependency/:unused/=lib/dependency/"]
         .unwrap();
         assert_eq!(
             artifact["metadata"]["settings"]["remappings"],
-            serde_json::json!(["lib/dependency/:unused/=lib/dependency/"])
+            serde_json::json!(["lib/dependency:unused/=lib/dependency/"])
         );
         artifacts.push(artifact);
     }
