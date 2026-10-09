@@ -585,6 +585,8 @@ async fn cast_run_warns_on_receipt_mismatch(cmd: _) {
     let endpoint = handle.http_endpoint();
     // MCOPY(0, 0, 0) STOP
     api.anvil_set_code(Address::with_last_byte(0xaa), bytes!("0x6000600060005e00")).await.unwrap();
+    // Mine the code, so the replayed transactions' parent block has it.
+    api.mine_one().await.unwrap();
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
     let mut tx_hashes = Vec::new();
