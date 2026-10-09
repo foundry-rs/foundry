@@ -3,7 +3,7 @@ use crate::eth::{
     backend::{
         db::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
-            SerializableTransaction, SerializedBlockStates, StateDb,
+            SerializableTransaction, StateDb,
         },
         mem::cache::{CacheSlot, DiskStateCache},
     },
@@ -368,8 +368,10 @@ impl InMemoryBlockStates {
         self.oldest_on_disk.retain(|h| !hashes.contains(h));
     }
 
-    /// Serialize all states to a list of serializable historical states
-    pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
+    /// Serialize all states, returning the child-execution states and the post-block states
+    pub fn serialized_states(
+        &mut self,
+    ) -> (SerializableHistoricalStates, Vec<(B256, StateSnapshot)>) {
         let states = Self::serialize_tier(
             &self.states,
             &mut self.on_disk_states,
@@ -383,7 +385,7 @@ impl InMemoryBlockStates {
             CacheSlot::PostBlock,
         );
 
-        SerializableHistoricalStates::new(states, post_block_states)
+        (SerializableHistoricalStates::new(states), post_block_states)
     }
 
     /// Serializes one memory tier together with its secondary tier, sorted by block hash.
@@ -392,7 +394,7 @@ impl InMemoryBlockStates {
         secondary: &mut B256HashMap<StateDb>,
         disk_cache: &mut DiskStateCache,
         slot: CacheSlot,
-    ) -> SerializedBlockStates {
+    ) -> Vec<(B256, StateSnapshot)> {
         let mut states = in_memory
             .into_iter()
             .map(|(hash, state)| (*hash, state.read_as_state_snapshot()))
@@ -410,8 +412,11 @@ impl InMemoryBlockStates {
     }
 
     /// Load states from serialized data
-    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        let (states, post_block_states) = states.into_parts();
+    pub fn load_states(
+        &mut self,
+        states: SerializableHistoricalStates,
+        post_block_states: Vec<(B256, StateSnapshot)>,
+    ) {
         // Record the post-block states first so that inserting their blocks moves them through the
         // disk-cache lifecycle just like a running node would.
         for (hash, state_snapshot) in post_block_states {
@@ -1256,7 +1261,7 @@ mod tests {
         }
 
         let serialized_hashes =
-            states.serialized_states().into_iter().map(|(hash, _)| hash).collect::<Vec<_>>();
+            states.serialized_states().0.into_iter().map(|(hash, _)| hash).collect::<Vec<_>>();
         assert_eq!(serialized_hashes, [hashes[1], hashes[2], hashes[0]]);
     }
 

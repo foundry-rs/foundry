@@ -8511,10 +8511,10 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             }
             (storage.best_number, storage.serialized_blocks(), storage.serialized_transactions())
         };
-        let historical_states =
-            preserve_historical_states.then(|| self.states.write().serialized_states());
+        let (historical_states, post_block_states) =
+            preserve_historical_states.then(|| self.states.write().serialized_states()).unzip();
 
-        let state = self
+        let mut state = self
             .db
             .read()
             .await
@@ -8524,6 +8524,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     "Dumping state not supported with the current configuration",
                 ))
             })?;
+        state.post_block_states = post_block_states.unwrap_or_default();
         #[cfg(feature = "monad")]
         let state = {
             let mut state = state;
@@ -8734,6 +8735,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         });
 
         let historical_states = state.historical_states.take();
+        let post_block_states = std::mem::take(&mut state.post_block_states);
         let mut db = self.db.write().await;
         let db_snapshot = db.snapshot_state();
         let load_result = (|| -> Result<(), BlockchainError> {
@@ -8791,7 +8793,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         self.db.write().await.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = historical_states {
-            self.states.write().load_states(historical_states);
+            self.states.write().load_states(historical_states, post_block_states);
         }
 
         Ok(true)

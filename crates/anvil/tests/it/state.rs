@@ -733,6 +733,8 @@ async fn post_block_states_survive_dump_and_load() {
     assert_eq!(before, U256::from(1));
 
     let ser_state = api.serialized_state(true).await.unwrap();
+    // Older versions only understand the plain list of historical states.
+    assert!(serde_json::to_value(&ser_state).unwrap()["historical_states"].is_array());
     foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
 
     let (_api, handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;

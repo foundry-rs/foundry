@@ -30,7 +30,7 @@ use revm::{
     state::{AccountInfo, bal::BlockAccessIndex},
 };
 use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
+    Deserialize, Deserializer, Serialize,
     de::{Error as DeError, MapAccess, Visitor},
 };
 use serde_json::Value;
@@ -807,6 +807,12 @@ pub struct SerializableState {
     /// Note: This is an Option for backwards compatibility.
     #[serde(default)]
     pub historical_states: Option<SerializableHistoricalStates>,
+    /// Post-block states of blocks overridden with `anvil_set*` while they were the head.
+    ///
+    /// For those blocks, `historical_states` holds the state their child was executed on. Kept
+    /// separate so that versions without this field can still load the dump.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub post_block_states: Vec<(B256, StateSnapshot)>,
 }
 
 impl SerializableState {
@@ -965,82 +971,21 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> From<SerializableTran
     }
 }
 
-/// Serialized block states, keyed by block hash.
-pub type SerializedBlockStates = Vec<(B256, StateSnapshot)>;
-
-/// Historical states of accounts and storage, keyed by block hash.
-///
-/// A block that was overridden with `anvil_set*` while it was the head has two states: the one its
-/// child was executed on, and its own post-block state. Both are kept so the distinction survives
-/// a dump/load round trip.
-#[derive(Clone, Debug, Default)]
-pub struct SerializableHistoricalStates {
-    states: SerializedBlockStates,
-    post_block_states: SerializedBlockStates,
-}
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct SerializableHistoricalStates(Vec<(B256, StateSnapshot)>);
 
 impl SerializableHistoricalStates {
-    pub const fn new(
-        states: SerializedBlockStates,
-        post_block_states: SerializedBlockStates,
-    ) -> Self {
-        Self { states, post_block_states }
-    }
-
-    /// Consumes this collection, returning the child-execution states and the post-block states.
-    pub fn into_parts(self) -> (SerializedBlockStates, SerializedBlockStates) {
-        (self.states, self.post_block_states)
+    pub const fn new(states: Vec<(B256, StateSnapshot)>) -> Self {
+        Self(states)
     }
 }
 
-/// Iterates the state each block's child was executed on.
 impl IntoIterator for SerializableHistoricalStates {
     type Item = (B256, StateSnapshot);
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.states.into_iter()
-    }
-}
-
-/// The wire shapes of [`SerializableHistoricalStates`].
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum HistoricalStatesRepr {
-    /// Dumps written before post-block states existed are a plain list.
-    Legacy(SerializedBlockStates),
-    Split {
-        states: SerializedBlockStates,
-        #[serde(default)]
-        post_block_states: SerializedBlockStates,
-    },
-}
-
-#[derive(Serialize)]
-struct HistoricalStatesSplit<'a> {
-    states: &'a [(B256, StateSnapshot)],
-    post_block_states: &'a [(B256, StateSnapshot)],
-}
-
-impl Serialize for SerializableHistoricalStates {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        // Keep the legacy shape while there is no post-block state to record.
-        if self.post_block_states.is_empty() {
-            return self.states.serialize(serializer);
-        }
-        HistoricalStatesSplit { states: &self.states, post_block_states: &self.post_block_states }
-            .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for SerializableHistoricalStates {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(match HistoricalStatesRepr::deserialize(deserializer)? {
-            HistoricalStatesRepr::Legacy(states) => Self { states, post_block_states: Vec::new() },
-            HistoricalStatesRepr::Split { states, post_block_states } => {
-                Self { states, post_block_states }
-            }
-        })
+        self.0.into_iter()
     }
 }
 
@@ -1049,32 +994,6 @@ mod test {
     use super::*;
     use alloy_consensus::Header;
     use std::fs;
-
-    #[test]
-    fn historical_states_accept_the_legacy_list_shape() {
-        let hash = B256::with_last_byte(1);
-        let legacy = serde_json::json!([[hash, StateSnapshot::default()]]);
-        let states: SerializableHistoricalStates = serde_json::from_value(legacy).unwrap();
-        let (states, post_block_states) = states.into_parts();
-        assert_eq!(states.len(), 1);
-        assert!(post_block_states.is_empty());
-    }
-
-    #[test]
-    fn historical_states_round_trip_both_versions() {
-        let hash = B256::with_last_byte(1);
-        let original = SerializableHistoricalStates::new(
-            vec![(hash, StateSnapshot::default())],
-            vec![(hash, StateSnapshot::default())],
-        );
-        let encoded = serde_json::to_value(&original).unwrap();
-        assert!(encoded.get("post_block_states").is_some());
-
-        let decoded: SerializableHistoricalStates = serde_json::from_value(encoded).unwrap();
-        let (states, post_block_states) = decoded.into_parts();
-        assert_eq!(states.len(), 1);
-        assert_eq!(post_block_states.len(), 1);
-    }
 
     #[test]
     fn loads_state_from_file_or_directory() {
