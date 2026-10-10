@@ -1538,9 +1538,6 @@ fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String>
     let base_in = Base::unwrap_or_detect(base_in, value)?;
     let base_out = base_out.parse()?;
     let n = NumberWithBase::parse_int_in(value, base_in)?.with_base(base_out);
-    if base_in == base_out {
-        return Ok(value.to_string());
-    }
     Ok(format!("{n:#?}"))
 }
 
