@@ -296,7 +296,15 @@ edition = "2021"
             //! These files may be overwritten by the codegen system at any time.
             "#
         )?;
-        if !single_file {
+        if single_file {
+            for instance in &self.instances {
+                let contents = instance
+                    .expansion
+                    .as_ref()
+                    .ok_or_eyre(format!("TokenStream for {} does not exist", instance.name))?;
+                super_contents.push_str(contents);
+            }
+        } else {
             for instance in &self.instances {
                 let name = instance.name.to_snake_case();
                 let path = if is_mod {
@@ -312,11 +320,11 @@ edition = "2021"
                 self.check_file_contents(&path, contents)?;
                 write_mod_name(&mut super_contents, &name)?;
             }
-
-            let super_path =
-                if is_mod { crate_path.join("mod.rs") } else { crate_path.join("src/lib.rs") };
-            self.check_file_contents(&super_path, &super_contents)?;
         }
+
+        let super_path =
+            if is_mod { crate_path.join("mod.rs") } else { crate_path.join("src/lib.rs") };
+        self.check_file_contents(&super_path, &super_contents)?;
 
         Ok(())
     }
