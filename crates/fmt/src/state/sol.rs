@@ -2102,7 +2102,13 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::While(cond, stmt) => {
                 // Check if blocks should be inlined and update cache if necessary
-                let inline = self.is_single_line_block(span.lo(), cond, stmt, None);
+                let inline = self.is_single_line_block(
+                    span.lo(),
+                    cond.span,
+                    6 + self.estimate_size(cond.span),
+                    stmt,
+                    None,
+                );
                 if !inline.is_cached && self.single_line_stmt.is_none() {
                     self.single_line_stmt = Some(inline.outcome);
                 }
@@ -2236,6 +2242,14 @@ impl<'ast> State<'_, 'ast> {
         next: &'ast Option<&mut ast::Expr<'ast>>,
         body: &'ast ast::Stmt<'ast>,
     ) {
+        let header = Self::for_header_span(span, init, cond, next);
+        let header_len = self.estimate_for_header_size(init, cond, next);
+        let inline = self.is_single_line_block(span.lo(), header, header_len, body, None);
+        let set_inline_cache = !inline.is_cached && self.single_line_stmt.is_none();
+        if set_inline_cache {
+            self.single_line_stmt = Some(inline.outcome);
+        }
+
         self.cbox(0);
         self.s.ibox(self.ind);
         let open_paren = self.find_uncommented_char(span, '(').unwrap();
@@ -2308,8 +2322,11 @@ impl<'ast> State<'_, 'ast> {
 
         // Print comments and body.
         self.print_comments(body.span.lo(), CommentConfig::skip_ws());
-        self.print_stmt_as_block(body, span.hi(), false);
+        self.print_stmt_as_block(body, span.hi(), inline.outcome);
         self.end();
+        if set_inline_cache {
+            self.single_line_stmt = None;
+        }
     }
 
     /// Prints an `if` statement, including its condition, `then` block, and any chained
@@ -2322,7 +2339,13 @@ impl<'ast> State<'_, 'ast> {
         els_opt: &'ast Option<&mut ast::Stmt<'ast>>,
     ) {
         // Check if blocks should be inlined and update cache if necessary
-        let inline = self.is_single_line_block(span.lo(), cond, then, els_opt.as_ref());
+        let inline = self.is_single_line_block(
+            span.lo(),
+            cond.span,
+            6 + self.estimate_size(cond.span),
+            then,
+            els_opt.as_ref(),
+        );
         let set_inline_cache = !inline.is_cached && self.single_line_stmt.is_none();
         if set_inline_cache {
             self.single_line_stmt = Some(inline.outcome);
@@ -2671,7 +2694,12 @@ impl<'ast> State<'_, 'ast> {
             std::slice::from_ref(stmt)
         };
 
-        if inline && stmts.len() == 1 {
+        // Solidity only permits variable declarations inside braces, even when a parent's
+        // cached inline decision would otherwise remove them.
+        if inline
+            && stmts.len() == 1
+            && !matches!(stmts[0].kind, ast::StmtKind::DeclSingle(_) | ast::StmtKind::DeclMulti(..))
+        {
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
@@ -2698,7 +2726,8 @@ impl<'ast> State<'_, 'ast> {
     fn is_single_line_block(
         &mut self,
         stmt_span_lo: BytePos,
-        cond: &'ast ast::Expr<'ast>,
+        cond: Span,
+        header_len: usize,
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
     ) -> Decision {
@@ -2743,7 +2772,7 @@ impl<'ast> State<'_, 'ast> {
 
         // If no decision was made, estimate the length to be formatted.
         // NOTE: conservative check -> worst-case scenario is formatting as multi-line block.
-        if !self.can_stmts_be_inlined(cond, then, els_opt) {
+        if !self.can_stmts_be_inlined(header_len, then, els_opt) {
             return Decision { outcome: false, is_cached: false };
         }
 
@@ -2751,7 +2780,8 @@ impl<'ast> State<'_, 'ast> {
         if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &then.kind {
             let child_decision = self.is_single_line_block(
                 then.span.lo(),
-                child_cond,
+                child_cond.span,
+                6 + self.estimate_size(child_cond.span),
                 child_then,
                 child_els_opt.as_ref(),
             );
@@ -2763,7 +2793,8 @@ impl<'ast> State<'_, 'ast> {
             if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &stmt.kind {
                 return self.is_single_line_block(
                     stmt.span.lo(),
-                    child_cond,
+                    child_cond.span,
+                    6 + self.estimate_size(child_cond.span),
                     child_then,
                     child_els_opt.as_ref(),
                 );
@@ -2787,7 +2818,7 @@ impl<'ast> State<'_, 'ast> {
             {
                 return false;
             }
-            if cond_len + self.estimate_size(if_span) >= self.space_left() {
+            if cond_len + self.estimate_inline_stmt_size(stmt) >= self.space_left() {
                 return false;
             }
             if let Some(els) = els_opt
@@ -2803,7 +2834,7 @@ impl<'ast> State<'_, 'ast> {
             {
                 return false;
             }
-            if cond_len + self.estimate_size(stmt.span) >= self.space_left() {
+            if cond_len + self.estimate_inline_stmt_size(stmt) >= self.space_left() {
                 return false;
             }
         }
@@ -2811,15 +2842,11 @@ impl<'ast> State<'_, 'ast> {
     }
 
     /// Checks if a statement was explicitly written in a new line.
-    fn is_stmt_in_new_line(
-        &self,
-        cond: &'ast ast::Expr<'ast>,
-        then: &'ast ast::Stmt<'ast>,
-    ) -> bool {
-        let span_between = cond.span.between(then.span);
+    fn is_stmt_in_new_line(&self, cond: Span, then: &'ast ast::Stmt<'ast>) -> bool {
+        let span_between = cond.between(then.span);
         if let Some(snip) = self.snippet(span_between) {
             // Check for newlines after the closing parenthesis of the `if (...)`.
-            if let Some((_, after_paren)) = snip.split_once(')') {
+            if let Some((_, after_paren)) = snip.rsplit_once(')') {
                 return after_paren.lines().count() > 1;
             }
         }
@@ -2832,6 +2859,11 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
         has_outer_else: bool,
     ) -> bool {
+        if has_outer_else
+            && matches!(then.kind, ast::StmtKind::For { .. } | ast::StmtKind::While(..))
+        {
+            return true;
+        }
         let ast::StmtKind::Block(block) = &then.kind else { return false };
         if block.stmts.len() != 1 {
             return false;
@@ -2854,16 +2886,20 @@ impl<'ast> State<'_, 'ast> {
                 self.is_multiline_block(block, empty_as_multiline, false)
             }
             ast::StmtKind::While(cond, body) => {
-                !self.is_single_line_block(stmt.span.lo(), cond, body, None).outcome
+                !self
+                    .is_single_line_block(
+                        stmt.span.lo(),
+                        cond.span,
+                        6 + self.estimate_size(cond.span),
+                        body,
+                        None,
+                    )
+                    .outcome
             }
-            ast::StmtKind::For { body, .. } => {
-                // In `print_for_stmt`, `print_stmt_as_block(body, span.hi(), false)` is called with
-                // `inline = false`. So only empty can be single-line.
-                if let ast::StmtKind::Block(block) = &body.kind {
-                    self.is_multiline_block(block, empty_as_multiline, true)
-                } else {
-                    true
-                }
+            ast::StmtKind::For { init, cond, next, body } => {
+                let header = Self::for_header_span(stmt.span, init, cond, next);
+                let header_len = self.estimate_for_header_size(init, cond, next);
+                !self.is_single_line_block(stmt.span.lo(), header, header_len, body, None).outcome
             }
 
             ast::StmtKind::If(_, _, Some(_)) => true,
@@ -2875,12 +2911,12 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Assembly(_)
             | ast::StmtKind::DoWhile(_, _)
             | ast::StmtKind::Try(_)
-            | ast::StmtKind::UncheckedBlock(_) => true,
+            | ast::StmtKind::UncheckedBlock(_)
+            | ast::StmtKind::DeclMulti(_, _)
+            | ast::StmtKind::DeclSingle(_) => true,
 
             ast::StmtKind::Break
             | ast::StmtKind::Continue
-            | ast::StmtKind::DeclMulti(_, _)
-            | ast::StmtKind::DeclSingle(_)
             | ast::StmtKind::Emit(_, _)
             | ast::StmtKind::Expr(_)
             | ast::StmtKind::Return(_)
@@ -2943,15 +2979,12 @@ impl<'ast> State<'_, 'ast> {
     /// Performs a size estimation to see if the if/else can fit on one line.
     fn can_stmts_be_inlined(
         &mut self,
-        cond: &'ast ast::Expr<'ast>,
+        header_len: usize,
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
     ) -> bool {
-        let cond_len = self.estimate_size(cond.span);
-
-        // If the condition fits in one line, 6 chars: 'if (' + {cond} + ') ' + {then}
-        // Otherwise chars: ') ' + {then}
-        let then_margin = if 6 + cond_len < self.space_left() { 6 + cond_len } else { 2 };
+        // If the header wraps, only its closing parenthesis precedes the body.
+        let then_margin = if header_len < self.space_left() { header_len } else { 2 };
 
         if !self.is_inline_stmt(then, then_margin) {
             return false;
@@ -2959,6 +2992,71 @@ impl<'ast> State<'_, 'ast> {
 
         // Always 6 chars for the else: 'else '
         els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
+    }
+
+    fn for_header_span(
+        span: Span,
+        init: &Option<&mut ast::Stmt<'_>>,
+        cond: &Option<&mut ast::Expr<'_>>,
+        next: &Option<&mut ast::Expr<'_>>,
+    ) -> Span {
+        span.with_hi(
+            next.as_ref()
+                .map(|expr| expr.span.hi())
+                .or_else(|| cond.as_ref().map(|expr| expr.span.hi()))
+                .or_else(|| init.as_ref().map(|stmt| stmt.span.hi()))
+                .unwrap_or(span.lo()),
+        )
+    }
+
+    /// Measures the printed clauses, rather than source spelling or whitespace, so normalization
+    /// cannot change the inline decision on the second pass.
+    fn estimate_for_header_size(
+        &self,
+        init: &'ast Option<&mut ast::Stmt<'ast>>,
+        cond: &'ast Option<&mut ast::Expr<'ast>>,
+        next: &'ast Option<&mut ast::Expr<'ast>>,
+    ) -> usize {
+        let mut state =
+            Self::new(self.file, self.config.clone(), Default::default(), Default::default());
+        state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
+        if let Some(init) = init {
+            state.print_stmt_bound(init, Some(init.span.hi()));
+        } else {
+            state.word(";");
+        }
+        if let Some(cond) = cond {
+            state.nbsp();
+            state.print_expr(cond);
+        }
+        state.word(";");
+        if let Some(next) = next {
+            state.nbsp();
+            state.print_expr(next);
+        }
+        // 'for (' + clauses + ') '.
+        7 + state.s.eof().len()
+    }
+
+    /// Measures the normalized body without letting a parent's inline decision remove required
+    /// braces. For an `if`, the `else` branch is measured separately by `is_inline_stmt`.
+    fn estimate_inline_stmt_size(&self, stmt: &'ast ast::Stmt<'ast>) -> usize {
+        let comments = if self.has_comment_between(stmt.span.lo(), stmt.span.hi()) {
+            self.comments.clone()
+        } else {
+            Default::default()
+        };
+        let mut state = Self::new(self.file, self.config.clone(), Default::default(), comments);
+        state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
+        state.single_line_stmt = Some(true);
+        if let ast::StmtKind::If(cond, then, _) = &stmt.kind {
+            state.print_expr(cond);
+            state.word(") ");
+            state.print_stmt_as_block(then, then.span.hi(), true);
+        } else {
+            state.print_stmt_as_block(stmt, stmt.span.hi(), true);
+        }
+        state.s.eof().len()
     }
 
     fn can_header_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {

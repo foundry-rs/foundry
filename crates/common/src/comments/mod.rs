@@ -14,6 +14,7 @@ pub mod inline_config;
 pub const DISABLE_START: &str = "forgefmt: disable-start";
 pub const DISABLE_END: &str = "forgefmt: disable-end";
 
+#[derive(Clone, Default)]
 pub struct Comments {
     comments: std::collections::VecDeque<Comment>,
 }
