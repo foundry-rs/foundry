@@ -333,13 +333,12 @@ edition = "2021"
         eyre::ensure!(file_path.is_file(), "{} is not a file", file_path.display());
         let file_contents = &fs::read_to_string(file_path).wrap_err("Failed to read file")?;
 
-        // Format both
+        // Only normalize formatting: generated expansions already have qualified paths.
         let file_contents = syn::parse_file(file_contents)?;
         let formatted_file = prettyplease::unparse(&file_contents);
 
         let expected_contents = syn::parse_file(expected_contents)?;
-        let formatted_exp =
-            qualify_shadowed_sibling_module_paths(prettyplease::unparse(&expected_contents));
+        let formatted_exp = prettyplease::unparse(&expected_contents);
 
         eyre::ensure!(
             formatted_file == formatted_exp,

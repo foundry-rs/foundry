@@ -610,3 +610,56 @@ Error: File contents do not match expected contents for "[..]/module-bindings/mo
 
 "#]]);
 }
+
+#[forgetest]
+fn bind_single_file_checks_multiple_contracts(prj: _, cmd: _) {
+    // The FooCalls contract must not shadow the call enum inside the Foo binding.
+    prj.add_source(
+        "Foo.sol",
+        "contract Foo { function a() external {} } contract FooCalls { function b() external {} }",
+    );
+
+    let module_path = prj.root().join("module-bindings");
+    let crate_args = ["bind", "--select", "^(Foo|FooCalls)$", "--single-file"];
+    let module_args = [
+        "bind",
+        "--select",
+        "^(Foo|FooCalls)$",
+        "--single-file",
+        "--module",
+        "--bindings-path",
+        module_path.to_str().unwrap(),
+    ];
+    let crate_file = prj.root().join("out/bindings/src/lib.rs");
+    let module_file = module_path.join("mod.rs");
+    for (args, file) in [(&crate_args[..], &crate_file), (&module_args[..], &module_file)] {
+        cmd.forge_fuse().args(args).assert_success();
+        cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+OK.
+
+"#]]);
+
+        // Whitespace changes must not invalidate otherwise identical bindings.
+        let contents = fs::read_to_string(file).unwrap();
+        fs::write(file, format!("\n{contents}\n")).unwrap();
+        cmd.forge_fuse().args(args).assert_success();
+    }
+
+    fs::remove_file(crate_file).unwrap();
+    cmd.forge_fuse().args(crate_args).assert_failure().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+Error: [..]/out/bindings/src/lib.rs is not a file
+
+"#]]);
+
+    fs::remove_file(module_file).unwrap();
+    cmd.forge_fuse().args(module_args).assert_failure().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+Error: [..]/module-bindings/mod.rs is not a file
+
+"#]]);
+}
