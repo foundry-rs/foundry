@@ -16,6 +16,9 @@ use foundry_config::{
     Config, fs_permissions::FsAccessKind, providers::relative_remapping_preserving_context_boundary,
 };
 
+#[cfg(windows)]
+use std::os::windows::fs::FileTypeExt;
+
 /// Check if a path is safe for use as a relative path within a workspace.
 /// Rejects absolute paths, parent directory components (..), and other unsafe patterns.
 pub fn is_safe_relative_path(p: &Path) -> bool {
@@ -730,6 +733,82 @@ fn copy_dir_recursive_inner(
     result
 }
 
+/// Makes `root/rel` writable without changing the files that `copy_project` links into `root`.
+///
+/// Copies linked directory trees so aliases in nested directories see the writable target.
+/// Rebases project-local symlinks and preserves external targets and dangling links.
+/// Removes a symlink at `rel` so the caller can write the mutant without changing its source.
+pub fn unshare_path(project_root: &Path, root: &Path, rel: &Path) -> Result<()> {
+    let root = canonicalize_path(root)?;
+    let mut current = root.clone();
+    let mut components = rel.components().peekable();
+    while let Some(component) = components.next() {
+        current.push(component);
+        let Ok(metadata) = fs::symlink_metadata(&current) else { return Ok(()) };
+        if !metadata.file_type().is_symlink() {
+            continue;
+        }
+        if components.peek().is_none() {
+            fs::remove_file(&current)?;
+            return Ok(());
+        }
+        let source = canonicalize_path(&current)?;
+        #[cfg(unix)]
+        fs::remove_file(&current)?;
+        #[cfg(windows)]
+        fs::remove_dir(&current)?;
+        copy_unshared_dir(project_root, &root, &current, &source, &current)?;
+    }
+    Ok(())
+}
+
+fn copy_unshared_dir(
+    project_root: &Path,
+    root: &Path,
+    isolated_root: &Path,
+    src: &Path,
+    dst: &Path,
+) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let destination = dst.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            // Resolve against the original parent before moving the link into the workspace.
+            let target = resolve_against_root(src, &fs::read_link(entry.path())?);
+            let rebased = rebase_project_path(project_root, root, &target);
+            // Keep uncopied project files accessible, but rebase forward references in this tree.
+            let target = if rebased.starts_with(isolated_root) || rebased.exists() {
+                rebased
+            } else {
+                target
+            };
+            symlink_entry(&target, &destination, file_type)?;
+        } else if file_type.is_dir() {
+            copy_unshared_dir(project_root, root, isolated_root, &entry.path(), &destination)?;
+        } else {
+            fs::copy(entry.path(), &destination)?;
+        }
+    }
+    Ok(())
+}
+
+/// Creates a symlink at `dst`, preserving the original type even if the target is missing.
+fn symlink_entry(target: &Path, dst: &Path, _file_type: fs::FileType) -> Result<()> {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, dst)?;
+    #[cfg(windows)]
+    {
+        if _file_type.is_symlink_dir() {
+            std::os::windows::fs::symlink_dir(target, dst)?;
+        } else {
+            std::os::windows::fs::symlink_file(target, dst)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -738,6 +817,11 @@ mod tests {
     use foundry_compilers::artifacts::ModelCheckerSettings;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as symlink_file;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file;
 
     fn create_test_dir_structure(base: &Path, structure: &[&str]) {
         for path in structure {
@@ -751,6 +835,90 @@ mod tests {
                 fs::write(&full_path, format!("// {path}")).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn test_unshare_path_preserves_nested_aliases_and_external_links() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("deeper/workspace");
+        let dependency = root.join("lib/bucket");
+        create_test_dir_structure(
+            &root,
+            &[
+                "lib/bucket/Arithmetic.sol",
+                "lib/bucket/nested/",
+                "src/Local.sol",
+                "uncopied/Local.sol",
+            ],
+        );
+        create_test_dir_structure(temp.path(), &["shared/Helper.sol"]);
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::copy(root.join("src/Local.sol"), workspace.join("src/Local.sol")).unwrap();
+        symlink_dir(&root.join("lib"), &workspace.join("lib")).unwrap();
+        symlink_file("Arithmetic.sol", dependency.join("Alias.sol")).unwrap();
+        symlink_file("../Arithmetic.sol", dependency.join("nested/Alias.sol")).unwrap();
+        symlink_file(dependency.join("Arithmetic.sol"), dependency.join("Absolute.sol")).unwrap();
+        symlink_file("../../../shared/Helper.sol", dependency.join("Helper.sol")).unwrap();
+        symlink_file("../../src/Local.sol", dependency.join("Local.sol")).unwrap();
+        symlink_file("../../uncopied/Local.sol", dependency.join("Uncopied.sol")).unwrap();
+        symlink_file("nonexistent", dependency.join("unused")).unwrap();
+        symlink_dir(Path::new("nested"), &dependency.join("a_alias")).unwrap();
+        symlink_dir(Path::new("missing-directory"), &dependency.join("unused_dir")).unwrap();
+
+        unshare_path(&root, &workspace, Path::new("lib/bucket/Arithmetic.sol")).unwrap();
+        fs::write(workspace.join("lib/bucket/Arithmetic.sol"), "mutant").unwrap();
+        fs::write(workspace.join("src/Local.sol"), "workspace local").unwrap();
+
+        for alias in ["Alias.sol", "nested/Alias.sol", "Absolute.sol", "a_alias/Alias.sol"] {
+            assert_eq!(
+                fs::read_to_string(workspace.join("lib/bucket").join(alias)).unwrap(),
+                "mutant",
+                "{alias}",
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(dependency.join("Arithmetic.sol")).unwrap(),
+            "// lib/bucket/Arithmetic.sol",
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/Helper.sol")).unwrap(),
+            "// shared/Helper.sol",
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/Local.sol")).unwrap(),
+            "workspace local",
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/Uncopied.sol")).unwrap(),
+            "// uncopied/Local.sol",
+        );
+        for link in ["unused", "unused_dir"] {
+            let path = workspace.join("lib/bucket").join(link);
+            assert!(fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+            assert!(!path.exists());
+        }
+        #[cfg(windows)]
+        assert!(
+            fs::symlink_metadata(workspace.join("lib/bucket/unused_dir"))
+                .unwrap()
+                .file_type()
+                .is_symlink_dir()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_symlink_entry_preserves_directory_type_before_target_exists() {
+        let temp = TempDir::new().unwrap();
+        let original = temp.path().join("original");
+        symlink_dir(Path::new("z_real"), &original).unwrap();
+        let file_type = fs::symlink_metadata(original).unwrap().file_type();
+        let alias = temp.path().join("a_alias");
+        symlink_entry(Path::new("z_real"), &alias, file_type).unwrap();
+        assert!(fs::symlink_metadata(&alias).unwrap().file_type().is_symlink_dir());
+        fs::create_dir(temp.path().join("z_real")).unwrap();
+        assert!(alias.is_dir());
     }
 
     #[test]
