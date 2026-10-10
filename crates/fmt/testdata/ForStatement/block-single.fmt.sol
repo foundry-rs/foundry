@@ -3,9 +3,7 @@ pragma solidity ^0.8.8;
 
 contract ForStatement {
     function test() external {
-        for (uint256 i1; i1 < 10; i1++) {
-            i1++;
-        }
+        for (uint256 i1; i1 < 10; i1++) i1++;
 
         uint256 i2;
         for (++i2; i2 < 10; i2++) {}
@@ -16,47 +14,29 @@ contract ForStatement {
             i3 < 10 && veryLongVariableName > 999
                 && veryLongVariableName < 1001;
             i3++
-        ) {
-            i3++;
-        }
+        ) i3++;
 
         for (
             uint256 i3;
             i3 < 10 && veryLongVariableName > 900 && veryLongVariableName < 999;
             i3++
-        ) {
-            i3++;
-        }
+        ) i3++;
 
         for (type(uint256).min;;) {}
 
-        for (;;) {
-            "test";
-        }
+        for (;;) "test";
 
-        for (uint256 i4; i4 < 10; i4++) {
-            i4++;
-        }
+        for (uint256 i4; i4 < 10; i4++) i4++;
 
-        for (uint256 i5;;) {
-            for (uint256 i6 = 10; i6 > i5; i6--) {
-                i5++;
-            }
-        }
+        for (uint256 i5;;) for (uint256 i6 = 10; i6 > i5; i6--) i5++;
 
-        for (;;) {
-            doIt();
-        }
+        for (;;) doIt();
         for (;;) {
             doIt();
             doIt();
         }
 
-        while (c) {
-            for (;;) {
-                x();
-            }
-        }
+        while (c) for (;;) x();
     }
 
     function bracedTrailingComment() external {
@@ -69,9 +49,7 @@ contract ForStatement {
 
     function bracelessTrailingComment() external {
         uint256 x;
-        for (uint256 i = 0; i < 10; ++i) {
-            x++; // step
-        }
+        for (uint256 i = 0; i < 10; ++i) x++; // step
     }
 
     function emptyBodyTrailingComment() external {
@@ -81,9 +59,7 @@ contract ForStatement {
 
     function leadingCommentUnaffected() external {
         // leading comment, must not move
-        for (uint256 i = 0; i < 10; ++i) {
-            i;
-        }
+        for (uint256 i = 0; i < 10; ++i) i;
     }
 
     function commentAfterHeaderNoCondNoNext() external {

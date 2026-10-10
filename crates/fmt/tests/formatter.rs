@@ -1,5 +1,5 @@
 use forge_fmt::{DocCommentStyle, FormatterConfig};
-use foundry_config::fmt::IndentStyle;
+use foundry_config::fmt::{IndentStyle, SingleLineBlockStyle};
 use foundry_test_utils::init_tracing;
 use snapbox::{Data, assert_data_eq};
 use solar::sema::Compiler;
@@ -965,4 +965,177 @@ fn concatenated_string_trailing_comment_stays_after_last_literal() {
         format(source, Path::new("concatenated-string.sol"), Arc::new(FormatterConfig::default())),
         expected
     );
+}
+
+#[test]
+fn for_single_line_statement_blocks() {
+    for (style, body, expected) in [
+        (
+            SingleLineBlockStyle::Preserve,
+            "a[i] = b.get(i);",
+            "for (uint256 i = 0; i < n; i++) a[i] = b.get(i);",
+        ),
+        (
+            SingleLineBlockStyle::Single,
+            "{\n            a[i] = b.get(i);\n        }",
+            "for (uint256 i = 0; i < n; i++) a[i] = b.get(i);",
+        ),
+        (
+            SingleLineBlockStyle::Multi,
+            "a[i] = b.get(i);",
+            "for (uint256 i = 0; i < n; i++) {\n            a[i] = b.get(i);\n        }",
+        ),
+        (
+            SingleLineBlockStyle::Preserve,
+            "\n            a[i] = b.get(i);",
+            "for (uint256 i = 0; i < n; i++) {\n            a[i] = b.get(i);\n        }",
+        ),
+    ] {
+        let source = format!(
+            "contract C {{\n    function f() external {{\n        for (uint256 i = 0; i < n; i++) {body}\n    }}\n}}\n"
+        );
+        let expected = format!(
+            "contract C {{\n    function f() external {{\n        {expected}\n    }}\n}}\n"
+        );
+        let config =
+            Arc::new(FormatterConfig { single_line_statement_blocks: style, ..Default::default() });
+        assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+        assert_eq!(format(&expected, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn statement_block_modes_agree() {
+    for style in
+        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
+    {
+        for (body, preserve_inline) in [
+            ("x();", true),
+            ("{ x(); }", true),
+            ("{\n            x();\n        }", false),
+            ("\n        {\n            x();\n        }", false),
+            ("\n            x();", false),
+            ("{ x(); y(); }", false),
+            ("{ /* comment */ x(); }", false),
+        ] {
+            let inline = match style {
+                SingleLineBlockStyle::Preserve => preserve_inline,
+                SingleLineBlockStyle::Single => !body.contains("y();") && !body.contains("comment"),
+                SingleLineBlockStyle::Multi => false,
+            };
+            for header in ["if (c)", "while (c)", "for (; c;)"] {
+                let source = format!(
+                    "contract C {{\n    function f() external {{\n        {header} {body}\n    }}\n}}\n"
+                );
+                let expected_body = if inline {
+                    "x();"
+                } else if body.contains("y();") {
+                    "{\n            x();\n            y();\n        }"
+                } else if body.contains("comment") {
+                    "{\n            /* comment */\n            x();\n        }"
+                } else {
+                    "{\n            x();\n        }"
+                };
+                let expected = format!(
+                    "contract C {{\n    function f() external {{\n        {header} {expected_body}\n    }}\n}}\n"
+                );
+                let config = Arc::new(FormatterConfig {
+                    single_line_statement_blocks: style,
+                    ..Default::default()
+                });
+                let actual = format(&source, Path::new("test.sol"), config);
+                assert_eq!(actual, expected, "{style:?}: {header} {body}");
+            }
+        }
+    }
+}
+
+#[test]
+fn statement_block_declarations_keep_braces() {
+    for style in
+        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
+    {
+        for header in ["for (;;)", "while (c)", "if (c)", "for (;;) while (c)"] {
+            for declaration in ["uint256 x;", "(uint256 x, uint256 y) = g();"] {
+                let source = format!(
+                    "contract C {{ function f() external {{ {header} {{ {declaration} }} }} }}"
+                );
+                let expected = if header == "for (;;) while (c)" {
+                    format!(
+                        "contract C {{\n    function f() external {{\n        for (;;) {{\n            while (c) {{\n                {declaration}\n            }}\n        }}\n    }}\n}}\n"
+                    )
+                } else {
+                    format!(
+                        "contract C {{\n    function f() external {{\n        {header} {{\n            {declaration}\n        }}\n    }}\n}}\n"
+                    )
+                };
+                let config = Arc::new(FormatterConfig {
+                    single_line_statement_blocks: style,
+                    ..Default::default()
+                });
+                assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn for_body_normalization_is_stable() {
+    let source =
+        "contract C { function f() external { uint256 n; for(uint i=0;i<n;i++) n += uint(n); } }";
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        for line_length in [54, 56, 57] {
+            let body = if line_length <= 56 {
+                "{\n            n += uint256(n);\n        }"
+            } else {
+                "n += uint256(n);"
+            };
+            let expected = format!(
+                "contract C {{\n    function f() external {{\n        uint256 n;\n        for (uint256 i = 0; i < n; i++) {body}\n    }}\n}}\n"
+            );
+            let config = Arc::new(FormatterConfig {
+                line_length,
+                single_line_statement_blocks: style,
+                ..Default::default()
+            });
+            assert_eq!(format(source, Path::new("test.sol"), config), expected);
+        }
+    }
+}
+
+#[test]
+fn for_nested_in_while_preserves_outer_else() {
+    let source = "contract C { function f(bool a, bool b, bool c) external pure returns (uint256) { if (a) while (b) for (;;) { if (c) return 1; } else return 2; return 0; } }";
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        let config =
+            Arc::new(FormatterConfig { single_line_statement_blocks: style, ..Default::default() });
+        let expected = "contract C {\n    function f(bool a, bool b, bool c) external pure returns (uint256) {\n        if (a) {\n            while (b) for (;;) if (c) return 1;\n        } else {\n            return 2;\n        }\n        return 0;\n    }\n}\n";
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn for_header_normalization_is_stable() {
+    for header in
+        ["for (uint i = 0; i < n; i++)", "for(uint i=0;i<n;i++)", "for (uint256 i = 0; i < n; i++)"]
+    {
+        for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+            for line_length in [44, 45, 48] {
+                let source = format!(
+                    "contract C {{ function f() external {{ uint256 n; {header} n++; }} }}"
+                );
+                let body =
+                    if line_length == 44 { "{\n            n++;\n        }" } else { "n++;" };
+                let expected = format!(
+                    "contract C {{\n    function f() external {{\n        uint256 n;\n        for (uint256 i = 0; i < n; i++) {body}\n    }}\n}}\n"
+                );
+                let config = Arc::new(FormatterConfig {
+                    line_length,
+                    single_line_statement_blocks: style,
+                    ..Default::default()
+                });
+                assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+            }
+        }
+    }
 }
