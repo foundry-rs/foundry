@@ -253,50 +253,28 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions) = if setup {
-            match self.executor.setup(Some(self.evm_opts.sender), address, None) {
-                Ok(RawCallResult {
-                    reverted,
-                    traces: setup_traces,
-                    labels,
-                    logs: setup_logs,
-                    gas_used,
-                    debug_bytecodes: setup_debug_bytecodes,
-                    transactions: setup_transactions,
-                    ..
-                }) => {
-                    traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
-                    logs.extend_from_slice(&setup_logs);
-                    self.extend_debug_bytecodes(&mut debug_bytecodes, setup_debug_bytecodes);
-
-                    if let Some(txs) = setup_transactions {
-                        library_transactions.extend(txs);
-                    }
-
-                    (!reverted, gas_used, labels, Some(library_transactions))
-                }
-                Err(EvmError::Execution(err)) => {
-                    let RawCallResult {
-                        reverted,
-                        traces: setup_traces,
-                        labels,
-                        logs: setup_logs,
-                        gas_used,
-                        debug_bytecodes: setup_debug_bytecodes,
-                        transactions,
-                        ..
-                    } = err.raw;
-                    traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
-                    logs.extend_from_slice(&setup_logs);
-                    self.extend_debug_bytecodes(&mut debug_bytecodes, setup_debug_bytecodes);
-
-                    if let Some(txs) = transactions {
-                        library_transactions.extend(txs);
-                    }
-
-                    (!reverted, gas_used, labels, Some(library_transactions))
-                }
-                Err(e) => return Err(e.into()),
+            let result = match self.executor.setup(Some(self.evm_opts.sender), address, None) {
+                Ok(result) => result,
+                Err(EvmError::Execution(err)) => err.raw,
+                Err(err) => return Err(err.into()),
+            };
+            let RawCallResult {
+                reverted,
+                traces: setup_traces,
+                labels,
+                logs: setup_logs,
+                gas_used,
+                debug_bytecodes: setup_debug_bytecodes,
+                transactions: setup_transactions,
+                ..
+            } = result;
+            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
+            logs.extend_from_slice(&setup_logs);
+            self.extend_debug_bytecodes(&mut debug_bytecodes, setup_debug_bytecodes);
+            if let Some(txs) = setup_transactions {
+                library_transactions.extend(txs);
             }
+            (!reverted, gas_used, labels, Some(library_transactions))
         } else {
             self.executor.backend_mut().set_test_contract(address);
             (true, 0, Default::default(), Some(library_transactions))
@@ -502,7 +480,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             while let Some(limit) = search.next_limit() {
                 self.executor.tx_env_mut().set_gas_limit(limit);
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
-                search.record(limit, res.exit_reason);
+                search.record(limit, needs_more_gas(res.exit_reason));
             }
             gas_used = search.gas_used();
             // Reset gas limit in the executor.
@@ -540,24 +518,19 @@ impl GasSearch {
         }
     }
 
-    pub(crate) const fn record(&mut self, limit: u64, exit_reason: Option<InstructionResult>) {
-        match exit_reason {
-            Some(
-                InstructionResult::Revert
-                | InstructionResult::OutOfGas
-                | InstructionResult::OutOfFunds,
-            ) => {
-                self.lowest = limit;
-            }
-            _ => {
-                self.highest = limit;
-                // Stop when successive successful estimates differ by less than ten percent.
-                if (self.last_highest - self.highest) * 10 / self.last_highest < 1 {
-                    self.gas_used = self.highest;
-                    self.done = true;
-                } else {
-                    self.last_highest = self.highest;
-                }
+    /// Records the outcome of a probe at `limit`, where `needs_more_gas` means the limit was not
+    /// enough.
+    pub(crate) const fn record(&mut self, limit: u64, needs_more_gas: bool) {
+        if needs_more_gas {
+            self.lowest = limit;
+        } else {
+            self.highest = limit;
+            // Stop when successive successful estimates differ by less than ten percent.
+            if (self.last_highest - self.highest) * 10 / self.last_highest < 1 {
+                self.gas_used = self.highest;
+                self.done = true;
+            } else {
+                self.last_highest = self.highest;
             }
         }
     }
@@ -565,6 +538,16 @@ impl GasSearch {
     pub(crate) const fn gas_used(&self) -> u64 {
         self.gas_used
     }
+}
+
+/// Returns whether the gas search treats `exit_reason` as needing more gas.
+pub(crate) const fn needs_more_gas(exit_reason: Option<InstructionResult>) -> bool {
+    matches!(
+        exit_reason,
+        Some(
+            InstructionResult::Revert | InstructionResult::OutOfGas | InstructionResult::OutOfFunds
+        )
+    )
 }
 
 #[cfg(test)]
@@ -576,7 +559,7 @@ mod gas_search_tests {
         let mut search = GasSearch::new(100);
         for expected in [200, 150, 125, 112, 106] {
             assert_eq!(search.next_limit(), Some(expected));
-            search.record(expected, Some(InstructionResult::Return));
+            search.record(expected, false);
         }
         assert_eq!(search.next_limit(), None);
         assert_eq!(search.gas_used(), 106);
@@ -586,9 +569,26 @@ mod gas_search_tests {
     fn unsuccessful_probes_keep_original_estimate() {
         let mut search = GasSearch::new(100);
         while let Some(limit) = search.next_limit() {
-            search.record(limit, Some(InstructionResult::OutOfGas));
+            search.record(limit, true);
         }
         assert_eq!(search.gas_used(), 100);
         assert_eq!(GasSearch::new(0).next_limit(), None);
+    }
+
+    #[test]
+    fn only_revert_and_running_out_mean_too_little_gas() {
+        for reason in
+            [InstructionResult::Revert, InstructionResult::OutOfGas, InstructionResult::OutOfFunds]
+        {
+            assert!(needs_more_gas(Some(reason)));
+        }
+        for reason in [
+            Some(InstructionResult::Return),
+            Some(InstructionResult::Stop),
+            Some(InstructionResult::InvalidFEOpcode),
+            None,
+        ] {
+            assert!(!needs_more_gas(reason));
+        }
     }
 }

@@ -264,6 +264,9 @@ impl CallArgs {
                 // which `--curl` deliberately never contacts.
                 eyre::bail!("--delegate cannot be combined with --curl");
             }
+            if !self.tx.auth.is_empty() {
+                eyre::bail!("--auth cannot be combined with --curl");
+            }
             return self.run_curl().await;
         }
 

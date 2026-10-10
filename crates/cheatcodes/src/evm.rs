@@ -2,14 +2,14 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
-    Vm::*, inspector::RecordDebugStepInfo,
+    Vm::*, env::FORGE_CONTEXT, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::{Typed2718, transaction::SignerRecoverable};
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
-    Address, B256, U256, hex, keccak256,
+    Address, B256, Bytes, U256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -25,7 +25,7 @@ use foundry_common::{
 };
 use foundry_evm_core::{
     FoundryBlock, FoundryChain, FoundryTransaction,
-    backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
+    backend::{DatabaseError, DatabaseExt, JournaledState, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -1264,7 +1264,7 @@ impl Cheatcode for getStorageSlotsCall {
                     let length = usize::try_from(length)
                         .map_err(|_| fmt_err!("long bytes/string length exceeds host usize"))?;
                     let num_data_slots = length.div_ceil(32);
-                    let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
+                    let data_start = Into::<U256>::into(keccak256(B256::from(slot).0));
 
                     for i in 0..num_data_slots {
                         slots.push(data_start + U256::from(i));
@@ -1346,8 +1346,6 @@ impl Cheatcode for executeTransactionCall {
         ccx: &mut CheatsCtxt<'_, '_, FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        use crate::env::FORGE_CONTEXT;
-
         // Block in script contexts.
         if let Some(ctx) = FORGE_CONTEXT.get()
             && *ctx == ForgeContext::ScriptGroup
@@ -1400,12 +1398,8 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.cfg_env_mut().tx_gas_limit_cap = None;
 
         // Snapshot the modified env for EVM construction.
-        let modified_evm_env = ccx.ecx.evm_clone();
         let modified_tx_env = ccx.ecx.tx_clone();
 
-        // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
-        // when the inner EVM executes calls at depth == 1.
-        executor.set_in_inner_context(true, Some(sender));
         if let Some(address) = created_address {
             let fork_id = ccx.active_fork_id();
             ccx.state.record_created_account(fork_id, address);
@@ -1414,30 +1408,15 @@ impl Cheatcode for executeTransactionCall {
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = prepare_child_state(ccx.ecx.journal_inner());
 
-        // A fresh transaction owns an independent journal. Do not let snapshot bookkeeping from an
-        // enclosing isolated call cross into it or vice versa.
-        let track_isolated_snapshots = ccx.state.track_isolated_snapshots;
-        ccx.state.track_isolated_snapshots = false;
         let mut res = None;
         let mut cold_state = Some(cold_state);
-        let nested_evm_env = {
-            let (db, _) = ccx.ecx.db_journal_inner_mut();
-            executor.with_fresh_nested_evm(
-                ccx.state,
-                db,
-                modified_evm_env,
-                chain_context,
-                &mut |evm| {
-                    // SAFETY: closure is called exactly once by the executor.
-                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
-                    // Set depth to 1 for proper trace collection.
-                    evm.journal_inner_mut().depth = 1;
-                    res = Some(evm.transact_raw(modified_tx_env.clone()));
-                    Ok(())
-                },
-            )
-        };
-        ccx.state.track_isolated_snapshots = track_isolated_snapshots;
+        let nested_evm_env =
+            executor.with_fresh_nested_evm(ccx.state, ccx.ecx, chain_context, &mut |evm| {
+                // SAFETY: closure is called exactly once by the executor.
+                evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                res = Some(evm.transact_raw(modified_tx_env.clone()));
+                Ok(())
+            });
         let mut nested_evm_env = nested_evm_env?;
         let res = res.unwrap();
 
@@ -1451,9 +1430,6 @@ impl Cheatcode for executeTransactionCall {
         nested_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
         ccx.ecx.set_evm(nested_evm_env);
         ccx.ecx.set_tx(cached_tx_env);
-
-        // Reset inner context flag.
-        executor.set_in_inner_context(false, None);
 
         let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
@@ -1658,6 +1634,25 @@ fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt
     ccx.ecx.chain_mut().clear_transaction_fee_cache();
 }
 
+/// Records the live journal replaced by a snapshot restoration so that a failing enclosing frame
+/// can reinstate it and unwind its journaled writes.
+fn track_snapshot_restore<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    journaled_state: JournaledState,
+    restored: &JournaledState,
+) {
+    if !ccx.state.track_isolated_snapshots {
+        return;
+    }
+    if std::mem::take(&mut ccx.state.capture_isolated_snapshot_restore) {
+        ccx.state.isolated_snapshot_restores.push(journaled_state);
+    }
+    // The suspended parent of an isolated call adopts the restored journal on success.
+    if ccx.state.in_isolation_context {
+        ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+    }
+}
+
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
@@ -1672,10 +1667,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        if ccx.state.track_isolated_snapshots {
-            ccx.state.isolated_snapshot_restores.push(journaled_state);
-            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
-        }
+        track_snapshot_restore(ccx, journaled_state, &restored);
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {
@@ -1719,10 +1711,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        if ccx.state.track_isolated_snapshots {
-            ccx.state.isolated_snapshot_restores.push(journaled_state);
-            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
-        }
+        track_snapshot_restore(ccx, journaled_state, &restored);
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {
@@ -1946,7 +1935,7 @@ fn set_eip2935_blockhash<
     let account_was_cold = ecx.journal_mut().load_account(HISTORY_STORAGE_ADDRESS)?.is_cold;
     let account =
         ecx.journal_mut().evm_state().get(&HISTORY_STORAGE_ADDRESS).expect("account is loaded");
-    if account.info.code_hash != keccak256(&HISTORY_STORAGE_CODE) {
+    if account.info.code_hash() != keccak256(&HISTORY_STORAGE_CODE) {
         restore_eip2935_cold_state(ecx, account_was_cold, None);
         return Ok(());
     }
@@ -2122,7 +2111,7 @@ fn encode_short_string(bytes: &[u8]) -> U256 {
 }
 
 fn solidity_dynamic_data_slot(base_slot: U256) -> U256 {
-    U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0)
+    Into::<U256>::into(keccak256(base_slot.to_be_bytes::<32>()))
 }
 
 const fn is_long_string(slot_value: U256) -> bool {
@@ -2156,6 +2145,77 @@ fn get_state_diff<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>) -> Result
             .flatten(),
     );
     Ok(res.abi_encode())
+}
+
+/// Marks a reverted frame's account accesses, including their storage accesses, as reverted.
+pub(crate) fn mark_account_accesses_reverted(accesses: &mut [AccountAccess]) {
+    for access in accesses {
+        access.reverted = true;
+        for storage_access in &mut access.storageAccesses {
+            storage_access.reverted = true;
+        }
+    }
+}
+
+/// Moves a finished frame's account accesses into the enclosing recorded frame, or back onto the
+/// stack when no enclosing frame was recorded, preserving the order of the accesses.
+pub(crate) fn merge_recorded_frame(
+    stack: &mut Vec<Vec<AccountAccess>>,
+    mut accesses: Vec<AccountAccess>,
+) {
+    if let Some(parent) = stack.last_mut() {
+        parent.append(&mut accesses);
+    } else {
+        stack.push(accesses);
+    }
+}
+
+/// Appends an AccountAccess that resumes the recording of the current context.
+pub(crate) fn append_storage_access(
+    last: &mut Vec<AccountAccess>,
+    storage_access: crate::Vm::StorageAccess,
+    storage_depth: u64,
+) {
+    // Assert that there's an existing record for the current context.
+    if !last.is_empty() && last.first().unwrap().depth < storage_depth {
+        // Three cases to consider:
+        // 1. If there hasn't been a context switch since the start of this context, then add the
+        //    storage access to the current context record.
+        // 2. If there's an existing Resume record, then add the storage access to it.
+        // 3. Otherwise, create a new Resume record based on the current context.
+        if last.len() == 1 {
+            last.first_mut().unwrap().storageAccesses.push(storage_access);
+        } else {
+            let last_record = last.last_mut().unwrap();
+            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
+                last_record.storageAccesses.push(storage_access);
+            } else {
+                let entry = last.first().unwrap();
+                let resume_record = crate::Vm::AccountAccess {
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: entry.chainInfo.forkId,
+                        chainId: entry.chainInfo.chainId,
+                    },
+                    accessor: entry.accessor,
+                    account: entry.account,
+                    kind: crate::Vm::AccountAccessKind::Resume,
+                    initialized: entry.initialized,
+                    storageAccesses: vec![storage_access],
+                    reverted: entry.reverted,
+                    // The remaining fields are defaults
+                    oldBalance: U256::ZERO,
+                    newBalance: U256::ZERO,
+                    oldNonce: 0,
+                    newNonce: 0,
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                    deployedCode: Bytes::new(),
+                    depth: entry.depth,
+                };
+                last.push(resume_record);
+            }
+        }
+    }
 }
 
 /// Helper function that creates a `GenesisAccount` from a regular `Account`.

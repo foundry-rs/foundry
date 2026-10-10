@@ -934,7 +934,9 @@ impl VerifyArgs {
                 output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
             );
 
-            let Some((artifact_id, _)) = contracts.find_by_deployed_code_exact(&code) else {
+            let Some((artifact_id, _)) =
+                contracts.find_by_deployed_code_exact_unambiguous(&code)?
+            else {
                 eyre::bail!(format!(
                     "Bytecode at {} does not match any local contracts",
                     self.address

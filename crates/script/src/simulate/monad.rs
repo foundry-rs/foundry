@@ -1,13 +1,14 @@
 //! Sequential Monad simulation owns its block cursor independently of local script execution.
 
-use super::{PreSimulationState, RpcContexts, RpcSimulationContext, context_for_rpc};
+use super::{PreSimulationState, RpcSimulationContext};
 use crate::{
     ScriptResult,
-    runner::{GasSearch, ScriptRunner},
+    runner::{GasSearch, ScriptRunner, needs_more_gas},
     simulate::FilledTransactionsState,
     transaction::ScriptTransactionBuilder,
 };
 use alloy_eips::eip7702::SignedAuthorization;
+use alloy_evm::EvmEnv;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, TxKind, U256, map::HashMap};
 use eyre::{Result, WrapErr};
@@ -15,14 +16,16 @@ use foundry_evm::{
     backend::DatabaseExt,
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{BlockContext, ChainFor, EvmEnvFor, MonadEvmNetwork, TxEnvFor},
+        evm::{BlockContext, MonadEvmNetwork},
     },
     executors::{DeployResult, EvmError},
-    revm::{context::Transaction, context_interface::result::Output, interpreter::return_ok},
+    revm::{
+        context::{Transaction, TxEnv},
+        context_interface::result::Output,
+        interpreter::return_ok,
+    },
 };
-use futures::future::join_all;
-use parking_lot::RwLock;
-use std::sync::Arc;
+use monad_revm::{MonadChainContext, MonadHardfork};
 
 struct MonadSimulation {
     runner: ScriptRunner<MonadEvmNetwork>,
@@ -35,14 +38,14 @@ impl MonadSimulation {
         Ok(Self { runner, cursor })
     }
 
-    fn context(&self, tx: &TxEnvFor<MonadEvmNetwork>) -> Result<ChainFor<MonadEvmNetwork>> {
+    fn context(&self, tx: &TxEnv) -> Result<MonadChainContext> {
         self.cursor.as_ref().map_or_else(
             || self.runner.executor.backend().chain_context_for_synthetic_transaction(tx),
             |cursor| Ok(cursor.next_transaction(tx)),
         )
     }
 
-    fn record(&mut self, tx: TxEnvFor<MonadEvmNetwork>) {
+    fn record(&mut self, tx: TxEnv) {
         if let Some(cursor) = &mut self.cursor {
             cursor.record_transaction(tx);
         }
@@ -55,7 +58,7 @@ impl MonadSimulation {
         calldata: Bytes,
         value: U256,
         authorization_list: Option<Vec<SignedAuthorization>>,
-    ) -> (EvmEnvFor<MonadEvmNetwork>, TxEnvFor<MonadEvmNetwork>) {
+    ) -> (EvmEnv<MonadHardfork>, TxEnv) {
         let (env, mut tx) = self.runner.executor.prepare_call_env(from, to.into(), calldata, value);
         if let Some(authorization_list) = authorization_list {
             tx.set_signed_authorization(authorization_list);
@@ -114,7 +117,7 @@ impl MonadSimulation {
                 let (env, tx) = self.prepare_call(from, to, calldata.clone(), value, None);
                 let context = self.context(&tx)?;
                 let result = self.runner.executor.call_with_env_and_context(env, tx, context)?;
-                search.record(limit, result.exit_reason);
+                search.record(limit, needs_more_gas(result.exit_reason));
             }
             gas_used = search.gas_used();
             self.runner.executor.tx_env_mut().set_gas_limit(initial_limit);
@@ -149,20 +152,19 @@ impl PreSimulationState<MonadEvmNetwork> {
             contexts.insert(
                 rpc,
                 RpcSimulationContext {
-                    runner: RwLock::new(MonadSimulation::new(context.runner.into_inner())?),
+                    runner: MonadSimulation::new(context.runner)?,
                     decoder: context.decoder,
                 },
             );
         }
-        let contexts = Arc::new(contexts);
         let transactions =
-            self.transaction_metadata(&RpcContexts::Simulation(Arc::clone(&contexts)))?;
-        let futs = transactions
+            self.transaction_metadata(|rpc| &contexts.get(rpc).expect("invalid rpc url").decoder)?;
+        self.show_simulation_header()?;
+        let results = transactions
             .into_iter()
-            .map(|mut transaction| async {
+            .map(|mut transaction| {
                 let rpc = transaction.rpc.clone();
-                let context = context_for_rpc(&contexts, &rpc);
-                let mut simulation = context.runner.write();
+                let simulation = &mut contexts.get_mut(&rpc).expect("invalid rpc url").runner;
                 let tx = transaction.tx_mut();
                 let to = tx.to();
                 let result = simulation
@@ -197,8 +199,7 @@ impl PreSimulationState<MonadEvmNetwork> {
                 eyre::Ok((rpc, Some(transaction), is_noop, result.traces))
             })
             .collect::<Vec<_>>();
-        self.show_simulation_header()?;
-        let transactions = self.collect_simulation_results(join_all(futs).await, &contexts).await?;
+        let transactions = self.collect_simulation_results(results, &contexts).await?;
         Ok(self.into_filled(transactions))
     }
 }
@@ -212,12 +213,12 @@ mod tests {
     use foundry_evm_networks::NetworkConfigs;
 
     fn simulation() -> MonadSimulation {
-        let mut env = EvmEnvFor::<MonadEvmNetwork>::default();
+        let mut env = EvmEnv::<MonadHardfork>::default();
         // Match the simulation environment produced by EvmOpts.
         env.cfg_env.disable_nonce_check = true;
         let executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20).build(
             env,
-            TxEnvFor::<MonadEvmNetwork>::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::with_monad(),
         );

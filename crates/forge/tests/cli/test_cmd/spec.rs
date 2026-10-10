@@ -3,7 +3,9 @@ use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 #[cfg(feature = "monad")]
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
+#[cfg(feature = "monad")]
+use alloy_rpc_types::TransactionRequest;
 
 #[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
@@ -1864,7 +1866,7 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 1),
-        alloy_primitives::B256::ZERO,
+        B256::ZERO,
     )
     .await
     .unwrap();
@@ -1879,14 +1881,13 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.mine_one().await.unwrap();
     let parent_block = provider.get_block_number().await.unwrap();
 
-    let request =
-        <alloy_network::Ethereum as alloy_network::Network>::TransactionRequest::default()
-            .with_from(SYSTEM_ADDRESS)
-            .with_to(STAKING_ADDRESS)
-            .with_value(reward)
-            .with_input(monad_staking_reward_input(BLOCK_AUTHOR))
-            .with_gas_limit(1_000_000)
-            .with_gas_price(2_000_000_000);
+    let request = TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(STAKING_ADDRESS)
+        .with_value(reward)
+        .with_input(monad_staking_reward_input(BLOCK_AUTHOR))
+        .with_gas_limit(1_000_000)
+        .with_gas_price(2_000_000_000);
     let receipt =
         provider.send_transaction(request.into()).await.unwrap().get_receipt().await.unwrap();
     assert!(receipt.status());
@@ -1936,14 +1937,13 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     failed_api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
     failed_api.mine_one().await.unwrap();
     let failed_parent_block = failed_provider.get_block_number().await.unwrap();
-    let failed_request =
-        <alloy_network::Ethereum as alloy_network::Network>::TransactionRequest::default()
-            .with_from(SYSTEM_ADDRESS)
-            .with_to(STAKING_ADDRESS)
-            .with_value(reward)
-            .with_input(monad_staking_reward_input(UNKNOWN_BLOCK_AUTHOR))
-            .with_gas_limit(1_000_000)
-            .with_gas_price(2_000_000_000);
+    let failed_request = TransactionRequest::default()
+        .with_from(SYSTEM_ADDRESS)
+        .with_to(STAKING_ADDRESS)
+        .with_value(reward)
+        .with_input(monad_staking_reward_input(UNKNOWN_BLOCK_AUTHOR))
+        .with_gas_limit(1_000_000)
+        .with_gas_price(2_000_000_000);
     let failed_receipt = failed_provider
         .send_transaction(failed_request.into())
         .await

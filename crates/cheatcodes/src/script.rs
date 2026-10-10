@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
-use alloy_primitives::{Address, B256, U256, Uint};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -107,12 +107,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
     let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.chain_id()) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
-    let signed_auth = SignedAuthorization::new_unchecked(
-        auth,
-        *v,
-        U256::from_be_bytes(r.0),
-        U256::from_be_bytes(s.0),
-    );
+    let signed_auth = SignedAuthorization::new_unchecked(auth, *v, (*r).into(), (*s).into());
     write_delegation(ccx, signed_auth.clone())?;
     ccx.state.add_delegation(signed_auth);
     Ok(Default::default())
@@ -122,7 +117,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
 /// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
 fn sign_delegation<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    private_key: Uint<256, 4>,
+    private_key: U256,
     implementation: Address,
     nonce: Option<u64>,
     cross_chain: bool,
@@ -177,7 +172,7 @@ fn next_delegation_nonce(
     {
         Some(auth) => {
             // Increment nonce of last recorded delegation.
-            auth.nonce + 1
+            auth.nonce() + 1
         }
         None => {
             // First time a delegation is added for this authority.
@@ -210,10 +205,10 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
         account_nonce,
     );
 
-    if expected_nonce != auth.nonce {
+    if expected_nonce != auth.nonce() {
         return Err(format!(
             "invalid nonce for {authority:?}: expected {expected_nonce}, got {}",
-            auth.nonce
+            auth.nonce()
         )
         .into());
     }

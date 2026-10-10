@@ -1,6 +1,6 @@
 use crate::{errors::convert_solar_errors, fs::normalize_path};
 use foundry_compilers::{
-    Compiler, ProjectPathsConfig, SourceParser, apply_updates,
+    ProjectPathsConfig, SourceParser, apply_updates,
     artifacts::{EvmVersion, SolcLanguage},
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
@@ -190,7 +190,7 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn preprocess(
         &self,
         compiler: &MultiCompiler,
-        input: &mut <MultiCompiler as Compiler>::Input,
+        input: &mut MultiCompilerInput,
         paths: &ProjectPathsConfig<MultiCompilerLanguage>,
         mocks: &mut HashSet<PathBuf>,
     ) -> Result<()> {
@@ -213,7 +213,7 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn preprocess_with_dependencies(
         &self,
         compiler: &MultiCompiler,
-        input: &mut <MultiCompiler as Compiler>::Input,
+        input: &mut MultiCompilerInput,
         paths: &ProjectPathsConfig<MultiCompilerLanguage>,
         mocks: &mut HashSet<PathBuf>,
         preprocessor_state: &mut PreprocessorState,

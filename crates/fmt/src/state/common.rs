@@ -337,7 +337,7 @@ impl<'ast> State<'_, 'ast> {
             if let Some(last_style) = self.print_comments(span.lo(), cmnt_config) {
                 match (cmnt_style.is_mixed(), last_style.is_mixed()) {
                     (true, true) => {
-                        if format.breaks_cmnts {
+                        if format.breaks_with_comments() {
                             self.hardbreak();
                         } else {
                             self.space();
@@ -448,7 +448,7 @@ impl<'ast> State<'_, 'ast> {
             if self
                 .print_comments(get_span(value).lo(), CommentConfig::skip_ws().mixed_prev_space())
                 .is_some_and(|cmnt| cmnt.is_mixed())
-                && format.breaks_cmnts
+                && format.breaks_with_comments()
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
@@ -480,7 +480,7 @@ impl<'ast> State<'_, 'ast> {
             }
 
             if !is_last
-                && format.breaks_cmnts
+                && format.breaks_with_comments()
                 && cmnt_before_next.is_some_and(|(cmnt_span, cmnt_style)| {
                     let disabled = self.inline_config.is_disabled(cmnt_span);
                     (cmnt_style.is_mixed() && !disabled) || (cmnt_style.is_isolated() && disabled)

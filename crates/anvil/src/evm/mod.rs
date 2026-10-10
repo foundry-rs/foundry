@@ -104,7 +104,7 @@ mod tests {
             cfg: CfgEnv::new_with_spec(spec),
             tx: tx_env.clone(),
             chain: (),
-            local: LocalContext::default(),
+            local: LocalContext::new(),
             error: Ok(()),
         };
 

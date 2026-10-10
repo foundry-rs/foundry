@@ -1338,10 +1338,9 @@ mod tests {
 
     #[test]
     fn deserialize_submodule() {
-        let submodule: Submodule = serde_json::from_str(
-            r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#,
-        )
-        .unwrap();
+        let submodule: Submodule =
+            parse_json(r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#)
+                .unwrap();
         assert_eq!(submodule.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
         assert_eq!(submodule.path(), Path::new("lib/dep"));
         assert_eq!(

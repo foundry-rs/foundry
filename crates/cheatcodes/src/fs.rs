@@ -536,28 +536,21 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
     // original depth just as the native create inspector would.
     let mut caller = ccx.caller;
-    if let Some(prank) = ccx.state.get_prank(depth).copied()
-        && depth >= prank.depth
-        && caller == prank.prank_caller
+    if let Some(prank) = ccx.state.get_prank(depth)
+        && let Some(changes) = prank.changes_for(depth, caller)
     {
-        let prank_applied = if depth == prank.depth {
-            caller = prank.new_caller;
-            true
-        } else {
-            false
-        };
-        let prank_applied = if let Some(new_origin) = prank.new_origin {
+        if let Some(new_caller) = changes.caller {
+            caller = new_caller;
+        }
+        if let Some(new_origin) = changes.origin {
             ccx.ecx.tx_mut().set_caller(new_origin);
-            true
-        } else {
-            prank_applied
-        };
-
-        if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-            ccx.state.pranks.insert(depth, applied_prank);
+        }
+        if let Some(used) = changes.used {
+            ccx.state.pranks.insert(depth, used);
         }
     }
 
+    ccx.state.deploy_code_depth = Some(depth);
     let outcome = exec_create(
         executor,
         CreateInputs::new(
@@ -570,6 +563,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         ),
         ccx,
     );
+    ccx.state.deploy_code_depth = None;
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.
@@ -1216,9 +1210,9 @@ mod tests {
             BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
         },
     };
-    use foundry_evm_core::evm::TempoEvmNetwork;
     use std::{env, fs as stdfs, str::FromStr, sync::Arc};
     use tempfile::TempDir;
+    use tempo_alloy::TempoNetwork;
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -1714,7 +1708,7 @@ mod tests {
 
         fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
 
-        let latest = latest_broadcast::<<TempoEvmNetwork as FoundryEvmNetwork>::Network>(
+        let latest = latest_broadcast::<TempoNetwork>(
             &"Counter".to_owned(),
             31337,
             &broadcast_path,

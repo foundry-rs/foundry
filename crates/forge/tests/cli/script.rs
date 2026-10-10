@@ -5,13 +5,14 @@ use crate::{
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, hex, keccak256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::TransactionRequest;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
-use foundry_compilers::artifacts::EvmVersion;
+use foundry_compilers::{PathStyle, artifacts::EvmVersion};
 use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
@@ -21,7 +22,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
-    util::{OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
 use serde_json::Value;
@@ -475,30 +476,17 @@ contract MultiDeploy is Script {
 async fn assert_exit_code_error_on_failure_script(prj: _, cmd: _) {
     let script = prj.add_source("FailingScript", FAILING_SCRIPT);
 
-    // set up command
-    cmd.arg("script").arg(script);
+    for json in [false, true] {
+        cmd.forge_fuse().arg("script").arg(&script);
+        if json {
+            cmd.arg("--json");
+        }
 
-    // run command and assert error exit code
-    cmd.assert_failure().stderr_eq(str![[r#"
+        cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: failed
 
 "#]]);
-}
-
-// Tests that execution throws upon encountering a revert in the script with --json option.
-// <https://github.com/foundry-rs/foundry/issues/2508>
-#[forgetest_init]
-async fn assert_exit_code_error_on_failure_script_with_json(prj: _, cmd: _) {
-    let script = prj.add_source("FailingScript", FAILING_SCRIPT);
-
-    // set up command
-    cmd.arg("script").arg(script).arg("--json");
-
-    // run command and assert error exit code
-    cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: failed
-
-"#]]);
+    }
 }
 
 // Tests that script failures surface halt reasons for empty revert data.
@@ -506,77 +494,26 @@ Error: script failed: failed
 async fn assert_exit_code_error_on_out_of_gas_script(prj: _, cmd: _) {
     let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
 
-    // Use a small block gas limit so the infinite loop exhausts gas in milliseconds rather than
-    // >25s at the default ~1B limit, which often exceeds the nextest slow-timeout window on CI.
-    cmd.arg("script").arg(script).args(["--block-gas-limit", "1000000"]);
+    for json in [false, true] {
+        // Use a small block gas limit so the infinite loop exhausts gas in milliseconds rather than
+        // >25s at the default ~1B limit, which often exceeds the nextest slow-timeout window on CI.
+        cmd.forge_fuse().arg("script").arg(&script).args(["--block-gas-limit", "1000000"]);
+        if json {
+            cmd.arg("--json");
+        }
 
-    cmd.assert_failure().stderr_eq(str![[r#"
+        cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: EvmError: OutOfGas
 
 "#]]);
-}
-
-// Tests that --json script failures also surface halt reasons for empty revert data.
-#[forgetest_init]
-async fn assert_exit_code_error_on_out_of_gas_script_with_json(prj: _, cmd: _) {
-    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
-
-    // See `assert_exit_code_error_on_out_of_gas_script`
-    cmd.arg("script").arg(script).arg("--json").args(["--block-gas-limit", "1000000"]);
-
-    cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: EvmError: OutOfGas
-
-"#]]);
+    }
 }
 
 // Tests that the manually specified gas limit is used when using the --unlocked option
 #[forgetest_init]
 async fn can_execute_script_command_with_manual_gas_limit_unlocked(prj: _, cmd: _) {
-    let deploy_script = prj.add_source(
-        "Foo",
-        r#"
-import "forge-std/Script.sol";
-
-contract GasWaster {
-    function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas, "Gas left needs to be higher");
-    }
-}
-contract DeployScript is Script {
-    function run() external {
-        vm.startBroadcast();
-        GasWaster gasWaster = new GasWaster();
-        gasWaster.wasteGas{gas: 500000}(200000);
-    }
-}
-   "#,
-    );
-
-    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
-
-    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
-    let (_api, handle) = spawn(node_config).await;
-    let dev = handle.dev_accounts().next().unwrap();
-    cmd.set_current_dir(prj.root());
-
-    cmd.args([
-        "script",
-        &deploy_contract,
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
-        "--sender",
-        format!("{dev:?}").as_str(),
-        "-vvvvv",
-        "--slow",
-        "--broadcast",
-        "--unlocked",
-        "--ignored-error-codes=2018", // `wasteGas` can be restricted to view
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+    let _handle = prepare_manual_gas_limit(&prj, &mut cmd, true).await;
+    cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -634,49 +571,8 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 // Tests that the manually specified gas limit is used.
 #[forgetest_init]
 async fn can_execute_script_command_with_manual_gas_limit(prj: _, cmd: _) {
-    let deploy_script = prj.add_source(
-        "Foo",
-        r#"
-import "forge-std/Script.sol";
-
-contract GasWaster {
-    function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas, "Gas left needs to be higher");
-    }
-}
-contract DeployScript is Script {
-    function run() external {
-        vm.startBroadcast();
-        GasWaster gasWaster = new GasWaster();
-        gasWaster.wasteGas{gas: 500000}(200000);
-    }
-}
-   "#,
-    );
-
-    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
-
-    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
-    let (_api, handle) = spawn(node_config).await;
-    let private_key =
-        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
-    cmd.set_current_dir(prj.root());
-
-    cmd.args([
-        "script",
-        &deploy_contract,
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
-        "-vvvvv",
-        "--slow",
-        "--broadcast",
-        "--private-key",
-        &private_key,
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+    let _handle = prepare_manual_gas_limit(&prj, &mut cmd, false).await;
+    cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
@@ -5298,8 +5194,8 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [9882] DeployScript::run()
-    ├─ [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
+  [12182] DeployScript::run()
+    ├─ [2300] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -5620,11 +5516,7 @@ async fn tempo_batch_resume_reuses_signed_payload(prj: _, cmd: _) {
         .await
         .expect("Forge did not reach the blocked batch submission");
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let transactions = sequence["transactions"].as_array().unwrap();
     assert_eq!(transactions.len(), 3);
@@ -5718,11 +5610,7 @@ async fn tempo_batch_unlocked_crash_blocks_resubmission(prj: _, cmd: _) {
         .await
         .expect("Forge did not reach the blocked delegated batch submission");
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     assert!(sequence["transactions"].as_array().unwrap().iter().all(|tx| tx["hash"].is_null()));
     assert!(sequence["pending"].as_array().unwrap().is_empty());
@@ -5818,11 +5706,7 @@ async fn tempo_batch_reconciles_accepted_signed_submission_error(prj: _, cmd: _)
     assert!(!submissions.is_empty());
     assert!(submissions.iter().all(|submission| submission == &submissions[0]));
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     assert!(sequence["pending"].as_array().unwrap().is_empty());
     assert_eq!(sequence["receipts"].as_array().unwrap().len(), 3);
@@ -6004,11 +5888,7 @@ async fn tempo_batch_resume_waits_for_pending_hash(prj: _, cmd: _) {
         String::from_utf8_lossy(&stderr)
     );
     assert_eq!(submissions.lock().unwrap().len(), 1);
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let mut sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let pending = sequence["pending"].as_array().unwrap();
     assert_eq!(pending.len(), 1);
@@ -6396,11 +6276,7 @@ contract DeployTempoBatch is Script {
     ]);
     cmd.assert_success();
 
-    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no broadcast artifact found");
+    let run_latest = latest_broadcast_path(prj.root());
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
     let returned = |name: &str| -> Address {
         json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
@@ -6482,11 +6358,7 @@ contract TempoResume is Script {
     let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
     assert!(stderr.contains("method is not allowed"), "{stderr}");
 
-    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| {
-            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
-        })
-        .expect("no latest Tempo broadcast artifact");
+    let path = latest_broadcast_path(prj.root());
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let transactions = sequence["transactions"].as_array().unwrap();
     assert_eq!(transactions.len(), 2);
@@ -6896,6 +6768,70 @@ contract FundViaRpc is Script {
     assert_eq!(balance, U256::from(500) * U256::from(10).pow(U256::from(18)));
 }
 
+// The on-chain simulation replays only the broadcast transactions, so cheatcode state from script
+// execution must not reach it, with or without isolation.
+#[forgetest_init]
+async fn simulation_ignores_execution_only_state_on_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "ExecutionOnlyState.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract Vault {
+    function withdraw() external {
+        payable(msg.sender).transfer(1 ether);
+    }
+}
+
+contract ExecutionOnlyState is Script {
+    function run() external {
+        vm.broadcast();
+        Vault vault = new Vault();
+
+        // Funds the vault for script execution only; this is not a broadcast transaction. The
+        // extra ether stays unspent, so leaked execution state would let the withdrawal succeed.
+        vm.deal(address(vault), 2 ether);
+
+        vm.broadcast();
+        vault.withdraw();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    for isolation in ["--isolate", "--no-isolate"] {
+        cmd.forge_fuse()
+            .args([
+                "script",
+                "ExecutionOnlyState",
+                "--rpc-url",
+                endpoint.as_str(),
+                "--sender",
+                "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                "--unlocked",
+                isolation,
+            ])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+  [..] Vault::withdraw()
+    ├─ [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::receive{value: 1000000000000000000}()
+    │   └─ ← [OutOfFunds] EvmError: OutOfFunds
+    └─ ← [Revert] EvmError: Revert
+...
+"#]])
+            .stderr_eq(str![[r#"
+Error: Simulated execution failed.
+
+"#]]);
+    }
+}
+
 // Regression test for https://github.com/foundry-rs/foundry/issues/13312: an account loaded before
 // `anvil_setCode` must be refreshed before the next call in the same script execution.
 #[forgetest]
@@ -7009,4 +6945,520 @@ fn script_unlocked_conflicts_with_remote_signers(cmd: _) {
                  For more information, try '--help'.\n"
             ));
     }
+}
+
+// Another operator resumes from a fresh checkout that received only the authoritative recovery
+// snapshot, without the broadcast and cache exports, build artifacts, or signing credentials.
+#[forgetest_init]
+async fn resume_hands_off_recovery_snapshot_to_fresh_checkout(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "HandoffResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract HandoffResumeTarget {}
+
+contract HandoffResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new HandoffResumeTarget();
+        new HandoffResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    // The first submission is accepted but its response is lost; the second is recorded.
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        true,
+    )
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let provider = handle.http_provider();
+    let broadcast = "broadcast/HandoffResume.s.sol/31337/run-latest.json";
+    let sensitive = "cache/HandoffResume.s.sol/31337/run-latest.json";
+    let snapshot = "cache/HandoffResume.s.sol/31337/run-latest.json.recovery.json";
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "HandoffResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), reached.notified())
+        .await
+        .expect("forge did not submit the first transaction");
+    let hashes = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let submitted = submissions.lock().unwrap().clone();
+            if submitted.len() == 2 {
+                break submitted
+                    .iter()
+                    .map(|params| keccak256(hex::decode(params[0].as_str().unwrap()).unwrap()))
+                    .collect::<Vec<_>>();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not submit the second transaction");
+    for hash in &hashes {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while provider.get_transaction_receipt(*hash).await.unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("a submitted transaction was not mined");
+    }
+    // Mining does not guarantee Forge has finished checkpointing the second submission.
+    let (recovery, planned) = tokio::time::timeout(Duration::from_secs(30), async {
+        let second_hash = serde_json::to_value(hashes[1]).unwrap();
+        loop {
+            if let Ok(recovery) =
+                foundry_common::fs::read_json_file::<Value>(&prj.root().join(snapshot))
+                && recovery["data"]["sequence"]["transactions"][1]["hash"] == second_hash
+                && let Ok(planned) =
+                    foundry_common::fs::read_json_file::<Value>(&prj.root().join(broadcast))
+                && planned["transactions"][1]["hash"] == second_hash
+                && !prj.root().join(snapshot).with_extension("pending").exists()
+            {
+                break (recovery, planned);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("second submission was not checkpointed in the snapshot and broadcast export");
+    assert!(child.is_running(), "forge exited before it could be interrupted");
+    drop(child.kill_and_wait());
+    release.notify_one();
+
+    // Both operations have durable signed attempts, so resuming needs no signer.
+    let attempts = recovery["deployments"][0]["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 2);
+    assert!(attempts.iter().all(|attempt| attempt["kind"]["kind"] == "signed"));
+    assert!(!prj.root().join(snapshot).with_extension("pending").exists());
+    let planned_addresses = planned["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| tx["contractAddress"].as_str().unwrap().parse::<Address>().unwrap())
+        .collect::<Vec<_>>();
+
+    // The fresh checkout has sources only, plus the transferred snapshot.
+    let fresh = TestProject::new("handoff-fresh-checkout", PathStyle::Dapptools);
+    prj.copy_to(fresh.root());
+    assert!(!fresh.root().join(broadcast).exists());
+    assert!(!fresh.root().join(sensitive).exists());
+    fs::create_dir_all(fresh.root().join(snapshot).parent().unwrap()).unwrap();
+    fs::copy(prj.root().join(snapshot), fresh.root().join(snapshot)).unwrap();
+
+    let mut cmd = fresh.forge_command();
+    cmd.arg("script").arg(fresh.root().join("script/HandoffResume.s.sol")).args([
+        "--tc",
+        "HandoffResume",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+    ]);
+    for var in ["ETH_FROM", "ETH_KEYSTORE", "ETH_KEYSTORE_ACCOUNT", "ETH_PASSWORD"] {
+        cmd.unset_env(var);
+    }
+    cmd.assert_success();
+
+    // Both mined attempts are reconciled without sending anything, and the exports are rebuilt in
+    // the fresh checkout with the original identities.
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&fresh.root().join(broadcast)).unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let transactions = sequence["transactions"].as_array().unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(transactions.len(), 2);
+    assert_eq!(receipts.len(), 2);
+    for (index, transaction) in transactions.iter().enumerate() {
+        for field in ["from", "nonce", "input", "value", "gas", "chainId"] {
+            assert_eq!(
+                transaction["transaction"][field],
+                planned["transactions"][index]["transaction"][field],
+                "{field}"
+            );
+        }
+        let address = transaction["contractAddress"].as_str().unwrap().parse::<Address>().unwrap();
+        assert_eq!(address, planned_addresses[index]);
+        assert!(!provider.get_code_at(address).await.unwrap().is_empty());
+    }
+    let mut receipt_hashes = receipts
+        .iter()
+        .map(|receipt| receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap())
+        .collect::<Vec<_>>();
+    receipt_hashes.sort();
+    let mut expected = hashes.clone();
+    expected.sort();
+    assert_eq!(receipt_hashes, expected);
+    assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
+    assert!(fresh.root().join(sensitive).exists());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+}
+
+const DELEGATED_RESUME_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract DelegatedResumeTarget {}
+
+contract DelegatedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new DelegatedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#;
+
+// Runs an unlocked broadcast whose only submission fails at the RPC, and returns the id of the
+// delegated attempt that is left with an unknown outcome.
+async fn interrupt_delegated_submission(
+    prj: &TestProject,
+    cmd: &mut TestCommand,
+    script: &Path,
+    rpc: &str,
+    sender: Address,
+    reached: &tokio::sync::Notify,
+    release: &tokio::sync::Notify,
+) -> String {
+    cmd.arg("script").arg(script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), reached.notified())
+        .await
+        .expect("forge did not submit the delegated transaction");
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not stop after the ambiguous submission");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "submission outcome for delegated operation 0 is unknown; refusing to risk a duplicate transaction"
+        ),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let recovery: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("cache/DelegatedResume.s.sol/31337/run-latest.json.recovery.json"),
+    )
+    .unwrap();
+    let attempt = &recovery["deployments"][0]["attempts"][0];
+    assert_eq!(attempt["kind"]["kind"], "delegated");
+    assert_eq!(attempt["kind"]["status"]["status"], "outcomeUnknown");
+    attempt["id"].as_str().unwrap().to_string()
+}
+
+// A delegated submission that reached the node but returned an error is resolved by the operator
+// with its transaction hash, after an unrelated transaction is rejected.
+#[forgetest_init]
+async fn resume_resolves_unknown_delegated_outcome_with_tx_hash(prj: _, cmd: _) {
+    let script = prj.add_script("DelegatedResume.s.sol", DELEGATED_RESUME_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendTransaction",
+        true,
+    )
+    .await;
+    let mut accounts = handle.dev_accounts();
+    let sender = accounts.next().unwrap();
+    let other_sender = accounts.next().unwrap();
+    let provider = handle.http_provider();
+
+    let attempt =
+        interrupt_delegated_submission(&prj, &mut cmd, &script, &rpc, sender, &reached, &release)
+            .await;
+    let block = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(block) = provider.get_block_by_number(1.into()).await.unwrap() {
+                break block;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the accepted delegated transaction was not mined");
+    let hashes = block.transactions.hashes().collect::<Vec<_>>();
+    assert_eq!(hashes.len(), 1);
+    let accepted = hashes[0];
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+
+    // A transaction that exists but does not match the saved request is rejected.
+    let other = ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+    let unrelated = TransactionRequest::default()
+        .with_from(other_sender)
+        .with_to(other_sender)
+        .with_value(U256::from(1));
+    let unrelated = *other.send_transaction(unrelated).await.unwrap().tx_hash();
+    let resume = |cmd: &mut TestCommand, hash: B256| {
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--tc",
+            "DelegatedResume",
+            "--rpc-url",
+            &rpc,
+            "--sender",
+            &sender.to_string(),
+            "--unlocked",
+            "--resume",
+            "--resume-attempt",
+            &attempt,
+            "--resume-tx-hash",
+            &hash.to_string(),
+        ]);
+    };
+    resume(&mut cmd, unrelated);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: resolved transaction does not match its delegated submission attempt
+
+"#]]);
+
+    // The accepted transaction completes the operation without another submission.
+    resume(&mut cmd, accepted);
+    cmd.assert_success();
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/DelegatedResume.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["transactionHash"].as_str().unwrap().parse::<B256>().unwrap(), accepted);
+    let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    assert!(!provider.get_code_at(address.parse().unwrap()).await.unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
+// A resolved delegated hash survives interruption during receipt waiting, so plain resume
+// reconciles the transaction without submitting it again.
+#[forgetest_init]
+async fn resume_resolves_pending_delegated_outcome_across_interruption(prj: _, cmd: _) {
+    prj.update_config(|config| config.transaction_timeout = 120);
+    let script = prj.add_script("DelegatedResume.s.sol", DELEGATED_RESUME_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (receipt_rpc, receipt_requests) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getTransactionReceipt").await;
+    let (rpc, submissions, reached, release) =
+        spawn_rpc_proxy_blocking_first_submission(receipt_rpc, "eth_sendTransaction", true).await;
+    let sender = handle.dev_accounts().next().unwrap();
+    let provider = handle.http_provider();
+
+    let attempt =
+        interrupt_delegated_submission(&prj, &mut cmd, &script, &rpc, sender, &reached, &release)
+            .await;
+    let block = provider.get_block_by_number("pending".parse().unwrap()).await.unwrap().unwrap();
+    let hashes = block.transactions.hashes().collect::<Vec<_>>();
+    assert_eq!(hashes.len(), 1);
+    let accepted = hashes[0];
+    assert!(provider.get_transaction_receipt(accepted).await.unwrap().is_none());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    receipt_requests.lock().unwrap().clear();
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        &rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--resume",
+        "--resume-attempt",
+        &attempt,
+        "--resume-tx-hash",
+        &accepted.to_string(),
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let snapshot =
+        prj.root().join("cache/DelegatedResume.s.sol/31337/run-latest.json.recovery.json");
+    let accepted_json = serde_json::to_value(accepted).unwrap();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Ok(recovery) = foundry_common::fs::read_json_file::<Value>(&snapshot)
+                && recovery["deployments"][0]["attempts"][0]["kind"]["status"]
+                    == serde_json::json!({ "status": "pending", "hash": accepted_json })
+                && !snapshot.with_extension("pending").exists()
+                && !receipt_requests.lock().unwrap().is_empty()
+            {
+                break;
+            }
+            assert!(child.is_running(), "forge exited before checkpointing the resolved hash");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not checkpoint the resolved hash and start waiting for its receipt");
+    assert!(child.is_running(), "forge exited before it could be interrupted");
+    drop(child.kill_and_wait());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    assert!(provider.get_transaction_receipt(accepted).await.unwrap().is_none());
+
+    api.mine_one().await.unwrap();
+    // The attempt is already resolved; no resolution flags are needed on the next invocation.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        &rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--resume",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/DelegatedResume.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["transactionHash"], accepted_json);
+    assert_eq!(receipts[0]["status"], "0x1");
+    let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    assert!(!provider.get_code_at(address.parse().unwrap()).await.unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
+// A delegated submission that never reached the node is retried once after the operator
+// explicitly allows it.
+#[forgetest_init]
+async fn resume_retries_unsubmitted_delegated_outcome(prj: _, cmd: _) {
+    let script = prj.add_script("DelegatedResume.s.sol", DELEGATED_RESUME_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendTransaction",
+        false,
+    )
+    .await;
+    let sender = handle.dev_accounts().next().unwrap();
+    let provider = handle.http_provider();
+
+    let attempt =
+        interrupt_delegated_submission(&prj, &mut cmd, &script, &rpc, sender, &reached, &release)
+            .await;
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        &rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--resume",
+        "--resume-attempt",
+        &attempt,
+        "--resume-retry",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/DelegatedResume.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["status"], "0x1");
+    let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    assert!(!provider.get_code_at(address.parse().unwrap()).await.unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
+async fn prepare_manual_gas_limit(
+    prj: &TestProject,
+    cmd: &mut TestCommand,
+    unlocked: bool,
+) -> anvil::NodeHandle {
+    let deploy_script = prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract GasWaster {
+    function wasteGas(uint256 minGas) public {
+        require(gasleft() >= minGas, "Gas left needs to be higher");
+    }
+}
+contract DeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        GasWaster gasWaster = new GasWaster();
+        gasWaster.wasteGas{gas: 500000}(200000);
+    }
+}
+   "#,
+    );
+
+    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--slow",
+        "--broadcast",
+    ]);
+    if unlocked {
+        cmd.args(["--unlocked", "--sender", &dev.to_string(), "--ignored-error-codes=2018"]);
+    } else {
+        cmd.args([
+            "--private-key",
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ]);
+    }
+    handle
+}
+
+fn latest_broadcast_path(root: &Path) -> PathBuf {
+    foundry_common::fs::json_files(&root.join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest broadcast artifact")
 }

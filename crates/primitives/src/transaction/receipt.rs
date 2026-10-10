@@ -115,6 +115,10 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
                 receipt: Eip8130Receipt::new(inner_receipt, eip8130_phase_statuses),
                 logs_bloom,
             }),
+            FoundryTxType::Celo => Self::Unknown(AnyReceiptEnvelope {
+                inner: ReceiptWithBloom { receipt: inner_receipt, logs_bloom },
+                r#type: super::CIP64_TX_TYPE,
+            }),
             FoundryTxType::Tempo => {
                 Self::Tempo(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
@@ -276,18 +280,18 @@ impl<T> FoundryReceiptEnvelope<T> {
     /// Return the receipt's bloom.
     pub const fn logs_bloom(&self) -> &Bloom {
         match self {
-            Self::Legacy(t) => &t.logs_bloom,
-            Self::Eip2930(t) => &t.logs_bloom,
-            Self::Eip1559(t) => &t.logs_bloom,
-            Self::Eip4844(t) => &t.logs_bloom,
-            Self::Eip7702(t) => &t.logs_bloom,
+            Self::Legacy(t) => t.bloom_ref(),
+            Self::Eip2930(t) => t.bloom_ref(),
+            Self::Eip1559(t) => t.bloom_ref(),
+            Self::Eip4844(t) => t.bloom_ref(),
+            Self::Eip7702(t) => t.bloom_ref(),
             #[cfg(feature = "optimism")]
-            Self::PostExec(t) => &t.logs_bloom,
+            Self::PostExec(t) => t.bloom_ref(),
             #[cfg(any(feature = "base", feature = "optimism"))]
-            Self::Deposit(t) => &t.logs_bloom,
+            Self::Deposit(t) => t.bloom_ref(),
             #[cfg(feature = "base")]
-            Self::Eip8130(t) => &t.logs_bloom,
-            Self::Tempo(t) => &t.logs_bloom,
+            Self::Eip8130(t) => t.bloom_ref(),
+            Self::Tempo(t) => t.bloom_ref(),
             Self::Unknown(t) => &t.inner.logs_bloom,
         }
     }

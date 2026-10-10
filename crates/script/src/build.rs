@@ -4,11 +4,10 @@ use crate::{
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
+    receipts::is_mined_receipt_for,
     recovery::recovery_exists,
     sequence::ScriptSequenceKind,
-    session::{
-        RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
-    },
+    session::{SignerScope, script_session_expected_sender_if_configured},
 };
 use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
@@ -19,7 +18,8 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, provider::ProviderBuilder,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
+    provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -61,8 +61,8 @@ impl BuildData {
     ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = script_config
-            .evm_opts
-            .can_use_create2_deployer_resolved(script_config.resolved_fork()?)
+            .backend
+            .can_use_create2_deployer(script_config.evm_opts.create2_deployer)
             .await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
@@ -209,13 +209,13 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         // If we've received correct path, use it as target_path
         // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
         // present.
-        let target_path = if let Ok(path) = dunce::canonicalize(&args.path) {
+        let target_path = if let Ok(path) = canonicalize_path(&args.path) {
             path
         } else {
             let contract = ContractInfo::from_str(&args.path)?;
             target_name = Some(contract.name.clone());
             if let Some(path) = contract.path {
-                dunce::canonicalize(path)?
+                canonicalize_path(path)?
             } else {
                 project.find_contract_path(contract.name.as_str())?
             }
@@ -361,9 +361,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         && !deployment.pending.contains(&hash)
                         && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
                         && let Some(receipt) = provider.get_transaction_receipt(hash).await?
-                        && receipt.block_number().is_some()
-                        && receipt.block_hash().is_some()
-                        && receipt.transaction_index().is_some()
+                        && is_mined_receipt_for(&receipt, hash)
                     {
                         sequence.sequences_mut()[index].add_pending(operation, hash);
                     }
@@ -421,7 +419,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 let remaining_transactions =
                     remaining_unsigned_transactions_for_recovery(&sequence);
                 let remaining_froms =
-                    remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
+                    remaining_transactions.iter().map(|tx| tx.sender).collect::<AddressHashSet>();
                 let expected_session_sender = script_session_expected_sender_if_configured(
                     &self.script_config.tempo,
                     &remaining_froms,
@@ -545,7 +543,7 @@ fn has_available_script_signers(
     wallets: &MultiWalletOpts,
     script_wallets: &Wallets,
     expected_sender: Option<Address>,
-    remaining: &[RemainingScriptTransaction],
+    remaining: &[SignerScope],
 ) -> Result<bool> {
     let signers = script_wallets
         .signers()
@@ -558,7 +556,7 @@ fn has_available_script_signers(
         .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
         .map(|s| SignerScope::new(s.session.chain_id, s.access_key.account()));
 
-    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
+    Ok(remaining.iter().all(|tx| signers.contains(&tx.sender) || session_scope == Some(*tx)))
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@ use std::str::FromStr;
 use tempo_alloy::{
     TempoNetwork,
     provider::TempoProviderExt,
+    rpc::TempoTransactionRequest,
     transport::{RelayConnector, SponsorshipMode},
 };
 
@@ -338,7 +339,7 @@ pub(crate) async fn resolve_transaction_network_and_signer(
 /// access-key signing.
 pub(crate) async fn fill_access_key_transaction<P>(
     provider: &P,
-    tx: &mut <TempoNetwork as Network>::TransactionRequest,
+    tx: &mut TempoTransactionRequest,
     access_key: &TempoAccountsWallet,
     chain: Chain,
     eip1559_fee_estimate: Eip1559FeeEstimatePreset,
@@ -426,7 +427,7 @@ mod tests {
         let provider =
             AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
         let payer = Address::repeat_byte(0x11);
-        let mut tx = <TempoNetwork as Network>::TransactionRequest::default();
+        let mut tx = TempoTransactionRequest::default();
         tx.set_gas_price(1);
 
         apply_fee_payment(None, Some(&provider), &mut tx, payer).await.unwrap();

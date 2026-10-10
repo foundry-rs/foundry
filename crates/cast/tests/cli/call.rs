@@ -535,7 +535,12 @@ Error: EIP-7702 authorization disclosure requires confirmation; pass `--force` t
 
 "#]]);
 
-    cmd.cast_fuse().args(base_args).arg("--curl").assert_success().stderr_eq(str![""]);
+    cmd.cast_fuse().args(base_args).arg("--curl").assert_failure().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
+Error: --auth cannot be combined with --curl
+
+"#]],
+    );
 }
 
 // https://github.com/foundry-rs/foundry/issues/11521
@@ -940,7 +945,7 @@ fn cast_call_can_override_state_diff(cmd: _) {
 "#]]);
     cmd.args(["--trace"]).assert_success().stdout_eq(str![[r#"
 Traces:
-  [7281] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
+  [7681] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
     ├─ [2275] 0xe537cb8a46Bd179c0C36aB7E3Fdecd759C8B80fc::fallback() [delegatecall]
     │   └─ ← [Return] 0x1337
     └─ ← [Return] 0x1337
@@ -1269,4 +1274,37 @@ fn curl_call_rejects_browser_wallet(cmd: _) {
         stderr.contains("--browser cannot be combined with --curl; use --from <ADDRESS>"),
         "unexpected stderr:\n{stderr}"
     );
+}
+
+#[casttest]
+async fn curl_call_rejects_signed_authorization(cmd: _) {
+    let signer: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+    let auth = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        nonce: 0,
+    };
+    let signature = signer.sign_hash(&auth.signature_hash()).await.unwrap();
+    let encoded_auth = hex::encode_prefixed(alloy_rlp::encode(auth.into_signed(signature)));
+
+    for trace_args in [&[][..], &["--debug-trace-call"][..]] {
+        cmd.cast_fuse()
+            .args([
+                "call",
+                "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+                "--auth",
+                &encoded_auth,
+                "--rpc-url",
+                "http://127.0.0.1:1",
+                "--curl",
+            ])
+            .args(trace_args)
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Error: --auth cannot be combined with --curl
+
+"#]]);
+    }
 }
