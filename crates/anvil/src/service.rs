@@ -202,14 +202,15 @@ where
                             return (Ok(None), backend, generation);
                         }
                         trace!(target: "miner", "creating new block");
-                        let result = backend.mine_block_locked(transactions).await.map(|outcome| {
-                            let block_number = outcome.block_number;
-                            if pool.on_mined_block(outcome) {
-                                miner.retry_ready_transactions();
-                            }
-                            trace!(target: "miner", "created new block: {block_number}");
-                            Some(block_number)
-                        });
+                        let result =
+                            backend.mine_block_locked(transactions, false).await.map(|outcome| {
+                                let block_number = outcome.block_number;
+                                if pool.on_mined_block(outcome) {
+                                    miner.retry_ready_transactions();
+                                }
+                                trace!(target: "miner", "created new block: {block_number}");
+                                Some(block_number)
+                            });
                         drop(mining_guard);
                         (result, backend, generation)
                     })

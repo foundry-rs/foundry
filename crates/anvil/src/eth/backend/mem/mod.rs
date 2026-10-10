@@ -1599,13 +1599,14 @@ impl<N: Network> Backend<N> {
         &self,
         db: &dyn revm::DatabaseRef<Error = DatabaseError>,
         parent_timestamp: u64,
+        pin_timestamp: bool,
     ) -> Result<PendingBlockTimestamp, DatabaseError> {
         #[cfg(feature = "base")]
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
             return base::prepare_block_timestamp(db, &self.time, parent_timestamp);
         }
         let _ = (db, parent_timestamp);
-        Ok(self.time.prepare_next_timestamp())
+        Ok(self.time.prepare_next_timestamp(pin_timestamp))
     }
 
     /// Builds the required deposits from the same parent state used to prepare the clock.
@@ -2038,7 +2039,7 @@ impl<N: Network> Backend<N> {
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         let pending =
-            self.prepare_block_timestamp(db, evm_env.block_env.timestamp.saturating_to())?;
+            self.prepare_block_timestamp(db, evm_env.block_env.timestamp.saturating_to(), false)?;
         evm_env.block_env.timestamp = U256::from(pending.timestamp);
         Ok(evm_env)
     }
@@ -5829,8 +5830,9 @@ where
     pub(crate) async fn mine_block_locked(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
-        self.do_mine_block_locked(pool_transactions).await
+        self.do_mine_block_locked(pool_transactions, pin_timestamp).await
     }
 
     /// Replays a transaction-hash fork prefix before the live pool and miner are created.
@@ -6228,13 +6230,14 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
-        self.do_mine_block_locked(pool_transactions).await
+        self.do_mine_block_locked(pool_transactions, false).await
     }
 
     /// Mines a block while the caller holds the mining lock.
     async fn do_mine_block_locked(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
@@ -6295,8 +6298,11 @@ where
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                let pending_timestamp = self
-                    .prepare_block_timestamp(&**db, evm_env.block_env.timestamp.saturating_to())?;
+                let pending_timestamp = self.prepare_block_timestamp(
+                    &**db,
+                    evm_env.block_env.timestamp.saturating_to(),
+                    pin_timestamp,
+                )?;
                 let block_timestamp = pending_timestamp.timestamp;
                 evm_env.block_env.timestamp = U256::from(block_timestamp);
 
@@ -6564,7 +6570,7 @@ where
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block_locked(to_be_mined).await?;
+            let outcome = self.do_mine_block_locked(to_be_mined, false).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,

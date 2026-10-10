@@ -618,7 +618,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
-        let now = self.backend.time().current_call_timestamp();
+        let now = self.backend.time().current_wall_timestamp();
         self.backend.time().set_time(timestamp);
 
         // number of seconds between the given timestamp and the current time.
@@ -4252,6 +4252,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.saturating_to::<u64>());
+        let pin_timestamp = interval == Some(0);
         let blocks = num_blocks.unwrap_or(U256::ONE);
         if blocks.is_zero() {
             return Ok(());
@@ -4263,7 +4264,7 @@ impl EthApi<FoundryNetwork> {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) = this.mine_one().await {
+                if let Err(error) = this.mine_one_with_timestamp_pinning(pin_timestamp).await {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -5045,9 +5046,13 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
+        self.mine_one_with_timestamp_pinning(false).await
+    }
+
+    async fn mine_one_with_timestamp_pinning(&self, pin_timestamp: bool) -> Result<()> {
         let _mining = self.backend.lock_mining().await;
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block_locked(transactions).await?;
+        let outcome = self.backend.mine_block_locked(transactions, pin_timestamp).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         if self.pool.on_mined_block(outcome) {
