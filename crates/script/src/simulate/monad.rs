@@ -165,18 +165,27 @@ impl PreSimulationState<MonadEvmNetwork> {
             .map(|mut transaction| {
                 let rpc = transaction.rpc.clone();
                 let simulation = &mut contexts.get_mut(&rpc).expect("invalid rpc url").runner;
+
+                // A fixed gas limit (an explicit `{gas: N}` call or a signed raw transaction) is
+                // sent as is, so simulate with it to catch transactions that would run out of gas.
+                let gas_limit = simulation.runner.executor.gas_limit();
+                if transaction.is_fixed_gas_limit
+                    && let Some(gas) = transaction.tx().gas()
+                {
+                    simulation.runner.executor.set_gas_limit(gas as u64);
+                }
+
                 let tx = transaction.tx_mut();
                 let to = tx.to();
-                let result = simulation
-                    .simulate(
-                        tx.from()
-                            .expect("transaction doesn't have a `from` address at execution time"),
-                        to,
-                        tx.input().cloned(),
-                        tx.value(),
-                        tx.authorization_list(),
-                    )
-                    .wrap_err("Internal EVM error during simulation")?;
+                let result = simulation.simulate(
+                    tx.from().expect("transaction doesn't have a `from` address at execution time"),
+                    to,
+                    tx.input().cloned(),
+                    tx.value(),
+                    tx.authorization_list(),
+                );
+                simulation.runner.executor.set_gas_limit(gas_limit);
+                let result = result.wrap_err("Internal EVM error during simulation")?;
                 if !result.success {
                     return Ok((rpc, None, false, result.traces));
                 }
