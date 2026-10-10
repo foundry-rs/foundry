@@ -482,6 +482,43 @@ contract GasDependent {
     );
 }
 
+// tests that `cast call --trace` executes the call with the requested fees, like `eth_call`.
+// <https://github.com/foundry-rs/foundry/issues/17526>
+#[casttest]
+async fn cast_call_trace_respects_gas_price(cmd: _) {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let target = "0x0000000000000000000000000000000000001234";
+    // Returns `GASPRICE`.
+    let override_code = format!("{target}:0x3a60005260206000f3");
+
+    // The block base fee is 1 gwei.
+    for (fee_args, gas_price) in [
+        (&[][..], 0),
+        (&["--legacy", "--gas-price", "3gwei"][..], 3_000_000_000u64),
+        (&["--gas-price", "50gwei", "--priority-gas-price", "2gwei"][..], 3_000_000_000),
+        (&["--gas-price", "50gwei"][..], 1_000_000_000),
+        (&["--gas-price", "2gwei", "--priority-gas-price", "2gwei"][..], 2_000_000_000),
+    ] {
+        cmd.cast_fuse()
+            .args(["call", target, "--trace", "--rpc-url", &endpoint, "--override-code"])
+            .arg(&override_code)
+            .args(fee_args)
+            .assert_success()
+            .stdout_eq(format!(
+                "\
+Traces:
+  [17] 0x0000000000000000000000000000000000001234::fallback()
+    └─ ← [Return] 0x{gas_price:064x}
+
+
+Transaction successfully executed.
+[GAS]
+"
+            ));
+    }
+}
+
 #[casttest]
 async fn cast_call_disables_external_identification(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;

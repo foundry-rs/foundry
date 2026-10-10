@@ -62,6 +62,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
+use revm::context::Block;
 use std::str::FromStr;
 
 #[cfg(feature = "base")]
@@ -685,13 +686,17 @@ impl CallArgs {
                 executor.set_gas_limit(gas_limit);
             }
 
-            // Set transaction options with --trace
-            let env_tx = executor.tx_env_mut();
+            // `prepare_call_env` zeroes fees for tests, so apply the transaction options to the
+            // prepared env. Like `eth_call`, honour the requested fees without requiring the caller
+            // to afford them. Monad ignores `disable_fee_charge`, so also skip the balance check.
+            let (mut evm_env, mut env_tx) = executor.prepare_call_env(from, tx_kind, input, value);
             if let Some(gas_price) = tx.max_fee_per_gas().or(tx.gas_price()) {
+                evm_env.cfg_env.disable_fee_charge = true;
+                evm_env.cfg_env.disable_balance_check = true;
+                evm_env.block_env.set_basefee(executor.evm_env().block_env.basefee());
                 env_tx.set_gas_price(gas_price);
-            }
-            if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
-                env_tx.set_gas_priority_fee(Some(max_priority_fee_per_gas));
+                env_tx
+                    .set_gas_priority_fee(Some(tx.max_priority_fee_per_gas().unwrap_or_default()));
             }
             if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
                 env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
@@ -709,11 +714,11 @@ impl CallArgs {
 
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result = executor.deploy(from, input, value, None);
+                    let deploy_result = executor.deploy_with_env(evm_env, env_tx, None);
                     TraceResult::try_from(deploy_result)?
                 }
-                TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw(from, to, input, value)?,
+                TxKind::Call(_) => TraceResult::from_raw(
+                    executor.transact_with_env(evm_env, env_tx)?,
                     TraceKind::Execution,
                 ),
             };
