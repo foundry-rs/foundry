@@ -1861,14 +1861,18 @@ async fn test_mine_blocks_with_zero_interval() {
 
     api.anvil_mine(Some(U256::from(4)), Some(U256::ZERO)).await.unwrap();
 
+    // A zero interval allows equal timestamps but never goes backwards; the wall clock decides.
+    let mut prev = init_block.header.timestamp;
     for number in 1..=4 {
         let block = api.block_by_number(number.into()).await.unwrap().unwrap();
-        assert_eq!(block.header.timestamp, init_block.header.timestamp);
+        assert!(block.header.timestamp >= prev, "block {number} went backwards");
+        prev = block.header.timestamp;
     }
+    assert!(prev <= init_block.header.timestamp + 1, "blocks should share the wall-clock second");
 
     api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
     let next_block = api.block_by_number(5.into()).await.unwrap().unwrap();
-    assert!(next_block.header.timestamp > init_block.header.timestamp);
+    assert!(next_block.header.timestamp > prev);
 }
 
 #[tokio::test(flavor = "multi_thread")]

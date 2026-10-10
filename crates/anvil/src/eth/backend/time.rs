@@ -222,10 +222,6 @@ impl TimeManager {
 
         let (mut next_timestamp, update_offset) = if let Some(next) = exact_timestamp {
             (next.timestamp, true)
-        } else if pin_timestamp {
-            // An explicit zero interval (`anvil_mine(n, 0)`) pins to the last timestamp, but must
-            // still honour a pending `evm_increaseTime`.
-            (last_timestamp.saturating_add(state.time_increase), false)
         } else if let Some(interval) = state.interval {
             (last_timestamp.saturating_add(interval), false)
         } else {
@@ -235,9 +231,10 @@ impl TimeManager {
             let wall = current.saturating_add(state.offset) as u64;
             (wall.max(last_timestamp.saturating_add(state.time_increase)), false)
         };
-        // Equal timestamps are only allowed when explicitly requested (exact override or
-        // interval, e.g. `anvil_setBlockTimestampInterval(0)`). On the default path timestamps must
-        // strictly increase.
+        // Equal timestamps are only allowed when explicitly requested (exact override, an
+        // interval, or a zero-interval mine such as `anvil_mine(n, 0)`). On the default path
+        // timestamps must strictly increase. The zero-interval flag only allows equality: the
+        // timestamp itself still comes from the wall clock or the configured interval.
         let allow_equal = exact_timestamp.is_some() || pin_timestamp || state.interval.is_some();
         let too_low = if allow_equal {
             next_timestamp < last_timestamp
@@ -482,7 +479,22 @@ mod tests {
     fn explicit_zero_interval_allows_equal_timestamp() {
         let state = TimeState { last_timestamp: 1_000, ..Default::default() };
 
-        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_001, true).0, 1_000);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, true).0, 1_000);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 1_001);
+    }
+
+    #[test]
+    fn explicit_zero_interval_keeps_wall_clock_progress() {
+        let state = TimeState { last_timestamp: 1_000, ..Default::default() };
+
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_002, true).0, 1_002);
+    }
+
+    #[test]
+    fn explicit_zero_interval_keeps_persistent_interval() {
+        let state = TimeState { last_timestamp: 1_000, interval: Some(12), ..Default::default() };
+
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, true).0, 1_012);
     }
 
     #[test]
