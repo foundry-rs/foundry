@@ -7,6 +7,24 @@ use std::{
 };
 use tempfile::TempDir;
 
+/// Which of a block's two cached state versions a cache file holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CacheSlot {
+    /// The state the block's child was executed on.
+    ChildExecution,
+    /// The state as of the end of the block, without later `anvil_set*` overrides.
+    PostBlock,
+}
+
+impl CacheSlot {
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::ChildExecution => "",
+            Self::PostBlock => ".post",
+        }
+    }
+}
+
 /// On disk state cache
 ///
 /// A basic tempdir which stores states on disk
@@ -22,8 +40,8 @@ impl DiskStateCache {
     pub fn with_path(self, temp_path: PathBuf) -> Self {
         Self { temp_path: Some(temp_path), temp_dir: None }
     }
-    /// Returns the cache file for the given hash
-    fn with_cache_file<F, R>(&mut self, hash: B256, f: F) -> Option<R>
+    /// Returns the cache file for the given hash and slot
+    fn with_cache_file<F, R>(&mut self, hash: B256, slot: CacheSlot, f: F) -> Option<R>
     where
         F: FnOnce(PathBuf) -> R,
     {
@@ -48,7 +66,7 @@ impl DiskStateCache {
             }
         }
         if let Some(temp_dir) = &self.temp_dir {
-            let path = temp_dir.path().join(format!("{hash:?}.json"));
+            let path = temp_dir.path().join(format!("{hash:?}{}.json", slot.suffix()));
             Some(f(path))
         } else {
             None
@@ -58,15 +76,17 @@ impl DiskStateCache {
     /// Stores the snapshot for the given hash synchronously.
     ///
     /// Returns `true` if the write was successful, `false` otherwise.
-    pub fn write(&mut self, hash: B256, state: &StateSnapshot) -> bool {
-        self.with_cache_file(hash, |file| match foundry_common::fs::write_json_file(&file, state) {
-            Ok(_) => {
-                trace!(target: "backend", ?hash, "wrote state json file");
-                true
-            }
-            Err(err) => {
-                error!(target: "backend", %err, ?hash, "Failed to write state snapshot");
-                false
+    pub fn write(&mut self, hash: B256, slot: CacheSlot, state: &StateSnapshot) -> bool {
+        self.with_cache_file(hash, slot, |file| {
+            match foundry_common::fs::write_json_file(&file, state) {
+                Ok(_) => {
+                    trace!(target: "backend", ?hash, "wrote state json file");
+                    true
+                }
+                Err(err) => {
+                    error!(target: "backend", %err, ?hash, "Failed to write state snapshot");
+                    false
+                }
             }
         })
         .unwrap_or(false)
@@ -75,8 +95,8 @@ impl DiskStateCache {
     /// Loads the snapshot file for the given hash
     ///
     /// Returns None if it doesn't exist or deserialization failed
-    pub fn read(&mut self, hash: B256) -> Option<StateSnapshot> {
-        self.with_cache_file(hash, |file| {
+    pub fn read(&mut self, hash: B256, slot: CacheSlot) -> Option<StateSnapshot> {
+        self.with_cache_file(hash, slot, |file| {
             match foundry_common::fs::read_json_file::<StateSnapshot>(&file) {
                 Ok(state) => {
                     trace!(target: "backend", ?hash,"loaded cached state");
@@ -92,8 +112,8 @@ impl DiskStateCache {
     }
 
     /// Removes the cache file for the given hash, if it exists
-    pub fn remove(&mut self, hash: B256) {
-        self.with_cache_file(hash, |file| {
+    pub fn remove(&mut self, hash: B256, slot: CacheSlot) {
+        self.with_cache_file(hash, slot, |file| {
             foundry_common::fs::remove_file(file).map_err(|err| {
                 error!(target: "backend", %err, %hash, "Failed to remove state snapshot");
             })

@@ -807,6 +807,12 @@ pub struct SerializableState {
     /// Note: This is an Option for backwards compatibility.
     #[serde(default)]
     pub historical_states: Option<SerializableHistoricalStates>,
+    /// Post-block states of blocks overridden with `anvil_set*` while they were the head.
+    ///
+    /// For those blocks, `historical_states` holds the state their child was executed on. Kept
+    /// separate so that versions without this field can still load the dump.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub post_block_states: Vec<(B256, StateSnapshot)>,
 }
 
 impl SerializableState {

@@ -4571,14 +4571,23 @@ impl EthApi<FoundryNetwork> {
                                 .ok_or(BlockchainError::NoSignerAvailable)
                         })?;
 
-                        // Get the nonce at the common block
-                        let curr_nonce = nonces.entry(from).or_insert(
-                            self.get_transaction_count(
-                                from,
-                                Some(common_block.header.number().into()),
-                            )
-                            .await?,
-                        );
+                        // Get the nonce from the state the rollback restores, which includes any
+                        // override applied to the common block while it was the head.
+                        let nonce = if let Some(fork) = self.get_fork()
+                            && fork.predates_fork(common_height)
+                        {
+                            fork.get_nonce(from, common_height).await?
+                        } else {
+                            self.backend
+                                .with_child_execution_database_at(
+                                    Some(BlockRequest::Number(common_height)),
+                                    |db, _| db.basic_ref(from),
+                                )
+                                .await??
+                                .unwrap_or_default()
+                                .nonce
+                        };
+                        let curr_nonce = nonces.entry(from).or_insert(nonce);
 
                         // Build typed transaction request
                         let typed_tx = self

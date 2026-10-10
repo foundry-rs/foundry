@@ -208,7 +208,10 @@ use tempo_revm::{
 };
 #[cfg(test)]
 use tokio::sync::Notify;
-use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
+use tokio::{
+    sync::{RwLock as AsyncRwLock, RwLockWriteGuard as AsyncRwLockWriteGuard},
+    task::JoinSet,
+};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_primitives::get_deposit_tx_parts;
@@ -1070,12 +1073,53 @@ impl<T> BlockRequest<T> {
     }
 }
 
+/// Which version of a historical block's state a read should be served.
+#[derive(Clone, Copy, Debug)]
+enum HistoricalState {
+    /// The state as of the end of the block, without later `anvil_set*` overrides.
+    PostBlock,
+    /// The state the block's child was executed on, including those overrides.
+    ChildExecution,
+}
+
+impl HistoricalState {
+    fn select<'a>(&self, states: &'a InMemoryBlockStates, hash: &B256) -> Option<&'a StateDb> {
+        match self {
+            // A post-block state in the secondary tier must not be shadowed by the in-memory
+            // child-execution state, which mining re-inserts after a revert.
+            Self::PostBlock if states.has_on_disk_post_block_state(hash) => {
+                states.get_post_block_state(hash)
+            }
+            Self::PostBlock => states.get_post_block_state(hash).or_else(|| states.get_state(hash)),
+            Self::ChildExecution => states.get_state(hash),
+        }
+    }
+
+    fn select_on_disk<'a>(
+        &self,
+        states: &'a mut InMemoryBlockStates,
+        hash: &B256,
+    ) -> Option<&'a StateDb> {
+        match self {
+            Self::PostBlock if states.has_on_disk_post_block_state(hash) => {
+                states.get_on_disk_post_block_state(hash)
+            }
+            Self::PostBlock | Self::ChildExecution => states.get_on_disk_state(hash),
+        }
+    }
+}
+
 struct StateSnapshot {
     block_number: u64,
     block_hash: B256,
     fees: FeeSnapshot,
     time: TimeSnapshot,
     next_block: NextBlockOverrides,
+    /// The head block's post-block state when the snapshot was taken, restored on revert.
+    ///
+    /// Holding it keeps it alive even if history retention evicts it, and `None` drops any
+    /// post-block state recorded afterwards for overrides the revert discards.
+    head_post_block_state: Option<Arc<StateDb>>,
 }
 
 #[cfg(test)]
@@ -1271,8 +1315,10 @@ impl<N: Network> Backend<N> {
 
     /// Writes the CREATE2 deployer code directly to the database at the address provided.
     pub async fn set_create2_deployer(&self, address: Address) -> DatabaseResult<()> {
-        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)).await?;
-        Ok(())
+        self.db
+            .write()
+            .await
+            .set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE))
     }
 
     /// Updates memory limits that should be more strict when auto-mine is enabled
@@ -1382,26 +1428,40 @@ impl<N: Network> Backend<N> {
         self.cheats.set_next_block_parent_beacon_block_root(root);
     }
 
+    /// Locks the database for a state override of the current head.
+    ///
+    /// The head state is recorded as its block's post-block state first, so historical reads of
+    /// the block do not see the override once the next block is mined.
+    async fn db_for_head_override(&self) -> AsyncRwLockWriteGuard<'_, Box<dyn Db>> {
+        let db = self.db.write().await;
+        if self.prune_state_history_config.is_state_history_supported() {
+            self.states
+                .write()
+                .insert_post_block_state_with(self.best_hash(), || db.current_state());
+        }
+        db
+    }
+
     /// Sets the nonce of the given address
     pub async fn set_nonce(&self, address: Address, nonce: U256) -> DatabaseResult<()> {
-        self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX))
+        self.db_for_head_override().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX))
     }
 
     /// Sets the balance of the given address
     pub async fn set_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
-        self.db.write().await.set_balance(address, balance)
+        self.db_for_head_override().await.set_balance(address, balance)
     }
 
     /// Increases the balance of the given address, saturating at `U256::MAX`.
     pub(crate) async fn add_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
-        let mut db = self.db.write().await;
+        let mut db = self.db_for_head_override().await;
         let current_balance = db.basic(address)?.unwrap_or_default().balance;
         db.set_balance(address, current_balance.saturating_add(balance))
     }
 
     /// Sets the code of the given address
     pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        self.db.write().await.set_code(address, code)
+        self.db_for_head_override().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
@@ -1411,7 +1471,7 @@ impl<N: Network> Backend<N> {
         slot: U256,
         val: B256,
     ) -> DatabaseResult<()> {
-        self.db.write().await.set_storage_at(address, slot.into(), val)
+        self.db_for_head_override().await.set_storage_at(address, slot.into(), val)
     }
 
     /// Returns the configured specid
@@ -1987,6 +2047,7 @@ impl<N: Network> Backend<N> {
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
+        let head_post_block_state = self.states.write().share_post_block_state(&hash);
         self.active_state_snapshots.lock().insert(
             id,
             StateSnapshot {
@@ -1995,6 +2056,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time: self.time.snapshot(),
                 next_block: self.cheats.next_block_overrides(),
+                head_post_block_state,
             },
         );
         id
@@ -5542,7 +5604,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time, next_block)) =
+        let Some((num, hash, fees, time, next_block, head_post_block_state)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5550,6 +5612,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time,
                     snapshot.next_block,
+                    snapshot.head_post_block_state.clone(),
                 )
             })
         else {
@@ -5568,7 +5631,11 @@ impl<N: Network> Backend<N> {
         // Revert the storage that's newer than the snapshot.
         let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
-        self.states.write().remove_block_states(&removed_hashes);
+        {
+            let mut states = self.states.write();
+            states.remove_block_states(&removed_hashes);
+            states.restore_post_block_state(hash, head_post_block_state);
+        }
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
@@ -7109,9 +7176,37 @@ where
     }
 
     /// Helper function to execute a closure with the database at a specific block
+    ///
+    /// Historical blocks are served their post-block state, i.e. without any `anvil_set*` override
+    /// applied to them while they were the head.
     pub async fn with_database_at<F, T>(
         &self,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+    {
+        self.with_historical_state_at(block_request, HistoricalState::PostBlock, f).await
+    }
+
+    /// Like [`Self::with_database_at`], but serves the state the block's child was executed on,
+    /// including any `anvil_set*` override applied after the block was mined.
+    pub async fn with_child_execution_database_at<F, T>(
+        &self,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+    {
+        self.with_historical_state_at(block_request, HistoricalState::ChildExecution, f).await
+    }
+
+    async fn with_historical_state_at<F, T>(
+        &self,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        historical: HistoricalState,
         f: F,
     ) -> Result<T, BlockchainError>
     where
@@ -7160,12 +7255,12 @@ where
             .map(|block| (block.header.hash, block))
         {
             let read_guard = self.states.upgradable_read();
-            if let Some(state_db) = read_guard.get_state(&block_hash) {
+            if let Some(state_db) = historical.select(&read_guard, &block_hash) {
                 return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
             }
 
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+            if let Some(state) = historical.select_on_disk(&mut write_guard, &block_hash) {
                 return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
             }
         }
@@ -7239,12 +7334,14 @@ where
             .map(|block| (block.header.hash, block))
         {
             let read_guard = self.states.upgradable_read();
-            if let Some(state_db) = read_guard.get_state(&block_hash) {
+            if let Some(state_db) = HistoricalState::PostBlock.select(&read_guard, &block_hash) {
                 return f(Box::new(state_db), self.block_env_from_header(&block.header), context);
             }
 
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+            if let Some(state) =
+                HistoricalState::PostBlock.select_on_disk(&mut write_guard, &block_hash)
+            {
                 return f(Box::new(state), self.block_env_from_header(&block.header), context);
             }
         }
@@ -7618,7 +7715,9 @@ where
             headers.push(alloy_rlp::encode(&block.header).into());
         }
 
-        self.with_database_at(Some(BlockRequest::Number(parent)), |state, _| {
+        // The witness must describe the state this block actually executed on, so any override
+        // applied to the parent while it was the head belongs in it.
+        self.with_child_execution_database_at(Some(BlockRequest::Number(parent)), |state, _| {
             let Some(accounts) = state.maybe_full_db() else {
                 return Err(BlockchainError::Message(
                     "debug_executionWitness is not supported while forking".to_string(),
@@ -8409,10 +8508,10 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             }
             (storage.best_number, storage.serialized_blocks(), storage.serialized_transactions())
         };
-        let historical_states =
-            preserve_historical_states.then(|| self.states.write().serialized_states());
+        let (historical_states, post_block_states) =
+            preserve_historical_states.then(|| self.states.write().serialized_states()).unzip();
 
-        let state = self
+        let mut state = self
             .db
             .read()
             .await
@@ -8422,6 +8521,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     "Dumping state not supported with the current configuration",
                 ))
             })?;
+        state.post_block_states = post_block_states.unwrap_or_default();
         #[cfg(feature = "monad")]
         let state = {
             let mut state = state;
@@ -8632,6 +8732,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         });
 
         let historical_states = state.historical_states.take();
+        let post_block_states = std::mem::take(&mut state.post_block_states);
         let mut db = self.db.write().await;
         let db_snapshot = db.snapshot_state();
         let load_result = (|| -> Result<(), BlockchainError> {
@@ -8689,7 +8790,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         self.db.write().await.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = historical_states {
-            self.states.write().load_states(historical_states);
+            self.states.write().load_states(historical_states, post_block_states);
         }
 
         Ok(true)
@@ -9859,7 +9960,7 @@ impl Backend<FoundryNetwork> {
             let env = self.evm_env.read();
             (env.cfg_env.chain_id, env.block_env.timestamp, env.block_env.number.to::<u64>())
         };
-        let mut db = self.db.write().await;
+        let mut db = self.db_for_head_override().await;
         let mut storage = AnvilStorageProvider::new(
             &mut **db,
             chain_id,
@@ -10859,7 +10960,10 @@ mod tests {
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_provider::Provider;
-    use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
+    use alloy_rpc_types::{
+        Block, BlockTransactions, TransactionRequest,
+        state::{EvmOverrides, StateOverridesBuilder},
+    };
     use alloy_serde::WithOtherFields;
     use foundry_config::NamedChain;
     use foundry_evm::{
@@ -11037,13 +11141,13 @@ mod tests {
         let contract = Address::repeat_byte(0x22);
 
         // Return the recipient balance followed by NUMBER. At block 0 both are zero; at block 1,
-        // after the queued transfer is mined, both are one.
+        // after the queued transfer is mined, both are one. The code is a call override, so block 0
+        // itself stays untouched.
         let mut code = vec![0x73];
         code.extend_from_slice(recipient.as_slice());
         code.extend_from_slice(&[
             0x31, 0x60, 0x00, 0x52, 0x43, 0x60, 0x20, 0x52, 0x60, 0x40, 0x60, 0x00, 0xf3,
         ]);
-        api.anvil_set_code(contract, code.into()).await.unwrap();
         api.send_transaction(WithOtherFields::new(
             TransactionRequest::default().from(sender).to(recipient).value(U256::ONE),
         ))
@@ -11064,7 +11168,9 @@ mod tests {
             request,
             FeeDetails::zero(),
             Some(BlockRequest::Number(resolved_head)),
-            EvmOverrides::default(),
+            EvmOverrides::state(Some(
+                StateOverridesBuilder::default().with_code(contract, code).build(),
+            )),
         ));
         assert!(futures::poll!(call.as_mut()).is_pending());
 
@@ -11672,5 +11778,82 @@ mod tests {
             decoder.labels.get(&ActivationRegistryStorage::ADDRESS).map(String::as_str),
             Some("ActivationRegistry")
         );
+    }
+
+    #[tokio::test]
+    async fn reverting_a_discarded_override_drops_its_post_block_state() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let account = Address::repeat_byte(0x11);
+
+        // Each round mines a block, snapshots it, overrides the head and then throws the override
+        // away again. The discarded override must not leave a post-block state behind.
+        for round in 0..5u64 {
+            api.mine_one().await.unwrap();
+            let snapshot = api.backend.create_state_snapshot().await;
+            api.backend.set_balance(account, U256::from(round + 1)).await.unwrap();
+            assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+        }
+
+        assert_eq!(api.backend.states.read().post_block_state_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn reverting_keeps_a_post_block_state_the_snapshot_already_needed() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let account = Address::repeat_byte(0x11);
+
+        api.mine_one().await.unwrap();
+        // The override precedes the snapshot, so block 1 genuinely needs its post-block state.
+        api.backend.set_balance(account, U256::from(1)).await.unwrap();
+        let snapshot = api.backend.create_state_snapshot().await;
+        api.backend.set_balance(account, U256::from(2)).await.unwrap();
+        assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+
+        assert_eq!(api.backend.states.read().post_block_state_count(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reverted_head_keeps_its_post_block_state() {
+        // Enough blocks to move the head's states out of the memory tier, or to evict them.
+        for (config, blocks) in [
+            (NodeConfig::test(), 1000u64),
+            (NodeConfig::test().set_pruned_history(Some(Some(1))), 2),
+        ] {
+            let (api, _handle) = spawn(config).await;
+            let account = Address::repeat_byte(0x11);
+
+            api.backend.set_balance(account, U256::from(1)).await.unwrap();
+            api.mine_one().await.unwrap();
+            let block = api.backend.best_number();
+            api.backend.set_balance(account, U256::from(2)).await.unwrap();
+            let snapshot = api.backend.create_state_snapshot().await;
+            api.anvil_mine(Some(U256::from(blocks)), None).await.unwrap();
+            assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+            api.backend.set_balance(account, U256::from(3)).await.unwrap();
+            api.mine_one().await.unwrap();
+
+            assert_eq!(api.balance(account, Some(block.into())).await.unwrap(), U256::from(1));
+            let child = Some((block + 1).into());
+            assert_eq!(api.balance(account, child).await.unwrap(), U256::from(3));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn snapshot_after_rollback_keeps_the_spilled_post_block_state() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let account = Address::repeat_byte(0x11);
+
+        api.backend.set_balance(account, U256::from(1)).await.unwrap();
+        api.mine_one().await.unwrap();
+        let block = api.backend.best_number();
+        api.backend.set_balance(account, U256::from(2)).await.unwrap();
+        // Spill block's states to the secondary tier, then make it the head again.
+        api.anvil_mine(Some(U256::from(1000)), None).await.unwrap();
+        api.anvil_rollback(Some(1000)).await.unwrap();
+        let snapshot = api.backend.create_state_snapshot().await;
+        assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+        api.mine_one().await.unwrap();
+
+        assert_eq!(api.balance(account, Some(block.into())).await.unwrap(), U256::from(1));
     }
 }

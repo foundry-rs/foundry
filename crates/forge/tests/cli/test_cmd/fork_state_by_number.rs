@@ -201,9 +201,9 @@ contract InlineProbe is Probe {{
     }
     prj.update_config(|config| config.fork_state_by_number = true);
     // Numbered rolls must move between blocks with different state, not stay pinned or follow head.
-    // Anvil applies state overrides to the latest block, so mine first: block 2 = 9, head = 11.
-    api.mine_one().await.unwrap();
+    // Anvil state overrides land in the next mined block: block 2 = 9, head = 11.
     api.anvil_set_storage_at(target, U256::from(1), B256::from(U256::from(9))).await.unwrap();
+    api.mine_one().await.unwrap();
     api.mine_one().await.unwrap();
     api.anvil_set_storage_at(target, U256::from(1), B256::from(U256::from(11))).await.unwrap();
     prj.add_test(
