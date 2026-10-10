@@ -111,7 +111,7 @@ fn classify_verifier_credential_response(
     }
 }
 
-fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
+pub(crate) fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
     let url = Url::parse(url).wrap_err_with(|| format!("invalid {label} URL `{url}`"))?;
     if !matches!(url.scheme(), "http" | "https") {
         eyre::bail!("invalid {label} URL `{url}`: URL scheme must be http or https");
