@@ -3194,6 +3194,65 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     );
 }
 
+// A raw transaction signed with too little gas must fail the on-chain simulation instead of being
+// broadcast and running out of gas on-chain.
+#[forgetest_init]
+async fn test_broadcast_raw_transaction_tight_gas_fails_simulation(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    // The raw transaction is an EIP-1559 transaction on chain 31337, signed by anvil account 1
+    // with nonce 0. It calls `Sink.set()` at the address of the first deployment from account 0
+    // with a gas limit of 30,000, below the ~43,000 the call needs.
+    prj.add_script(
+        "TightGas",
+        r#"
+import "forge-std/Script.sol";
+
+contract Sink {
+    uint256 public x;
+
+    function set() external {
+        x = 1;
+    }
+}
+
+contract TightGasScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Sink();
+        vm.broadcastRawTransaction(
+            hex"02f86c827a6980018477359401827530945fbdb2315678afecb367f032d93f642f64180aa38084b8e010dec001a0cad6fbbb0b7a55a6db6fc622dcd6630ef848367bb5977fac9d6c3a464e893dd1a051f767f64247e57f7e3756d08f15383d3e0f7da8551abadeacf0d8d23998f1e5"
+        );
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "TightGasScript",
+    ]);
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: Simulated execution failed.
+
+"#]]);
+
+    let provider = handle.http_provider();
+    for sender in [
+        address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+        address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+    ] {
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    }
+}
+
 #[forgetest_init]
 fn can_get_script_wallets(prj: _, cmd: _) {
     let script = prj.add_source(
