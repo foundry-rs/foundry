@@ -41,6 +41,13 @@ impl FindBlockArgs {
         let provider = rpc_provider(&rpc)?;
 
         let last_block_num = provider.get_block_number().await?;
+        // A chain whose tip is still the genesis block has no block 1 to bound the search from
+        // below, so genesis is the only block that can be returned.
+        if last_block_num == 0 {
+            print_scalar(0)?;
+            return Ok(());
+        }
+
         let (ts_block_latest, ts_block_1) =
             join!(timestamp(&provider, last_block_num), timestamp(&provider, 1));
         let ts_block_latest = ts_block_latest?;
