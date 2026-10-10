@@ -151,6 +151,20 @@ fn finds_block(cmd: _) {
 "#]]);
 }
 
+// tests that `cast find-block` works on a chain that only has the genesis block
+#[casttest]
+async fn finds_block_genesis_only(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    // Block 1 does not exist yet, so any timestamp can only resolve to the genesis block.
+    for timestamp in ["0", "18446744073709551615"] {
+        cmd.cast_fuse()
+            .args(["find-block", "--rpc-url", &handle.http_endpoint(), timestamp])
+            .assert_success()
+            .stdout_eq("0\n");
+    }
+}
+
 #[casttest]
 fn balance(cmd: _) {
     let rpc = next_http_rpc_endpoint();
