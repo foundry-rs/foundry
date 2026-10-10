@@ -11,14 +11,15 @@ use crate::coverage::{
 };
 use alloy_json_abi::StateMutability;
 use alloy_primitives::{
-    Address, Bytes, U256, keccak256,
+    Address, B256, Bytes, U256, keccak256,
     map::{HashMap, HashSet},
 };
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{
-    TestFilter, compile::ProjectCompiler, errors::convert_solar_errors, version::SHORT_VERSION,
+    TestFilter, compile::ProjectCompiler, errors::convert_solar_errors, matches_contract_creation,
+    version::SHORT_VERSION,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -557,6 +558,7 @@ impl CoverageArgs {
 
         let known_contracts = outcome.known_contracts.as_ref().unwrap();
         let mut resolved_hit_maps = ResolvedHitMaps::default();
+        let mut unresolved_hit_maps = HashSet::<B256>::default();
 
         // Add hit data to the coverage report
         for suite in outcome.results.values() {
@@ -572,16 +574,39 @@ impl CoverageArgs {
                         )?;
                         continue;
                     }
+                    if unresolved_hit_maps.contains(code_hash) {
+                        continue;
+                    }
 
+                    // Only exact matches are credited: source maps of a merely similar artifact
+                    // would attribute hits to code that never ran.
                     let Some((artifact_id, is_deployed_code)) = known_contracts
-                        .find_by_deployed_code(map.bytecode())
+                        .find_by_deployed_code_exact(map.bytecode())
                         .map(|(id, _)| (id, true))
                         .or_else(|| {
                             known_contracts
-                                .find_by_creation_code(map.bytecode())
+                                .iter()
+                                .find(|(_, contract)| {
+                                    matches_contract_creation(contract, map.bytecode())
+                                })
                                 .map(|(id, _)| (id, false))
                         })
                     else {
+                        if let Some((similar, kind)) = known_contracts
+                            .find_by_deployed_code(map.bytecode())
+                            .map(|(id, _)| (id, "runtime"))
+                            .or_else(|| {
+                                known_contracts
+                                    .find_by_creation_code(map.bytecode())
+                                    .map(|(id, _)| (id, "creation"))
+                            })
+                        {
+                            sh_warn!(
+                                "excluding executed {kind} code from coverage: it resembles `{}` but does not match it exactly",
+                                similar.identifier()
+                            )?;
+                        }
+                        unresolved_hit_maps.insert(*code_hash);
                         continue;
                     };
 

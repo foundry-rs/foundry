@@ -4437,3 +4437,83 @@ fn coverage_cache_prunes_obsolete_files(prj: _, cmd: _) {
         assert_eq!(builds.len(), 1);
     }
 }
+
+// Bytecode that only resembles an artifact must not be credited to that artifact's source.
+#[forgetest]
+fn coverage_ignores_inexact_bytecode(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {
+    uint256 public value;
+
+    constructor() {
+        value = 1;
+    }
+
+    function live() external pure returns (uint256) {
+        return 0x1111;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+}
+
+contract TargetTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    // Patches `PUSH2 0x1111` to `PUSH2 0x2222`.
+    function patch(bytes memory code) internal pure returns (bytes memory) {
+        for (uint256 i; i + 2 < code.length; ++i) {
+            if (code[i] == 0x61 && code[i + 1] == 0x11 && code[i + 2] == 0x11) {
+                code[i + 1] = 0x22;
+                code[i + 2] = 0x22;
+                return code;
+            }
+        }
+        revert("constant not found");
+    }
+
+    function testModifiedCode() external {
+        address etched = address(0x1234);
+        vm.etch(etched, patch(type(Target).runtimeCode));
+        require(Target(etched).live() == 0x2222);
+
+        bytes memory initCode = patch(type(Target).creationCode);
+        Target created;
+        assembly {
+            created := create(0, add(initCode, 0x20), mload(initCode))
+        }
+        require(created.value() == 1 && created.live() == 0x2222);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=summary"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭----------------+-------------+--------------+------------+-------------╮
+| File           | % Lines     | % Statements | % Branches | % Funcs     |
++========================================================================+
+| src/Target.sol | 0.00% (0/4) | 0.00% (0/2)  | N/A (0/0)  | 0.00% (0/2) |
+|----------------+-------------+--------------+------------+-------------|
+| Total          | 0.00% (0/4) | 0.00% (0/2)  | N/A (0/0)  | 0.00% (0/2) |
+╰----------------+-------------+--------------+------------+-------------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
+Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
+
+"#]]);
+}
