@@ -5844,6 +5844,7 @@ fn assert_create2_rewrite_dry_run(root: &std::path::Path) {
     for tx in txs {
         assert_eq!(tx["transactionType"], "CREATE2", "plain CREATE was rewritten");
         assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+        assert_eq!(tx["isFixedGasLimit"], false, "rewritten CREATE gas must be estimated");
     }
 
     let addrs: std::collections::HashSet<_> =
