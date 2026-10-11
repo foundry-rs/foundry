@@ -18,8 +18,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{
-    TestFilter, compile::ProjectCompiler, errors::convert_solar_errors, matches_contract_creation,
-    version::SHORT_VERSION,
+    TestFilter, compile::ProjectCompiler, errors::convert_solar_errors, version::SHORT_VERSION,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -579,7 +578,8 @@ impl CoverageArgs {
                     }
 
                     // Only exact matches are credited: source maps of a merely similar artifact
-                    // would attribute hits to code that never ran.
+                    // would attribute hits to code that never ran. Creation code may be followed
+                    // by any constructor data, which leaves the artifact's instructions unchanged.
                     let Some((artifact_id, is_deployed_code)) = known_contracts
                         .find_by_deployed_code_exact(map.bytecode())
                         .map(|(id, _)| (id, true))
@@ -587,7 +587,9 @@ impl CoverageArgs {
                             known_contracts
                                 .iter()
                                 .find(|(_, contract)| {
-                                    matches_contract_creation(contract, map.bytecode())
+                                    contract
+                                        .bytecode()
+                                        .is_some_and(|code| map.bytecode().starts_with(code))
                                 })
                                 .map(|(id, _)| (id, false))
                         })

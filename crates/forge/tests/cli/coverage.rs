@@ -4438,17 +4438,17 @@ fn coverage_cache_prunes_obsolete_files(prj: _, cmd: _) {
     }
 }
 
-// Bytecode that only resembles an artifact must not be credited to that artifact's source.
+// Only bytecode matching an artifact is credited to its source; constructor data may vary.
 #[forgetest]
-fn coverage_ignores_inexact_bytecode(prj: _, cmd: _) {
+fn coverage_credits_only_exact_bytecode(prj: _, cmd: _) {
     prj.add_source(
         "Target.sol",
         r#"
 contract Target {
     uint256 public value;
 
-    constructor() {
-        value = 1;
+    constructor(uint256 x) {
+        value = x;
     }
 
     function live() external pure returns (uint256) {
@@ -4481,23 +4481,33 @@ contract TargetTest {
         revert("constant not found");
     }
 
+    function deploy(bytes memory initCode) internal returns (Target created) {
+        assembly {
+            created := create(0, add(initCode, 0x20), mload(initCode))
+        }
+    }
+
     function testModifiedCode() external {
         address etched = address(0x1234);
         vm.etch(etched, patch(type(Target).runtimeCode));
         require(Target(etched).live() == 0x2222);
 
-        bytes memory initCode = patch(type(Target).creationCode);
-        Target created;
-        assembly {
-            created := create(0, add(initCode, 0x20), mload(initCode))
-        }
+        Target created =
+            deploy(patch(abi.encodePacked(type(Target).creationCode, abi.encode(uint256(1)))));
         require(created.value() == 1 && created.live() == 0x2222);
+    }
+
+    function testConstructorTrailingData() external {
+        Target created = deploy(
+            abi.encodePacked(type(Target).creationCode, abi.encode(uint256(42)), hex"ff")
+        );
+        require(created.value() == 42);
     }
 }
 "#,
     );
 
-    cmd.args(["coverage", "--report=summary"])
+    cmd.args(["coverage", "--report=summary", "--mt", "testModifiedCode"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -4514,6 +4524,21 @@ contract TargetTest {
 ...
 Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
 Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--report=summary", "--mt", "testConstructorTrailingData"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭----------------+--------------+--------------+------------+--------------╮
+| File           | % Lines      | % Statements | % Branches | % Funcs      |
++==========================================================================+
+| src/Target.sol | 50.00% (2/4) | 50.00% (1/2) | N/A (0/0)  | 50.00% (1/2) |
+|----------------+--------------+--------------+------------+--------------|
+| Total          | 50.00% (2/4) | 50.00% (1/2) | N/A (0/0)  | 50.00% (1/2) |
+╰----------------+--------------+--------------+------------+--------------╯
 
 "#]]);
 }
