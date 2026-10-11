@@ -317,13 +317,13 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
     ) -> Result<ScriptResult<FEN::Network>> {
         if is_fixed_gas_limit {
             let (env, tx) = self.prepare_fixed_gas_env(transaction);
-            return if transaction.to().is_some() {
+            return if tx.is_single_create() {
+                let result = self.executor.deploy_with_env(env, tx, None);
+                self.deployment_result(result)
+            } else {
                 let result = self.executor.transact_with_env(env, tx)?;
                 let gas_used = result.gas_used;
                 Ok(self.call_result(result, gas_used))
-            } else {
-                let result = self.executor.deploy_with_env(env, tx, None);
-                self.deployment_result(result)
             };
         }
 
@@ -603,8 +603,16 @@ pub(crate) const fn needs_more_gas(exit_reason: Option<InstructionResult>) -> bo
 }
 
 #[cfg(test)]
-mod gas_search_tests {
+mod tests {
     use super::*;
+    use alloy_primitives::bytes;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use foundry_evm::{
+        backend::Backend, core::evm::TempoEvmNetwork, executors::ExecutorBuilder, revm::DatabaseRef,
+    };
+    use foundry_evm_networks::NetworkConfigs;
+    use tempo_alloy::primitives::{TempoTransaction, TempoTxEnvelope, transaction::Call};
 
     #[test]
     fn successful_probes_keep_existing_ten_percent_stop() {
@@ -641,6 +649,56 @@ mod gas_search_tests {
             None,
         ] {
             assert!(!needs_more_gas(reason));
+        }
+    }
+
+    #[test]
+    fn fixed_gas_tempo_create_first_batch() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let target = sender.create(0);
+        // The constructor stores seven; the runtime increments that slot when called.
+        let initcode = bytes!("60075f556008600e5f3960085ff35f546001015f5500");
+        for batch in [false, true] {
+            let mut env = EvmEnvFor::<TempoEvmNetwork>::default();
+            env.cfg_env.chain_id = 31337;
+            env.cfg_env.disable_nonce_check = true;
+            let executor = ExecutorBuilder::<TempoEvmNetwork>::new().gas_limit(30_000_000).build(
+                env,
+                TxEnvFor::<TempoEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+                NetworkConfigs::with_tempo(),
+            );
+            let mut runner = ScriptRunner::new(executor, EvmOpts::default());
+            let mut calls =
+                vec![Call { to: TxKind::Create, value: U256::ZERO, input: initcode.clone() }];
+            if batch {
+                calls.push(Call {
+                    to: TxKind::Call(target),
+                    value: U256::ZERO,
+                    input: Bytes::new(),
+                });
+            }
+            let transaction = TempoTransaction {
+                chain_id: 31337,
+                gas_limit: 2_000_000,
+                calls,
+                ..Default::default()
+            };
+            let signature = signer.sign_hash_sync(&transaction.signature_hash()).unwrap();
+            let transaction = TransactionMaybeSigned::Signed {
+                tx: TempoTxEnvelope::AA(transaction.into_signed(signature.into())),
+                from: sender,
+            };
+            let result = runner.simulate(&transaction, true).unwrap();
+            assert!(result.success);
+            assert_eq!(
+                runner.executor.backend().storage_ref(target, U256::ZERO).unwrap(),
+                U256::from(if batch { 8 } else { 7 }),
+            );
+            assert!(!runner.executor.is_empty_code(target).unwrap());
+            assert_eq!(transaction.gas(), Some(2_000_000));
+            assert_eq!(runner.executor.gas_limit(), 30_000_000);
         }
     }
 }

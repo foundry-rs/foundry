@@ -5548,6 +5548,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types",
  "alloy-signer",
+ "alloy-signer-local",
  "anvil",
  "clap",
  "dialoguer",
