@@ -3135,19 +3135,52 @@ contract Counter {
         "CounterTest.sol",
         r#"
 import "./test.sol";
-import {Counter} from "./Counter.sol";
+import {Counter, LibCounter} from "./Counter.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata code) external;
+}
 
 contract CounterTest is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
     function testIncrement() public {
         Counter counter = new Counter();
         counter.increment();
+    }
+
+    function testRelinked() public {
+        Counter counter = new Counter();
+        address original = address(LibCounter);
+        address replacement = address(0x1234567890123456789012345678901234567890);
+        vm.etch(replacement, original.code);
+        bytes memory code = address(counter).code;
+        bytes20 oldAddress = bytes20(original);
+        bytes20 newAddress = bytes20(replacement);
+        uint256 patches;
+        for (uint256 i; i + 20 <= code.length; ++i) {
+            bool matchAddress = true;
+            for (uint256 j; j < 20; ++j) {
+                if (code[i + j] != oldAddress[j]) matchAddress = false;
+            }
+            if (matchAddress) {
+                for (uint256 j; j < 20; ++j) code[i + j] = newAddress[j];
+                ++patches;
+                i += 19;
+            }
+        }
+        require(patches == 1, "expected one library link");
+        vm.etch(address(counter), code);
+        counter.increment();
+        require(counter.number() == 1);
     }
 }
     "#,
     );
 
-    // Assert 100% coverage for linked libraries.
-    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+    // Assert 100% coverage for both original and relocated library links.
+    for test in ["testIncrement", "testRelinked"] {
+        cmd.forge_fuse().args(["coverage", "--mt", test]).assert_success().stdout_eq(str![[r#"
 ...
 ╭-----------------+---------------+---------------+------------+---------------╮
 | File            | % Lines       | % Statements  | % Branches | % Funcs       |
@@ -3158,6 +3191,7 @@ contract CounterTest is DSTest {
 ╰-----------------+---------------+---------------+------------+---------------╯
 ...
 "#]]);
+    }
 }
 
 // <https://github.com/foundry-rs/foundry/issues/10422>

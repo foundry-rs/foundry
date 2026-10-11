@@ -18,7 +18,8 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{
-    TestFilter, compile::ProjectCompiler, errors::convert_solar_errors, version::SHORT_VERSION,
+    ContractsByArtifactBuilder, TestFilter, compile::ProjectCompiler, errors::convert_solar_errors,
+    version::SHORT_VERSION,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -556,6 +557,12 @@ impl CoverageArgs {
             .await?;
 
         let known_contracts = outcome.known_contracts.as_ref().unwrap();
+        // Linking removes library references. Match runtime against the compiler artifacts to
+        // retain those offsets, while keeping linked bytecode for creation matching.
+        let runtime_contracts = ContractsByArtifactBuilder::new(
+            output.artifact_ids().map(|(id, artifact)| (id, artifact.into())),
+        )
+        .build();
         let mut resolved_hit_maps = ResolvedHitMaps::default();
         let mut unresolved_hit_maps = HashSet::<B256>::default();
 
@@ -580,7 +587,7 @@ impl CoverageArgs {
                     // Only exact matches are credited: source maps of a merely similar artifact
                     // would attribute hits to code that never ran. Creation code may be followed
                     // by any constructor data, which leaves the artifact's instructions unchanged.
-                    let Some((artifact_id, is_deployed_code)) = known_contracts
+                    let Some((artifact_id, is_deployed_code)) = runtime_contracts
                         .find_by_deployed_code_exact(map.bytecode())
                         .map(|(id, _)| (id, true))
                         .or_else(|| {
