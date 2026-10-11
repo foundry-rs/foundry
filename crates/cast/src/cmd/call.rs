@@ -689,14 +689,17 @@ impl CallArgs {
             // `prepare_call_env` zeroes fees for tests, so apply the transaction options to the
             // prepared env. Like `eth_call`, honour the requested fees without requiring the caller
             // to afford them. Monad ignores `disable_fee_charge`, so also skip the balance check.
+            // Zero fees keep the zeroed base fee, skipping base fee validation like `eth_call`.
             let (mut evm_env, mut env_tx) = executor.prepare_call_env(from, tx_kind, input, value);
-            if let Some(gas_price) = tx.max_fee_per_gas().or(tx.gas_price()) {
+            let priority_fee = tx.max_priority_fee_per_gas().unwrap_or_default();
+            if let Some(gas_price) = tx.max_fee_per_gas().or(tx.gas_price())
+                && (gas_price != 0 || priority_fee != 0)
+            {
                 evm_env.cfg_env.disable_fee_charge = true;
                 evm_env.cfg_env.disable_balance_check = true;
                 evm_env.block_env.set_basefee(executor.evm_env().block_env.basefee());
                 env_tx.set_gas_price(gas_price);
-                env_tx
-                    .set_gas_priority_fee(Some(tx.max_priority_fee_per_gas().unwrap_or_default()));
+                env_tx.set_gas_priority_fee(Some(priority_fee));
             }
             if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
                 env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);

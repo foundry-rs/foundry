@@ -495,6 +495,9 @@ async fn cast_call_trace_respects_gas_price(cmd: _) {
     // The block base fee is 1 gwei.
     for (fee_args, gas_price) in [
         (&[][..], 0),
+        // Zero fees skip base fee validation, like `eth_call`.
+        (&["--legacy", "--gas-price", "0"][..], 0),
+        (&["--gas-price", "0", "--priority-gas-price", "0"][..], 0),
         (&["--legacy", "--gas-price", "3gwei"][..], 3_000_000_000u64),
         (&["--gas-price", "50gwei", "--priority-gas-price", "2gwei"][..], 3_000_000_000),
         (&["--gas-price", "50gwei"][..], 1_000_000_000),
