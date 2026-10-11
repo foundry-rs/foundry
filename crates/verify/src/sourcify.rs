@@ -544,11 +544,16 @@ mod tests {
     #[tokio::test]
     async fn check_rejects_invalid_explicit_url_instead_of_public_fallback() {
         for (verifier_url, expected) in [
+            ("127.0.0.1:5555", "invalid Sourcify URL: relative URL without a base"),
+            ("", "invalid Sourcify URL: relative URL without a base"),
             (
-                "127.0.0.1:5555",
-                "invalid Sourcify URL `127.0.0.1:5555`: relative URL without a base",
+                "https://user:password-secret@example.invalid:bad/server?api_key=query-secret",
+                "invalid Sourcify URL: invalid port number",
             ),
-            ("", "invalid Sourcify URL ``: relative URL without a base"),
+            (
+                "ftp://user:password-secret@example.invalid/server?api_key=query-secret",
+                "invalid Sourcify URL: URL scheme must be http or https",
+            ),
         ] {
             let args = VerifyCheckArgs::parse_from([
                 "foundry-cli",
