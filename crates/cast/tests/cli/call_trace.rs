@@ -520,6 +520,71 @@ Transaction successfully executed.
 "
             ));
     }
+
+    for fee_args in [
+        &["--priority-gas-price", "2gwei"][..],
+        &["--gas-price", "0", "--priority-gas-price", "2gwei"][..],
+    ] {
+        cmd.cast_fuse()
+            .args(["call", target, "--trace", "--rpc-url", &endpoint, "--override-code"])
+            .arg(&override_code)
+            .args(fee_args)
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: EVM error
+
+Context:
+- transaction validation error: priority fee is greater than max fee
+
+"#]]);
+    }
+}
+
+#[cfg(feature = "monad")]
+#[casttest]
+async fn cast_call_trace_monad_fees(cmd: _) {
+    let (_api, handle) = anvil::spawn(NodeConfig::test_monad()).await;
+    let endpoint = handle.http_endpoint();
+    let target = "0x0000000000000000000000000000000000001234";
+    let override_code = format!("{target}:0x3a60005260206000f3");
+
+    for fee_args in [
+        &[][..],
+        &["--legacy", "--gas-price", "0"][..],
+        &["--gas-price", "0", "--priority-gas-price", "0"][..],
+    ] {
+        cmd.cast_fuse()
+            .args(["call", target, "--trace", "--chain", "143", "--rpc-url", &endpoint])
+            .args(["--override-code", &override_code])
+            .args(fee_args)
+            .assert_success()
+            .stdout_eq(str![[r#"
+Traces:
+  [14] 0x0000000000000000000000000000000000001234::fallback()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000000
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+    }
+
+    for fee_args in [
+        &["--legacy", "--gas-price", "3gwei"][..],
+        &["--gas-price", "50gwei", "--priority-gas-price", "2gwei"][..],
+        &["--priority-gas-price", "2gwei"][..],
+    ] {
+        cmd.cast_fuse()
+            .args(["call", target, "--trace", "--chain", "143", "--rpc-url", &endpoint])
+            .args(["--override-code", &override_code])
+            .args(fee_args)
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: Nonzero fees are not supported for local Monad traces; use --debug-trace-call instead
+
+"#]]);
+    }
 }
 
 #[casttest]
