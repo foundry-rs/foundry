@@ -32,7 +32,7 @@ use solar::{
         ty::Gcx,
     },
 };
-use std::{cell::OnceCell, fmt};
+use std::{cell::OnceCell, ffi::OsStr, fmt, path::Path};
 use walkdir::WalkDir;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -44,6 +44,8 @@ static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
     output: ProjectCompileOutput,
+    /// The file name of the generated REPL contract source (e.g. `"ReplContract.sol"`).
+    file_name: String,
 }
 
 impl fmt::Debug for GeneratedOutput {
@@ -58,11 +60,12 @@ impl GeneratedOutput {
         &self,
         f: impl for<'a, 'b, 'gcx> FnOnce(GeneratedOutputRef<'a, 'b, 'gcx>) -> R + Send,
     ) -> R {
+        let file_name = &self.file_name;
         self.output
             .parser()
             .solc()
             .compiler()
-            .enter(|c| f(GeneratedOutputRef { output: &self.output, compiler: c }))
+            .enter(|c| f(GeneratedOutputRef { output: &self.output, compiler: c, file_name }))
     }
 }
 
@@ -70,6 +73,8 @@ impl GeneratedOutput {
 pub struct GeneratedOutputRef<'a, 'b, 'gcx> {
     output: &'a ProjectCompileOutput,
     pub(crate) compiler: &'b CompilerRef<'gcx>,
+    /// The file name of the generated REPL source (e.g. `"ReplContract.sol"`).
+    file_name: &'a str,
 }
 
 impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
@@ -78,12 +83,24 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     }
 
     pub fn repl_contract(&self) -> Option<&ConfigurableContractArtifact> {
-        self.output.find_first("REPL")
+        let expected = OsStr::new(self.file_name);
+        self.output.artifacts_with_files().find_map(|(path, name, artifact)| {
+            if name == "REPL" && path.file_name() == Some(expected) { Some(artifact) } else { None }
+        })
     }
 
     /// Looks up the REPL contract in the HIR.
     pub fn repl_contract_hir(&self) -> Option<&'gcx Contract<'gcx>> {
-        self.gcx().hir.contracts().find(|c| c.name.as_str() == "REPL")
+        let file_name = self.file_name;
+        self.gcx().hir.contracts().find(|c| {
+            c.name.as_str() == "REPL"
+                && self
+                    .gcx()
+                    .sources
+                    .get(c.source)
+                    .and_then(|s| s.file.name.as_real())
+                    .is_some_and(|p| p.ends_with(file_name))
+        })
     }
 
     /// Returns the body block of the REPL `run()` function.
@@ -684,7 +701,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             return Ok(output);
         }
         let output = self.compile()?;
-        let output = GeneratedOutput { output };
+        let output = GeneratedOutput { output, file_name: self.file_name.clone() };
         Ok(self.output.get_or_init(|| output))
     }
 
