@@ -2874,7 +2874,8 @@ impl<'ast> State<'_, 'ast> {
 
             ast::StmtKind::If(_, _, Some(_)) => true,
             ast::StmtKind::If(_, then, None) => {
-                self.is_multiline_block_stmt(then, empty_as_multiline)
+                self.has_comment_between(stmt.span.lo(), then.span.lo())
+                    || self.is_multiline_block_stmt(then, empty_as_multiline)
             }
 
             // these ones always has an inner block, so we mark them as multiline
@@ -2891,7 +2892,10 @@ impl<'ast> State<'_, 'ast> {
             | ast::StmtKind::Expr(_)
             | ast::StmtKind::Return(_)
             | ast::StmtKind::Revert(_, _)
-            | ast::StmtKind::Placeholder => false,
+            | ast::StmtKind::Placeholder => {
+                // Internal comments can force hard breaks even when the source occupies one line.
+                self.has_comment_between(stmt.span.lo(), stmt.span.hi())
+            }
         }
     }
 
@@ -2940,6 +2944,16 @@ impl<'ast> State<'_, 'ast> {
         }
 
         let stmt = &block.stmts[0];
+        // Removing the outer braces would leave a standalone block that still prints multiline.
+        if matches!(stmt.kind, ast::StmtKind::Block(_)) {
+            return true;
+        }
+        // Keep comment context stable when wrapping can introduce new lines after the statement.
+        if self.config.wrap_comments
+            && self.peek_comment_between(stmt.span.hi(), block.span.hi()).is_some()
+        {
+            return true;
+        }
 
         // Comments can break single-line layout. Mark block as multiline if there is a comment at
         // the beginning.
@@ -3011,12 +3025,8 @@ impl<'ast> State<'_, 'ast> {
     /// Measures the normalized body without letting a parent's inline decision remove required
     /// braces. For an `if`, the `else` branch is measured separately by `is_inline_stmt`.
     fn estimate_inline_stmt_size(&self, stmt: &'ast ast::Stmt<'ast>) -> usize {
-        let comments = if self.has_comment_between(stmt.span.lo(), stmt.span.hi()) {
-            self.comments.clone()
-        } else {
-            Default::default()
-        };
-        let mut state = Self::new(self.file, self.config.clone(), Default::default(), comments);
+        let mut state =
+            Self::new(self.file, self.config.clone(), Default::default(), Default::default());
         state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
         state.single_line_stmt = Some(true);
         if let ast::StmtKind::If(cond, then, _) = &stmt.kind {
