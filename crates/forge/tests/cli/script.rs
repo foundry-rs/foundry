@@ -4,11 +4,15 @@ use crate::{
     constants::TEMPLATE_CONTRACT,
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{Ethereum, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, hex, keccak256};
+use alloy_network::{
+    Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync, eip2718::Encodable2718,
+};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequest};
+use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
@@ -25,6 +29,7 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
+use revm::bytecode::opcode;
 use serde_json::Value;
 use std::{
     env, fs,
@@ -3194,6 +3199,397 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     );
 }
 
+// A raw transaction signed with too little gas must fail the on-chain simulation instead of being
+// broadcast and running out of gas on-chain.
+#[forgetest_init]
+async fn test_broadcast_raw_transaction_tight_gas_fails_simulation(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    // The raw transaction is an EIP-1559 transaction on chain 31337, signed by anvil account 1
+    // with nonce 0. It calls `Sink.set()` at the address of the first deployment from account 0
+    // with a gas limit of 30,000, below the ~43,000 the call needs.
+    prj.add_script(
+        "TightGas",
+        r#"
+import "forge-std/Script.sol";
+
+contract Sink {
+    uint256 public x;
+
+    function set() external {
+        x = 1;
+    }
+}
+
+contract TightGasScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Sink();
+        vm.broadcastRawTransaction(
+            hex"02f86c827a6980018477359401827530945fbdb2315678afecb367f032d93f642f64180aa38084b8e010dec001a0cad6fbbb0b7a55a6db6fc622dcd6630ef848367bb5977fac9d6c3a464e893dd1a051f767f64247e57f7e3756d08f15383d3e0f7da8551abadeacf0d8d23998f1e5"
+        );
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "TightGasScript",
+    ]);
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: Simulated execution failed.
+
+"#]]);
+
+    let provider = handle.http_provider();
+    for sender in [
+        address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+        address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+    ] {
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    }
+}
+
+// A transaction's fixed gas limit must not replace the block gas limit observed by contracts.
+#[forgetest]
+async fn broadcast_raw_transaction_preserves_block_gas_limit_fork(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(30_000_000))).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let signer = handle.dev_wallets().nth(1).unwrap();
+    let target = sender.create(0);
+    let mut transaction = TxEip1559 {
+        chain_id: 31337,
+        gas_limit: 500_000,
+        max_fee_per_gas: 2_000_000_001,
+        max_priority_fee_per_gas: 1,
+        to: TxKind::Call(target),
+        input: keccak256("check()")[..4].to_vec().into(),
+        ..Default::default()
+    };
+    let signature = signer.sign_transaction_sync(&mut transaction).unwrap();
+    let transaction = transaction.into_signed(signature);
+    let hash = *transaction.hash();
+    let mut raw = Vec::new();
+    transaction.eip2718_encode(&mut raw);
+
+    prj.add_script(
+        "BlockGasLimit.s.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function broadcastRawTransaction(bytes calldata data) external;
+}}
+
+contract BlockGasLimit {{
+    uint256 public observed;
+
+    function check() external {{
+        require(block.gaslimit > 1_000_000, "block gas too low");
+        observed = block.gaslimit;
+    }}
+}}
+
+contract BlockGasLimitScript {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {{
+        vm.startBroadcast();
+        new BlockGasLimit();
+        vm.broadcastRawTransaction(hex"{}");
+        vm.stopBroadcast();
+    }}
+}}
+"#,
+            hex::encode(raw)
+        ),
+    );
+
+    cmd.args([
+        "script",
+        "BlockGasLimitScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--unlocked",
+        "--sender",
+        &sender.to_string(),
+        "--broadcast",
+    ])
+    .assert_success()
+    .stderr_eq(str![""])
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    let provider = handle.http_provider();
+    let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+    assert!(receipt.status());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert_eq!(provider.get_transaction_count(signer.address()).await.unwrap(), 1);
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(30_000_000));
+}
+
+#[forgetest]
+async fn broadcast_raw_transaction_preserves_access_list_fork(prj: _, cmd: _) {
+    assert_raw_transaction_access_list(&prj, &mut cmd, NodeConfig::test()).await;
+}
+
+#[cfg(feature = "monad")]
+#[forgetest]
+async fn monad_broadcast_raw_transaction_preserves_access_list_fork(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_monad();
+        config.hardfork = Some("monad:MonadNine".parse().unwrap());
+    });
+    assert_raw_transaction_access_list(
+        &prj,
+        &mut cmd,
+        NodeConfig::test_monad().with_hardfork(Some("monad:MonadNine".parse().unwrap())),
+    )
+    .await;
+}
+
+async fn assert_raw_transaction_access_list(
+    prj: &TestProject,
+    cmd: &mut TestCommand,
+    config: NodeConfig,
+) {
+    let (api, handle) = spawn(config.with_gas_limit(Some(30_000_000))).await;
+    let provider = handle.http_provider();
+    let signer = handle.dev_wallets().nth(1).unwrap();
+    let endpoint = handle.http_endpoint();
+    let sender = handle.dev_wallets().next().unwrap().address().to_string();
+    add_raw_transaction_script(prj);
+    let common = [
+        "script",
+        "RawTransactionScript",
+        "--rpc-url",
+        endpoint.as_str(),
+        "--unlocked",
+        "--sender",
+        sender.as_str(),
+        "--broadcast",
+    ];
+
+    // Read 400 distinct slots, then record successful execution in slot 400. The same code
+    // serves as a call's runtime or a creation's initcode, returning a one-byte STOP runtime.
+    let mut code = Vec::new();
+    for slot in 0u16..400 {
+        code.push(opcode::PUSH2);
+        code.extend_from_slice(&slot.to_be_bytes());
+        code.extend_from_slice(&[opcode::SLOAD, opcode::POP]);
+    }
+    code.extend_from_slice(&[opcode::PUSH1, 1, opcode::PUSH2]);
+    code.extend_from_slice(&400u16.to_be_bytes());
+    code.extend_from_slice(&[opcode::SSTORE, opcode::PUSH1, 1, opcode::PUSH0, opcode::RETURN]);
+
+    for create in [false, true] {
+        let target =
+            if create { signer.address().create(0) } else { Address::with_last_byte(0x42) };
+        if !create {
+            api.anvil_set_code(target, code.clone().into()).await.unwrap();
+        }
+        let access_list = AccessList(vec![AccessListItem {
+            address: target,
+            storage_keys: (0..400).map(|slot| B256::from(U256::from(slot))).collect(),
+        }]);
+        for transaction_type in [1, 2] {
+            let sign = |gas_limit, access_list: AccessList| -> TxEnvelope {
+                let to = if create { TxKind::Create } else { TxKind::Call(target) };
+                let input = if create { code.clone().into() } else { Bytes::new() };
+                let mut transaction = TransactionRequest {
+                    transaction_type: Some(transaction_type),
+                    chain_id: Some(31337),
+                    nonce: Some(0),
+                    gas: Some(gas_limit),
+                    gas_price: (transaction_type == 1).then_some(2_000_000_001),
+                    max_fee_per_gas: (transaction_type == 2).then_some(2_000_000_001),
+                    max_priority_fee_per_gas: (transaction_type == 2).then_some(1),
+                    to: Some(to),
+                    input: input.into(),
+                    access_list: Some(access_list),
+                    ..Default::default()
+                }
+                .build_typed_tx()
+                .unwrap();
+                let signature = signer.sign_transaction_sync(&mut transaction).unwrap();
+                transaction.into_signed(signature).into()
+            };
+
+            // Measure real execution before choosing a tight cap. Missing the access list must
+            // make this exact cap insufficient, for both CALL and CREATE and both typed envelopes.
+            let snapshot = api.evm_snapshot().await.unwrap();
+            let transaction = sign(2_000_000, access_list.clone());
+            let receipt = provider
+                .send_raw_transaction(&transaction.encoded_2718())
+                .await
+                .unwrap()
+                .get_receipt()
+                .await
+                .unwrap();
+            assert!(receipt.status());
+            let gas_limit = receipt.gas_used() + 1_000;
+            assert!(api.evm_revert(snapshot).await.unwrap());
+
+            let snapshot = api.evm_snapshot().await.unwrap();
+            let without_list = sign(gas_limit, AccessList::default());
+            let receipt = provider
+                .send_raw_transaction(&without_list.encoded_2718())
+                .await
+                .unwrap()
+                .get_receipt()
+                .await
+                .unwrap();
+            assert!(!receipt.status());
+            assert_eq!(receipt.gas_used(), gas_limit);
+            assert!(api.evm_revert(snapshot).await.unwrap());
+
+            let failure = cmd
+                .forge_fuse()
+                .args(common)
+                .args(["--sig", "run(bytes)", &hex::encode_prefixed(without_list.encoded_2718())])
+                .assert_failure();
+            if create {
+                failure.stderr_eq(str![[r#"
+Error: Failed with `EvmError: OutOfGas`:
+
+Error: Simulated execution failed.
+
+"#]]);
+            } else {
+                failure.stderr_eq(str![[r#"
+Error: Simulated execution failed.
+
+"#]]);
+            }
+            assert_eq!(provider.get_transaction_count(signer.address()).await.unwrap(), 0);
+            assert_eq!(provider.get_storage_at(target, U256::from(400)).await.unwrap(), U256::ZERO);
+
+            let snapshot = api.evm_snapshot().await.unwrap();
+            let transaction = sign(gas_limit, access_list.clone());
+            cmd.forge_fuse()
+                .args(common)
+                .args(["--sig", "run(bytes)", &hex::encode_prefixed(transaction.encoded_2718())])
+                .assert_success()
+                .stderr_eq(str![""])
+                .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+            let receipt =
+                provider.get_transaction_receipt(*transaction.tx_hash()).await.unwrap().unwrap();
+            assert!(receipt.status());
+            assert!(receipt.gas_used() < gas_limit);
+            assert_eq!(provider.get_transaction_count(signer.address()).await.unwrap(), 1);
+            assert_eq!(
+                provider.get_storage_at(target, U256::from(400)).await.unwrap(),
+                U256::from(1)
+            );
+            if create {
+                assert_eq!(receipt.contract_address(), Some(target));
+                assert_eq!(provider.get_code_at(target).await.unwrap(), bytes!("00"));
+            }
+            assert!(api.evm_revert(snapshot).await.unwrap());
+        }
+    }
+}
+
+#[forgetest]
+async fn broadcast_raw_transaction_preserves_authorization_and_access_list_fork(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let signer = handle.dev_wallets().nth(1).unwrap();
+    let authority = handle.dev_wallets().nth(2).unwrap();
+    let delegate = Address::with_last_byte(0x42);
+    // Delegated execution increments slot zero in the authority's storage.
+    api.anvil_set_code(delegate, bytes!("5f546001015f5500")).await.unwrap();
+    let authorization = Authorization { chain_id: U256::from(31337), address: delegate, nonce: 0 };
+    let signature = authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let mut transaction = TxEip7702 {
+        chain_id: 31337,
+        gas_limit: 150_000,
+        max_fee_per_gas: 2_000_000_001,
+        max_priority_fee_per_gas: 1,
+        to: authority.address(),
+        access_list: AccessList(vec![AccessListItem {
+            address: authority.address(),
+            storage_keys: vec![B256::ZERO],
+        }]),
+        authorization_list: vec![authorization.into_signed(signature)],
+        ..Default::default()
+    };
+    let signature = signer.sign_transaction_sync(&mut transaction).unwrap();
+    let transaction = TxEnvelope::from(transaction.into_signed(signature));
+    add_raw_transaction_script(&prj);
+    cmd.args([
+        "script",
+        "RawTransactionScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--unlocked",
+        "--sender",
+        &handle.dev_wallets().next().unwrap().address().to_string(),
+        "--broadcast",
+        "--sig",
+        "run(bytes)",
+        &hex::encode_prefixed(transaction.encoded_2718()),
+    ])
+    .assert_success()
+    .stderr_eq(str![""])
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    let provider = handle.http_provider();
+    let receipt = provider.get_transaction_receipt(*transaction.tx_hash()).await.unwrap().unwrap();
+    assert!(receipt.status());
+    assert_eq!(provider.get_transaction_count(signer.address()).await.unwrap(), 1);
+    assert_eq!(provider.get_transaction_count(authority.address()).await.unwrap(), 1);
+    assert_eq!(
+        provider.get_storage_at(authority.address(), U256::ZERO).await.unwrap(),
+        U256::from(1)
+    );
+    let mut delegation = hex!("ef0100").to_vec();
+    delegation.extend_from_slice(delegate.as_slice());
+    assert_eq!(provider.get_code_at(authority.address()).await.unwrap(), Bytes::from(delegation));
+}
+
+fn add_raw_transaction_script(prj: &TestProject) {
+    prj.add_script(
+        "RawTransaction.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function broadcastRawTransaction(bytes calldata data) external;
+}
+
+contract RawTransactionScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run(bytes calldata transaction) external {
+        vm.startBroadcast();
+        vm.broadcastRawTransaction(transaction);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+}
+
 #[forgetest_init]
 fn can_get_script_wallets(prj: _, cmd: _) {
     let script = prj.add_source(
@@ -5448,6 +5844,7 @@ fn assert_create2_rewrite_dry_run(root: &std::path::Path) {
     for tx in txs {
         assert_eq!(tx["transactionType"], "CREATE2", "plain CREATE was rewritten");
         assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+        assert_eq!(tx["isFixedGasLimit"], false, "rewritten CREATE gas must be estimated");
     }
 
     let addrs: std::collections::HashSet<_> =

@@ -200,21 +200,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         self.show_simulation_header()?;
         let results = transactions
             .into_iter()
-            .map(|mut transaction| {
+            .map(|transaction| {
                 let rpc = transaction.rpc.clone();
                 let runner = &mut contexts.get_mut(&rpc).expect("invalid rpc url").runner;
-                let tx = transaction.tx_mut();
 
+                let tx = transaction.tx();
                 let to = tx.to();
                 let result = runner
-                    .simulate(
-                        tx.from()
-                            .expect("transaction doesn't have a `from` address at execution time"),
-                        to,
-                        tx.input().cloned(),
-                        tx.value(),
-                        tx.authorization_list(),
-                    )
+                    .simulate(tx, transaction.is_fixed_gas_limit)
                     .wrap_err("Internal EVM error during simulation")?;
 
                 if !result.success {
