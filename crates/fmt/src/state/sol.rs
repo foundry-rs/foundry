@@ -2715,14 +2715,8 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    /// Determines if an `if/else` block should be inlined.
-    /// Also returns if the value was cached, so that it can be cleaned afterwards.
-    ///
-    /// # Returns
-    ///
-    /// A tuple `(should_inline, was_cached)`. The second boolean is `true` if the
-    /// decision was retrieved from the cache or is a final decision based on config,
-    /// preventing the caller from clearing a cache value that was never set.
+    /// Determines whether a statement body can be inlined and whether the decision came from
+    /// the parent cache.
     fn is_single_line_block(
         &mut self,
         stmt_span_lo: BytePos,
@@ -2742,33 +2736,21 @@ impl<'ast> State<'_, 'ast> {
             return Decision { outcome: cached_decision, is_cached: true };
         }
 
-        // Empty statements are always printed as blocks.
-        if std::slice::from_ref(then).is_empty() {
-            return Decision { outcome: false, is_cached: false };
-        }
-
         // Comments near cond can break single-line layouts. Print as blocks in this case
         if self.peek_comment_between(stmt_span_lo, then.span.lo()).is_some() {
             return Decision { outcome: false, is_cached: false };
         }
 
-        // If possible, take an early decision based on the block style configuration.
-        match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve => {
-                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
-                {
-                    return Decision { outcome: false, is_cached: false };
-                }
-            }
-            config::SingleLineBlockStyle::Single => {
-                if self.is_multiline_block_stmt(then, true) {
-                    return Decision { outcome: false, is_cached: false };
-                }
-            }
-            config::SingleLineBlockStyle::Multi => {
-                return Decision { outcome: false, is_cached: false };
-            }
-        };
+        // Multi always keeps braces; Preserve also respects an explicit body line break.
+        if matches!(self.config.single_line_statement_blocks, config::SingleLineBlockStyle::Multi)
+            || (matches!(
+                self.config.single_line_statement_blocks,
+                config::SingleLineBlockStyle::Preserve
+            ) && self.is_stmt_in_new_line(cond, then))
+            || self.is_multiline_block_stmt(then, true)
+        {
+            return Decision { outcome: false, is_cached: false };
+        }
 
         // If no decision was made, estimate the length to be formatted.
         // NOTE: conservative check -> worst-case scenario is formatting as multi-line block.
@@ -2807,36 +2789,24 @@ impl<'ast> State<'_, 'ast> {
         Decision { outcome: true, is_cached: false }
     }
 
-    fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
-        if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
-            let if_span = cond.span.to(then.span);
-            if !self.same_source_line(if_span.lo(), if_span.hi())
-                && matches!(
-                    self.config.single_line_statement_blocks,
-                    config::SingleLineBlockStyle::Preserve
-                )
-            {
-                return false;
-            }
-            if cond_len + self.estimate_inline_stmt_size(stmt) >= self.space_left() {
-                return false;
-            }
-            if let Some(els) = els_opt
-                && !self.is_inline_stmt(els, 6)
-            {
-                return false;
-            }
+    fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, header_len: usize) -> bool {
+        let span = if let ast::StmtKind::If(cond, then, _) = &stmt.kind {
+            cond.span.to(then.span)
         } else {
-            if matches!(
-                self.config.single_line_statement_blocks,
-                config::SingleLineBlockStyle::Preserve
-            ) && !self.same_source_line(stmt.span.lo(), stmt.span.hi())
-            {
-                return false;
-            }
-            if cond_len + self.estimate_inline_stmt_size(stmt) >= self.space_left() {
-                return false;
-            }
+            stmt.span
+        };
+        if matches!(
+            self.config.single_line_statement_blocks,
+            config::SingleLineBlockStyle::Preserve
+        ) && !self.same_source_line(span.lo(), span.hi())
+        {
+            return false;
+        }
+        if header_len + self.estimate_inline_stmt_size(stmt) >= self.space_left() {
+            return false;
+        }
+        if let ast::StmtKind::If(_, _, Some(els)) = &stmt.kind {
+            return self.is_inline_stmt(els, 6);
         }
         true
     }
@@ -2982,7 +2952,7 @@ impl<'ast> State<'_, 'ast> {
 
     /// Performs a size estimation to see if the if/else can fit on one line.
     fn can_stmts_be_inlined(
-        &mut self,
+        &self,
         header_len: usize,
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
@@ -2990,12 +2960,8 @@ impl<'ast> State<'_, 'ast> {
         // If the header wraps, only its closing parenthesis precedes the body.
         let then_margin = if header_len <= self.space_left() { header_len } else { 2 };
 
-        if !self.is_inline_stmt(then, then_margin) {
-            return false;
-        }
-
-        // Always 6 chars for the else: 'else '
-        els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
+        self.is_inline_stmt(then, then_margin)
+            && els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
     }
 
     fn for_header_span(
