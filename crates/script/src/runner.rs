@@ -1,9 +1,12 @@
 use super::{ScriptConfig, ScriptResult};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_evm::revm::context::Transaction;
+use alloy_evm::{
+    FromRecoveredTx,
+    revm::context::{Block, Transaction},
+};
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, U256, map::AddressHashMap};
+use alloy_primitives::{Address, Bytes, TxKind, U256, map::AddressHashMap};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_common::{LIBRARY_DEPLOYER, TransactionMaybeSigned};
@@ -11,8 +14,8 @@ use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
     core::{
-        FoundryTransaction,
-        evm::{FoundryEvmNetwork, TransactionRequestFor},
+        FoundryBlock, FoundryTransaction,
+        evm::{EvmEnvFor, FoundryEvmNetwork, TransactionRequestFor, TxEnvFor},
     },
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
@@ -309,26 +312,36 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
     /// Runs a broadcastable transaction locally and persists its state.
     pub fn simulate(
         &mut self,
-        from: Address,
-        to: Option<Address>,
-        calldata: Option<Bytes>,
-        value: Option<U256>,
-        authorization_list: Option<Vec<SignedAuthorization>>,
+        transaction: &TransactionMaybeSigned<FEN::Network>,
+        is_fixed_gas_limit: bool,
     ) -> Result<ScriptResult<FEN::Network>> {
-        if let Some(to) = to {
+        if is_fixed_gas_limit {
+            let (env, tx) = self.prepare_fixed_gas_env(transaction);
+            return if transaction.to().is_some() {
+                let result = self.executor.transact_with_env(env, tx)?;
+                let gas_used = result.gas_used;
+                Ok(self.call_result(result, gas_used))
+            } else {
+                let result = self.executor.deploy_with_env(env, tx, None);
+                self.deployment_result(result)
+            };
+        }
+
+        let from = transaction.from().expect("transaction sender missing");
+        if let Some(to) = transaction.to() {
             self.call(
                 from,
                 to,
-                calldata.unwrap_or_default(),
-                value.unwrap_or(U256::ZERO),
-                authorization_list,
+                transaction.input().cloned().unwrap_or_default(),
+                transaction.value().unwrap_or_default(),
+                transaction.authorization_list(),
                 true,
             )
         } else {
             let res = self.executor.deploy(
                 from,
-                calldata.expect("No data for create transaction"),
-                value.unwrap_or(U256::ZERO),
+                transaction.input().cloned().expect("No data for create transaction"),
+                transaction.value().unwrap_or_default(),
                 None,
             );
             self.deployment_result(res)
@@ -487,6 +500,45 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             self.executor.tx_env_mut().set_gas_limit(init_gas_limit);
         }
         Ok(gas_used)
+    }
+
+    /// Prepares a fixed-limit transaction without changing the block or executor gas limit.
+    pub(crate) fn prepare_fixed_gas_env(
+        &self,
+        transaction: &TransactionMaybeSigned<FEN::Network>,
+    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>) {
+        let from = transaction.from().expect("transaction sender missing");
+        let kind = transaction.to().map_or(TxKind::Create, TxKind::Call);
+        let (mut env, mut tx) = self.executor.prepare_call_env(
+            from,
+            kind,
+            transaction.input().cloned().unwrap_or_default(),
+            transaction.value().unwrap_or_default(),
+        );
+        env.block_env.set_gas_limit(self.executor.evm_env().block_env.gas_limit());
+        match transaction {
+            TransactionMaybeSigned::Signed { tx: signed, .. } => {
+                // Keep the complete signed payload, including access lists and network fields.
+                tx = TxEnvFor::<FEN>::from_recovered_tx(signed, from);
+            }
+            TransactionMaybeSigned::Unsigned(request) => {
+                let access_list = request.access_list().cloned().unwrap_or_default();
+                if !access_list.is_empty() && tx.tx_type() == 0 {
+                    tx.set_tx_type(1);
+                }
+                tx.set_access_list(access_list);
+                if let Some(authorization_list) = transaction.authorization_list() {
+                    tx.set_signed_authorization(authorization_list);
+                    tx.set_tx_type(4);
+                }
+            }
+        }
+        // Retain the synthetic call's fee and chain normalization.
+        tx.set_gas_price(0);
+        tx.set_gas_priority_fee(None);
+        tx.set_chain_id(Some(env.cfg_env.chain_id));
+        tx.set_gas_limit(transaction.gas().expect("fixed gas limit missing") as u64);
+        (env, tx)
     }
 }
 
