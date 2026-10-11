@@ -4484,7 +4484,7 @@ async fn test_tempo_aa_transaction_with_valid_after() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_aa_expired_valid_before() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -4497,6 +4497,8 @@ async fn test_tempo_aa_expired_valid_before() {
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
+    // Pin the clock: the next block timestamp is otherwise `latest + 1`.
+    api.evm_set_next_block_timestamp(current_time).unwrap();
     let valid_before = current_time.saturating_sub(10); // 10 seconds ago
 
     let transfer_call = token.transfer(recipient, U256::from(50_000));
