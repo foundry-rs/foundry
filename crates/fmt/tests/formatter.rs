@@ -742,6 +742,9 @@ fmt_tests! {
     SimpleComments,
     SortedImports,
     StatementBlock,
+    StatementBlockBodyComments,
+    StatementBlockModes,
+    StatementBlockSafety,
     StructDefinition,
     StructFieldAccess,
     ThisExpression,
@@ -972,118 +975,6 @@ fn concatenated_string_trailing_comment_stays_after_last_literal() {
 }
 
 #[test]
-fn for_single_line_statement_blocks() {
-    for (style, body, expected) in [
-        (
-            SingleLineBlockStyle::Preserve,
-            "a[i] = b.get(i);",
-            "for (uint256 i = 0; i < n; i++) a[i] = b.get(i);",
-        ),
-        (
-            SingleLineBlockStyle::Single,
-            "{\n            a[i] = b.get(i);\n        }",
-            "for (uint256 i = 0; i < n; i++) a[i] = b.get(i);",
-        ),
-        (
-            SingleLineBlockStyle::Multi,
-            "a[i] = b.get(i);",
-            "for (uint256 i = 0; i < n; i++) {\n            a[i] = b.get(i);\n        }",
-        ),
-        (
-            SingleLineBlockStyle::Preserve,
-            "\n            a[i] = b.get(i);",
-            "for (uint256 i = 0; i < n; i++) {\n            a[i] = b.get(i);\n        }",
-        ),
-    ] {
-        let source = format!(
-            "contract C {{\n    function f() external {{\n        for (uint256 i = 0; i < n; i++) {body}\n    }}\n}}\n"
-        );
-        let expected = format!(
-            "contract C {{\n    function f() external {{\n        {expected}\n    }}\n}}\n"
-        );
-        let config =
-            Arc::new(FormatterConfig { single_line_statement_blocks: style, ..Default::default() });
-        assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
-        assert_eq!(format(&expected, Path::new("test.sol"), config), expected);
-    }
-}
-
-#[test]
-fn statement_block_modes_agree() {
-    for style in
-        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
-    {
-        for (body, preserve_inline) in [
-            ("x();", true),
-            ("{ x(); }", true),
-            ("{\n            x();\n        }", false),
-            ("\n        {\n            x();\n        }", false),
-            ("\n            x();", false),
-            ("{ x(); y(); }", false),
-            ("{ /* comment */ x(); }", false),
-        ] {
-            let inline = match style {
-                SingleLineBlockStyle::Preserve => preserve_inline,
-                SingleLineBlockStyle::Single => !body.contains("y();") && !body.contains("comment"),
-                SingleLineBlockStyle::Multi => false,
-            };
-            for header in ["if (c)", "while (c)", "for (; c;)"] {
-                let source = format!(
-                    "contract C {{\n    function f() external {{\n        {header} {body}\n    }}\n}}\n"
-                );
-                let expected_body = if inline {
-                    "x();"
-                } else if body.contains("y();") {
-                    "{\n            x();\n            y();\n        }"
-                } else if body.contains("comment") {
-                    "{\n            /* comment */\n            x();\n        }"
-                } else {
-                    "{\n            x();\n        }"
-                };
-                let expected = format!(
-                    "contract C {{\n    function f() external {{\n        {header} {expected_body}\n    }}\n}}\n"
-                );
-                let config = Arc::new(FormatterConfig {
-                    single_line_statement_blocks: style,
-                    ..Default::default()
-                });
-                let actual = format(&source, Path::new("test.sol"), config);
-                assert_eq!(actual, expected, "{style:?}: {header} {body}");
-            }
-        }
-    }
-}
-
-#[test]
-fn statement_block_declarations_keep_braces() {
-    for style in
-        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
-    {
-        for header in ["for (;;)", "while (c)", "if (c)", "for (;;) while (c)"] {
-            for declaration in ["uint256 x;", "(uint256 x, uint256 y) = g();"] {
-                let source = format!(
-                    "contract C {{ function f() external {{ {header} {{ {declaration} }} }} }}"
-                );
-                let expected = if header == "for (;;) while (c)" {
-                    format!(
-                        "contract C {{\n    function f() external {{\n        for (;;) {{\n            while (c) {{\n                {declaration}\n            }}\n        }}\n    }}\n}}\n"
-                    )
-                } else {
-                    format!(
-                        "contract C {{\n    function f() external {{\n        {header} {{\n            {declaration}\n        }}\n    }}\n}}\n"
-                    )
-                };
-                let config = Arc::new(FormatterConfig {
-                    single_line_statement_blocks: style,
-                    ..Default::default()
-                });
-                assert_eq!(format(&source, Path::new("test.sol"), config), expected);
-            }
-        }
-    }
-}
-
-#[test]
 fn for_body_normalization_is_stable() {
     let source =
         "contract C { function f() external { uint256 n; for(uint i=0;i<n;i++) n += uint(n); } }";
@@ -1104,17 +995,6 @@ fn for_body_normalization_is_stable() {
             });
             assert_eq!(format(source, Path::new("test.sol"), config), expected);
         }
-    }
-}
-
-#[test]
-fn for_nested_in_while_preserves_outer_else() {
-    let source = "contract C { function f(bool a, bool b, bool c) external pure returns (uint256) { if (a) while (b) for (;;) { if (c) return 1; } else return 2; return 0; } }";
-    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        let config =
-            Arc::new(FormatterConfig { single_line_statement_blocks: style, ..Default::default() });
-        let expected = "contract C {\n    function f(bool a, bool b, bool c) external pure returns (uint256) {\n        if (a) {\n            while (b) for (;;) if (c) return 1;\n        } else {\n            return 2;\n        }\n        return 0;\n    }\n}\n";
-        assert_eq!(format(source, Path::new("test.sol"), config), expected);
     }
 }
 
@@ -1167,54 +1047,6 @@ fn condition_header_normalization_is_stable() {
                         ..Default::default()
                     });
                     assert_eq!(format(&source, Path::new("test.sol"), config), expected);
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn nested_statement_blocks_are_stable() {
-    for style in
-        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
-    {
-        for line_length in [40, 60, 80, 120] {
-            for header in [
-                "if (a)",
-                "while (a)",
-                "for (;;)",
-                "for (;a;)",
-                "for (;;x())",
-                "for (x();;)",
-                "for (uint i=0;i<n;++i)",
-                "for (/* init */ uint i=0; /* cond */ i<n; /* next */ ++i)",
-            ] {
-                for body in [
-                    "{ x(); }",
-                    "{ uint x; }",
-                    "{ (uint x, uint y) = g(); }",
-                    "{ if (b) x(); }",
-                    "{ if (b) x(); else y(); }",
-                    "{ while (b) { if (c) x(); } }",
-                    "{ for (;;) { if (b) x(); } }",
-                    "{ /* before */ x(); /* after */ }",
-                    "{ x(); // after\n }",
-                    "/* header ) */\n { x(); }",
-                    "{ unchecked { x(); } }",
-                ] {
-                    let source = format!(
-                        "contract C {{ function f() external {{ {header} {body} y(); }} }}"
-                    );
-                    let config = Arc::new(FormatterConfig {
-                        line_length,
-                        single_line_statement_blocks: style,
-                        ..Default::default()
-                    });
-                    let result = std::panic::catch_unwind(|| {
-                        let actual = format(&source, Path::new("test.sol"), config.clone());
-                        assert_eq!(format(&actual, Path::new("test.sol"), config), actual);
-                    });
-                    assert!(result.is_ok(), "{style:?}, {line_length}: {source}");
                 }
             }
         }
@@ -1340,100 +1172,6 @@ fn for_header_at_line_limit_keeps_nested_body_stable() {
 }
 
 #[test]
-fn nested_multiline_bodies_inline_in_one_pass() {
-    for outer in ["if (a)", "while (a)", "for (uint256 i; i < n; ++i)"] {
-        let source = format!(
-            "contract C {{ function f() external {{ {outer} {{\n if (b) {{\n x();\n }}\n }} }} }}"
-        );
-        let expected = format!(
-            "contract C {{\n    function f() external {{\n        {outer} if (b) x();\n    }}\n}}\n"
-        );
-        let config = Arc::new(FormatterConfig {
-            single_line_statement_blocks: SingleLineBlockStyle::Single,
-            ..Default::default()
-        });
-        assert_eq!(format(&source, Path::new("test.sol"), config), expected);
-    }
-}
-
-#[test]
-fn statement_body_comments_keep_braces() {
-    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        for header in ["for (;;)", "if (c)", "while (c)"] {
-            for (line_length, body, expected_body) in [
-                (120, "g(/* c */ 1);", "g( /* c */\n                1\n            );"),
-                (
-                    40,
-                    "x = uint256(11111111111111111111111111111111111111 /* c */) + 1;",
-                    "x = uint256(\n                11111111111111111111111111111111111111 /* c */\n            ) + 1;",
-                ),
-            ] {
-                let source = format!(
-                    "contract C {{ function f(uint256 x) external {{ {header} {body} }} }}"
-                );
-                let expected = format!(
-                    "contract C {{\n    function f(uint256 x) external {{\n        {header} {{\n            {expected_body}\n        }}\n    }}\n}}\n"
-                );
-                let config = Arc::new(FormatterConfig {
-                    line_length,
-                    single_line_statement_blocks: style,
-                    ..Default::default()
-                });
-                assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
-                assert_eq!(format(&expected, Path::new("test.sol"), config), expected);
-            }
-        }
-    }
-}
-
-#[test]
-fn nested_if_condition_comments_keep_braces() {
-    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        for body in ["if (/* c */ c) break;", "{ if (/* c */ c) break; }"] {
-            let source =
-                format!("contract C {{ function f(bool c) external pure {{ for (;;) {body} }} }}");
-            let expected = "contract C {\n    function f(bool c) external pure {\n        for (;;) {\n            if ( /* c */\n                c\n            ) {\n                break;\n            }\n        }\n    }\n}\n";
-            let config = Arc::new(FormatterConfig {
-                single_line_statement_blocks: style,
-                ..Default::default()
-            });
-            assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
-            assert_eq!(format(expected, Path::new("test.sol"), config), expected);
-        }
-    }
-}
-
-#[test]
-fn nested_standalone_blocks_keep_braces() {
-    for style in [SingleLineBlockStyle::Single, SingleLineBlockStyle::Preserve] {
-        for header in ["for (;;)", "while (c)", "if (c)"] {
-            for (body, expected_body) in [
-                (
-                    "{ { break; } }",
-                    "{\n            {\n                break;\n            }\n        }",
-                ),
-                (
-                    "{ { { break; } } }",
-                    "{\n            {\n                {\n                    break;\n                }\n            }\n        }",
-                ),
-            ] {
-                let source =
-                    format!("contract C {{ function f() external {{ {header} {body} }} }}");
-                let expected = format!(
-                    "contract C {{\n    function f() external {{\n        {header} {expected_body}\n    }}\n}}\n"
-                );
-                let config = Arc::new(FormatterConfig {
-                    single_line_statement_blocks: style,
-                    ..Default::default()
-                });
-                assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
-                assert_eq!(format(&expected, Path::new("test.sol"), config), expected);
-            }
-        }
-    }
-}
-
-#[test]
 fn wrapped_body_trailing_comments_keep_braces() {
     for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
         let expected = "contract C {\n    function f() external {\n        for (;;) {\n            break; /* aaaaaaaaa bbbbbbbbb */\n        }\n    }\n}\n";
@@ -1449,6 +1187,5 @@ fn wrapped_body_trailing_comments_keep_braces() {
             );
             assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
         }
-        assert_eq!(format(expected, Path::new("test.sol"), config), expected);
     }
 }
