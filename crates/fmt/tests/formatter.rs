@@ -2,9 +2,13 @@ use forge_fmt::{DocCommentStyle, FormatterConfig};
 use foundry_config::fmt::{IndentStyle, SingleLineBlockStyle};
 use foundry_test_utils::init_tracing;
 use snapbox::{Data, assert_data_eq};
-use solar::sema::Compiler;
+use solar::{
+    ast::{self, Visit},
+    sema::Compiler,
+};
 use std::{
     fs,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -1137,5 +1141,217 @@ fn for_header_normalization_is_stable() {
                 assert_eq!(format(&source, Path::new("test.sol"), config), expected);
             }
         }
+    }
+}
+
+#[test]
+fn condition_header_normalization_is_stable() {
+    for (keyword, inline_length) in [("if", 33), ("while", 36)] {
+        for condition in ["uint(c)>0", "uint256(c) > 0"] {
+            for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+                for line_length in [inline_length - 1, inline_length] {
+                    let source = format!(
+                        "contract C {{ function f() external {{ {keyword} ({condition}) x(); }} }}"
+                    );
+                    let body = if line_length == inline_length {
+                        "x();"
+                    } else {
+                        "{\n            x();\n        }"
+                    };
+                    let expected = format!(
+                        "contract C {{\n    function f() external {{\n        {keyword} (uint256(c) > 0) {body}\n    }}\n}}\n"
+                    );
+                    let config = Arc::new(FormatterConfig {
+                        line_length,
+                        single_line_statement_blocks: style,
+                        ..Default::default()
+                    });
+                    assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn nested_statement_blocks_are_stable() {
+    for style in
+        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
+    {
+        for line_length in [40, 60, 80, 120] {
+            for header in [
+                "if (a)",
+                "while (a)",
+                "for (;;)",
+                "for (;a;)",
+                "for (;;x())",
+                "for (x();;)",
+                "for (uint i=0;i<n;++i)",
+                "for (/* init */ uint i=0; /* cond */ i<n; /* next */ ++i)",
+            ] {
+                for body in [
+                    "{ x(); }",
+                    "{ uint x; }",
+                    "{ (uint x, uint y) = g(); }",
+                    "{ if (b) x(); }",
+                    "{ if (b) x(); else y(); }",
+                    "{ while (b) { if (c) x(); } }",
+                    "{ for (;;) { if (b) x(); } }",
+                    "{ /* before */ x(); /* after */ }",
+                    "{ x(); // after\n }",
+                    "/* header ) */\n { x(); }",
+                    "{ unchecked { x(); } }",
+                ] {
+                    let source = format!(
+                        "contract C {{ function f() external {{ {header} {body} y(); }} }}"
+                    );
+                    let config = Arc::new(FormatterConfig {
+                        line_length,
+                        single_line_statement_blocks: style,
+                        ..Default::default()
+                    });
+                    let result = std::panic::catch_unwind(|| {
+                        let actual = format(&source, Path::new("test.sol"), config.clone());
+                        assert_eq!(format(&actual, Path::new("test.sol"), config), actual);
+                    });
+                    assert!(result.is_ok(), "{style:?}, {line_length}: {source}");
+                }
+            }
+        }
+    }
+}
+
+/// Records statement nesting while ignoring braces around a single non-declaration statement.
+fn statement_structure(source: &str) -> Vec<String> {
+    let mut compiler = Compiler::new(
+        solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+    );
+    compiler.enter_mut(|c| {
+        let file = c
+            .sess()
+            .source_map()
+            .new_source_file(solar::interface::source_map::FileName::Stdin, source)
+            .unwrap();
+        let mut parser = c.parse();
+        parser.set_resolve_imports(false);
+        parser.add_file(file.clone());
+        parser.parse();
+        c.dcx().has_errors().unwrap();
+        let gcx = c.gcx();
+        let (_, source) = gcx.get_ast_source(&file.name).unwrap();
+        let mut visitor = StatementStructure::default();
+        let _ = visitor.visit_source_unit(source.ast.as_ref().unwrap());
+        visitor.0
+    })
+}
+
+#[derive(Default)]
+struct StatementStructure(Vec<String>);
+
+impl<'ast> Visit<'ast> for StatementStructure {
+    type BreakValue = ();
+
+    fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let ast::StmtKind::Block(block) = &stmt.kind
+            && let [child] = block.stmts.as_slice()
+            && !matches!(child.kind, ast::StmtKind::DeclSingle(_) | ast::StmtKind::DeclMulti(..))
+        {
+            return self.visit_stmt(child);
+        }
+        self.0.push(format!("{:?}", std::mem::discriminant(&stmt.kind)));
+        self.walk_stmt(stmt)?;
+        self.0.push(")".into());
+        ControlFlow::Continue(())
+    }
+}
+
+#[test]
+fn inlined_loops_preserve_else_binding() {
+    for style in
+        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
+    {
+        for line_length in [40, 80, 120] {
+            for body in [
+                "for (;;) { if (b) x(); }",
+                "while (b) { if (c) x(); }",
+                "for (;;) while (b) { if (c) x(); }",
+                "while (b) for (;;) { if (c) x(); }",
+                "for (;;) { if (b) x(); else y(); }",
+                "for (;;) { if (b) { if (c) x(); } else y(); }",
+                "for (;;) { uint256 x; }",
+                "for (;;) { (uint256 x, uint256 y) = g(); }",
+            ] {
+                for then in [body.to_owned(), format!("{{ {body} }}")] {
+                    let source = format!(
+                        "contract C {{ function f() external {{ if (a) {then} else z(); }} }}"
+                    );
+                    let config = Arc::new(FormatterConfig {
+                        line_length,
+                        single_line_statement_blocks: style,
+                        ..Default::default()
+                    });
+                    let actual = format(&source, Path::new("test.sol"), config);
+                    assert_eq!(
+                        statement_structure(&source),
+                        statement_structure(&actual),
+                        "{source}\n{actual}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn nested_if_width_includes_keyword() {
+    let source = "contract C { function f() external { if (a) if (b) x(); } }";
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        for line_length in [26, 27] {
+            let body = if line_length == 26 {
+                "if (a) {\n            if (b) x();\n        }"
+            } else {
+                "if (a) if (b) x();"
+            };
+            let expected = format!(
+                "contract C {{\n    function f() external {{\n        {body}\n    }}\n}}\n"
+            );
+            let config = Arc::new(FormatterConfig {
+                line_length,
+                single_line_statement_blocks: style,
+                ..Default::default()
+            });
+            assert_eq!(format(source, Path::new("test.sol"), config), expected);
+        }
+    }
+}
+
+#[test]
+fn for_header_at_line_limit_keeps_nested_body_stable() {
+    let source = "contract C { function f() external { for (uint i=0;i<n;++i) { while (b) { if (c) x(); } } y(); } }";
+    let expected = "contract C {\n    function f() external {\n        for (uint256 i = 0; i < n; ++i) {\n            while (b) if (c) x();\n        }\n        y();\n    }\n}\n";
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        let config = Arc::new(FormatterConfig {
+            line_length: 40,
+            single_line_statement_blocks: style,
+            ..Default::default()
+        });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn nested_multiline_bodies_inline_in_one_pass() {
+    for outer in ["if (a)", "while (a)", "for (uint256 i; i < n; ++i)"] {
+        let source = format!(
+            "contract C {{ function f() external {{ {outer} {{\n if (b) {{\n x();\n }}\n }} }} }}"
+        );
+        let expected = format!(
+            "contract C {{\n    function f() external {{\n        {outer} if (b) x();\n    }}\n}}\n"
+        );
+        let config = Arc::new(FormatterConfig {
+            single_line_statement_blocks: SingleLineBlockStyle::Single,
+            ..Default::default()
+        });
+        assert_eq!(format(&source, Path::new("test.sol"), config), expected);
     }
 }

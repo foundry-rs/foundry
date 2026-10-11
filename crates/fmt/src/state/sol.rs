@@ -2105,7 +2105,7 @@ impl<'ast> State<'_, 'ast> {
                 let inline = self.is_single_line_block(
                     span.lo(),
                     cond.span,
-                    6 + self.estimate_size(cond.span),
+                    self.estimate_cond_header_size("while", cond),
                     stmt,
                     None,
                 );
@@ -2342,7 +2342,7 @@ impl<'ast> State<'_, 'ast> {
         let inline = self.is_single_line_block(
             span.lo(),
             cond.span,
-            6 + self.estimate_size(cond.span),
+            self.estimate_cond_header_size("if", cond),
             then,
             els_opt.as_ref(),
         );
@@ -2781,7 +2781,7 @@ impl<'ast> State<'_, 'ast> {
             let child_decision = self.is_single_line_block(
                 then.span.lo(),
                 child_cond.span,
-                6 + self.estimate_size(child_cond.span),
+                self.estimate_cond_header_size("if", child_cond),
                 child_then,
                 child_els_opt.as_ref(),
             );
@@ -2794,7 +2794,7 @@ impl<'ast> State<'_, 'ast> {
                 return self.is_single_line_block(
                     stmt.span.lo(),
                     child_cond.span,
-                    6 + self.estimate_size(child_cond.span),
+                    self.estimate_cond_header_size("if", child_cond),
                     child_then,
                     child_els_opt.as_ref(),
                 );
@@ -2890,7 +2890,7 @@ impl<'ast> State<'_, 'ast> {
                     .is_single_line_block(
                         stmt.span.lo(),
                         cond.span,
-                        6 + self.estimate_size(cond.span),
+                        self.estimate_cond_header_size("while", cond),
                         body,
                         None,
                     )
@@ -2946,9 +2946,13 @@ impl<'ast> State<'_, 'ast> {
             return true;
         }
 
-        // Check for multiline block.span first.
-        // Block can spans multipline because of comments.
-        if !self.same_source_line(block.span.lo(), block.span.hi())
+        // Preserve source layout unless Single requests structural inlining. Comments still
+        // require the source-line check, as they can force breaks in the printed body.
+        if (!matches!(
+            self.config.single_line_statement_blocks,
+            config::SingleLineBlockStyle::Single
+        ) || self.has_comment_between(block.span.lo(), block.span.hi()))
+            && !self.same_source_line(block.span.lo(), block.span.hi())
             && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
@@ -2984,7 +2988,7 @@ impl<'ast> State<'_, 'ast> {
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
     ) -> bool {
         // If the header wraps, only its closing parenthesis precedes the body.
-        let then_margin = if header_len < self.space_left() { header_len } else { 2 };
+        let then_margin = if header_len <= self.space_left() { header_len } else { 2 };
 
         if !self.is_inline_stmt(then, then_margin) {
             return false;
@@ -3050,12 +3054,27 @@ impl<'ast> State<'_, 'ast> {
         state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
         state.single_line_stmt = Some(true);
         if let ast::StmtKind::If(cond, then, _) = &stmt.kind {
+            state.word("if (");
             state.print_expr(cond);
             state.word(") ");
             state.print_stmt_as_block(then, then.span.hi(), true);
         } else {
             state.print_stmt_as_block(stmt, stmt.span.hi(), true);
         }
+        state.s.eof().len()
+    }
+
+    /// Measures a normalized condition together with its keyword and delimiters.
+    fn estimate_cond_header_size(
+        &self,
+        keyword: &'static str,
+        cond: &'ast ast::Expr<'ast>,
+    ) -> usize {
+        let mut state =
+            Self::new(self.file, self.config.clone(), Default::default(), Default::default());
+        state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
+        state.print_if_cond(keyword, cond, cond.span.hi());
+        state.nbsp();
         state.s.eof().len()
     }
 
