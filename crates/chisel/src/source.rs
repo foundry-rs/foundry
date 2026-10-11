@@ -32,7 +32,7 @@ use solar::{
         ty::Gcx,
     },
 };
-use std::{cell::OnceCell, ffi::OsStr, fmt, path::Path};
+use std::{cell::OnceCell, ffi::OsStr, fmt};
 use walkdir::WalkDir;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -85,7 +85,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     pub fn repl_contract(&self) -> Option<&ConfigurableContractArtifact> {
         let expected = OsStr::new(self.file_name);
         self.output.artifacts_with_files().find_map(|(path, name, artifact)| {
-            if name == "REPL" && path.file_name() == Some(expected) { Some(artifact) } else { None }
+            (name == "REPL" && path.file_name() == Some(expected)).then_some(artifact)
         })
     }
 
