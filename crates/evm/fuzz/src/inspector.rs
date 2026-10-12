@@ -1,10 +1,19 @@
-use crate::invariant::RandomCallGenerator;
+use crate::{BasicTxDetails, invariant::RandomCallGenerator};
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-use foundry_common::mapping_slots::{
-    MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
-    record_hash as record_mapping_hash, step as mapping_step,
+use evm2::{
+    Inspector as Evm2Inspector,
+    interpreter::{
+        Interpreter as Evm2Interpreter, Message, MessageKind, MessageResult, op as evm2_opcode,
+    },
 };
-use foundry_evm_core::constants::CHEATCODE_ADDRESS;
+use foundry_common::mapping_slots::{MappingSlots, PendingMappingHash};
+use foundry_evm_core::{constants::CHEATCODE_ADDRESS, ethereum::FoundryEvmTypes};
+
+#[cfg(feature = "revm")]
+use foundry_common::mapping_slots::{
+    capture_hash as capture_mapping_hash, record_hash as record_mapping_hash, step as mapping_step,
+};
+#[cfg(feature = "revm")]
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
@@ -50,13 +59,14 @@ pub struct Fuzzer {
     extra_cheatcode_addresses: &'static [Address],
 }
 
+#[cfg(feature = "revm")]
 impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         self.capture_mapping_hash(interp);
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
-            self.collect_data(interp);
+            self.collect_data(interp.stack.data());
         }
     }
 
@@ -105,7 +115,104 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     }
 }
 
+impl Evm2Inspector<FoundryEvmTypes> for Fuzzer {
+    #[inline]
+    fn step(&mut self, interp: &mut Evm2Interpreter<'_, '_, FoundryEvmTypes>) {
+        if let Some(mapping_slots) = &mut self.mapping_slots {
+            let op = interp.opcode();
+            let address = interp.message().destination;
+            let stack = interp.stack();
+            if op == evm2_opcode::SSTORE
+                && let Some(slots) = mapping_slots.get_mut(&address)
+                && let Some(slot) = stack.peek(0)
+            {
+                slots.insert(slot.into());
+            }
+            self.pending_mapping_hash = if op == evm2_opcode::KECCAK256
+                && stack.peek(1) == Some(U256::from(0x40))
+                && let Some(offset) = stack.peek(0).and_then(|offset| offset.try_into().ok())
+            {
+                Some(PendingMappingHash { address, offset })
+            } else {
+                None
+            };
+        }
+        // We only collect `stack` and `memory` data before and after calls.
+        if self.collect {
+            self.collect_data(interp.stack().as_slice());
+        }
+    }
+
+    #[inline]
+    fn step_end(&mut self, interp: &mut Evm2Interpreter<'_, '_, FoundryEvmTypes>) {
+        if let Some(pending) = self.pending_mapping_hash.take()
+            && interp.result().is_ok()
+            && let Some(mapping_slots) = &mut self.mapping_slots
+            && let Some(result) = interp.stack().peek(0)
+        {
+            let preimage = interp.memory().slice(pending.offset, 0x40);
+            mapping_slots.entry(pending.address).or_default().record_hash(
+                result.into(),
+                B256::from_slice(&preimage[..0x20]),
+                B256::from_slice(&preimage[0x20..]),
+            );
+        }
+    }
+
+    fn call(
+        &mut self,
+        interp: &mut Evm2Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &mut Message<FoundryEvmTypes>,
+    ) -> Option<MessageResult<FoundryEvmTypes>> {
+        // We don't want to override the very first call made to the test contract.
+        if self.call_generator.is_some() {
+            let context = interp.host().ext();
+            if context.origin_override.or(context.transaction_origin) != Some(message.caller) {
+                self.override_message(interp, message);
+            }
+        }
+
+        self.call_depth = self.call_depth.saturating_add(1);
+        if self.record_calls && self.call_depth > 1 && matches!(message.kind, MessageKind::Call) {
+            self.observed_calls.push(ObservedCall {
+                depth: self.call_depth - 1,
+                caller: message.caller,
+                target: message.destination,
+                calldata: message.input.clone(),
+                value: (!message.value.is_zero()).then_some(message.value),
+            });
+        }
+
+        // We only collect `stack` and `memory` data before and after calls.
+        // this will be turned off on the next `step`
+        self.collect = true;
+
+        None
+    }
+
+    fn call_end(
+        &mut self,
+        _interp: &mut Evm2Interpreter<'_, '_, FoundryEvmTypes>,
+        _message: &Message<FoundryEvmTypes>,
+        _result: &mut MessageResult<FoundryEvmTypes>,
+    ) {
+        // Decrement depth when any call ends while inside an override
+        if let Some(call_generator) = &mut self.call_generator
+            && call_generator.override_depth > 0
+        {
+            call_generator.override_depth -= 1;
+        }
+
+        // We only collect `stack` and `memory` data before and after calls.
+        // this will be turned off on the next `step`
+        self.collect = true;
+
+        self.call_depth = self.call_depth.saturating_sub(1);
+    }
+}
+
 impl Fuzzer {
+    #[cfg(feature = "revm")]
     fn capture_mapping_hash(&mut self, interpreter: &Interpreter) {
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping_step(mapping_slots, interpreter);
@@ -113,6 +220,7 @@ impl Fuzzer {
         }
     }
 
+    #[cfg(feature = "revm")]
     fn record_mapping_hash(&mut self, interpreter: &Interpreter) {
         if let Some(pending) = self.pending_mapping_hash.take()
             && interpreter.bytecode.action.is_none()
@@ -163,7 +271,7 @@ impl Fuzzer {
         std::mem::take(&mut self.observed_calls)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "revm"))]
     fn record_observed_call(
         &mut self,
         caller: Address,
@@ -183,6 +291,7 @@ impl Fuzzer {
         }
     }
 
+    #[cfg(feature = "revm")]
     #[inline]
     const fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
         self.record_calls && self.call_depth > 1 && scheme.is_call()
@@ -195,10 +304,9 @@ impl Fuzzer {
 
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
-    fn collect_data(&mut self, interpreter: &Interpreter) {
+    fn collect_data(&mut self, stack: &[U256]) {
         let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
-        self.collected_values
-            .extend(interpreter.stack.data().iter().take(remaining).copied().map(B256::from));
+        self.collected_values.extend(stack.iter().take(remaining).copied().map(B256::from));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {
@@ -224,39 +332,11 @@ impl Fuzzer {
     /// - Replaces the call entirely with a reentrant callback
     ///
     /// This simulates malicious contracts that immediately reenter when called.
+    #[cfg(feature = "revm")]
     fn override_call<CTX: ContextTr>(&mut self, ecx: &mut CTX, call: &mut CallInputs) {
-        let target_is_cheatcode = self.is_cheatcode_address(call.transfer_to());
-        let Some(ref mut call_generator) = self.call_generator else {
-            return;
-        };
-
-        // Skip if:
-        // - Caller is test contract (don't override the initial calls from the test)
-        // - Not a CALL scheme (only override CALLs, not STATICCALLs, DELEGATECALLs, etc.)
-        // - Inside an override (prevent recursive overrides)
-        // - Target is cheatcode address
-        // - Neither caller nor target is a handler contract
-        //
-        // We override calls when either the caller OR target is a handler. This covers:
-        // 1. EtherStore pattern: handler sends ETH out, attacker reenters handler
-        // 2. Rari pattern: external protocol sends ETH to handler, handler reenters protocol
-        if call.transfer_from() == call_generator.test_address
-            || !call.scheme.is_call()
-            || call_generator.override_depth > 0
-            || target_is_cheatcode
-        {
-            return;
-        }
-        {
-            let handlers = call_generator.handler_addresses.read();
-            if !handlers.contains(&call.transfer_from()) && !handlers.contains(&call.transfer_to())
-            {
-                return;
-            }
-        }
-
-        // There's only a ~27% chance that an override happens (90% * 30% from strategy).
-        let Some(tx) = call_generator.next(call.transfer_from(), call.transfer_to()) else {
+        let Some(tx) =
+            self.next_override(call.transfer_from(), call.transfer_to(), call.scheme.is_call())
+        else {
             return;
         };
 
@@ -288,11 +368,103 @@ impl Fuzzer {
         call.value = CallValue::Transfer(alloy_primitives::U256::ZERO);
 
         // Track that we're inside an overridden call to avoid recursive overrides
-        call_generator.override_depth = 1;
+        if let Some(call_generator) = &mut self.call_generator {
+            call_generator.override_depth = 1;
+        }
+    }
+
+    /// evm2 counterpart of [`Self::override_call`].
+    fn override_message(
+        &mut self,
+        interp: &mut Evm2Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &mut Message<FoundryEvmTypes>,
+    ) {
+        let Some(tx) = self.next_override(
+            message.caller,
+            message.destination,
+            matches!(message.kind, MessageKind::Call),
+        ) else {
+            return;
+        };
+
+        // For value transfers, perform the ETH transfer before injecting the callback.
+        let has_value = !message.value.is_zero() && message.gas_limit > 2300;
+        if has_value
+            && !matches!(
+                interp.host().state_mut().transfer(
+                    &message.caller,
+                    &message.destination,
+                    &message.value
+                ),
+                Ok(true)
+            )
+        {
+            return;
+        }
+
+        // Replace the call with a reentrant callback that executes the new target's code.
+        let target = tx.call_details.target;
+        message.code = interp
+            .host()
+            .state_mut()
+            .account(&target)
+            .and_then(|mut account| account.load_code())
+            .expect("failed to load account");
+        message.input = tx.call_details.calldata;
+        message.caller = tx.sender;
+        message.destination = target;
+        message.call_target = target;
+        message.code_address = target;
+        // Clear value since ETH was already transferred above
+        message.value = U256::ZERO;
+
+        // Track that we're inside an overridden call to avoid recursive overrides
+        if let Some(call_generator) = &mut self.call_generator {
+            call_generator.override_depth = 1;
+        }
+    }
+
+    /// Returns the reentrant callback that replaces a call from `caller` to `target`, if the call
+    /// is eligible and the generator picks one.
+    fn next_override(
+        &mut self,
+        caller: Address,
+        target: Address,
+        is_call: bool,
+    ) -> Option<BasicTxDetails> {
+        let target_is_cheatcode = self.is_cheatcode_address(target);
+        let call_generator = self.call_generator.as_mut()?;
+
+        // Skip if:
+        // - Caller is test contract (don't override the initial calls from the test)
+        // - Not a CALL scheme (only override CALLs, not STATICCALLs, DELEGATECALLs, etc.)
+        // - Inside an override (prevent recursive overrides)
+        // - Target is cheatcode address
+        // - Neither caller nor target is a handler contract
+        //
+        // We override calls when either the caller OR target is a handler. This covers:
+        // 1. EtherStore pattern: handler sends ETH out, attacker reenters handler
+        // 2. Rari pattern: external protocol sends ETH to handler, handler reenters protocol
+        if caller == call_generator.test_address
+            || !is_call
+            || call_generator.override_depth > 0
+            || target_is_cheatcode
+        {
+            return None;
+        }
+        {
+            let handlers = call_generator.handler_addresses.read();
+            if !handlers.contains(&caller) && !handlers.contains(&target) {
+                return None;
+            }
+        }
+
+        // There's only a ~27% chance that an override happens (90% * 30% from strategy).
+        call_generator.next(caller, target)
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use alloy_primitives::keccak256;
