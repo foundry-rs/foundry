@@ -1189,3 +1189,58 @@ fn wrapped_body_trailing_comments_keep_braces() {
         }
     }
 }
+
+#[test]
+fn for_body_assignment_spacing_is_stable() {
+    for style in
+        [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single, SingleLineBlockStyle::Multi]
+    {
+        for line_length in [36, 37, 40] {
+            let body = if style == SingleLineBlockStyle::Multi || line_length == 36 {
+                "for (;;) {\n            variable = g() + b;\n        }"
+            } else {
+                "for (;;) variable = g() + b;"
+            };
+            let expected = format!(
+                "contract C {{\n    function f(uint256 b) external {{\n        uint256 variable;\n        {body}\n    }}\n}}\n"
+            );
+            let config = Arc::new(FormatterConfig {
+                line_length,
+                single_line_statement_blocks: style,
+                ..Default::default()
+            });
+            for spacing in ["", "                    "] {
+                let source = format!(
+                    "contract C {{ function f(uint256 b) external {{ uint256 variable; for (;;) variable = g({spacing}) + b; }} }}"
+                );
+                assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+            }
+        }
+    }
+
+    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
+        let config = Arc::new(FormatterConfig {
+            line_length: 40,
+            single_line_statement_blocks: style,
+            ..Default::default()
+        });
+        for nested in [false, true] {
+            let body = if nested { "g(variable = h() + b);" } else { "variable = g() + b;" };
+            let expected = format!(
+                "contract C {{\n    function f(uint256 b) external {{\n        uint256 variable;\n        for (;;) {body}\n    }}\n}}\n"
+            );
+            for padding in (0..=24).chain([65_516]) {
+                let spacing = " ".repeat(padding);
+                let body = if nested {
+                    format!("g(variable = h({spacing}) + b);")
+                } else {
+                    format!("variable = g({spacing}) + b;")
+                };
+                let source = format!(
+                    "contract C {{ function f(uint256 b) external {{ uint256 variable; for (;;) {body} }} }}"
+                );
+                assert_eq!(format(&source, Path::new("test.sol"), config.clone()), expected);
+            }
+        }
+    }
+}

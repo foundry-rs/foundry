@@ -936,6 +936,15 @@ impl<'ast> State<'_, 'ast> {
             self.break_offset_if_not_bol(SIZE_INFINITY as usize, self.ind, false);
         }
 
+        // A certified inline body must not acquire source-dependent assignment hard breaks.
+        if self.inline_assignments {
+            self.nbsp();
+            self.neverbreak();
+            self.print_expr(rhs);
+            self.var_init = cache;
+            return;
+        }
+
         // Match on expression kind to determine formatting strategy
         match &rhs.kind {
             ast::ExprKind::Lit(lit, ..) if lit.is_str_concatenation() => {
@@ -2701,7 +2710,19 @@ impl<'ast> State<'_, 'ast> {
             && !matches!(stmts[0].kind, ast::StmtKind::DeclSingle(_) | ast::StmtKind::DeclMulti(..))
         {
             self.neverbreak();
+            let inline_assignments = self.inline_assignments;
+            // Only leaf bodies are certified flat; nested statement headers may still wrap.
+            if matches!(
+                stmts[0].kind,
+                ast::StmtKind::Expr(_)
+                    | ast::StmtKind::Return(_)
+                    | ast::StmtKind::Emit(..)
+                    | ast::StmtKind::Revert(..)
+            ) {
+                self.inline_assignments = true;
+            }
             self.print_block_without_braces(stmts, pos_hi, None);
+            self.inline_assignments = inline_assignments;
         } else {
             // Reset cache for nested (child) stmts within this (parent) block.
             let inline_parent = self.single_line_stmt.take();
@@ -3001,9 +3022,7 @@ impl<'ast> State<'_, 'ast> {
         cond: &'ast Option<&mut ast::Expr<'ast>>,
         next: &'ast Option<&mut ast::Expr<'ast>>,
     ) -> usize {
-        let mut state =
-            Self::new(self.file, self.config.clone(), Default::default(), Default::default());
-        state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
+        let mut state = self.statement_sizing_state();
         if let Some(init) = init {
             state.print_stmt_bound(init, Some(init.span.hi()));
         } else {
@@ -3025,9 +3044,7 @@ impl<'ast> State<'_, 'ast> {
     /// Measures the normalized body without letting a parent's inline decision remove required
     /// braces. For an `if`, the `else` branch is measured separately by `is_inline_stmt`.
     fn estimate_inline_stmt_size(&self, stmt: &'ast ast::Stmt<'ast>) -> usize {
-        let mut state =
-            Self::new(self.file, self.config.clone(), Default::default(), Default::default());
-        state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
+        let mut state = self.statement_sizing_state();
         state.single_line_stmt = Some(true);
         if let ast::StmtKind::If(cond, then, _) = &stmt.kind {
             state.word("if (");
@@ -3046,12 +3063,21 @@ impl<'ast> State<'_, 'ast> {
         keyword: &'static str,
         cond: &'ast ast::Expr<'ast>,
     ) -> usize {
-        let mut state =
-            Self::new(self.file, self.config.clone(), Default::default(), Default::default());
-        state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
+        let mut state = self.statement_sizing_state();
         state.print_if_cond(keyword, cond, cond.span.hi());
         state.nbsp();
         state.s.eof().len()
+    }
+
+    /// Keeps both the printer and explicit layout decisions unbounded while measuring statements.
+    fn statement_sizing_state(&self) -> Self {
+        let mut config = (*self.config).clone();
+        config.line_length = SIZE_INFINITY as usize;
+        let mut state = Self::new(self.file, config.into(), Default::default(), Default::default());
+        // Measure indentation in spaces even when the output uses tabs.
+        state.s = crate::pp::Printer::new(SIZE_INFINITY as usize, None);
+        state.inline_assignments = true;
+        state
     }
 
     fn can_header_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {
