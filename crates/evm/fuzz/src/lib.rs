@@ -32,7 +32,9 @@ pub mod sequence;
 pub mod strategies;
 pub use strategies::LiteralMaps;
 
+#[cfg(feature = "revm")]
 mod inspector;
+#[cfg(feature = "revm")]
 pub use inspector::{Fuzzer, ObservedCall};
 
 /// Metadata needed to reproduce a fuzz run.

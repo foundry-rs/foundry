@@ -6324,7 +6324,6 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
- "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
