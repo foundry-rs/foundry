@@ -124,18 +124,18 @@ cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "duplicate the existing small-value example",
+  "generator": {"agent": "fixture", "model": "deterministic"},
   "files": [{
     "path": "tests/generated/ArithmeticNoGain.t.sol",
-    "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\n// rejected-no-gain-marker\ncontract ArithmeticNoGainTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"
+    "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticNoGainTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"
   }]
 }
 JSON
 exit 0
 fi
 if grep -q '"round": 3' "$prompt"; then
-grep -q '"last_rejected_sources"' "$prompt"
-grep -q 'rejected-no-gain-marker' "$prompt"
-if grep -q 'rejected-overwrite-marker' "$prompt"; then exit 1; fi
+if grep -q '"last_rejected_sources"' "$prompt"; then exit 1; fi
+grep -q 'ArithmeticNoGainTest' "$prompt"
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
@@ -164,7 +164,6 @@ exit 0
 fi
 grep -q '"last_rejected_sources"' "$prompt"
 grep -q 'rejected-retained-path-marker' "$prompt"
-if grep -q 'rejected-no-gain-marker' "$prompt"; then exit 1; fi
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
@@ -204,7 +203,8 @@ JSON
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-added 2 generated test file(s) that reproducibly resolve 6 mutation survivor(s):
+added 3 generated test file(s) that reproducibly resolve 6 mutation survivor(s):
+  tests/generated/ArithmeticNoGain.t.sol (spec test: resolves no current mutation survivor)
   tests/generated/ArithmeticLower.t.sol
   tests/generated/ArithmeticUpper.t.sol
 
@@ -216,13 +216,15 @@ added 2 generated test file(s) that reproducibly resolve 6 mutation survivor(s):
     assert_eq!(rounds.as_array().unwrap().len(), 5);
     assert_eq!(rounds[0]["accepted"], false);
     assert!(rounds[0]["reasons"][0].as_str().unwrap().contains("would overwrite"));
-    assert_eq!(rounds[1]["accepted"], false);
+    assert_eq!(rounds[1]["accepted"], true);
     assert_eq!(rounds[1]["candidate"].as_array().unwrap().len(), 2);
-    assert!(
-        rounds[1]["reasons"][0]
-            .as_str()
-            .unwrap()
-            .contains("did not reproducibly resolve a current mutation survivor")
+    assert_data_eq!(
+        serde_json::to_string_pretty(&rounds[1]["warnings"]).unwrap(),
+        str![[r#"
+[
+  "candidate did not reproducibly resolve a current mutation survivor; its tests are kept as specification tests"
+]
+"#]]
     );
     assert_eq!(rounds[2]["accepted"], true);
     assert_eq!(rounds[2]["generator"]["model"], "deterministic");
@@ -240,7 +242,7 @@ added 2 generated test file(s) that reproducibly resolve 6 mutation survivor(s):
             .unwrap();
     assert!(candidate.contains("ArithmeticLowerTest"));
     assert!(candidate.contains("ArithmeticUpperTest"));
-    for name in ["ArithmeticLower", "ArithmeticUpper"] {
+    for name in ["ArithmeticNoGain", "ArithmeticLower", "ArithmeticUpper"] {
         let source =
             fs::read_to_string(prj.root().join(format!("tests/generated/{name}.t.sol"))).unwrap();
         assert!(source.contains(&format!("contract {name}Test")));
@@ -432,6 +434,135 @@ added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(
   test/generated/ArithmeticLower.t.sol
 
 "#]]);
+}
+
+#[cfg(unix)]
+#[forgetest_init]
+fn properties_keeps_candidates_despite_unrelated_noise(prj: _, cmd: _) {
+    const GENERATOR: &str = r#"#!/bin/sh
+set -eu
+if grep -q '"round": 1' "$1"; then
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "exercise the lower comparison boundary",
+  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}]
+}
+JSON
+exit 0
+fi
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "small values are in the first bucket",
+  "files": [{"path": "test/generated/ArithmeticSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticSpecTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"}]
+}
+JSON
+"#;
+
+    prj.add_source(
+        "Arithmetic.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#,
+    );
+    // Candidate workspaces write the resolved config without comments, so the large-value check
+    // runs only in the baseline. Its kills then look revived in candidate runs.
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r##"
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest is Test {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+    }
+
+    function testLargeValueInProject() public view {
+        if (vm.indexOf(vm.readFile("foundry.toml"), "# baseline-only") != type(uint256).max) {
+            require(arithmetic.bucket(1000) == 3);
+        }
+    }
+}
+"##,
+    );
+    prj.update_config(|config| {
+        config.fs_permissions = foundry_config::fs_permissions::FsPermissions::new([
+            foundry_config::fs_permissions::PathPermission::read("foundry.toml"),
+        ]);
+    });
+    let foundry_toml = prj.root().join("foundry.toml");
+    let toml = fs::read_to_string(&foundry_toml).unwrap();
+    fs::write(&foundry_toml, format!("# baseline-only\n{toml}")).unwrap();
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "properties",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Arithmetic.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^ArithmeticTest$",
+        "--rounds",
+        "2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+added 2 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
+  test/generated/ArithmeticLower.t.sol
+  test/generated/ArithmeticSpec.t.sol (spec test: resolves no current mutation survivor)
+
+"#]]);
+
+    let rounds: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
+    )
+    .unwrap();
+    assert_data_eq!(
+        serde_json::to_string_pretty(
+            &rounds.as_array().unwrap().iter().map(|round| &round["warnings"]).collect::<Vec<_>>()
+        )
+        .unwrap(),
+        str![[r#"
+[
+  [
+    "candidate run did not kill [..] mutant(s) that the baseline killed on seed 24301; up to 8 are treated as run noise",
+    "candidate run did not kill [..] mutant(s) that the baseline killed on seed 12648430; up to 8 are treated as run noise"
+  ],
+  [
+    "candidate did not reproducibly resolve a current mutation survivor; its tests are kept as specification tests"
+  ]
+]
+"#]]
+    );
 }
 
 #[cfg(unix)]
@@ -765,6 +896,15 @@ Error: generator failed in round 3 (exit status: 3): generator quota exceeded
     assert_eq!(journal[1]["test"], "FeeRemovedTest::testDocumentedCap");
     assert_eq!(journal[1]["path"], "test/generated/FeeRemoved.t.sol");
     assert!(journal[1]["source"].as_str().unwrap().contains("function testDocumentedCap()"));
+    // Each mutation run keeps its log.
+    let digest = rounds[1]["candidate_digest"].as_str().unwrap();
+    for dir in ["baseline", digest] {
+        for seed in ["0x5eed", "0xc0ffee"] {
+            assert!(
+                prj.root().join(format!("cache/properties/{dir}/mutation-{seed}.log")).exists()
+            );
+        }
+    }
 }
 
 #[cfg(unix)]
