@@ -753,6 +753,14 @@ pub fn unshare_path(project_root: &Path, root: &Path, rel: &Path) -> Result<()> 
             return Ok(());
         }
         let source = canonicalize_path(&current)?;
+        // A workspace inside the linked tree, for example with `TMPDIR` under `lib/`, would copy
+        // into itself.
+        eyre::ensure!(
+            !root.starts_with(&source),
+            "mutation workspace {} is inside linked dependency {}",
+            root.display(),
+            source.display()
+        );
         #[cfg(unix)]
         fs::remove_file(&current)?;
         #[cfg(windows)]
@@ -778,8 +786,9 @@ fn copy_unshared_dir(
             // Resolve against the original parent before moving the link into the workspace.
             let target = resolve_against_root(src, &fs::read_link(entry.path())?);
             let rebased = rebase_project_path(project_root, root, &target);
-            // Keep uncopied project files accessible, but rebase forward references in this tree.
-            let target = if rebased.starts_with(isolated_root) || rebased.exists() {
+            // Rebase references into this tree and into copied files. An existing directory
+            // elsewhere in the workspace can be a partial copy, so keep its original target.
+            let target = if rebased.starts_with(isolated_root) || rebased.is_file() {
                 rebased
             } else {
                 target
@@ -905,6 +914,42 @@ mod tests {
                 .file_type()
                 .is_symlink_dir()
         );
+    }
+
+    #[test]
+    fn test_unshare_path_keeps_links_to_partially_copied_dirs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &["lib/bucket/Arithmetic.sol", "shared/visible/V.sol", "shared/hidden/H.sol"],
+        );
+        // A remapping copied only `shared/visible/` into the workspace.
+        create_test_dir_structure(&workspace, &["shared/visible/V.sol"]);
+        symlink_dir(&root.join("lib"), &workspace.join("lib")).unwrap();
+        symlink_dir(Path::new("../../shared"), &root.join("lib/bucket/helpers")).unwrap();
+
+        unshare_path(&root, &workspace, Path::new("lib/bucket/Arithmetic.sol")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/helpers/hidden/H.sol")).unwrap(),
+            "// shared/hidden/H.sol",
+        );
+    }
+
+    #[test]
+    fn test_unshare_path_rejects_workspace_inside_linked_tree() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = root.join("lib/.tmp/workspace");
+        create_test_dir_structure(&root, &["lib/bucket/Arithmetic.sol", "lib/.tmp/workspace/"]);
+        symlink_dir(&root.join("lib"), &workspace.join("lib")).unwrap();
+
+        let err = unshare_path(&root, &workspace, Path::new("lib/bucket/Arithmetic.sol"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("is inside linked dependency"), "{err}");
     }
 
     #[cfg(windows)]
