@@ -131,6 +131,11 @@ pub struct PropertiesArgs {
     /// Restrict mutation evaluation to matching test contracts.
     #[arg(long, value_name = "REGEX")]
     match_contract: Option<String>,
+
+    /// Skip mutation testing: run only the generator rounds and the candidate checks, and report
+    /// candidate tests that fail on every seed as possible bugs.
+    #[arg(long, conflicts_with = "check")]
+    no_mutation: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -403,15 +408,19 @@ impl PropertiesArgs {
         {
             return Err(error).wrap_err("failed to reset the check journal");
         }
-        let baseline = self.run_mutations(
-            &forge,
-            &config,
-            &config.root,
-            &contract_filter_args,
-            None,
-            &cache_root.join("baseline"),
-        )?;
-        let baseline_tests = list_tests(&forge, &config.root, &contract_filter_args)?;
+        let (baseline, baseline_tests) = if self.no_mutation {
+            (vec![], vec![])
+        } else {
+            let baseline = self.run_mutations(
+                &forge,
+                &config,
+                &config.root,
+                &contract_filter_args,
+                None,
+                &cache_root.join("baseline"),
+            )?;
+            (baseline, list_tests(&forge, &config.root, &contract_filter_args)?)
+        };
         let project_context = project_context(&config, &self.mutate);
         let prompt_baseline = baseline
             .iter()
@@ -640,11 +649,15 @@ impl PropertiesArgs {
                     .and_then(|mut target| target.write_all(file.content.as_bytes()))
                     .wrap_err_with(|| format!("failed to write {}", file.path.display()))?;
             }
-            sh_println!(
-                "added {} generated test file(s) that reproducibly resolve {} mutation survivor(s):",
-                candidate.files.len(),
-                resolved_survivors.len(),
-            )?;
+            if self.no_mutation {
+                sh_println!("added {} generated test file(s):", candidate.files.len())?;
+            } else {
+                sh_println!(
+                    "added {} generated test file(s) that reproducibly resolve {} mutation survivor(s):",
+                    candidate.files.len(),
+                    resolved_survivors.len(),
+                )?;
+            }
             for file in &candidate.files {
                 let notes = [
                     (&spec_paths, "spec test: resolves no current mutation survivor"),
@@ -663,6 +676,8 @@ impl PropertiesArgs {
                     sh_println!("  {} ({})", file.path.display(), notes.join("; "))?;
                 }
             }
+        } else if self.no_mutation {
+            sh_println!("no candidate passed the checks")?;
         } else {
             sh_println!("no candidate reproducibly resolved a mutation survivor")?;
         }
@@ -708,7 +723,7 @@ impl PropertiesArgs {
         let possible_bugs = failures.iter().map(ToString::to_string).collect();
         let mut warnings = Vec::new();
 
-        let candidate_results = if reasons.is_empty() {
+        let candidate_results = if reasons.is_empty() && !self.no_mutation {
             // Run exactly the baseline tests and the generated tests. Widening filters instead
             // could also select existing tests that the baseline excluded.
             let selection = baseline_tests.iter().chain(&tests).cloned().collect::<Vec<_>>();
@@ -789,7 +804,7 @@ impl PropertiesArgs {
         };
         // Passing tests that resolve no survivor still encode documented behavior, so they are
         // kept as specification tests.
-        if reasons.is_empty() && newly_resolved.is_empty() {
+        if reasons.is_empty() && newly_resolved.is_empty() && !self.no_mutation {
             warnings.push(
                 "candidate did not reproducibly resolve a current mutation survivor; its tests are kept as specification tests".to_string(),
             );
