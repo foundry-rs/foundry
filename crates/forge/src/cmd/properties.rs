@@ -16,9 +16,10 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use foundry_evm::fuzz::CounterExample;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ffi::OsString,
     fs,
     io::Write,
@@ -31,7 +32,12 @@ const CANDIDATE_SCHEMA: &str = "foundry/properties-candidate-v1";
 const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v1";
 const MAX_CANDIDATE_FILES: usize = 8;
 const MAX_CANDIDATE_BYTES: usize = 256 * 1024;
-// Bound each source-context section so it cannot dominate the prompt.
+// Bound each source-context section so it cannot dominate the prompt. Targets hold the
+// documentation that defines correct behavior, so they get the largest share; 64 KiB holds most
+// production contracts in full.
+const MAX_PROMPT_TARGET_BYTES: usize = 64 * 1024;
+// Interfaces and base contracts often hold the NatSpec of the functions that a target implements.
+const MAX_PROMPT_INHERITED_BYTES: usize = 32 * 1024;
 const MAX_PROMPT_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_PROJECT_CONTEXT_FILES: usize = 2;
 /// Above this count of revived mutants on one seed, a candidate run is rejected. Generated files
@@ -56,6 +62,17 @@ const SELECT_ALL_TESTS: [&str; 10] = [
     "--no-match-path",
     "/forge-properties-none/**",
 ];
+
+/// Solidity line and block comments.
+static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)//[^\n]*|/\*.*?\*/").unwrap());
+/// A contract, interface, or library declaration and its name.
+static DECLARATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:contract|interface|library)\s+([A-Za-z_$][A-Za-z0-9_$]*)").unwrap()
+});
+/// A contract or interface declaration and its list of bases.
+static INHERITANCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:contract|interface)\s+[A-Za-z_$][A-Za-z0-9_$]*\s+is\s+([^{]+)\{").unwrap()
+});
 
 /// Rules for the property generator, one per bullet in `guidance.md`.
 static GUIDANCE: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -175,6 +192,9 @@ struct ProjectContext {
     isolate: bool,
     evm_version: String,
     target_sources: Vec<PromptSource>,
+    /// Interfaces and base contracts that the targets inherit, nearest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    inherited_sources: Vec<PromptSource>,
     test_sources: Vec<PromptSource>,
 }
 
@@ -537,6 +557,7 @@ impl PropertiesArgs {
                                     .files
                                     .iter()
                                     .map(|file| (file.path.as_path(), file.content.as_str())),
+                                MAX_PROMPT_SOURCE_BYTES,
                             ));
                         }
                         feedback.push(evaluation.feedback(Some(&proposal)));
@@ -554,6 +575,7 @@ impl PropertiesArgs {
                                 .files
                                 .iter()
                                 .map(|file| (file.path.as_path(), file.content.as_str())),
+                            MAX_PROMPT_SOURCE_BYTES,
                         ));
                         feedback.push(evaluation.feedback(Some(&proposal)));
                         evaluation
@@ -1207,14 +1229,17 @@ fn project_context(config: &Config, mutate: &[PathBuf]) -> ProjectContext {
         isolate: config.isolate,
         evm_version: config.evm_version.to_string(),
         target_sources: Vec::new(),
+        inherited_sources: Vec::new(),
         test_sources: Vec::new(),
     };
     let targets = mutate
         .iter()
         .filter_map(|path| Some((path, fs::read_to_string(config.root.join(path)).ok()?)))
         .collect::<Vec<_>>();
-    context.target_sources =
-        prompt_sources(targets.iter().map(|(path, source)| (path.as_path(), source.as_str())));
+    context.target_sources = prompt_sources(
+        targets.iter().map(|(path, source)| (path.as_path(), source.as_str())),
+        MAX_PROMPT_TARGET_BYTES,
+    );
     let Ok(graph) =
         Graph::<MultiCompilerParser>::resolve(&config.project_paths::<MultiCompilerLanguage>())
     else {
@@ -1229,6 +1254,17 @@ fn project_context(config: &Config, mutate: &[PathBuf]) -> ProjectContext {
         })
         .cloned()
         .collect::<BTreeSet<_>>();
+    let inherited = inherited_files(config, &graph, &mutation_targets)
+        .into_iter()
+        .map(|index| {
+            let node = graph.node(index);
+            (workspace::relative_to_root(&config.root, node.path()), node.content())
+        })
+        .collect::<Vec<_>>();
+    context.inherited_sources = prompt_sources(
+        inherited.iter().map(|(path, source)| (path.as_path(), *source)),
+        MAX_PROMPT_INHERITED_BYTES,
+    );
     let generated_tests = config.test.join("generated");
     let mut relevant_tests = graph
         .nodes
@@ -1290,11 +1326,14 @@ fn project_context(config: &Config, mutate: &[PathBuf]) -> ProjectContext {
 }
 
 /// Bounds sources to one shared byte budget so a single section cannot dominate the prompt.
-fn prompt_sources<'a>(sources: impl IntoIterator<Item = (&'a Path, &'a str)>) -> Vec<PromptSource> {
+fn prompt_sources<'a>(
+    sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
+    budget: usize,
+) -> Vec<PromptSource> {
     let mut prompt_sources = Vec::new();
     let mut total_bytes = 0;
     for (path, source) in sources {
-        let available = MAX_PROMPT_SOURCE_BYTES - total_bytes;
+        let available = budget - total_bytes;
         if available == 0 {
             break;
         }
@@ -1307,6 +1346,79 @@ fn prompt_sources<'a>(sources: impl IntoIterator<Item = (&'a Path, &'a str)>) ->
         });
     }
     prompt_sources
+}
+
+/// Returns the files that declare the contracts and interfaces that the targets inherit, nearest
+/// first. At each inheritance depth, project files come before library files.
+fn inherited_files(
+    config: &Config,
+    graph: &Graph<MultiCompilerParser>,
+    targets: &BTreeSet<PathBuf>,
+) -> Vec<usize> {
+    let target_ids =
+        targets.iter().filter_map(|path| graph.files().get(path).copied()).collect::<Vec<_>>();
+    // Only files that a target imports can declare its bases.
+    let mut declarations = HashMap::new();
+    for index in target_ids.iter().flat_map(|&index| graph.all_imported_nodes(index)) {
+        let source = COMMENT.replace_all(graph.node(index).content(), " ");
+        for captures in DECLARATION.captures_iter(&source) {
+            declarations.entry(captures[1].to_string()).or_insert(index);
+        }
+    }
+    let mut included = target_ids.iter().copied().collect::<HashSet<_>>();
+    let mut inherited = Vec::new();
+    let mut level = target_ids;
+    while !level.is_empty() {
+        let mut next = Vec::new();
+        for index in level {
+            for name in base_names(graph.node(index).content()) {
+                if let Some(&base) = declarations.get(&name)
+                    && included.insert(base)
+                {
+                    next.push(base);
+                }
+            }
+        }
+        next.sort_by_key(|&index| {
+            let path = graph.node(index).path();
+            config.libs.iter().any(|lib| path.starts_with(config.root.join(lib)))
+        });
+        inherited.extend(&next);
+        level = next;
+    }
+    inherited
+}
+
+/// Returns the names of the contracts and interfaces that the declarations in a source inherit.
+fn base_names(source: &str) -> Vec<String> {
+    let source = COMMENT.replace_all(source, " ");
+    let mut names = Vec::new();
+    for captures in INHERITANCE.captures_iter(&source) {
+        // Split on commas outside of constructor arguments, such as `ERC20("Name", "N")`.
+        let mut depth = 0usize;
+        let mut start = 0;
+        let list = &captures[1];
+        for (index, character) in list.char_indices().chain([(list.len(), ',')]) {
+            match character {
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    let base = list[start..index].trim();
+                    let path =
+                        base.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("");
+                    // A qualified name such as `Lib.Base` is declared as `Base`.
+                    if let Some(name) = path.rsplit('.').next()
+                        && !name.is_empty()
+                    {
+                        names.push(name.to_string());
+                    }
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    names
 }
 
 fn mutation_gaps(root: &Path, results: &[SeedMutation]) -> Vec<MutationGap> {

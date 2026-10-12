@@ -2,7 +2,7 @@
 
 Forge sends these rules to the property generator in `guidance`, one per bullet.
 
-- Derive expected behavior from the specification first: NatSpec (@notice, @dev, @param, @return, and error docs) in project_context.target_sources, the project's README and documentation files, interfaces, and reference implementations.
+- Derive expected behavior from the specification first: NatSpec (@notice, @dev, @param, @return, and error docs) in project_context.target_sources and project_context.inherited_sources, the project's README and documentation files, interfaces, and reference implementations.
 - List the documented claims of each public function and find claims that no existing test encodes. Encode both directions of a revert rule: the documented failure reverts with the exact error, and every other input does not revert.
 - Write one claim per test: keep revert cases and success cases of a function in separate tests. When one test checks several rules, one wrong rule makes the whole test fail and hides the correct ones.
 - Keep the test's own arithmetic safe on every fuzzed input: bound values before you add or multiply them, or derive them with unchecked math or hashing. A panic in the test's own code is not a bug in the code under test, and it makes the property fail on correct code.

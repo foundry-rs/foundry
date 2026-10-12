@@ -340,6 +340,8 @@ added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(
 fn properties_keeps_library_paths_in_nested_workspaces(prj: _, cmd: _) {
     const GENERATOR: &str = r#"#!/bin/sh
 set -eu
+grep -q '"inherited_sources"' "$1"
+grep -q 'bucket-spec-marker' "$1"
 cat > "$2" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
@@ -350,11 +352,12 @@ JSON
 "#;
 
     // The source imports the library through a remapping and the test imports it by its project
-    // path. Both must name the same file in candidate mutation runs, or the types differ.
+    // path. Both must name the same file in candidate mutation runs, or the types differ. The
+    // prompt also includes the interface that the target implements.
     fs::create_dir_all(prj.root().join("lib/example")).unwrap();
     fs::write(
         prj.root().join("lib/example/Kind.sol"),
-        "pragma solidity ^0.8.20;\nenum Kind { Small, Large }\n",
+        "pragma solidity ^0.8.20;\nenum Kind { Small, Large }\ninterface IBucket {\n    /// @notice bucket-spec-marker\n    function bucket(uint256 value) external pure returns (uint256);\n}\n",
     )
     .unwrap();
     prj.add_source(
@@ -362,9 +365,9 @@ JSON
         r#"
 pragma solidity ^0.8.20;
 
-import {Kind} from "example/Kind.sol";
+import {IBucket, Kind} from "example/Kind.sol";
 
-contract Arithmetic {
+contract Arithmetic is IBucket {
     function bucket(uint256 value) external pure returns (uint256) {
         if (value < 10) return 1;
         if (value < 100) return 2;
