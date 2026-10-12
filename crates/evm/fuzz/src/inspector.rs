@@ -471,7 +471,7 @@ mod tests {
     use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
     use revm::bytecode::Bytecode;
 
-    fn fuzzer(record_calls: bool) -> Fuzzer {
+    const fn fuzzer(record_calls: bool) -> Fuzzer {
         Fuzzer::new(16, None).with_call_recording(record_calls)
     }
 
