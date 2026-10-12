@@ -6,9 +6,7 @@ use evm2::{
         Interpreter as Evm2Interpreter, Message, MessageKind, MessageResult, op as evm2_opcode,
     },
 };
-use foundry_common::mapping_slots::{
-    MappingSlots, PendingMappingHash, capture_hash_parts, record_hash_parts, step_parts,
-};
+use foundry_common::mapping_slots::{MappingSlots, PendingMappingHash};
 use foundry_evm_core::{constants::CHEATCODE_ADDRESS, ethereum::FoundryEvmTypes};
 
 #[cfg(feature = "revm")]
@@ -19,7 +17,7 @@ use foundry_common::mapping_slots::{
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
-    interpreter::{CallInput, CallInputs, CallOutcome, CallValue, Interpreter},
+    interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
 };
 
 /// A sub-call observed by the [`Fuzzer`] inspector.
@@ -84,7 +82,7 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         }
 
         self.call_depth = self.call_depth.saturating_add(1);
-        if self.should_record_observed_call(inputs.scheme.is_call()) {
+        if self.should_record_observed_call(inputs.scheme) {
             self.observed_calls.push(ObservedCall {
                 depth: self.call_depth - 1,
                 caller: inputs.transfer_from(),
@@ -102,7 +100,18 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     }
 
     fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, _outcome: &mut CallOutcome) {
-        self.end_call();
+        if let Some(ref mut call_generator) = self.call_generator {
+            // Decrement depth when any call ends while inside an override
+            if call_generator.override_depth > 0 {
+                call_generator.override_depth -= 1;
+            }
+        }
+
+        // We only collect `stack` and `memory` data before and after calls.
+        // this will be turned off on the next `step`
+        self.collect = true;
+
+        self.call_depth = self.call_depth.saturating_sub(1);
     }
 }
 
@@ -113,11 +122,17 @@ impl Evm2Inspector<FoundryEvmTypes> for Fuzzer {
             let op = interp.opcode();
             let address = interp.message().destination;
             let stack = interp.stack();
-            if op == evm2_opcode::SSTORE {
-                step_parts(mapping_slots, address, stack.peek(0));
+            if op == evm2_opcode::SSTORE
+                && let Some(slots) = mapping_slots.get_mut(&address)
+                && let Some(slot) = stack.peek(0)
+            {
+                slots.insert(slot.into());
             }
-            self.pending_mapping_hash = if op == evm2_opcode::KECCAK256 {
-                capture_hash_parts(address, stack.peek(0), stack.peek(1))
+            self.pending_mapping_hash = if op == evm2_opcode::KECCAK256
+                && stack.peek(1) == Some(U256::from(0x40))
+                && let Some(offset) = stack.peek(0).and_then(|offset| offset.try_into().ok())
+            {
+                Some(PendingMappingHash { address, offset })
             } else {
                 None
             };
@@ -135,11 +150,11 @@ impl Evm2Inspector<FoundryEvmTypes> for Fuzzer {
             && let Some(mapping_slots) = &mut self.mapping_slots
             && let Some(result) = interp.stack().peek(0)
         {
-            record_hash_parts(
-                mapping_slots,
-                result,
-                interp.memory().slice(pending.offset, 0x40),
-                pending,
+            let preimage = interp.memory().slice(pending.offset, 0x40);
+            mapping_slots.entry(pending.address).or_default().record_hash(
+                result.into(),
+                B256::from_slice(&preimage[..0x20]),
+                B256::from_slice(&preimage[0x20..]),
             );
         }
     }
@@ -158,7 +173,7 @@ impl Evm2Inspector<FoundryEvmTypes> for Fuzzer {
         }
 
         self.call_depth = self.call_depth.saturating_add(1);
-        if self.should_record_observed_call(matches!(message.kind, MessageKind::Call)) {
+        if self.record_calls && self.call_depth > 1 && matches!(message.kind, MessageKind::Call) {
             self.observed_calls.push(ObservedCall {
                 depth: self.call_depth - 1,
                 caller: message.caller,
@@ -181,7 +196,18 @@ impl Evm2Inspector<FoundryEvmTypes> for Fuzzer {
         _message: &Message<FoundryEvmTypes>,
         _result: &mut MessageResult<FoundryEvmTypes>,
     ) {
-        self.end_call();
+        // Decrement depth when any call ends while inside an override
+        if let Some(call_generator) = &mut self.call_generator
+            && call_generator.override_depth > 0
+        {
+            call_generator.override_depth -= 1;
+        }
+
+        // We only collect `stack` and `memory` data before and after calls.
+        // this will be turned off on the next `step`
+        self.collect = true;
+
+        self.call_depth = self.call_depth.saturating_sub(1);
     }
 }
 
@@ -252,9 +278,9 @@ impl Fuzzer {
         target: Address,
         calldata: Bytes,
         value: Option<U256>,
-        is_call: bool,
+        scheme: CallScheme,
     ) {
-        if self.should_record_observed_call(is_call) {
+        if self.should_record_observed_call(scheme) {
             self.observed_calls.push(ObservedCall {
                 depth: self.call_depth - 1,
                 caller,
@@ -265,25 +291,10 @@ impl Fuzzer {
         }
     }
 
+    #[cfg(feature = "revm")]
     #[inline]
-    const fn should_record_observed_call(&self, is_call: bool) -> bool {
-        self.record_calls && self.call_depth > 1 && is_call
-    }
-
-    /// Leaves the current call, closing an active override frame.
-    const fn end_call(&mut self) {
-        // Decrement depth when any call ends while inside an override
-        if let Some(call_generator) = &mut self.call_generator
-            && call_generator.override_depth > 0
-        {
-            call_generator.override_depth -= 1;
-        }
-
-        // We only collect `stack` and `memory` data before and after calls.
-        // this will be turned off on the next `step`
-        self.collect = true;
-
-        self.call_depth = self.call_depth.saturating_sub(1);
+    const fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
+        self.record_calls && self.call_depth > 1 && scheme.is_call()
     }
 
     #[inline]
@@ -458,7 +469,7 @@ mod tests {
     use super::*;
     use alloy_primitives::keccak256;
     use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
-    use revm::{bytecode::Bytecode, interpreter::CallScheme};
+    use revm::bytecode::Bytecode;
 
     fn fuzzer(record_calls: bool) -> Fuzzer {
         Fuzzer::new(16, None).with_call_recording(record_calls)
@@ -512,7 +523,7 @@ mod tests {
             Address::repeat_byte(0x11),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             Some(U256::ONE),
-            CallScheme::Call.is_call(),
+            CallScheme::Call,
         );
 
         assert!(fuzzer.take_observed_calls().is_empty());
@@ -528,7 +539,7 @@ mod tests {
             Address::repeat_byte(0x11),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             None,
-            CallScheme::Call.is_call(),
+            CallScheme::Call,
         );
 
         assert!(fuzzer.take_observed_calls().is_empty());
@@ -543,13 +554,7 @@ mod tests {
         let value = Some(U256::from(7));
         fuzzer.call_depth = 3;
 
-        fuzzer.record_observed_call(
-            caller,
-            target,
-            calldata.clone(),
-            value,
-            CallScheme::Call.is_call(),
-        );
+        fuzzer.record_observed_call(caller, target, calldata.clone(), value, CallScheme::Call);
 
         assert_eq!(
             fuzzer.take_observed_calls(),
@@ -567,7 +572,7 @@ mod tests {
             Address::repeat_byte(0x22),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             None,
-            CallScheme::DelegateCall.is_call(),
+            CallScheme::DelegateCall,
         );
 
         assert!(fuzzer.take_observed_calls().is_empty());
@@ -582,7 +587,7 @@ mod tests {
             Address::repeat_byte(0x33),
             Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
             None,
-            CallScheme::Call.is_call(),
+            CallScheme::Call,
         );
 
         assert_eq!(fuzzer.take_observed_calls().len(), 1);
