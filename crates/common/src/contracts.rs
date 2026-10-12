@@ -385,10 +385,12 @@ impl ContractsByArtifact {
 
             let metadata_start = if is_vyper { None } else { find_metadata_start(code) };
 
+            // Keep the trailing CBOR length in the comparison: it is read from `code`, so ignoring
+            // it would let crafted code declare arbitrary bytes as metadata.
             if let Some(metadata) = metadata_start {
                 ignored.push(Offsets {
                     start: metadata as u32,
-                    length: (code.len() - metadata) as u32,
+                    length: (code.len() - 2 - metadata) as u32,
                 });
             }
 
@@ -926,6 +928,28 @@ mod tests {
 
         // The overlap must not panic or prevent a match.
         assert!(contracts.find_by_deployed_code_exact(&code).is_some());
+    }
+
+    #[test]
+    fn find_by_deployed_code_exact_rejects_forged_metadata_length() {
+        // `PUSH1 0 PUSH1 1` followed by one byte of CBOR metadata and its length.
+        let contracts = ContractsByArtifact::new([deployed_artifact(
+            "A",
+            Bytes::from_static(&[0x60, 0x00, 0x60, 0x01, 0xa0, 0x00, 0x01]),
+        )]);
+
+        // Different metadata with the same length is still a partial match.
+        assert!(
+            contracts
+                .find_by_deployed_code_exact(&[0x60, 0x00, 0x60, 0x01, 0xf6, 0x00, 0x01])
+                .is_some()
+        );
+        // A forged length that declares modified code as metadata is not.
+        assert!(
+            contracts
+                .find_by_deployed_code_exact(&[0x60, 0x00, 0x60, 0x02, 0xa0, 0x00, 0x04])
+                .is_none()
+        );
     }
 
     #[test]

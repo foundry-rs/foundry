@@ -266,6 +266,8 @@ pub struct BroadcastableTransaction<N: Network = Ethereum> {
     pub rpc: Option<String>,
     /// The transaction to broadcast.
     pub transaction: TransactionMaybeSigned<N>,
+    /// The CREATE address captured from account state for a pre-signed transaction.
+    pub contract_address: Option<Address>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -1669,6 +1671,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc,
                         transaction: TransactionMaybeSigned::new(tx_req),
+                        contract_address: None,
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -2716,6 +2719,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
                     transaction: TransactionMaybeSigned::new(tx_req),
+                    contract_address: None,
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
@@ -3734,7 +3738,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[cold]
     fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
         match interpreter.bytecode.opcode() {
-            op::CREATE2 => self.dynamic_gas_limit = true,
+            // Both creation opcodes forward remaining gas, even when rewritten to factory calls.
+            op::CREATE | op::CREATE2 => self.dynamic_gas_limit = true,
             op::CALL => {
                 // If first element of the stack is close to current remaining gas then assume
                 // dynamic gas limit.

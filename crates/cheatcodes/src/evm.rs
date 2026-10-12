@@ -4,7 +4,7 @@ use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*, env::FORGE_CONTEXT, inspector::RecordDebugStepInfo,
 };
-use alloy_consensus::{Typed2718, transaction::SignerRecoverable};
+use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
@@ -335,6 +335,14 @@ impl Cheatcode for loadCall {
         }
 
         Ok(val.abi_encode())
+    }
+}
+
+impl Cheatcode for loadTransientCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, slot } = *self;
+        let value = ccx.ecx.journal_mut().tload(target, slot.into());
+        Ok(B256::from(value).abi_encode())
     }
 }
 
@@ -885,6 +893,15 @@ impl Cheatcode for storeCall {
     }
 }
 
+impl Cheatcode for storeTransientCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, slot, value } = *self;
+        ccx.ensure_not_precompile(&target)?;
+        ccx.ecx.journal_mut().tstore(target, slot.into(), value.into());
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for setTip20LogoURICall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { token, newLogoURI } = self;
@@ -1302,6 +1319,12 @@ impl Cheatcode for broadcastRawTransactionCall {
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
         let from = sender;
+        let contract_address = if tx.kind().is_create() {
+            let nonce = ccx.ecx.journal_mut().load_account(sender)?.data.info.nonce;
+            Some(sender.create(nonce))
+        } else {
+            None
+        };
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
         #[cfg(feature = "monad")]
@@ -1311,6 +1334,7 @@ impl Cheatcode for broadcastRawTransactionCall {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
                 rpc: ccx.active_fork_url(),
                 transaction: TransactionMaybeSigned::Signed { tx, from },
+                contract_address,
             });
         }
 
