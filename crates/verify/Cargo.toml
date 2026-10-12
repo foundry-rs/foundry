@@ -47,6 +47,9 @@ yansi.workspace = true
 itertools.workspace = true
 url.workspace = true
 
+# monad
+monad-revm = { workspace = true, optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
 foundry-test-utils.workspace = true
@@ -57,6 +60,7 @@ default = ["optimism", "revm"]
 revm = ["dep:revm", "foundry-evm/revm", "foundry-cli/revm", "foundry-common/revm"]
 monad = [
     "revm",
+    "dep:monad-revm",
     "foundry-common/monad",
     "foundry-config/monad",
     "foundry-evm/monad",

@@ -68,7 +68,16 @@ use revm::{
 use foundry_evm::core::evm::BaseEvmNetwork;
 
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
+use alloy_network::Ethereum;
+#[cfg(feature = "monad")]
+use foundry_evm::{
+    EvmEnv,
+    core::evm::{BlockContext, MonadEvmNetwork},
+};
+#[cfg(feature = "monad")]
+use monad_revm::{MonadChainContext, MonadHardfork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
@@ -1026,8 +1035,8 @@ async fn replay_monad_block_transactions(
     block_number: u64,
     target_hash: B256,
     executor: &mut Executor<MonadEvmNetwork>,
-    evm_env: &EvmEnvFor<MonadEvmNetwork>,
-) -> Result<Option<ChainFor<MonadEvmNetwork>>> {
+    evm_env: &EvmEnv<MonadHardfork>,
+) -> Result<Option<MonadChainContext>> {
     let block = block.ok_or_else(|| {
         eyre::eyre!("block {block_number} is required to reconstruct transaction context")
     })?;
@@ -1046,7 +1055,7 @@ async fn replay_monad_block_transactions(
             break;
         }
 
-        let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
+        let tx_env = TxEnv::from_any_rpc_transaction(tx)?;
         let chain_context = block_context.transaction(index);
         if is_known_system_sender(tx.from())
             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
@@ -1101,9 +1110,7 @@ async fn monad_block_context(
     config: &Config,
     block_number: u64,
 ) -> Result<BlockContext<MonadEvmNetwork>> {
-    let provider =
-        ProviderBuilder::<<MonadEvmNetwork as FoundryEvmNetwork>::Network>::from_config(config)?
-            .build()?;
+    let provider = ProviderBuilder::<Ethereum>::from_config(config)?.build()?;
     let block = provider.get_block(block_number.into()).full().await?.ok_or_else(|| {
         eyre::eyre!("block {block_number} is required to reconstruct transaction context")
     })?;

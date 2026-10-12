@@ -2,7 +2,7 @@
 
 use super::{Broadcast, build_blob_sidecar, next_delegation_nonce};
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
-use alloy_primitives::{Address, B256, U256, Uint};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -114,7 +114,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
 /// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
 fn sign_delegation<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    private_key: Uint<256, 4>,
+    private_key: U256,
     implementation: Address,
     nonce: Option<u64>,
     cross_chain: bool,

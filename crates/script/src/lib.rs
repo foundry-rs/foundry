@@ -405,6 +405,7 @@ impl ScriptArgs {
         if let Some(sender) = session_sender {
             evm_opts.sender = sender;
         } else if !args.resume
+            && args.evm.sender.is_none()
             && let Some(sender) = args.maybe_load_private_key()?
         {
             evm_opts.sender = sender;
@@ -3048,5 +3049,45 @@ mod tests {
         ]);
         // priority (200) > max_fee (100) — broadcast should reject this at runtime
         assert!(args.priority_gas_price.unwrap() > args.with_gas_price.unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn explicit_sender_takes_precedence_over_sole_private_key() {
+        let temp = tempdir().unwrap();
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let key_address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sender = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--private-key",
+            private_key,
+            "--sender",
+            &sender.to_string(),
+        ]);
+        let state = args
+            .preprocess::<EthEvmNetwork>(
+                Config::default(),
+                EvmOpts { sender, ..Default::default() },
+                ExecutorBuilder::<EthEvmNetwork>::new,
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.script_config.evm_opts.sender, sender);
+
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--private-key", private_key]);
+        let state = args
+            .preprocess::<EthEvmNetwork>(
+                Config::default(),
+                EvmOpts::default(),
+                ExecutorBuilder::<EthEvmNetwork>::new,
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.script_config.evm_opts.sender, key_address);
     }
 }

@@ -61,14 +61,22 @@ thiserror.workspace = true
 tempo-alloy = { workspace = true, optional = true }
 tempo-primitives.workspace = true
 
+# monad
+monad-revm = { workspace = true, optional = true }
+
+# revm
+alloy-evm = { workspace = true, optional = true }
+
 [dev-dependencies]
 tempo-alloy.workspace = true
 anvil.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+alloy-signer-local.workspace = true
 
 [features]
 default = ["optimism", "revm"]
 revm = [
+    "dep:alloy-evm",
     "dep:tempo-alloy",
     "forge-script-sequence/revm",
     "forge-verify/revm",
@@ -80,6 +88,7 @@ revm = [
 ]
 monad = [
     "revm",
+    "dep:monad-revm",
     "anvil/monad",
     "foundry-config/monad",
     "foundry-evm/monad",

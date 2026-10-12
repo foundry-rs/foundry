@@ -11,26 +11,13 @@ use itertools::Itertools;
 /// A transaction sender scoped to one chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SignerScope {
-    chain: u64,
-    sender: Address,
+    pub(crate) chain: u64,
+    pub(crate) sender: Address,
 }
 
 impl SignerScope {
     pub(crate) const fn new(chain: u64, sender: Address) -> Self {
         Self { chain, sender }
-    }
-}
-
-/// A remaining unsigned script transaction, represented only by the data needed for signer lookup.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RemainingScriptTransaction {
-    pub(crate) chain: u64,
-    pub(crate) from: Address,
-}
-
-impl RemainingScriptTransaction {
-    pub(crate) const fn scope(&self) -> SignerScope {
-        SignerScope::new(self.chain, self.from)
     }
 }
 
@@ -61,11 +48,12 @@ fn single_session_sender(required_addresses: &AddressHashSet) -> Result<Option<A
 pub(crate) fn insert_session_access_key_for_remaining_transactions(
     access_keys: &mut HashMap<SignerScope, TempoAccountsWallet>,
     session: ResolvedSessionSigner,
-    remaining_transactions: &[RemainingScriptTransaction],
+    remaining_transactions: &[SignerScope],
 ) -> Result<()> {
     let chain = session.session.chain_id;
     let root = session.session.root_account;
-    if let Some(tx) = remaining_transactions.iter().find(|tx| tx.from == root && tx.chain != chain)
+    if let Some(tx) =
+        remaining_transactions.iter().find(|tx| tx.sender == root && tx.chain != chain)
     {
         eyre::bail!(
             "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
@@ -75,7 +63,7 @@ pub(crate) fn insert_session_access_key_for_remaining_transactions(
         );
     }
 
-    if remaining_transactions.iter().any(|tx| tx.from == root) {
+    if remaining_transactions.iter().any(|tx| tx.sender == root) {
         access_keys.insert(SignerScope::new(chain, root), session.access_key);
     }
 
@@ -109,7 +97,7 @@ mod tests {
     #[test]
     fn session_access_key_rejects_session_root_on_wrong_chain() {
         let (session, root_address, _) = session_signer(4217);
-        let remaining = [RemainingScriptTransaction { chain: 1, from: root_address }];
+        let remaining = [SignerScope { chain: 1, sender: root_address }];
         let mut access_keys = HashMap::default();
 
         let err = insert_session_access_key_for_remaining_transactions(
@@ -129,7 +117,7 @@ mod tests {
     #[test]
     fn session_access_key_is_inserted_for_session_chain() {
         let (session, root_address, access_key_address) = session_signer(4217);
-        let remaining = [RemainingScriptTransaction { chain: 4217, from: root_address }];
+        let remaining = [SignerScope { chain: 4217, sender: root_address }];
         let mut access_keys = HashMap::default();
 
         insert_session_access_key_for_remaining_transactions(&mut access_keys, session, &remaining)

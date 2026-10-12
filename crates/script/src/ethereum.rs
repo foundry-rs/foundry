@@ -1,7 +1,9 @@
 //! Script deployment, setup and execution over native Ethereum state.
 
 use crate::{ScriptResult, build::ScriptPredeployLibraries, execute::PreExecutionState};
-use alloy_consensus::{TxEip4844, TxEip7702, TxLegacy, transaction::Recovered};
+use alloy_consensus::{
+    Transaction, TxEip2930, TxEip4844, TxEip7702, TxLegacy, transaction::Recovered,
+};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::state::AccountOverride;
@@ -79,6 +81,7 @@ impl Simulation {
     pub(crate) fn execute<N: alloy_network::Network>(
         &mut self,
         request: &TransactionMaybeSigned<N>,
+        is_fixed_gas_limit: bool,
     ) -> Result<ScriptResult<N>>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -94,6 +97,16 @@ impl Simulation {
             .version
             .tx_gas_limit_cap
             .min(u64::try_from(self.env.block.gas_limit).unwrap_or(u64::MAX));
+        let limit = if is_fixed_gas_limit {
+            u64::try_from(request.gas().ok_or_else(|| eyre::eyre!("fixed gas limit missing"))?)?
+        } else {
+            limit
+        };
+        let access_list = match request {
+            TransactionMaybeSigned::Signed { tx, .. } => tx.access_list().cloned(),
+            TransactionMaybeSigned::Unsigned(tx) => tx.access_list().cloned(),
+        }
+        .unwrap_or_default();
         let tx = if let Some(hashes) = request.blob_versioned_hashes() {
             ensure!(authorization_list.is_none(), "blob simulation cannot include authorizations");
             TxEnvelope::Eip4844(
@@ -105,6 +118,7 @@ impl Simulation {
                     input,
                     value,
                     blob_versioned_hashes: hashes.to_vec(),
+                    access_list,
                     // Simulation executes the intent; publishing resolves the transaction's fees.
                     max_fee_per_blob_gas: self.env.block.blob_basefee.try_into()?,
                     ..Default::default()
@@ -122,10 +136,22 @@ impl Simulation {
                     input,
                     value,
                     authorization_list,
+                    access_list,
                     ..Default::default()
                 }
                 .into(),
             )
+        } else if !access_list.is_empty() {
+            TxEnvelope::Eip2930(TxEip2930 {
+                chain_id: self.env.version.chain_id,
+                to: to.map_or(TxKind::Create, TxKind::Call),
+                nonce,
+                gas_limit: limit,
+                input,
+                value,
+                access_list,
+                ..Default::default()
+            })
         } else {
             TxEnvelope::Legacy(TxLegacy {
                 to: to.map_or(TxKind::Create, TxKind::Call),
@@ -137,34 +163,39 @@ impl Simulation {
             })
         };
         let mut tx = Recovered::new_unchecked(tx, from);
-        let probe = self.executor.call(&tx)?;
-        let mut gas_used = probe.tx_gas_used();
-        if to.is_some() && probe.status {
-            let mut search = crate::gas_search::GasSearch::new(gas_used);
-            while let Some(limit) = search.next_limit() {
+        let mut gas_used = 0;
+        if !is_fixed_gas_limit {
+            let probe = self.executor.call(&tx)?;
+            gas_used = probe.tx_gas_used();
+            if to.is_some() && probe.status {
+                let mut search = crate::gas_search::GasSearch::new(gas_used);
+                while let Some(limit) = search.next_limit() {
+                    match tx.inner_mut() {
+                        TxEnvelope::Legacy(tx) => tx.gas_limit = limit,
+                        TxEnvelope::Eip2930(tx) => tx.gas_limit = limit,
+                        TxEnvelope::Eip7702(tx) => tx.gas_limit = limit,
+                        TxEnvelope::Eip4844(tx) => tx.as_mut().gas_limit = limit,
+                        _ => unreachable!("native Script simulation envelope"),
+                    }
+                    let result = self.executor.call(&tx)?;
+                    search.record(
+                        limit,
+                        matches!(
+                            result.stop,
+                            evm2::interpreter::InstrStop::Revert
+                                | evm2::interpreter::InstrStop::OutOfGas
+                                | evm2::interpreter::InstrStop::OutOfFunds
+                        ),
+                    );
+                }
+                gas_used = search.gas_used();
                 match tx.inner_mut() {
                     TxEnvelope::Legacy(tx) => tx.gas_limit = limit,
+                    TxEnvelope::Eip2930(tx) => tx.gas_limit = limit,
                     TxEnvelope::Eip7702(tx) => tx.gas_limit = limit,
                     TxEnvelope::Eip4844(tx) => tx.as_mut().gas_limit = limit,
                     _ => unreachable!("native Script simulation envelope"),
                 }
-                let result = self.executor.call(&tx)?;
-                search.record(
-                    limit,
-                    matches!(
-                        result.stop,
-                        evm2::interpreter::InstrStop::Revert
-                            | evm2::interpreter::InstrStop::OutOfGas
-                            | evm2::interpreter::InstrStop::OutOfFunds
-                    ),
-                );
-            }
-            gas_used = search.gas_used();
-            match tx.inner_mut() {
-                TxEnvelope::Legacy(tx) => tx.gas_limit = limit,
-                TxEnvelope::Eip7702(tx) => tx.gas_limit = limit,
-                TxEnvelope::Eip4844(tx) => tx.as_mut().gas_limit = limit,
-                _ => unreachable!("native Script simulation envelope"),
             }
         }
         let tracing = TracingInspector::new(
@@ -172,6 +203,9 @@ impl Simulation {
         );
         let (result, tracing) = self.executor.inspect_transact(&tx, tracing);
         let result = result?;
+        if is_fixed_gas_limit {
+            gas_used = result.tx_gas_used();
+        }
         Ok(ScriptResult {
             success: result.status,
             returned: result.output,
@@ -347,6 +381,7 @@ pub(super) async fn execute<FEN: FoundryEvmNetwork>(
             BroadcastableTransaction {
                 rpc: opts.fork_url.clone(),
                 transaction: TransactionMaybeSigned::new(request),
+                contract_address: None,
             },
         );
     }
@@ -441,6 +476,7 @@ pub(super) async fn execute<FEN: FoundryEvmNetwork>(
         transactions.push_back(BroadcastableTransaction {
             rpc: transaction.rpc,
             transaction: TransactionMaybeSigned::new(target),
+            contract_address: transaction.contract_address,
         });
     }
     Ok(output)
@@ -531,11 +567,14 @@ mod tests {
         assert_eq!(runner.env.spec, SpecId::LONDON);
         assert!(!runner.is_empty_code(target).unwrap());
         let result = runner
-            .execute::<alloy_network::Ethereum>(&TransactionMaybeSigned::new(
-                TransactionRequest::default()
-                    .with_from(Address::with_last_byte(0xaa))
-                    .with_to(target),
-            ))
+            .execute::<alloy_network::Ethereum>(
+                &TransactionMaybeSigned::new(
+                    TransactionRequest::default()
+                        .with_from(Address::with_last_byte(0xaa))
+                        .with_to(target),
+                ),
+                false,
+            )
             .unwrap();
         assert!(!result.success);
 
@@ -543,11 +582,14 @@ mod tests {
         let fork = EthereumFork::open(&config, &opts, None).await.unwrap();
         let mut runner = Simulation::from_fork(fork, &config, &opts).unwrap();
         let result = runner
-            .execute::<alloy_network::Ethereum>(&TransactionMaybeSigned::new(
-                TransactionRequest::default()
-                    .with_from(Address::with_last_byte(0xaa))
-                    .with_to(target),
-            ))
+            .execute::<alloy_network::Ethereum>(
+                &TransactionMaybeSigned::new(
+                    TransactionRequest::default()
+                        .with_from(Address::with_last_byte(0xaa))
+                        .with_to(target),
+                ),
+                false,
+            )
             .unwrap();
         assert!(result.success);
         assert_eq!(result.returned, Bytes::from(vec![0; 32]));
@@ -585,9 +627,54 @@ mod tests {
         for request in [unsigned, signed] {
             let fork = EthereumFork::open(&config, &opts, None).await.unwrap();
             let mut runner = Simulation::from_fork(fork, &config, &opts).unwrap();
-            let result = runner.execute::<alloy_network::Ethereum>(&request).unwrap();
+            let result = runner.execute::<alloy_network::Ethereum>(&request, false).unwrap();
             assert!(result.success);
             assert_eq!(result.returned.as_ref(), hash.as_slice());
         }
+    }
+    #[test]
+    fn fixed_gas_simulation_preserves_block_limit_and_enforces_transaction_limit() {
+        let mut opts = EvmOpts { memory_limit: 128 * 1024 * 1024, ..Default::default() };
+        opts.env.gas_limit = 1_000_000.into();
+        let env = EthereumEnv::local_from_config(&Config::default(), &opts).unwrap();
+        let executor = Executor::new(
+            EmptyDB::default(),
+            env.spec,
+            ExecutionConfig::for_spec_and_version(env.spec, env.version),
+            env.block,
+        );
+        let mut runner = Simulation { executor, env };
+        let sender = Address::with_last_byte(0xaa);
+        let target = Address::with_last_byte(0xc0);
+        runner
+            .executor
+            .apply_state_overrides(
+                [(
+                    target,
+                    AccountOverride {
+                        code: Some(bytes!("4560005260206000f3")),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            )
+            .unwrap();
+        let request =
+            TransactionRequest::default().with_from(sender).with_to(target).with_gas_limit(50_000);
+        let result = runner
+            .execute::<alloy_network::Ethereum>(&TransactionMaybeSigned::new(request.clone()), true)
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(U256::from_be_slice(&result.returned), env.block.gas_limit);
+        assert_eq!(runner.executor.block().gas_limit, env.block.gas_limit);
+        let result = runner
+            .execute::<alloy_network::Ethereum>(
+                &TransactionMaybeSigned::new(request.with_gas_limit(21_001)),
+                true,
+            )
+            .unwrap();
+        assert!(!result.success);
+        assert_eq!(runner.executor.block().gas_limit, env.block.gas_limit);
     }
 }

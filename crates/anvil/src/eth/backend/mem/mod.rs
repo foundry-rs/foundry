@@ -125,10 +125,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
-    core::{
-        evm::{EvmEnvFor, TempoEvmNetwork},
-        precompiles::EC_RECOVER,
-    },
+    core::precompiles::EC_RECOVER,
     decode::RevertDecoder,
     hardfork::{EthereumHardfork, FoundryHardfork},
     inspectors::AccessListInspector,
@@ -1459,6 +1456,11 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
+    /// Returns whether Celo compatibility is enabled.
+    pub const fn is_celo(&self) -> bool {
+        self.networks.is_celo()
+    }
+
     /// Returns true if Monad network mode is active
     pub const fn is_monad(&self) -> bool {
         self.networks.is_monad()
@@ -1485,7 +1487,7 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "monad"))]
-    fn active_monad_context_for_mined_block(
+    const fn active_monad_context_for_mined_block(
         &self,
         _block: &Block,
     ) -> Result<Option<MonadReplayContext>, BlockchainError> {
@@ -1493,7 +1495,7 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "monad"))]
-    fn active_monad_context_before_mined_transaction(
+    const fn active_monad_context_before_mined_transaction(
         &self,
         _block: &Block,
         _current_tx_index: usize,
@@ -1597,13 +1599,14 @@ impl<N: Network> Backend<N> {
         &self,
         db: &dyn revm::DatabaseRef<Error = DatabaseError>,
         parent_timestamp: u64,
+        pin_timestamp: bool,
     ) -> Result<PendingBlockTimestamp, DatabaseError> {
         #[cfg(feature = "base")]
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
             return base::prepare_block_timestamp(db, &self.time, parent_timestamp);
         }
         let _ = (db, parent_timestamp);
-        Ok(self.time.prepare_next_timestamp())
+        Ok(self.time.prepare_next_timestamp(pin_timestamp))
     }
 
     /// Builds the required deposits from the same parent state used to prepare the clock.
@@ -1841,6 +1844,16 @@ impl<N: Network> Backend<N> {
         Err(BlockchainError::TempoTransactionUnsupported)
     }
 
+    /// Returns an error unless CIP-64 native-fee compatibility is active.
+    pub fn ensure_cip64_active(&self) -> Result<(), BlockchainError> {
+        if !self.is_celo() {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "CIP-64 transactions require Celo mode (--celo)".into(),
+            ));
+        }
+        self.ensure_eip1559_active()
+    }
+
     /// Builds the [`InspectorTxConfig`] from the backend's current settings.
     fn inspector_tx_config(&self) -> InspectorTxConfig {
         InspectorTxConfig {
@@ -2026,7 +2039,7 @@ impl<N: Network> Backend<N> {
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         let pending =
-            self.prepare_block_timestamp(db, evm_env.block_env.timestamp.saturating_to())?;
+            self.prepare_block_timestamp(db, evm_env.block_env.timestamp.saturating_to(), false)?;
         evm_env.block_env.timestamp = U256::from(pending.timestamp);
         Ok(evm_env)
     }
@@ -2969,7 +2982,7 @@ impl<N: Network> Backend<N> {
     fn build_tempo_evm_env(
         evm_env: &EvmEnv,
         hardfork: TempoHardfork,
-    ) -> EvmEnvFor<TempoEvmNetwork> {
+    ) -> EvmEnv<TempoHardfork, TempoBlockEnv> {
         EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv {
@@ -3444,6 +3457,13 @@ impl<N: Network> Backend<N> {
             return Err(BlockchainError::ConflictingFeeFields);
         }
         let transaction_type = request.transaction_type;
+        if transaction_type == Some(foundry_primitives::CIP64_TX_TYPE)
+            || request.other.get("feeCurrency").is_some_and(|value| !value.is_null())
+        {
+            self.ensure_cip64_active()?;
+            return FoundryTransactionRequest::new(request)
+                .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()));
+        }
         #[cfg(feature = "base")]
         if self.is_base() {
             let parsed = FoundryTransactionRequest::try_from(request.clone()).map_err(
@@ -3650,7 +3670,11 @@ impl<N: Network> Backend<N> {
                     simulated_envelope,
                 })
             }
-            FoundryTransactionRequest::Ethereum(mut request) => {
+            FoundryTransactionRequest::Ethereum(mut request)
+            | FoundryTransactionRequest::Celo(foundry_primitives::Cip64TransactionRequest {
+                inner: mut request,
+                ..
+            }) => {
                 // Tempo charges the account-creation cost for nonce 0, so an omitted nonce must
                 // not default to it.
                 if self.is_tempo() && request.nonce.is_none() {
@@ -5806,8 +5830,9 @@ where
     pub(crate) async fn mine_block_locked(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
-        self.do_mine_block_locked(pool_transactions).await
+        self.do_mine_block_locked(pool_transactions, pin_timestamp).await
     }
 
     /// Replays a transaction-hash fork prefix before the live pool and miner are created.
@@ -5822,7 +5847,7 @@ where
                 arbitrum_replay_block_number(&replay.source_block),
             )
         });
-        let prepared = prepare_fork_transaction_replay(replay, self.is_monad())?;
+        let prepared = prepare_fork_transaction_replay(replay, self.is_monad(), self.is_celo())?;
         let fallback_execution_chain_id = self
             .get_fork()
             .map(|fork| fork.execution_chain_id())
@@ -6205,13 +6230,14 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
-        self.do_mine_block_locked(pool_transactions).await
+        self.do_mine_block_locked(pool_transactions, false).await
     }
 
     /// Mines a block while the caller holds the mining lock.
     async fn do_mine_block_locked(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
@@ -6272,8 +6298,11 @@ where
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                let pending_timestamp = self
-                    .prepare_block_timestamp(&**db, evm_env.block_env.timestamp.saturating_to())?;
+                let pending_timestamp = self.prepare_block_timestamp(
+                    &**db,
+                    evm_env.block_env.timestamp.saturating_to(),
+                    pin_timestamp,
+                )?;
                 let block_timestamp = pending_timestamp.timestamp;
                 evm_env.block_env.timestamp = U256::from(block_timestamp);
 
@@ -6541,7 +6570,7 @@ where
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block_locked(to_be_mined).await?;
+            let outcome = self.do_mine_block_locked(to_be_mined, false).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -8251,6 +8280,12 @@ where
 
         // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
         let mut inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
+        if let FoundryTxEnvelope::Celo(tx) = &*transaction {
+            inner
+                .0
+                .other
+                .insert("feeCurrency".into(), serde_json::to_value(tx.tx().fee_currency).unwrap());
+        }
         if self.is_tempo() {
             let fee_payer = match &*transaction {
                 FoundryTxEnvelope::Tempo(tx) => match tx.tx().recover_fee_payer(info.from) {
@@ -8521,6 +8556,17 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let transactions = std::mem::take(&mut state.transactions);
         let mut storage = self.blockchain.storage.read().clone();
         storage.load_blocks(blocks, fork_block_boundary);
+        if !self.is_celo()
+            && storage.blocks.values().any(|block| {
+                block
+                    .body
+                    .transactions
+                    .iter()
+                    .any(|tx| matches!(tx.as_ref(), FoundryTxEnvelope::Celo(_)))
+            })
+        {
+            self.ensure_cip64_active()?;
+        }
         storage.load_transactions(transactions, fork_block_boundary);
         if let Some(checkpoint) = checkpoint {
             storage.insert_block(checkpoint);
@@ -10434,6 +10480,23 @@ pub fn transaction_build(
         return build_rpc_transaction(envelope, from, block, info.as_ref(), None);
     }
 
+    if let FoundryTxEnvelope::Celo(tx) = eth_transaction.as_ref() {
+        let mut fields =
+            OtherFields::try_from(serde_json::to_value(tx).expect("valid CIP-64 transaction"))
+                .expect("CIP-64 transaction serializes to an object");
+        fields.remove("hash");
+        let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+            hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
+            inner: UnknownTypedTransaction {
+                ty: AnyTxType(foundry_primitives::CIP64_TX_TYPE),
+                fields,
+                memo: Default::default(),
+            },
+        });
+        let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
+        let effective_gas_price = block.map(|_| eth_transaction.effective_gas_price(base_fee));
+        return build_rpc_transaction(envelope, from, block, info.as_ref(), effective_gas_price);
+    }
     if let FoundryTxEnvelope::Tempo(tempo_tx) = eth_transaction.as_ref() {
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let ser = serde_json::to_value(tempo_tx).expect("could not serialize Tempo transaction");

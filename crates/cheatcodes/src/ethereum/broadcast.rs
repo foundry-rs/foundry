@@ -159,6 +159,7 @@ impl Cheatcodes {
         self.transactions.push_back(BroadcastableTransaction {
             rpc: self.forks.active_url().or_else(|| self.config.evm_opts.fork_url.clone()),
             transaction: TransactionMaybeSigned::new(request),
+            contract_address: None,
         });
         Ok(())
     }

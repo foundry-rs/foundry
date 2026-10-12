@@ -56,8 +56,13 @@ where
     }
     env.version.features.remove(EvmFeatures::BLOCK_GAS_LIMIT_CHECK);
     env.version.tx_gas_limit_cap = u64::MAX;
-    // Match Foundry's synthetic call environment: zero fees and the call's gas limit.
-    env.block.basefee = U256::ZERO;
+    // Like eth_call, honor requested fees without requiring the caller to afford them.
+    env.version.features.remove(EvmFeatures::FEE_CHARGE);
+    if request.max_fee_per_gas().or(request.gas_price()).unwrap_or_default() == 0
+        && request.max_priority_fee_per_gas().unwrap_or_default() == 0
+    {
+        env.block.basefee = U256::ZERO;
+    }
     env.block.gas_limit = U256::from(request.gas_limit().unwrap_or(opts.gas_limit()));
     if let Some(overrides) = block_overrides {
         if let Some(number) = overrides.number {
@@ -156,9 +161,10 @@ where
         nonce: Some(request.nonce().unwrap_or_default()),
         gas: Some(request.gas_limit().unwrap_or(gas_limit)),
         chain_id: Some(request.chain_id().unwrap_or(env.version.chain_id)),
-        gas_price: (!dynamic).then_some(0),
-        max_fee_per_gas: dynamic.then_some(0),
-        max_priority_fee_per_gas: dynamic.then_some(0),
+        gas_price: (!dynamic).then_some(request.gas_price().unwrap_or_default()),
+        max_fee_per_gas: dynamic.then_some(request.max_fee_per_gas().unwrap_or_default()),
+        max_priority_fee_per_gas: dynamic
+            .then_some(request.max_priority_fee_per_gas().unwrap_or_default()),
         access_list: request.access_list().cloned(),
         authorization_list: request.authorization_list().cloned(),
         max_fee_per_blob_gas: request.max_fee_per_blob_gas(),
@@ -185,4 +191,28 @@ pub(super) fn tracing_inspector(verbosity: u8) -> TracingInspector {
             .set_record_logs(true)
             .set_steps_and_state_diffs(verbosity > 4),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::Transaction;
+
+    #[test]
+    fn local_transaction_preserves_requested_fees() {
+        let opts = EvmOpts::default();
+        let env = EthereumEnv::local(evm2::SpecId::CANCUN, &opts);
+        let from = Address::with_last_byte(1);
+        let request =
+            TransactionRequest::default().with_to(Address::with_last_byte(2)).with_gas_price(7);
+        let tx = transaction::<alloy_network::Ethereum>(&request, from, &env, 100_000).unwrap();
+        assert_eq!(tx.inner().gas_price(), Some(7));
+        let request = TransactionRequest::default()
+            .with_to(Address::with_last_byte(2))
+            .with_max_fee_per_gas(11)
+            .with_max_priority_fee_per_gas(3);
+        let tx = transaction::<alloy_network::Ethereum>(&request, from, &env, 100_000).unwrap();
+        assert_eq!(tx.inner().max_fee_per_gas(), 11);
+        assert_eq!(tx.inner().max_priority_fee_per_gas(), Some(3));
+    }
 }

@@ -68,9 +68,14 @@ uuid = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
+# monad
+alloy-monad-evm = { workspace = true, optional = true }
+monad-revm = { workspace = true, optional = true }
+
 [dev-dependencies]
 foundry-cheatcodes.workspace = true
 alloy-sol-types.workspace = true
+tempo-revm.workspace = true
 
 [features]
 default = ["optimism", "revm"]
@@ -113,6 +118,8 @@ revm = [
 ]
 monad = [
     "revm",
+    "dep:monad-revm",
+    "dep:alloy-monad-evm",
     "foundry-evm-core/monad",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",

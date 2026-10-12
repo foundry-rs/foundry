@@ -618,7 +618,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
-        let now = self.backend.time().current_call_timestamp();
+        let now = self.backend.time().current_wall_timestamp();
         self.backend.time().set_time(timestamp);
 
         // number of seconds between the given timestamp and the current time.
@@ -4252,6 +4252,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.saturating_to::<u64>());
+        let pin_timestamp = interval == Some(0);
         let blocks = num_blocks.unwrap_or(U256::ONE);
         if blocks.is_zero() {
             return Ok(());
@@ -4263,7 +4264,7 @@ impl EthApi<FoundryNetwork> {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) = this.mine_one().await {
+                if let Err(error) = this.mine_one_with_timestamp_pinning(pin_timestamp).await {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -4532,6 +4533,9 @@ impl EthApi<FoundryNetwork> {
                         let mut data = bytes.as_ref();
                         let decoded = FoundryTxEnvelope::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+                        if matches!(&decoded, FoundryTxEnvelope::Celo(_)) {
+                            self.ensure_typed_transaction_supported(&decoded)?;
+                        }
                         let protocol_pending = {
                             #[cfg(feature = "monad")]
                             {
@@ -4550,7 +4554,18 @@ impl EthApi<FoundryNetwork> {
                     }
 
                     TransactionData::JSON(request) => {
-                        let from = request.from.map(Ok).unwrap_or_else(|| {
+                        let request = if request.transaction_type
+                            == Some(foundry_primitives::CIP64_TX_TYPE)
+                            || request
+                                .other
+                                .get("feeCurrency")
+                                .is_some_and(|value| !value.is_null())
+                        {
+                            self.parse_transaction_request(request)?
+                        } else {
+                            request.inner.into()
+                        };
+                        let from = request.from().map(Ok).unwrap_or_else(|| {
                             self.accounts()?
                                 .first()
                                 .copied()
@@ -4568,11 +4583,7 @@ impl EthApi<FoundryNetwork> {
 
                         // Build typed transaction request
                         let typed_tx = self
-                            .build_tx_request_with_fee_defaults(
-                                request.into(),
-                                *curr_nonce,
-                                fee_defaults,
-                            )
+                            .build_tx_request_with_fee_defaults(request, *curr_nonce, fee_defaults)
                             .await?;
 
                         // Increment nonce
@@ -5035,9 +5046,13 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
+        self.mine_one_with_timestamp_pinning(false).await
+    }
+
+    async fn mine_one_with_timestamp_pinning(&self, pin_timestamp: bool) -> Result<()> {
         let _mining = self.backend.lock_mining().await;
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block_locked(transactions).await?;
+        let outcome = self.backend.mine_block_locked(transactions, pin_timestamp).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         if self.pool.on_mined_block(outcome) {
@@ -5149,6 +5164,7 @@ impl EthApi<FoundryNetwork> {
                 || tx_type.is_eip4844()
                 || tx_type.is_eip7702()
                 || tx_type.is_tempo()
+                || tx_type.is_celo()
             {
                 request
                     .max_fee_per_gas()
@@ -5441,6 +5457,7 @@ impl EthApi<FoundryNetwork> {
             )),
             #[cfg(feature = "base")]
             FoundryTxEnvelope::Eip8130(_) => self.backend.ensure_base_eip8130_submission_active(),
+            FoundryTxEnvelope::Celo(_) => self.backend.ensure_cip64_active(),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active(),
         }

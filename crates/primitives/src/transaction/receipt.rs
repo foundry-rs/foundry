@@ -115,6 +115,10 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
                 receipt: Eip8130Receipt::new(inner_receipt, eip8130_phase_statuses),
                 logs_bloom,
             }),
+            FoundryTxType::Celo => Self::Unknown(AnyReceiptEnvelope {
+                inner: ReceiptWithBloom { receipt: inner_receipt, logs_bloom },
+                r#type: super::CIP64_TX_TYPE,
+            }),
             FoundryTxType::Tempo => {
                 Self::Tempo(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }

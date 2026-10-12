@@ -8,7 +8,10 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then run this in your Solidity project's
+[Foundry](https://getfoundry.sh), then install `paradigm.forge` from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge).
+
+To try the extension without installing it, run this in your Solidity project's
 terminal:
 
 ```sh
@@ -66,11 +69,9 @@ watchers, including nested projects.
 `solarLsp.serverPath` formerly selected standalone Solar. It is deprecated and
 ignored, with a migration warning when explicitly configured. Remove it and set
 `solarLsp.forgePath` to a **Forge** executable if necessary. Existing Solar paths
-are never reinterpreted as Forge paths. The package name `solar-lsp`, language
-ID `solidity`, `solarLsp.*` setting keys and `solar.*` commands remain unchanged.
-The original manifest has no publisher; local packaging retains that state.
-Marketplace ownership and publishing require separate maintainer decisions;
-`forge lsp` does not require a Marketplace installation.
+are never reinterpreted as Forge paths. The language ID `solidity`, `solarLsp.*`
+setting keys and `solar.*` commands remain unchanged. The extension ID is
+`paradigm.forge`; `forge lsp` does not require a Marketplace installation.
 
 ## Formatting
 
@@ -169,7 +170,7 @@ From `editors/vscode`, run:
 
 ```bash
 npm run package
-code --install-extension bundle/solar-lsp.vsix --force
+code --install-extension bundle/forge.vsix --force
 ```
 
 Packaging runs the compiler and stages the runtime dependencies, grammars and
@@ -180,7 +181,24 @@ after packaging; the checkout's license links are unchanged. Use `npm run packag
 for this preparation instead of invoking `vsce package` directly. The VSIX is
 local and ignored by Git. To preserve a normal profile, supply isolated
 `--user-data-dir` and `--extensions-dir` arguments when installing or opening
-VS Code. No automated Marketplace publishing is configured.
+VS Code.
+
+### Publishing
+
+The manual `Publish VS Code extension` workflow packages the VSIX and publishes
+it to the Visual Studio Marketplace. Bump `version` in `package.json` first; the
+Marketplace does not accept a version twice. The workflow signs in to Azure with GitHub OIDC and runs `vsce publish --azure-credential`,
+so the `release` environment needs `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`
+variables for a federated identity that trusts
+`repo:foundry-rs/foundry:environment:release` and is a member of the
+`paradigm` publisher. Select `pre-release` to publish a pre-release version, or
+`dry-run` to check the publish rights without publishing.
+
+The workflow also publishes to Open VSX with trusted publishing when the
+`release` environment sets `OPEN_VSX_PUBLISH` to `true`. Before enabling it,
+register a trusted publisher for this workflow and the `release` environment in
+`foundry-rs/foundry` on the `paradigm` namespace at
+<https://open-vsx.org/user-settings/trusted-publishers>.
 
 ## Protocol tracing and CodeLens
 

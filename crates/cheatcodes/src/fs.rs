@@ -914,10 +914,10 @@ mod tests {
             BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
         },
     };
-    use foundry_evm_core::evm::TempoEvmNetwork;
     use semver::Version;
     use std::{env, fs as stdfs, path::PathBuf, str::FromStr, sync::Arc};
     use tempfile::TempDir;
+    use tempo_alloy::TempoNetwork;
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -1418,7 +1418,7 @@ mod tests {
 
         fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
 
-        let latest = latest_broadcast::<<TempoEvmNetwork as FoundryEvmNetwork>::Network>(
+        let latest = latest_broadcast::<TempoNetwork>(
             &"Counter".to_owned(),
             31337,
             &broadcast_path,

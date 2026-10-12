@@ -5,7 +5,8 @@ use crate::{
     Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        DealRecord, GasRecord, RecordAccess, journaled_account,
+        DealRecord, GasRecord, RecordAccess, append_storage_access, journaled_account,
+        mark_account_accesses_reverted, merge_recorded_frame,
         mock::{self, MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -1455,13 +1456,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth) {
+        if let Some(prank) = self.get_prank(curr_depth).copied() {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
             if prank.delegate_call && curr_depth == prank.depth && call.scheme.is_delegate_call() {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
                 if let Some(new_origin) = prank.new_origin {
                     ecx.tx_mut().set_caller(new_origin);
+                }
+                if let Some(used) = prank.first_time_applied() {
+                    self.pranks.insert(curr_depth, used);
                 }
             }
 
@@ -1651,6 +1655,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc,
                         transaction: TransactionMaybeSigned::new(tx_req),
+                        contract_address: None,
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -2504,12 +2509,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if outcome.result.is_revert() {
-                    for element in &mut *last_recorded_depth {
-                        element.reverted = true;
-                        for storage_access in &mut element.storageAccesses {
-                            storage_access.reverted = true;
-                        }
-                    }
+                    mark_account_accesses_reverted(&mut last_recorded_depth);
                 }
 
                 if let Some(call_access) = last_recorded_depth.first_mut() {
@@ -2525,15 +2525,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         call_access.newBalance = acc.data.info.balance;
                         call_access.newNonce = acc.data.info.nonce;
                     }
-                    // Merge the last depth's AccountAccesses into the AccountAccesses at the
-                    // current depth, or push them back onto the pending
-                    // vector if higher depths were not recorded. This
-                    // preserves ordering of accesses.
-                    if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.extend(last_recorded_depth);
-                    } else {
-                        recorded_account_diffs_stack.push(last_recorded_depth);
-                    }
+                    merge_recorded_frame(recorded_account_diffs_stack, last_recorded_depth);
                 }
             }
         }
@@ -2711,6 +2703,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
                     transaction: TransactionMaybeSigned::new(tx_req),
+                    contract_address: None,
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
@@ -2862,12 +2855,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Update the reverted status of all deeper calls if this call reverted, in
             // accordance with EVM behavior.
             if outcome.result.is_revert() {
-                for element in &mut *last_depth {
-                    element.reverted = true;
-                    for storage_access in &mut element.storageAccesses {
-                        storage_access.reverted = true;
-                    }
-                }
+                mark_account_accesses_reverted(&mut last_depth);
             }
 
             if let Some(create_access) = last_depth.first_mut() {
@@ -2887,15 +2875,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     }
                 }
             }
-            // Merge the last depth's AccountAccesses into the AccountAccesses at the
-            // current depth, or push them back onto the pending
-            // vector if higher depths were not recorded. This
-            // preserves ordering of accesses.
-            if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                last.append(&mut last_depth);
-            } else {
-                recorded_account_diffs_stack.push(last_depth);
-            }
+            merge_recorded_frame(recorded_account_diffs_stack, last_depth);
         }
 
         // Match the create against expected_creates
@@ -3742,7 +3722,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[cold]
     fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
         match interpreter.bytecode.opcode() {
-            op::CREATE2 => self.dynamic_gas_limit = true,
+            // Both creation opcodes forward remaining gas, even when rewritten to factory calls.
+            op::CREATE | op::CREATE2 => self.dynamic_gas_limit = true,
             op::CALL => {
                 // If first element of the stack is close to current remaining gas then assume
                 // dynamic gas limit.
@@ -3798,54 +3779,6 @@ fn record_logs(recorded_logs: &mut Option<Vec<Vm::Log>>, log: &Log) {
             data: log.data.data.clone(),
             emitter: log.address,
         });
-    }
-}
-
-/// Appends an AccountAccess that resumes the recording of the current context.
-fn append_storage_access(
-    last: &mut Vec<AccountAccess>,
-    storage_access: crate::Vm::StorageAccess,
-    storage_depth: u64,
-) {
-    // Assert that there's an existing record for the current context.
-    if !last.is_empty() && last.first().unwrap().depth < storage_depth {
-        // Three cases to consider:
-        // 1. If there hasn't been a context switch since the start of this context, then add the
-        //    storage access to the current context record.
-        // 2. If there's an existing Resume record, then add the storage access to it.
-        // 3. Otherwise, create a new Resume record based on the current context.
-        if last.len() == 1 {
-            last.first_mut().unwrap().storageAccesses.push(storage_access);
-        } else {
-            let last_record = last.last_mut().unwrap();
-            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
-                last_record.storageAccesses.push(storage_access);
-            } else {
-                let entry = last.first().unwrap();
-                let resume_record = crate::Vm::AccountAccess {
-                    chainInfo: crate::Vm::ChainInfo {
-                        forkId: entry.chainInfo.forkId,
-                        chainId: entry.chainInfo.chainId,
-                    },
-                    accessor: entry.accessor,
-                    account: entry.account,
-                    kind: crate::Vm::AccountAccessKind::Resume,
-                    initialized: entry.initialized,
-                    storageAccesses: vec![storage_access],
-                    reverted: entry.reverted,
-                    // The remaining fields are defaults
-                    oldBalance: U256::ZERO,
-                    newBalance: U256::ZERO,
-                    oldNonce: 0,
-                    newNonce: 0,
-                    value: U256::ZERO,
-                    data: Bytes::new(),
-                    deployedCode: Bytes::new(),
-                    depth: entry.depth,
-                };
-                last.push(resume_record);
-            }
-        }
     }
 }
 

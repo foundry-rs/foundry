@@ -21,6 +21,8 @@ pub struct BroadcastableTransaction<N: Network = Ethereum> {
     pub rpc: Option<String>,
     /// The transaction to broadcast.
     pub transaction: TransactionMaybeSigned<N>,
+    /// The CREATE address captured from account state for a pre-signed transaction.
+    pub contract_address: Option<Address>,
 }
 
 /// List of transactions that can be broadcasted.
