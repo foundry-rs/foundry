@@ -650,3 +650,28 @@ repl_test!(multiline_block_comment_continues, |repl| {
     repl.sendln("value");
     repl.expect("Decimal: 3");
 });
+
+#[test]
+fn imported_repl_does_not_shadow_wrapper() {
+    // Cover both sides of artifact path ordering, with and without matching file names.
+    for (file_index, file) in
+        ["A.sol", "Z.sol", "A/ReplContract.sol", "Z/ReplContract.sol"].into_iter().enumerate()
+    {
+        // Missing run() exposes incorrect HIR selection; an existing run() exposes wrong execution.
+        for (body_index, body) in ["", "function run() public pure {}"].into_iter().enumerate() {
+            let name = format!("imported_repl_{file_index}_{body_index}");
+            let mut repl = ChiselSession::new(&name, "", false);
+            let source = repl.project().root().join(file);
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            fs::write(source, format!("contract REPL {{ {body} }}")).unwrap();
+            repl.sendln(&format!("import {{REPL as ImportedREPL}} from \"./{file}\";"));
+
+            repl.sendln("uint256 value = 7;");
+            repl.sendln("value");
+            repl.expect("Decimal: 7");
+            repl.sendln("value += 1;");
+            repl.sendln("value");
+            repl.expect("Decimal: 8");
+        }
+    }
+}
