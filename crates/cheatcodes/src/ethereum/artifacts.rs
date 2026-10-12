@@ -15,7 +15,7 @@ use evm2::{
     },
 };
 use foundry_evm_core::ethereum::FoundryEvmTypes;
-use std::mem;
+use std::{mem, sync::Arc};
 
 impl Cheatcodes {
     pub(super) fn deploy_code(
@@ -166,7 +166,7 @@ impl Cheatcodes {
             *host.ext(),
         );
         *child.state_mut() = mem::replace(host.state_mut(), State::new(EmptyDB::default()));
-        child.set_inspector(self.take_for_child());
+        child.set_inspector(mem::replace(self, Self::new(Arc::clone(&self.config))));
         let result = Host::execute_message(&mut child, &tx_env, message);
         let inspector = child.clear_inspector().expect("native child inspector");
         // SAFETY: This child was given an owned `Self` immediately above. Inspector replacement
