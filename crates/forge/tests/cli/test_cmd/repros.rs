@@ -39,13 +39,23 @@ contract Issue3055Test is Test {
         vm.revertToState(snapshotId);
     }
 }
+
+/// forge-config: default.assertions_revert = false
+/// forge-config: default.isolate = false
+contract Issue3055NonIsolatedTest is Issue3055Test {}
 "#,
     );
 
-    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+Ran 3 tests for test/Issue3055.t.sol:Issue3055NonIsolatedTest
+[FAIL] test_snapshot() ([GAS])
+[FAIL] test_snapshot2() ([GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
 Ran 3 tests for test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
@@ -53,17 +63,22 @@ Ran 3 tests for test/Issue3055.t.sol:Issue3055Test
 [FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
+Ran 2 test suites [ELAPSED]: 0 tests passed, 6 failed, 0 skipped (6 total tests)
 
 Failing tests:
+Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055NonIsolatedTest
+[FAIL] test_snapshot() ([GAS])
+[FAIL] test_snapshot2() ([GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+
 Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
 [FAIL] test_snapshot2() ([GAS])
 [FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 
-Encountered a total of 3 failing tests, 0 tests succeeded
+Encountered a total of 6 failing tests, 0 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --rerun` to retry only the 6 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)

@@ -37,7 +37,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -135,6 +135,8 @@ struct SharedFuzzState {
     total_rejects: Arc<AtomicU32>,
     /// Fuzz timer
     timer: FuzzTestTimer,
+    /// Whether a worker stopped because the timer expired.
+    timed_out: AtomicBool,
     /// Global corpus metrics
     global_corpus_metrics: GlobalCorpusMetrics,
 
@@ -152,6 +154,7 @@ impl SharedFuzzState {
             failed_worker_id: OnceLock::new(),
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
+            timed_out: AtomicBool::new(false),
             global_corpus_metrics: GlobalCorpusMetrics::default(),
             global_early_exit: early_exit,
             local_early_exit: EarlyExit::new(true),
@@ -170,9 +173,22 @@ impl SharedFuzzState {
 
     /// Returns `true` if the worker should continue running.
     fn should_continue(&self) -> bool {
-        !(self.global_early_exit.should_stop()
-            || self.local_early_exit.should_stop()
-            || self.timer.is_timed_out())
+        if self.global_early_exit.should_stop() || self.local_early_exit.should_stop() {
+            return false;
+        }
+        if self.timer.is_timed_out() {
+            self.timed_out.store(true, Ordering::Relaxed);
+            return false;
+        }
+        true
+    }
+
+    /// Returns `true` if fail-fast or Ctrl-C stopped the campaign before its timeout or
+    /// `planned_runs`.
+    fn interrupted(&self, planned_runs: u32) -> bool {
+        self.global_early_exit.should_stop()
+            && !self.timed_out.load(Ordering::Relaxed)
+            && self.total_runs.load(Ordering::Relaxed) < planned_runs
     }
 
     /// Returns true if the worker was able to claim the failure, false if failure was set by
@@ -613,6 +629,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         } else {
             let last_run_worker = &workers[last_run_worker_idx];
             result.success = true;
+            let planned_runs = if self.config.run.is_some() { 1 } else { self.config.runs };
+            if shared_state.interrupted(planned_runs) {
+                result.skipped = true;
+                result.reason = Some("interrupted".to_string());
+            }
             result.traces = last_run_worker.traces.last().cloned();
             result.debug_bytecodes.clone_from(&last_run_worker.debug_bytecodes);
             result.breakpoints = last_run_worker.breakpoints.clone();
@@ -1028,7 +1049,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         } else {
             let worker_id = worker_id as u32;
             let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-            U256::from_be_bytes(keccak256(seed_data).0)
+            keccak256(seed_data).into()
         }
     }
 

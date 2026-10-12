@@ -14,10 +14,11 @@ impl SymExpr {
             format!("concrete-address:{:?}", word_to_address(value))
         } else {
             let expr = self.symbolic_address_canonical();
-            let bytes = expr
-                .address_byte_terms_for_equivalence()
-                .map(|bytes| format!("{bytes:?}"))
-                .unwrap_or_else(|| format!("{expr:?}"));
+            let identity = expr.address_byte_terms_for_equivalence().map_or_else(
+                || ExpressionDigests::identity([expr]),
+                |bytes| ExpressionDigests::identity(&bytes),
+            );
+            let bytes = format!("{identity:?}");
             format!("symbolic-address:{bytes}")
         }
     }

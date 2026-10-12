@@ -106,7 +106,7 @@ async fn test_simulate_block_access_list_hash_rpc() {
     for (address, index) in
         [(HISTORY_STORAGE_ADDRESS, 0), (WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, 2)]
     {
-        expected.iter_mut().find(|account| account.address == address).unwrap().storage_changes =
+        expected.iter_mut().find(|account| account.address() == address).unwrap().storage_changes =
             vec![SlotChanges::new(
                 U256::ZERO,
                 vec![StorageChange::new(BlockAccessIndex::new(index), U256::from(42))],
@@ -125,7 +125,7 @@ async fn test_simulate_block_access_list_hash_rpc() {
         ..AccountChanges::new(contract)
     });
     expected.push(AccountChanges::new(beneficiary));
-    expected.sort_by_key(|account| account.address);
+    expected.sort_by_key(|account| account.address());
     let expected_hash = compute_block_access_list_hash(&expected);
 
     for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {

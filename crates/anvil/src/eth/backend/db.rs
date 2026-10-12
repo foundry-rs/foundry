@@ -186,7 +186,7 @@ pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState, SpecId);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
     pub fn new(inner: T, spec: SpecId) -> Self {
-        Self(CacheDB::new(inner), BalState::default(), spec)
+        Self(CacheDB::new(inner), BalState::new(), spec)
     }
 
     /// Enables EIP-7928 block access list recording.
@@ -416,6 +416,9 @@ pub trait Db:
     /// Returns `true` if the state snapshot was reverted.
     fn revert_state(&mut self, state_snapshot: U256, action: RevertStateSnapshotAction) -> bool;
 
+    /// Deletes a state snapshot without reverting it.
+    fn delete_state_snapshot(&mut self, state_snapshot: U256) -> bool;
+
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
         None
@@ -468,6 +471,10 @@ where
         false
     }
 
+    fn delete_state_snapshot(&mut self, _state_snapshot: U256) -> bool {
+        false
+    }
+
     fn maybe_state_root(&self) -> Option<B256> {
         self.maybe_full_db().map(|accounts| crate::mem::state::state_root(&accounts))
     }
@@ -511,7 +518,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
             let mut info = acc.info;
-            info.code = self.cache.contracts.remove(&info.code_hash);
+            info.code = self.cache.contracts.remove(&info.code_hash());
             accounts.insert(addr, info);
         }
         let block_hashes = std::mem::take(&mut self.cache.block_hashes);
@@ -525,7 +532,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, acc) in &self.cache.accounts {
             account_storage.insert(*addr, acc.storage.clone());
             let mut info = acc.info.clone();
-            info.code = self.cache.contracts.get(&info.code_hash).cloned();
+            info.code = self.cache.contracts.get(&info.code_hash()).cloned();
             accounts.insert(*addr, info);
         }
 
@@ -542,7 +549,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
-                self.cache.contracts.insert(acc.code_hash, code);
+                self.cache.contracts.insert(acc.code_hash(), code);
             }
             self.cache.accounts.insert(
                 addr,

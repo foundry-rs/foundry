@@ -6,8 +6,7 @@ use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, evm_spec_id};
 use foundry_evm_core::{
     backend::Backend,
-    evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
-    fork::CreateFork,
+    evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
 use foundry_evm_hardforks::FoundryHardfork;
@@ -29,7 +28,7 @@ pub struct TracingExecutor<FEN: FoundryEvmNetwork> {
 pub struct TracingFork<FEN: FoundryEvmNetwork> {
     pub evm_env: EvmEnvFor<FEN>,
     pub tx_env: TxEnvFor<FEN>,
-    fork: CreateFork,
+    fork: Backend<FEN>,
     context: TraceContext,
 }
 
@@ -81,7 +80,7 @@ impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
 
     fn into_parts(
         self,
-    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>, CreateFork, Chain, NetworkConfigs, Option<FoundryHardfork>)
+    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>, Backend<FEN>, Chain, NetworkConfigs, Option<FoundryHardfork>)
     {
         (
             self.evm_env,
@@ -100,14 +99,14 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     pub fn new(
         builder: ExecutorBuilder<FEN>,
         env: (EvmEnvFor<FEN>, TxEnvFor<FEN>),
-        fork: CreateFork,
+        fork: Backend<FEN>,
         version: Option<EvmVersion>,
         trace_requirements: TraceRequirements,
         networks: NetworkConfigs,
         create2_deployer: Address,
         state_overrides: Option<StateOverride>,
     ) -> eyre::Result<Self> {
-        let db = Backend::spawn(Some(fork))?;
+        let db = fork;
         // configures a bare version of the evm executor: no cheatcode and log_collector inspector
         // is enabled, tracing will be enabled only for the targeted transaction
         let mut executor = builder
@@ -170,13 +169,14 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_opts.fork_state_by_number = false;
         evm_opts.infer_network_from_fork().await?;
         let networks = evm_opts.networks;
-        let (evm_env, tx_env, resolved) =
-            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
-        let resolved = resolved.context("fork context is missing for tracing executor")?;
-        let fork = evm_opts
-            .get_fork_resolved(config, evm_env.cfg_env.chain_id, Some(&resolved))
-            .context("fork URL is missing for tracing executor")?;
-        let fork_context = resolved.context();
+        let fork = Backend::<FEN>::spawn(evm_opts.get_fork(
+            config,
+            evm_opts.env.chain_id.unwrap_or_default(),
+            None,
+        ))?;
+        let (evm_env, tx_env) = fork.env(&evm_opts).await?;
+        let fork_context =
+            fork.fork()?.context("fork context is missing for tracing executor")?.context();
 
         let chain = fork_context.source_chain_id.into();
         Ok(TracingFork {
@@ -194,7 +194,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     ) -> eyre::Result<(
         EvmEnvFor<FEN>,
         TxEnvFor<FEN>,
-        CreateFork,
+        Backend<FEN>,
         Chain,
         NetworkConfigs,
         Option<FoundryHardfork>,
@@ -250,9 +250,10 @@ impl<FEN: FoundryEvmNetwork> DerefMut for TracingExecutor<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_evm::EvmEnv;
     use alloy_rpc_types::state::AccountOverride;
     use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
-    use revm::context::Transaction;
+    use revm::context::{Transaction, TxEnv};
 
     #[cfg(feature = "base")]
     use foundry_evm_core::evm::BaseEvmNetwork;
@@ -331,11 +332,11 @@ mod tests {
     #[test]
     fn state_override_nonce_does_not_modify_transaction_nonce() {
         let sender = Address::repeat_byte(0x11);
-        let mut tx_env = TxEnvFor::<EthEvmNetwork>::default();
+        let mut tx_env = TxEnv::default();
         tx_env.set_caller(sender);
         tx_env.set_nonce(7);
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut evm_env = EvmEnvFor::<EthEvmNetwork>::default();
+        let mut evm_env = EvmEnv::default();
         evm_env.cfg_env.disable_nonce_check = true;
         let mut executor =
             ExecutorBuilder::default().build(evm_env, tx_env, backend, NetworkConfigs::default());

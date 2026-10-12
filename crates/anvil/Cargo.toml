@@ -53,7 +53,9 @@ base-common-evm = { workspace = true, optional = true, features = [
 base-common-genesis = { workspace = true, optional = true, features = ["std"] }
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["eip8130", "serde", "std"] }
+base-consensus-upgrades = { workspace = true, optional = true, features = ["std"] }
 base-execution-eip8130 = { workspace = true, optional = true }
+base-protocol = { workspace = true, optional = true, features = ["std"] }
 
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
@@ -163,7 +165,9 @@ base = [
     "dep:base-common-genesis",
     "dep:base-common-precompiles",
     "dep:base-common-rpc-types",
+    "dep:base-consensus-upgrades",
     "dep:base-execution-eip8130",
+    "dep:base-protocol",
     "dep:op-alloy-consensus",
     "dep:op-revm",
     "anvil-core/base",

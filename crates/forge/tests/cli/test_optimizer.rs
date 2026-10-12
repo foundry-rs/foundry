@@ -4680,7 +4680,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 fn preprocess_constructor_evm_version_validation(prj: _, cmd: _) {
     // The compilation target controls CREATE2 validation, independently of runtime settings.
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 28)));
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
     });
     prj.add_source("Target.sol", "pragma solidity ^0.8.0; contract Target {}");
     for (evm_version, salt, valid) in [
@@ -5019,7 +5019,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 #[forgetest]
 fn filtered_tests_preserve_cyclic_import_order(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
         config.evm_version = EvmVersion::Cancun;
     });
     prj.add_test(

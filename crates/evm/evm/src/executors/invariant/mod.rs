@@ -383,7 +383,7 @@ fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
         seed
     } else {
         let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-        U256::from_be_bytes(keccak256(seed_data).0)
+        keccak256(seed_data).into()
     }
 }
 
@@ -1081,11 +1081,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         for (worker_output, _) in worker_outputs {
             aggregator.push(worker_output);
         }
-        let result = if campaign_state.is_timed_campaign() {
+        let mut result = if campaign_state.is_timed_campaign() {
             aggregator.finish_partial()?
         } else {
             aggregator.finish_campaign()?
         };
+        result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
         persist_campaign_optimization(
             &self.config.corpus,
             result.optimization_best_value,
@@ -2395,19 +2396,21 @@ mod tests {
 
     use super::*;
     use crate::executors::ExecutorBuilder;
+    use alloy_evm::EvmEnv;
     use foundry_cheatcodes::CheatsConfig;
     use foundry_config::FuzzDictionaryConfig;
-    use foundry_evm_core::{
-        backend::Backend,
-        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
-    };
+    use foundry_evm_core::{backend::Backend, evm::EthEvmNetwork};
     use foundry_evm_fuzz::CallDetails;
     use proptest::{
         prelude::any,
         strategy::{Strategy, ValueTree},
         test_runner::Config,
     };
-    use revm::{bytecode::Bytecode, context::Block, database::InMemoryDB};
+    use revm::{
+        bytecode::Bytecode,
+        context::{Block, TxEnv},
+        database::InMemoryDB,
+    };
     use serde_json::json;
     use std::{sync::mpsc, thread};
 
@@ -2431,12 +2434,7 @@ mod tests {
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
             .gas_limit(1 << 24)
-            .build(
-                EvmEnvFor::<EthEvmNetwork>::default(),
-                TxEnvFor::<EthEvmNetwork>::default(),
-                backend,
-                Default::default(),
-            );
+            .build(EvmEnv::default(), TxEnv::default(), backend, Default::default());
         let target = Address::repeat_byte(0x11);
         let mut code = vec![0x6e]; // PUSH15.
         code.extend_from_slice(MAGIC_ASSUME);
@@ -2838,8 +2836,8 @@ mod tests {
         let handler_address = Address::repeat_byte(0x22);
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             Default::default(),
         );

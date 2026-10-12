@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::json::print_json_success;
-use foundry_common::{fs, sh_err, sh_println, shell};
+use foundry_common::{fs, fs::canonicalize_path, sh_err, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
 use serde::Serialize;
@@ -132,7 +132,7 @@ impl ListArgs {
             fs::create_dir_all(&default_dir)?;
             default_dir
         } else {
-            dunce::canonicalize(keystore_path)?
+            canonicalize_path(keystore_path)?
         };
 
         let mut accounts = Vec::new();

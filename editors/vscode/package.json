@@ -1,8 +1,10 @@
 {
-  "name": "solar-lsp",
+  "name": "forge",
   "displayName": "Solar LSP",
   "description": "Solidity language support powered by forge lsp and forge fmt",
   "version": "0.1.0",
+  "publisher": "paradigm",
+  "icon": "icon.png",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
@@ -220,6 +222,7 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "0.28.2",
+    "ovsx": "^1.2.0",
     "typescript": "^7.0.2"
   },
   "dependencies": {

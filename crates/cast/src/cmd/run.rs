@@ -72,7 +72,9 @@ use std::sync::Arc;
 use foundry_evm::core::evm::BaseEvmNetwork;
 
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
+use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
@@ -917,14 +919,14 @@ impl PreparedRun<MonadEvmNetwork> {
         // Decode the target transaction before replaying the block: an envelope this build
         // can't decode should fail fast, not after paying for the entire prior-transaction
         // replay.
-        let target_tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(&self.tx)?;
+        let target_tx_env = TxEnv::from_any_rpc_transaction(&self.tx)?;
         let target_index = self.target_index()?;
         self.prepare_target();
 
         let mut replay = Vec::new();
         self.for_each_prefix_transaction(target_index, |index, tx| {
-            let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
-            let chain_context: ChainFor<MonadEvmNetwork> = block_context.transaction(index);
+            let tx_env = TxEnv::from_any_rpc_transaction(tx)?;
+            let chain_context = block_context.transaction(index);
             replay.push((tx.tx_hash(), tx_env, chain_context));
             Ok(())
         })?;

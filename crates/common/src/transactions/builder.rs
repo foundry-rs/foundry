@@ -5,10 +5,11 @@ use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
 use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
+use alloy_rpc_types::{TransactionRequest, serde_helpers::WithOtherFields};
 use eyre::Result;
 use foundry_wallets::TempoAccountsWallet;
 use std::num::NonZeroU64;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 #[cfg(feature = "base")]
@@ -313,7 +314,7 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     }
 }
 
-impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionRequest {
+impl FoundryTransactionBuilder<Ethereum> for TransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
     }
@@ -352,7 +353,7 @@ impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionR
     }
 }
 
-impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::TransactionRequest {
+impl FoundryTransactionBuilder<AnyNetwork> for WithOtherFields<TransactionRequest> {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
     }
@@ -427,7 +428,7 @@ impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
 /// See <https://github.com/wevm/viem/blob/61a40ec943652a09ee6622e2349c5fedca97ed5e/src/tempo/Formatters.ts#L148-L159>.
 const TEMPO_BROWSER_WEBAUTHN_DATA_SIZE: u16 = 1_400;
 
-impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::TransactionRequest {
+impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
     }

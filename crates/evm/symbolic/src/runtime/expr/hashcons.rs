@@ -142,7 +142,7 @@ impl<T: Eq + Hash> HashCons<T> {
             match self.table.entry(
                 hash,
                 |entry| {
-                    if entry.hash != hash {
+                    if entry.hash() != hash {
                         return false;
                     }
                     match entry.value.upgrade() {

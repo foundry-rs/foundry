@@ -14,6 +14,7 @@ use axum::{
     routing::post,
 };
 use forge_script_sequence::ScriptSequence;
+use foundry_cli::utils::parse_json;
 use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
 use foundry_evm::traces::CallKind;
@@ -626,7 +627,7 @@ contract ExternalFactory {
     )
     .unwrap();
     let metadata: serde_json::Value =
-        serde_json::from_str(artifact["rawMetadata"].as_str().unwrap()).unwrap();
+        parse_json(artifact["rawMetadata"].as_str().unwrap()).unwrap();
     let compiler_version = format!("v{}", metadata["compiler"]["version"].as_str().unwrap());
 
     #[derive(Default)]

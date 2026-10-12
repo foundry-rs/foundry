@@ -3,6 +3,7 @@
 use crate::{
     TestFunctionExt,
     external_compiler::{ExternalCompilation, is_builtin_compiler_source},
+    fs::canonicalize_path,
     preprocessor::DynamicTestLinkingPreprocessor,
     shell,
     term::SpinnerReporter,
@@ -847,7 +848,7 @@ pub fn compile_target_abi(
     target_path: &Path,
     target_name: &str,
 ) -> Result<JsonAbi> {
-    let target_path = dunce::canonicalize(target_path)?;
+    let target_path = canonicalize_path(target_path)?;
     let output = compile_abi_project(
         project,
         ProjectCompiler::new().quiet(true).files([target_path.clone()]),
@@ -861,7 +862,7 @@ pub fn compile_target_abi(
 
 /// Creates a [Project] from an Etherscan source.
 pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
-    let target_path = dunce::canonicalize(target_path)?;
+    let target_path = canonicalize_path(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 

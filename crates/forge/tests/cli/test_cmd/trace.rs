@@ -750,3 +750,64 @@ contract GreeterTest is Test {
         .assert_success()
         .stderr_eq(str![""]);
 }
+
+// Nested transactions must share the suspended trace depth and restore isolation context.
+#[forgetest_init]
+fn execute_transaction_nested_tracing(prj: _, cmd: _) {
+    prj.add_test(
+        "ExecuteTransactionTracing.t.sol",
+        &include_str!("../../../../../testdata/default/cheats/ExecuteTransactionTracing.t.sol")
+            .replace("utils/Test.sol", "forge-std/Test.sol"),
+    );
+
+    for isolate in [false, true] {
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
+        cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 8 tests for test/ExecuteTransactionTracing.t.sol:ExecuteTransactionTracingTest
+[PASS] test_nested_create() ([GAS])
+[PASS] test_nested_halt() ([GAS])
+[PASS] test_nested_invalid_nonce() ([GAS])
+[PASS] test_nested_leaf() ([GAS])
+[PASS] test_nested_revert() ([GAS])
+[PASS] test_nested_subcall() ([GAS])
+[PASS] test_nested_transaction_creates_child() ([GAS])
+[PASS] test_recursive_transaction() ([GAS])
+Suite result: ok. 8 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 8 tests passed, 0 failed, 0 skipped (8 total tests)
+
+"#]]);
+
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
+        cmd.args(["test", "--mt", "test_nested_subcall", "-vvvv"]).assert_success().stdout_eq(
+            str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/ExecuteTransactionTracing.t.sol:ExecuteTransactionTracingTest
+[PASS] test_nested_subcall() ([GAS])
+Traces:
+  [..] ExecuteTransactionTracingTest::test_nested_subcall()
+...
+    ├─ [..] ExecuteTransactionTracingTest::execute([..])
+    │   ├─ [..] VM::executeTransaction([..])
+    │   │   ├─ [..] ExecuteTransactionTracingTest::leaf()
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Return] 0x
+    │   ├─ [..] ExecuteTransactionTracingTest::leaf()
+    │   │   └─ ← [Stop]
+    │   └─ ← [Stop]
+    ├─ [..] ExecuteTransactionTracingTest::leaf()
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+        );
+    }
+}

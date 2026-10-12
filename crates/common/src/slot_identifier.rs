@@ -217,10 +217,10 @@ impl SlotInfo {
             // Check if value is long
             if length_byte & 1 == 1 {
                 // Long bytes/string - populate members
-                let length: U256 = U256::from_be_bytes(base_value.0) >> 1;
+                let length: U256 = Into::<U256>::into(*base_value) >> 1;
                 let byte_len = length.try_into().unwrap_or(usize::MAX);
                 let num_slots = byte_len.div_ceil(32).min(256);
-                let data_start = U256::from_be_bytes(keccak256(base_slot.0).0);
+                let data_start = Into::<U256>::into(keccak256(base_slot.0));
 
                 let mut members = Vec::new();
                 let mut full_data = Vec::with_capacity(num_slots * 32);
@@ -398,7 +398,7 @@ impl SlotIdentifier {
     /// It can also identify whether a slot belongs to a mapping if provided with [`MappingSlots`].
     pub fn identify(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
         trace!(?slot, "identifying slot");
-        let slot_u256 = U256::from_be_bytes(slot.0);
+        let slot_u256 = Into::<U256>::into(*slot);
         let slot_str = slot_u256.to_string();
 
         for storage in &self.storage_layout.storage {
@@ -489,7 +489,7 @@ impl SlotIdentifier {
         slot: &B256,
         storage_values: &B256Map<B256>,
     ) -> Option<SlotInfo> {
-        let slot_u256 = U256::from_be_bytes(slot.0);
+        let slot_u256 = Into::<U256>::into(*slot);
         let slot_str = slot_u256.to_string();
 
         // Search through all bytes/string variables in the storage layout
@@ -911,14 +911,14 @@ impl SlotIdentifier {
         // Check if it could be a data slot for this long bytes/string
         // Calculate where data slots would start for this variable
         let data_start =
-            U256::from_be_bytes(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()).0);
+            Into::<U256>::into(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()));
 
         // Get the length from the base slot value to calculate exact number of slots
         // For long bytes/strings, the length is stored as (length * 2 + 1) in the base slot
         let length_byte = base_slot_value.0[31];
         if length_byte & 1 == 1 {
             // It's a long bytes/string
-            let length = U256::from_be_bytes(base_slot_value.0) >> 1;
+            let length = Into::<U256>::into(*base_slot_value) >> 1;
             // Calculate number of slots needed (round up)
             let num_slots = (length + U256::from(31)) / U256::from(32);
 

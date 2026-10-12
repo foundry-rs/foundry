@@ -64,11 +64,17 @@ use std::{
 };
 
 #[cfg(feature = "monad")]
+use alloy_monad_evm::MonadEvmFactory;
+#[cfg(feature = "monad")]
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 #[cfg(feature = "monad")]
 use foundry_evm_core::evm::{
     MonadEvmNetwork, refresh_chain_journal, try_transact_monad_system_replay,
 };
+#[cfg(feature = "monad")]
+use monad_revm::{MonadChainContext, MonadHardfork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -150,9 +156,9 @@ impl Executor<MonadEvmNetwork> {
     #[instrument(name = "transact_system_replay", level = "debug", skip_all)]
     pub fn try_transact_system_replay_with_env_and_context(
         &mut self,
-        mut evm_env: EvmEnvFor<MonadEvmNetwork>,
-        mut tx_env: TxEnvFor<MonadEvmNetwork>,
-        chain_context: ChainFor<MonadEvmNetwork>,
+        mut evm_env: EvmEnv<MonadHardfork>,
+        mut tx_env: TxEnv,
+        chain_context: MonadChainContext,
     ) -> eyre::Result<Option<RawCallResult<MonadEvmNetwork>>> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
@@ -184,10 +190,10 @@ impl Executor<MonadEvmNetwork> {
     #[instrument(name = "transact_monad_block_replay", level = "debug", skip_all)]
     pub fn transact_with_monad_block_replay(
         &mut self,
-        evm_env: EvmEnvFor<MonadEvmNetwork>,
-        target_tx_env: TxEnvFor<MonadEvmNetwork>,
-        target_chain_context: ChainFor<MonadEvmNetwork>,
-        replay: Vec<(B256, TxEnvFor<MonadEvmNetwork>, ChainFor<MonadEvmNetwork>)>,
+        evm_env: EvmEnv<MonadHardfork>,
+        target_tx_env: TxEnv,
+        target_chain_context: MonadChainContext,
+        replay: Vec<(B256, TxEnv, MonadChainContext)>,
         replay_system_txes: bool,
     ) -> eyre::Result<Option<(RawCallResult<MonadEvmNetwork>, bool)>> {
         let block_number = evm_env.block_env.number();
@@ -205,7 +211,7 @@ impl Executor<MonadEvmNetwork> {
                 TxKind::Create => caller.create(target_tx_env.nonce()),
             };
             backend.set_test_contract(target_contract);
-            let mut evm = <MonadEvmNetwork as FoundryEvmNetwork>::EvmFactory::default()
+            let mut evm = MonadEvmFactory::default()
                 .create_foundry_evm_with_inspector(backend, evm_env, &mut stack);
             *evm.chain_mut() = target_chain_context.clone();
             evm.disable_inspector();
@@ -556,18 +562,15 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let backend = self.backend_mut();
         for (address, account_state) in prestate {
             let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
-            let info = revm::state::AccountInfo {
-                nonce: account_state.nonce.unwrap_or_default(),
-                balance: account_state.balance.unwrap_or_default(),
-                code_hash: code.hash_slow(),
-                code: Some(code),
-                account_id: Default::default(),
-            };
+            let info = revm::state::AccountInfo::default()
+                .with_balance(account_state.balance.unwrap_or_default())
+                .with_nonce(account_state.nonce.unwrap_or_default())
+                .with_code(code);
             backend.insert_account_info(address, info);
 
             for (slot, value) in account_state.storage {
-                let slot = U256::from_be_bytes(slot.0);
-                let value = U256::from_be_bytes(value.0);
+                let slot = slot.into();
+                let value = value.into();
                 backend.insert_account_storage(address, slot, value)?;
             }
         }
@@ -805,7 +808,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         parent_beacon_block_root: alloy_primitives::B256,
     ) -> eyre::Result<()> {
-        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let calldata = Bytes::from(parent_beacon_block_root);
         let mut evm_env = self.evm_env.clone();
         let inspector = self.inspector().clone();
         let mut state = {
@@ -1713,7 +1716,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
             (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let stipend = calculate_stipend(&tx_env, &evm_env.cfg_env);
+    let stipend = calculate_stipend(&tx_env, evm_env.cfg_env());
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),
@@ -1912,6 +1915,11 @@ impl EvmExecutionCancellation {
         }
     }
 
+    /// Returns whether a campaign stop was requested or its deadline was observed.
+    pub(crate) fn stop_requested(&self) -> bool {
+        matches!(self, Self::Campaign { stop, .. } if stop.load(Ordering::Relaxed))
+    }
+
     pub(crate) const fn early_exit_ref(&self) -> &EarlyExit {
         match self {
             Self::EarlyExit(early_exit) | Self::Campaign { early_exit, .. } => early_exit,
@@ -1945,12 +1953,19 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
+    use foundry_evm_hardforks::TempoHardfork;
     use foundry_evm_traces::InternalTraceMode;
-    use revm::context::{CfgEnv, TxEnv};
+    use revm::context::CfgEnv;
     use std::{sync::mpsc, thread};
+    use tempo_revm::{TempoBlockEnv, TempoTxEnv};
+
+    #[cfg(not(feature = "monad"))]
+    use revm::context::TxEnv;
 
     #[cfg(feature = "base")]
     use foundry_evm_core::evm::BaseEvmNetwork;
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseSpecId;
 
     #[cfg(feature = "monad")]
     use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
@@ -1992,8 +2007,8 @@ mod tests {
     #[test]
     fn executor_tooling_follows_concrete_builder() {
         let ethereum = ExecutorBuilder::<EthEvmNetwork>::new().build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::with_monad(),
         );
@@ -2001,8 +2016,8 @@ mod tests {
         assert!(!ethereum.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
 
         let monad = ExecutorBuilder::<MonadEvmNetwork>::new().build(
-            EvmEnvFor::<MonadEvmNetwork>::default(),
-            TxEnvFor::<MonadEvmNetwork>::default(),
+            EvmEnv::<MonadHardfork>::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::with_monad(),
         );
@@ -2014,16 +2029,16 @@ mod tests {
     #[test]
     fn tempo_labels_follow_concrete_builder() {
         let ethereum = ExecutorBuilder::<EthEvmNetwork>::new().build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::with_tempo(),
         );
         assert!(ethereum.inspector().tempo_labels.is_none());
 
         let tempo = ExecutorBuilder::<TempoEvmNetwork>::new().build(
-            EvmEnvFor::<TempoEvmNetwork>::default(),
-            TxEnvFor::<TempoEvmNetwork>::default(),
+            EvmEnv::<TempoHardfork, TempoBlockEnv>::default(),
+            TempoTxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::default(),
         );
@@ -2107,7 +2122,7 @@ mod tests {
     fn base_block_replay_rejects_eip8130_before_execution() {
         for target_is_eip8130 in [true, false] {
             let mut executor = ExecutorBuilder::<BaseEvmNetwork>::new().build(
-                EvmEnvFor::<BaseEvmNetwork>::default(),
+                EvmEnv::<BaseSpecId>::default(),
                 TxEnvFor::<BaseEvmNetwork>::default(),
                 Backend::spawn(None).unwrap(),
                 NetworkConfigs::with_base(),
@@ -2150,7 +2165,7 @@ mod tests {
             };
             let error = executor
                 .transact_with_ordinary_block_replay(
-                    EvmEnvFor::<BaseEvmNetwork>::default(),
+                    EvmEnv::<BaseSpecId>::default(),
                     target,
                     prefix,
                 )
@@ -2164,8 +2179,8 @@ mod tests {
     fn block_replay_commits_prefix_and_traces_only_target() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2216,8 +2231,8 @@ mod tests {
     fn block_replay_initializes_create_target_from_canonical_nonce() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2256,8 +2271,8 @@ mod tests {
     fn block_replay_preserves_successful_prefix_deployment() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2291,8 +2306,8 @@ mod tests {
 
         let backend = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::<MonadEvmNetwork>::default().gas_limit(1 << 20).build(
-            EvmEnvFor::<MonadEvmNetwork>::default(),
-            TxEnvFor::<MonadEvmNetwork>::default(),
+            EvmEnv::<MonadHardfork>::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::with_monad(),
         );
@@ -2316,12 +2331,12 @@ mod tests {
             kind: TxKind::Call(Address::repeat_byte(0x11)),
             ..Default::default()
         };
-        let system_chain = ChainFor::<MonadEvmNetwork>::for_transaction(&system);
-        let target_chain = ChainFor::<MonadEvmNetwork>::for_transaction(&target);
+        let system_chain = MonadChainContext::for_transaction(&system);
+        let target_chain = MonadChainContext::for_transaction(&target);
 
         let (result, used_system_replay) = executor
             .transact_with_monad_block_replay(
-                EvmEnvFor::<MonadEvmNetwork>::default(),
+                EvmEnv::<MonadHardfork>::default(),
                 target,
                 target_chain,
                 vec![(B256::repeat_byte(1), system, system_chain)],
@@ -2342,8 +2357,8 @@ mod tests {
 
         let backend = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::<MonadEvmNetwork>::default().gas_limit(1 << 20).build(
-            EvmEnvFor::<MonadEvmNetwork>::default(),
-            TxEnvFor::<MonadEvmNetwork>::default(),
+            EvmEnv::<MonadHardfork>::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::with_monad(),
         );
@@ -2360,11 +2375,11 @@ mod tests {
             chain_id: None,
             ..Default::default()
         };
-        let target_chain = ChainFor::<MonadEvmNetwork>::for_transaction(&target);
+        let target_chain = MonadChainContext::for_transaction(&target);
 
         let (result, used_system_replay) = executor
             .transact_with_monad_block_replay(
-                EvmEnvFor::<MonadEvmNetwork>::default(),
+                EvmEnv::<MonadHardfork>::default(),
                 target,
                 target_chain,
                 Vec::new(),
@@ -2395,8 +2410,8 @@ mod tests {
     fn set_spec_id_updates_spec_dependent_cfg_state() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2525,8 +2540,8 @@ mod tests {
     fn set_trace_requirements_replaces_trace_mode_between_transactions() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2569,8 +2584,8 @@ mod tests {
         const GAS_LIMIT: u64 = 1 << 24;
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2609,8 +2624,8 @@ mod tests {
     fn completed_execution_is_not_retroactively_cancelled() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(1 << 24).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2631,8 +2646,8 @@ mod tests {
         const GAS_LIMIT: u64 = 1 << 24;
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2659,8 +2674,8 @@ mod tests {
     fn beacon_root_system_call_does_not_persist_system_address() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().spec_id(SpecId::CANCUN).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             backend,
             NetworkConfigs::default(),
         );
@@ -2748,8 +2763,8 @@ mod tests {
     #[test]
     fn concrete_system_replay_preserves_envelope_and_rejects_without_commit() {
         let mut executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20).build(
-            EvmEnvFor::<MonadEvmNetwork>::default(),
-            TxEnvFor::<MonadEvmNetwork>::default(),
+            EvmEnv::<MonadHardfork>::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::with_monad(),
         );
@@ -2767,9 +2782,9 @@ mod tests {
         };
         let result = executor
             .try_transact_system_replay_with_env_and_context(
-                EvmEnvFor::<MonadEvmNetwork>::default(),
+                EvmEnv::<MonadHardfork>::default(),
                 system.clone(),
-                ChainFor::<MonadEvmNetwork>::for_transaction(&system),
+                MonadChainContext::for_transaction(&system),
             )
             .unwrap()
             .unwrap();
@@ -2781,9 +2796,9 @@ mod tests {
         assert!(
             executor
                 .try_transact_system_replay_with_env_and_context(
-                    EvmEnvFor::<MonadEvmNetwork>::default(),
+                    EvmEnv::<MonadHardfork>::default(),
                     system.clone(),
-                    ChainFor::<MonadEvmNetwork>::for_transaction(&system),
+                    MonadChainContext::for_transaction(&system),
                 )
                 .is_err()
         );
@@ -2794,9 +2809,9 @@ mod tests {
         assert!(
             executor
                 .try_transact_system_replay_with_env_and_context(
-                    EvmEnvFor::<MonadEvmNetwork>::default(),
+                    EvmEnv::<MonadHardfork>::default(),
                     ordinary.clone(),
-                    ChainFor::<MonadEvmNetwork>::for_transaction(&ordinary),
+                    MonadChainContext::for_transaction(&ordinary),
                 )
                 .unwrap()
                 .is_none()

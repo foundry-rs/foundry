@@ -3,6 +3,7 @@
 use alloy_primitives::{Keccak256, keccak256};
 use eyre::{Context, Result, ensure, eyre};
 use flate2::read::GzDecoder;
+use foundry_common::fs::canonicalize_path;
 use foundry_config::Config;
 use std::{
     fs,
@@ -42,7 +43,7 @@ const ASSETS: &[(&str, &[u8])] = &[
 
 pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()> {
     let project =
-        dunce::canonicalize(path.map(Path::to_path_buf).unwrap_or(std::env::current_dir()?))
+        canonicalize_path(path.map(Path::to_path_buf).unwrap_or(std::env::current_dir()?))
             .wrap_err("Could not open the project directory")?;
     ensure!(project.is_dir(), "Project path must be a directory: {}", project.display());
     let forge = std::env::current_exe()?;
@@ -57,7 +58,7 @@ pub(super) fn launch(path: Option<&Path>, code_path: Option<&Path>) -> Result<()
         )
     };
     let code = which::which(&code).wrap_err_with(launch_error)?;
-    let code_target = dunce::canonicalize(&code).wrap_err_with(launch_error)?;
+    let code_target = canonicalize_path(&code).wrap_err_with(launch_error)?;
     let cache = Config::foundry_cache_dir()
         .ok_or_else(|| eyre!("Could not find the Foundry cache directory"))?
         .join("lsp");
@@ -138,7 +139,7 @@ fn vscode_session_dir(data: &Path, key: &str) -> Result<PathBuf> {
 
 #[cfg(unix)]
 fn vscode_session_link(session: &Path, temp: &Path) -> Result<PathBuf> {
-    let session = dunce::canonicalize(session)?;
+    let session = canonicalize_path(session)?;
     let uid = rustix::process::geteuid().as_raw();
     let root = temp.join(format!("foundry-lsp-{uid}"));
     create_private_dir(&root, uid)?;

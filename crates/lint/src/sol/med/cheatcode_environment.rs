@@ -1033,7 +1033,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                     let ConstValue::String(bytes) = self.gcx.try_eval_const_value(arg).ok()? else {
                         return None;
                     };
-                    return Some(U256::from_be_bytes(keccak256(bytes.as_byte_str()).0));
+                    return Some(keccak256(bytes.as_byte_str()).into());
                 }
                 let bits = self.cast_bits(callee)?;
                 let value = self.constant_word(arg, depth + 1)?;

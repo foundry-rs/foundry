@@ -13,14 +13,14 @@ use alloy_rpc_types::BlockId;
 use foundry_compilers::artifacts::EvmVersion;
 use revm::bytecode::opcode::{
     AND, CALL, CLZ, CODECOPY, CREATE, DUP6, EQ, GAS, INVALID, ISZERO, JUMPDEST, JUMPI, MCOPY,
-    MSTORE, MUL, OR, POP, PUSH0, PUSH1, PUSH2, PUSH3, RETURN, RETURNDATASIZE, STATICCALL, STOP,
-    SWAP1,
+    MSTORE, MUL, OR, POP, PUSH0, PUSH1, PUSH2, PUSH3, RETURN, RETURNDATASIZE, SLOTNUM, STATICCALL,
+    STOP, SWAP1,
 };
 
 /// Probed features in activation order, each paired with the EVM version that introduced it and
 /// runtime code that halts exceptionally unless the feature is active.
 #[rustfmt::skip]
-const PROBES: [(EvmVersion, &[u8]); 4] = [
+const PROBES: [(EvmVersion, &[u8]); 5] = [
     (EvmVersion::Shanghai, &[PUSH0, POP, STOP]),
     (EvmVersion::Cancun, &[PUSH1, 0, PUSH1, 0, PUSH1, 0, MCOPY, STOP]),
     // Calls the BLS12-381 G1ADD precompile (0x0b) with two points at infinity and requires its
@@ -32,13 +32,15 @@ const PROBES: [(EvmVersion, &[u8]); 4] = [
         RETURNDATASIZE, PUSH1, 0x80, EQ, AND, PUSH1, 22, JUMPI, INVALID, JUMPDEST, STOP,
     ]),
     (EvmVersion::Osaka, &[PUSH1, 0, CLZ, POP, STOP]),
+    (EvmVersion::Amsterdam, &[SLOTNUM, POP, STOP]),
 ];
 
 /// Gas forwarded to each probe. A failing probe consumes all of it.
 const PROBE_GAS: u32 = 20_000;
 
-/// Gas limit of the probe call, enough for the worst case in which every probe fails.
-const PROBE_CALL_GAS: u64 = 1_000_000;
+/// Gas limit of the probe call, enough for the worst case in which every probe fails. Under
+/// EIP-8037 the six accounts the probe creates cost 1,101,600 state gas alone.
+const PROBE_CALL_GAS: u64 = 3_000_000;
 
 /// Returns the newest EVM version whose features, and those of every earlier probed version, the
 /// node executes at `block`.
@@ -91,7 +93,7 @@ fn evm_version_from_mask(mask: U256) -> EvmVersion {
 /// failure cannot exhaust the call, and sets bit `i` of the returned word if probe `i` succeeded.
 /// The code itself only uses opcodes that predate every probed feature.
 fn probe_code() -> Bytes {
-    const PER_PROBE: usize = 38;
+    const PER_PROBE: usize = 39;
     const HEADER_AND_FOOTER: usize = 10;
 
     let [_, gas @ ..] = PROBE_GAS.to_be_bytes();
@@ -102,9 +104,10 @@ fn probe_code() -> Bytes {
     for (bit, (_, runtime)) in PROBES.iter().enumerate() {
         let initcode = deploy_code(runtime);
         let len = u8::try_from(initcode.len()).expect("probe initcode length fits in PUSH1");
-        let start = u8::try_from(offset).expect("probe initcode offset fits in PUSH1");
+        let [start_hi, start_lo] =
+            u16::try_from(offset).expect("probe initcode offset fits in PUSH2").to_be_bytes();
         // CODECOPY(0, start, len)
-        code.extend([PUSH1, len, PUSH1, start, PUSH1, 0, CODECOPY]);
+        code.extend([PUSH1, len, PUSH2, start_hi, start_lo, PUSH1, 0, CODECOPY]);
         // CREATE(0, 0, len)
         code.extend([PUSH1, len, PUSH1, 0, PUSH1, 0, CREATE]);
         // CALL(PROBE_GAS, address, 0, 0, 0, 0, 0), duplicating the created address from below the
@@ -155,6 +158,7 @@ mod tests {
             (SpecId::CANCUN, EvmVersion::Cancun),
             (SpecId::PRAGUE, EvmVersion::Prague),
             (SpecId::OSAKA, EvmVersion::Osaka),
+            (SpecId::AMSTERDAM, EvmVersion::Amsterdam),
         ] {
             let result = Context::mainnet()
                 .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(spec))

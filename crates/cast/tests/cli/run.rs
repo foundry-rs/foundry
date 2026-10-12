@@ -456,7 +456,7 @@ async fn cast_run_replays_elastic_chain_id_on_anvil(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
 
     cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()]).assert_success().stdout_eq(
@@ -482,7 +482,7 @@ async fn cast_run_rejects_elastic_chains(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -513,7 +513,7 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -662,7 +662,7 @@ async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
     let output = cmd
         .args([
             "run",
-            &receipt.transaction_hash().to_string(),
+            &receipt.tx_hash().to_string(),
             "--rpc-url",
             &handle.http_endpoint(),
             "--evm-version",
@@ -736,5 +736,49 @@ async fn cast_run_rejects_mismatched_transaction(cmd: _) {
             .stderr_eq(format!(
                 "Error: RPC returned transaction {returned} for requested {requested}\n"
             ));
+    }
+}
+
+// A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
+// charges 21000 where EIP-2780 charges 15000.
+#[casttest]
+async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
+    for (hardfork, gas) in
+        [(EthereumHardfork::Cancun, 21_000), (EthereumHardfork::Amsterdam, 15_000)]
+    {
+        let (upstream_api, upstream) =
+            anvil::spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let mut accounts = upstream.dev_accounts();
+        let tx = TransactionRequest::default()
+            .with_from(accounts.next().unwrap())
+            .with_to(accounts.next().unwrap());
+        let receipt = upstream
+            .http_provider()
+            .send_transaction(tx.into())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.gas_used, gas);
+        // Fork after the transaction's block, so that the fork serves it as upstream history.
+        upstream_api.evm_mine(None).await.unwrap();
+
+        let (_, fork) = anvil::spawn(
+            NodeConfig::test()
+                .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+                .with_eth_rpc_url(Some(upstream.http_endpoint())),
+        )
+        .await;
+        cmd.cast_fuse()
+            .args([
+                "run",
+                &receipt.transaction_hash.to_string(),
+                "--rpc-url",
+                &fork.http_endpoint(),
+            ])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n"));
     }
 }

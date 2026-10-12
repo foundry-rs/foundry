@@ -118,7 +118,8 @@ impl Cheatcode for randomUint_2Call {
 
 impl Cheatcode for randomAddressCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        Ok(DynSolValue::type_strategy(&DynSolType::Address)
+        Ok(DynSolType::Address
+            .value_strategy()
             .new_tree(state.test_runner())
             .unwrap()
             .current()
@@ -330,7 +331,8 @@ fn random_uint<FEN: FoundryEvmNetwork>(
         return Ok(random_number.abi_encode());
     }
 
-    Ok(DynSolValue::type_strategy(&DynSolType::Uint(256))
+    Ok(DynSolType::Uint(256)
+        .value_strategy()
         .new_tree(state.test_runner())
         .unwrap()
         .current()

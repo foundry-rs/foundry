@@ -112,6 +112,7 @@ tempfile.workspace = true
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
+alloy-rpc-types.workspace = true
 async-lsp.workspace = true
 tokio-util.workspace = true
 futures = { workspace = true, features = ["executor"] }
@@ -127,6 +128,7 @@ svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true
+base-common-consensus = { workspace = true, features = ["serde", "std"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 rexpect.workspace = true

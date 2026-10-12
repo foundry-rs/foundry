@@ -280,7 +280,7 @@ impl Create2Args {
         .ok_or_else(|| eyre::eyre!("create2 salt mining failed: all threads panicked"))?;
         sh_status!("Successfully found contract address in {:?}", timer.elapsed())?;
         sh_status!("Address: {address}")?;
-        sh_status!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
+        sh_status!("Salt: {salt} ({})", Into::<U256>::into(salt))?;
         // The machine-readable stdout record duplicates the prose above when stdout is an
         // interactive terminal.
         if !shell::is_out_tty() {
