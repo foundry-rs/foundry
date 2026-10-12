@@ -57,7 +57,7 @@ use foundry_evm_hardforks::BaseSpecId;
 use foundry_evm_networks::{active_base_precompiles, is_base_precompile_active_at};
 
 #[cfg(feature = "monad")]
-type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
+use foundry_evm_hardforks::MonadHardfork;
 
 #[cfg(feature = "base")]
 mod base;
