@@ -2,9 +2,14 @@ use crate::{ScriptSequence, TransactionWithMetadata};
 use alloy_network::{Network, ReceiptResponse};
 use eyre::{Result, bail};
 use foundry_common::fs;
-use revm_inspectors::tracing::types::CallKind;
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
+
+#[cfg(feature = "revm")]
+use revm_inspectors::tracing::types::CallKind;
+
+#[cfg(not(feature = "revm"))]
+use evm2_inspectors::tracing::types::CallKind;
 
 /// This type reads broadcast files in the
 /// `project_root/broadcast/{contract_name}.s.sol/{chain_id}/` directory.

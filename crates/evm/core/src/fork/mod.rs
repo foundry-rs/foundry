@@ -12,12 +12,17 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "revm")]
 pub mod database;
 
+#[cfg(feature = "revm")]
 mod multi;
+#[cfg(feature = "revm")]
 pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};
 
+#[cfg(feature = "revm")]
 mod bal;
+#[cfg(feature = "revm")]
 pub use bal::{cache_bal, validate_bal};
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
@@ -141,6 +146,7 @@ impl Fork {
         Ok(fork)
     }
 
+    #[cfg(any(test, feature = "revm"))]
     pub(crate) const fn source_id(&self) -> B256 {
         self.source_id
     }

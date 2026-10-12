@@ -12,7 +12,7 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
+use crate::{broadcast::BundledState, simulate::PreSimulationState};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -26,6 +26,7 @@ use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
+use foundry_cheatcodes::{BroadcastableTransactions, Wallets};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
@@ -36,7 +37,7 @@ use foundry_common::{
     compile::ContractSizeLimits,
     shell,
 };
-use foundry_compilers::{ArtifactId, artifacts::output_selection::ContractOutputSelection};
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{
     Config, Eip1559FeeEstimatePreset, FoundryHardfork, figment,
     figment::{
@@ -44,26 +45,40 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerLayout;
 use foundry_evm::{
-    backend::Backend,
     core::{
-        Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        Breakpoints,
+        evm::{EthEvmNetwork, FoundryEvmNetwork},
+        fork::Fork,
     },
-    executors::ExecutorBuilder,
-    inspectors::{
-        CheatsConfig,
-        cheatcodes::{BroadcastableTransactions, Wallets},
-    },
-    opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
-    revm::interpreter::InstructionResult,
-    traces::{InternalTraceMode, TraceRequirements, Traces},
+    opts::EvmOpts,
+    traces::{InstructionResult, Traces},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{marker::PhantomData, path::PathBuf};
+
+#[cfg(feature = "revm")]
+use crate::runner::ScriptRunner;
+#[cfg(feature = "revm")]
+use foundry_cheatcodes::CheatsConfig;
+#[cfg(feature = "revm")]
+use foundry_compilers::ArtifactId;
+#[cfg(feature = "revm")]
+use foundry_evm::{
+    backend::Backend,
+    core::{
+        FoundryTransaction,
+        evm::{EvmEnvFor, SpecFor, TempoEvmNetwork, TxEnvFor},
+    },
+    executors::ExecutorBuilder,
+    opts::{ExecutionSpecContext, ForkContext, resolve_execution_spec},
+    traces::{InternalTraceMode, TraceRequirements},
+};
+
+#[cfg(feature = "revm")]
+use foundry_debugger::DebuggerLayout;
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -76,13 +91,16 @@ use foundry_evm::core::evm::OpEvmNetwork;
 
 mod broadcast;
 mod build;
+mod ethereum;
 mod execute;
+mod gas_search;
 mod library_deployments;
 mod multi_sequence;
 mod progress;
 mod providers;
 mod receipts;
 mod recovery;
+#[cfg(feature = "revm")]
 mod runner;
 mod sequence;
 mod session;
@@ -237,6 +255,7 @@ pub struct ScriptArgs {
     pub debug: bool,
 
     /// Debugger layout to use.
+    #[cfg(feature = "revm")]
     #[arg(long = "debug-layout", requires = "debug", value_enum)]
     pub debug_layout: Option<DebuggerLayout>,
 
@@ -360,7 +379,7 @@ impl ScriptArgs {
         self,
         mut config: Config,
         mut evm_opts: EvmOpts,
-        executor_builder: ExecutorBuilder<FEN>,
+        #[cfg(feature = "revm")] executor_builder: fn() -> ExecutorBuilder<FEN>,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
         let mut tempo = args.tempo.clone();
@@ -408,9 +427,10 @@ impl ScriptArgs {
             config.extra_output.push(ContractOutputSelection::StorageLayout);
         }
 
-        let script_config = ScriptConfig::new(
+        let script_config = ScriptConfig::<FEN>::new(
             config,
             evm_opts,
+            #[cfg(feature = "revm")]
             executor_builder,
             args.batch,
             tempo,
@@ -453,6 +473,7 @@ impl ScriptArgs {
         // Box each branch's future to keep its large async state off `run_script`'s future;
         // otherwise `run_command` trips `clippy::large_stack_frames` by a small margin.
         match evm_opts.networks.execution_network() {
+            #[cfg(feature = "revm")]
             NetworkVariant::Tempo => {
                 let batch = self.batch;
                 Box::pin(async move {
@@ -460,7 +481,7 @@ impl ScriptArgs {
                         .prepare_bundled::<TempoEvmNetwork>(
                             config,
                             evm_opts,
-                            ExecutorBuilder::<TempoEvmNetwork>::new(),
+                            ExecutorBuilder::<TempoEvmNetwork>::new,
                         )
                         .await?
                     {
@@ -488,7 +509,7 @@ impl ScriptArgs {
                 Box::pin(self.run_generic_script::<BaseEvmNetwork>(
                     config,
                     evm_opts,
-                    ExecutorBuilder::<BaseEvmNetwork>::new(),
+                    ExecutorBuilder::<BaseEvmNetwork>::new,
                 ))
                 .await
             }
@@ -496,7 +517,7 @@ impl ScriptArgs {
             NetworkVariant::Monad => {
                 Box::pin(async move {
                     let Some(prepared) = self
-                        .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new())
+                        .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new)
                         .await?
                     else {
                         return Ok(());
@@ -517,15 +538,20 @@ impl ScriptArgs {
                 Box::pin(self.run_generic_script::<OpEvmNetwork>(
                     config,
                     evm_opts,
-                    ExecutorBuilder::<OpEvmNetwork>::new(),
+                    ExecutorBuilder::<OpEvmNetwork>::new,
                 ))
                 .await
+            }
+            #[cfg(not(feature = "revm"))]
+            NetworkVariant::Tempo => {
+                eyre::bail!("Tempo script execution requires the compatibility build")
             }
             NetworkVariant::Ethereum => {
                 Box::pin(self.run_generic_script::<EthEvmNetwork>(
                     config,
                     evm_opts,
-                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                    #[cfg(feature = "revm")]
+                    ExecutorBuilder::<EthEvmNetwork>::new,
                 ))
                 .await
             }
@@ -540,9 +566,17 @@ impl ScriptArgs {
         self,
         config: Config,
         evm_opts: EvmOpts,
-        executor_builder: ExecutorBuilder<FEN>,
+        #[cfg(feature = "revm")] executor_builder: fn() -> ExecutorBuilder<FEN>,
     ) -> Result<Option<BundledState<FEN>>> {
-        let Some(prepared) = self.prepare_script(config, evm_opts, executor_builder).await? else {
+        let Some(prepared) = self
+            .prepare_script::<FEN>(
+                config,
+                evm_opts,
+                #[cfg(feature = "revm")]
+                executor_builder,
+            )
+            .await?
+        else {
             return Ok(None);
         };
         let bundled = match prepared {
@@ -560,9 +594,16 @@ impl ScriptArgs {
         self,
         config: Config,
         evm_opts: EvmOpts,
-        executor_builder: ExecutorBuilder<FEN>,
+        #[cfg(feature = "revm")] executor_builder: fn() -> ExecutorBuilder<FEN>,
     ) -> Result<Option<PreparedScript<FEN>>> {
-        let state = self.preprocess::<FEN>(config, evm_opts, executor_builder).await?;
+        let state = self
+            .preprocess::<FEN>(
+                config,
+                evm_opts,
+                #[cfg(feature = "revm")]
+                executor_builder,
+            )
+            .await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
@@ -584,6 +625,7 @@ impl ScriptArgs {
                 .optimize_library_deployments()
                 .await?;
 
+            #[cfg(feature = "revm")]
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
                     Some(path) => pre_simulation.dump_debugger(&path).map(|_| None),
@@ -621,9 +663,22 @@ impl ScriptArgs {
                 return Ok(None);
             }
 
+            #[cfg(feature = "revm")]
             let size_limits = pre_simulation.args.contract_size_limits::<FEN>(
                 &pre_simulation.script_config.config,
                 &pre_simulation.script_config.evm_opts,
+            );
+            #[cfg(not(feature = "revm"))]
+            let size_limits = pre_simulation.args.contract_size_limits_with_default(
+                &pre_simulation.script_config.config,
+                &pre_simulation.script_config.evm_opts,
+                ContractSizeLimits::for_ethereum_spec(
+                    foundry_evm::core::ethereum::EthereumEnv::local_from_config(
+                        &pre_simulation.script_config.config,
+                        &pre_simulation.script_config.evm_opts,
+                    )?
+                    .spec,
+                ),
             );
             pre_simulation.args.check_contract_sizes(
                 size_limits,
@@ -668,9 +723,17 @@ impl ScriptArgs {
         self,
         config: Config,
         evm_opts: EvmOpts,
-        executor_builder: ExecutorBuilder<FEN>,
+        #[cfg(feature = "revm")] executor_builder: fn() -> ExecutorBuilder<FEN>,
     ) -> Result<()> {
-        let bundled = match self.prepare_bundled::<FEN>(config, evm_opts, executor_builder).await? {
+        let bundled = match self
+            .prepare_bundled::<FEN>(
+                config,
+                evm_opts,
+                #[cfg(feature = "revm")]
+                executor_builder,
+            )
+            .await?
+        {
             Some(bundled) => bundled,
             None => return Ok(()),
         };
@@ -840,10 +903,25 @@ impl ScriptArgs {
         Ok(())
     }
 
+    #[cfg(feature = "revm")]
     fn contract_size_limits<FEN: FoundryEvmNetwork>(
         &self,
         config: &Config,
         evm_opts: &EvmOpts,
+    ) -> ContractSizeLimits {
+        let spec_id: SpecFor<FEN> = config.evm_spec_id();
+        self.contract_size_limits_with_default(
+            config,
+            evm_opts,
+            ContractSizeLimits::for_spec_id(spec_id.into()),
+        )
+    }
+
+    fn contract_size_limits_with_default(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+        default: ContractSizeLimits,
     ) -> ContractSizeLimits {
         self.evm
             .env
@@ -857,10 +935,7 @@ impl ScriptArgs {
                     .contract_size_limits()
                     .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
             })
-            .unwrap_or_else(|| {
-                let spec_id: SpecFor<FEN> = config.evm_spec_id();
-                ContractSizeLimits::for_spec_id(spec_id.into())
-            })
+            .unwrap_or(default)
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
@@ -995,20 +1070,58 @@ struct JsonResult<'a, N: Network> {
     result: &'a ScriptResult<N>,
 }
 
+/// Preparation owns only the source needed by the selected execution family.
+#[derive(Clone, Debug)]
+enum ScriptBackend<FEN: FoundryEvmNetwork> {
+    Ethereum(Option<Fork>, PhantomData<FEN>),
+    #[cfg(feature = "revm")]
+    Legacy(Box<LegacyScriptBackend<FEN>>),
+}
+
+#[cfg(feature = "revm")]
+#[derive(Clone, Debug)]
+struct LegacyScriptBackend<FEN: FoundryEvmNetwork> {
+    backend: Backend<FEN>,
+    executor_builder: ExecutorBuilder<FEN>,
+}
+
+impl<FEN: FoundryEvmNetwork> ScriptBackend<FEN> {
+    #[cfg(feature = "revm")]
+    fn is_in_forking_mode(&self) -> bool {
+        match self {
+            Self::Ethereum(fork, _) => fork.is_some(),
+            #[cfg(feature = "revm")]
+            Self::Legacy(legacy) => legacy.backend.is_in_forking_mode(),
+        }
+    }
+
+    #[cfg(not(feature = "revm"))]
+    const fn is_in_forking_mode(&self) -> bool {
+        let Self::Ethereum(fork, _) = self;
+        fork.is_some()
+    }
+
+    fn fork(&self) -> Result<Option<Fork>> {
+        match self {
+            Self::Ethereum(fork, _) => Ok(fork.clone()),
+            #[cfg(feature = "revm")]
+            Self::Legacy(legacy) => legacy.backend.fork(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
-    /// Executor construction selected by concrete network dispatch.
-    pub executor_builder: ExecutorBuilder<FEN>,
     /// Exact network hardfork selected for script execution.
     pub hardfork: Option<FoundryHardfork>,
     /// Source chain used for trace decoding and external identifiers.
     pub source_chain_id: Option<u64>,
     pub sender_nonce: u64,
     sender_nonce_override: Option<u64>,
-    /// Pristine backend shared by preflight and cloned for each execution.
-    backend: Backend<FEN>,
+    /// Pinned source shared by preflight and the selected execution family.
+    backend: ScriptBackend<FEN>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
     pub batch: bool,
     /// Tempo transaction options applied to broadcast transactions.
@@ -1019,22 +1132,48 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     pub(crate) async fn new(
         mut config: Config,
         mut evm_opts: EvmOpts,
-        executor_builder: ExecutorBuilder<FEN>,
+        #[cfg(feature = "revm")] executor_builder: fn() -> ExecutorBuilder<FEN>,
         batch: bool,
         tempo: TempoOpts,
         sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
-        // Linking and execution share the backend created here, before any preflight reads.
+        // Resolve the selected execution family's source before any preflight reads.
         prepare_script_source(&mut config, &mut evm_opts, None).await?;
-        let backend = Backend::spawn(evm_opts.get_fork(
-            &config,
-            evm_opts.env.chain_id.unwrap_or_default(),
-            None,
-        ))?;
+        let backend = if evm_opts.networks.execution_network() == NetworkVariant::Ethereum {
+            ScriptBackend::Ethereum(evm_opts.prepare_fork().await?, PhantomData)
+        } else {
+            #[cfg(feature = "revm")]
+            {
+                ScriptBackend::Legacy(Box::new(LegacyScriptBackend {
+                    backend: Backend::spawn(evm_opts.get_fork(
+                        &config,
+                        evm_opts.env.chain_id.unwrap_or_default(),
+                        None,
+                    ))?,
+                    executor_builder: executor_builder(),
+                }))
+            }
+            #[cfg(not(feature = "revm"))]
+            {
+                eyre::bail!("only Ethereum script execution is available without REVM")
+            }
+        };
+        let (hardfork, source_chain_id) = match &backend {
+            ScriptBackend::Ethereum(fork, _) => {
+                (config.hardfork, fork.as_ref().map(|fork| fork.context().source_chain_id))
+            }
+            #[cfg(feature = "revm")]
+            ScriptBackend::Legacy(_) => (None, None),
+        };
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if evm_opts.fork_url.is_some() {
-            backend.transaction_count(evm_opts.sender).await?
+            evm_opts
+                .transaction_count_at_fork(
+                    evm_opts.sender,
+                    &backend.fork()?.ok_or_else(|| eyre::eyre!("script source is not forked"))?,
+                )
+                .await?
         } else {
             // dapptools compatibility
             1
@@ -1043,9 +1182,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(Self {
             config,
             evm_opts,
-            executor_builder,
-            hardfork: None,
-            source_chain_id: None,
+            hardfork,
+            source_chain_id,
             sender_nonce,
             sender_nonce_override,
             backend,
@@ -1054,11 +1192,42 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         })
     }
 
+    #[cfg(all(test, feature = "revm"))]
+    async fn new_legacy(
+        config: Config,
+        evm_opts: EvmOpts,
+        #[cfg(feature = "revm")] executor_builder: fn() -> ExecutorBuilder<FEN>,
+        batch: bool,
+        tempo: TempoOpts,
+        sender_nonce_override: Option<u64>,
+    ) -> Result<Self> {
+        let mut config =
+            Self::new(config, evm_opts, executor_builder, batch, tempo, sender_nonce_override)
+                .await?;
+        config.backend = ScriptBackend::Legacy(Box::new(LegacyScriptBackend {
+            backend: Backend::spawn(config.evm_opts.get_fork(
+                &config.config,
+                config.evm_opts.env.chain_id.unwrap_or_default(),
+                None,
+            ))?,
+            executor_builder: executor_builder(),
+        }));
+        Ok(config)
+    }
+
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(sender_nonce) = self.sender_nonce_override {
             sender_nonce
         } else if self.evm_opts.fork_url.is_some() {
-            self.backend.transaction_count(sender).await?
+            self.evm_opts
+                .transaction_count_at_fork(
+                    sender,
+                    &self
+                        .backend
+                        .fork()?
+                        .ok_or_else(|| eyre::eyre!("script source is not forked"))?,
+                )
+                .await?
         } else {
             // dapptools compatibility
             1
@@ -1067,26 +1236,39 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(())
     }
 
+    #[cfg(feature = "revm")]
     async fn select_rpc(&mut self, fork_url: String) -> Result<()> {
         self.evm_opts.set_fork_url(fork_url);
         self.select_backend().await
     }
 
+    #[cfg(feature = "revm")]
     async fn select_backend(&mut self) -> Result<()> {
         if self.evm_opts.fork_url.is_none() {
             if self.backend.fork()?.is_some() {
-                self.backend.replace_fork(None)?;
+                match &mut self.backend {
+                    ScriptBackend::Ethereum(fork, _) => *fork = None,
+                    #[cfg(feature = "revm")]
+                    ScriptBackend::Legacy(legacy) => legacy.backend.replace_fork(None)?,
+                }
             }
             return Ok(());
         }
         if !self.prepare_requested_source().await? {
             return Ok(());
         }
-        self.backend.replace_fork(self.evm_opts.get_fork(
-            &self.config,
-            self.evm_opts.env.chain_id.unwrap_or_default(),
-            None,
-        ))
+        match &mut self.backend {
+            ScriptBackend::Ethereum(fork, _) => {
+                *fork = self.evm_opts.prepare_fork().await?;
+                Ok(())
+            }
+            #[cfg(feature = "revm")]
+            ScriptBackend::Legacy(legacy) => legacy.backend.replace_fork(self.evm_opts.get_fork(
+                &self.config,
+                self.evm_opts.env.chain_id.unwrap_or_default(),
+                None,
+            )),
+        }
     }
 
     /// Prepares the requested RPC source. Returns `false` if the backend already serves it.
@@ -1107,14 +1289,40 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     /// Trace decoders only need the source chain and hardfork, so they do not open a fork cache.
     async fn resolve_rpc_execution_spec(&mut self, fork_url: String) -> Result<()> {
         self.evm_opts.set_fork_url(fork_url);
-        if !self.prepare_requested_source().await? {
-            self.resolve_execution_env().await?;
+        let source_changed = self.prepare_requested_source().await?;
+        if self.evm_opts.networks.execution_network() == NetworkVariant::Ethereum {
+            let fork = if source_changed {
+                self.evm_opts.prepare_fork().await?
+            } else {
+                self.backend.fork()?
+            };
+            foundry_evm::core::ethereum::EthereumEnv::local_from_config(
+                &self.config,
+                &self.evm_opts,
+            )?;
+            self.source_chain_id = fork.as_ref().map(|fork| fork.context().source_chain_id);
+            // Local Ethereum Script follows its configured spec, including when RPC-backed.
+            self.hardfork = self.config.hardfork;
             return Ok(());
         }
-        let (mut evm_env, _, fork_context) =
-            self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
-        self.apply_execution_spec(&mut evm_env, fork_context);
-        Ok(())
+        #[cfg(feature = "revm")]
+        {
+            if !source_changed {
+                let fork = self.backend.fork()?;
+                let (mut evm_env, _) =
+                    self.evm_opts.env_at_fork::<_, _, TxEnvFor<FEN>>(fork.as_ref()).await?;
+                self.apply_execution_spec(&mut evm_env, fork.as_ref().map(Fork::context));
+                return Ok(());
+            }
+            let (mut evm_env, _, fork_context) =
+                self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
+            self.apply_execution_spec(&mut evm_env, fork_context);
+            Ok(())
+        }
+        #[cfg(not(feature = "revm"))]
+        {
+            eyre::bail!("only Ethereum script execution is available without REVM")
+        }
     }
 
     pub(crate) async fn update_tempo_session_sender(
@@ -1130,6 +1338,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(())
     }
 
+    #[cfg(feature = "revm")]
     async fn get_runner_with_cheatcodes(
         &mut self,
         known_contracts: ContractsByArtifact,
@@ -1151,6 +1360,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(runner)
     }
 
+    #[cfg(feature = "revm")]
     async fn _get_runner(
         &mut self,
         cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
@@ -1159,12 +1369,18 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
         let (evm_env, mut tx_env) = self.resolve_execution_env().await?;
-        let db = self.backend.clone();
+        let (db, mut builder) = match &self.backend {
+            #[cfg(feature = "revm")]
+            ScriptBackend::Legacy(legacy) => {
+                (legacy.backend.clone(), legacy.executor_builder.clone())
+            }
+            ScriptBackend::Ethereum(_, _) => {
+                eyre::bail!("Ethereum Script uses the native runner")
+            }
+        };
 
         // We need to enable tracing to decode contract names: local or external.
-        let mut builder = self
-            .executor_builder
-            .clone()
+        builder = builder
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
@@ -1211,15 +1427,24 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(runner)
     }
 
+    async fn can_use_create2_deployer(&self) -> Result<bool> {
+        self.evm_opts.can_use_create2_deployer_at(self.backend.fork()?.as_ref()).await
+    }
+
     /// Builds the execution environment and spec from the selected backend.
+    #[cfg(feature = "revm")]
     async fn resolve_execution_env(&mut self) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
-        let (mut evm_env, tx_env) = self.backend.env(&self.evm_opts).await?;
+        let ScriptBackend::Legacy(legacy) = &self.backend else {
+            eyre::bail!("Ethereum Script uses the native execution environment")
+        };
+        let (mut evm_env, tx_env) = legacy.backend.env(&self.evm_opts).await?;
         let fork_context = self.backend.fork()?.as_ref().map(|fork| fork.context());
         self.apply_execution_spec(&mut evm_env, fork_context);
         Ok((evm_env, tx_env))
     }
 
     /// Records the source chain and resolves the execution spec for `fork_context`.
+    #[cfg(feature = "revm")]
     fn apply_execution_spec(
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
@@ -1265,6 +1490,7 @@ async fn prepare_script_source(
     Ok(())
 }
 
+#[cfg(feature = "revm")]
 const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequirements {
     TraceRequirements::none()
         .with_calls(true)
@@ -1277,7 +1503,7 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
         })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use alloy_chains::NamedChain;
@@ -1328,6 +1554,69 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn script_native_fork_preflight_and_execution_share_the_pinned_source() {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        let sender = handle.dev_accounts().next().unwrap();
+        let deployer = Address::with_last_byte(0xab);
+        api.anvil_set_balance(sender, U256::from(5)).await.unwrap();
+        api.anvil_set_nonce(sender, U256::from(7)).await.unwrap();
+        api.anvil_set_code(deployer, Bytes::from_static(&[0])).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+        let opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            sender,
+            create2_deployer: deployer,
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config {
+                hardfork: Some(FoundryHardfork::Ethereum(
+                    foundry_evm::hardforks::EthereumHardfork::London,
+                )),
+                ..Default::default()
+            },
+            opts,
+            || panic!("native Script preparation constructed a legacy executor builder"),
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(config.backend, ScriptBackend::Ethereum(Some(_), _)));
+        assert_eq!(config.sender_nonce, 7);
+        let source = config.backend.fork().unwrap().unwrap();
+        assert_eq!(config.source_chain_id, Some(source.context().source_chain_id));
+        assert_eq!(config.hardfork, config.config.hardfork);
+        config.resolve_rpc_execution_spec(handle.http_endpoint()).await.unwrap();
+        assert_eq!(config.source_chain_id, Some(source.context().source_chain_id));
+        assert_eq!(config.hardfork, config.config.hardfork);
+        // Seal the pinned state before Anvil's direct mutations change the current head.
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+        api.anvil_set_balance(sender, U256::from(9)).await.unwrap();
+        api.anvil_set_nonce(sender, U256::from(11)).await.unwrap();
+        api.anvil_set_code(deployer, Bytes::new()).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+        config.update_sender(sender).await.unwrap();
+        assert_eq!(config.sender_nonce, 7);
+        assert!(config.can_use_create2_deployer().await.unwrap());
+        let mut fork = foundry_evm::core::ethereum::EthereumFork::from_fork(
+            &config.config,
+            &config.evm_opts,
+            source.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fork.env.block.number, U256::from(source.number()));
+        let account =
+            evm2::evm::DynDatabase::get_account(&mut fork.database, &sender).unwrap().unwrap();
+        assert_eq!(account.balance, U256::from(5));
+        assert_eq!(account.nonce, 7);
+        assert!(matches!(config.backend, ScriptBackend::Ethereum(Some(_), _)));
+        assert!(config._get_runner(None, false, false).await.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn script_fork_context_is_re_resolved_for_a_new_rpc() {
         let (api_a, handle_a) = spawn(NodeConfig::test()).await;
         let (api_b, handle_b) = spawn(NodeConfig::test()).await;
@@ -1339,10 +1628,10 @@ mod tests {
             sender: handle_a.dev_accounts().next().unwrap(),
             ..Default::default()
         };
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1382,7 +1671,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1412,10 +1701,10 @@ mod tests {
             sender: handle_a.dev_accounts().next().unwrap(),
             ..Default::default()
         };
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1444,10 +1733,10 @@ mod tests {
             sender: handle_a.dev_accounts().next().unwrap(),
             ..Default::default()
         };
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1489,10 +1778,10 @@ mod tests {
         let sender = handle_a.dev_accounts().next().unwrap();
 
         let evm_opts = EvmOpts { fork_url: Some(url_a.clone()), sender, ..Default::default() };
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1551,10 +1840,10 @@ mod tests {
             sender: handle.dev_accounts().next().unwrap(),
             ..Default::default()
         };
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1583,10 +1872,10 @@ mod tests {
             sender: handle.dev_accounts().next().unwrap(),
             ..Default::default()
         };
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1619,10 +1908,10 @@ mod tests {
         evm_opts.env.chain_id = Some(42);
         configure_initial(&mut evm_opts);
 
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -1681,23 +1970,17 @@ mod tests {
             sender: handle.dev_accounts().next().unwrap(),
             ..Default::default()
         };
-        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+        let mut config = ScriptConfig::<EthEvmNetwork>::new_legacy(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
         )
         .await
         .unwrap();
-        assert!(
-            config
-                .backend
-                .can_use_create2_deployer(config.evm_opts.create2_deployer)
-                .await
-                .unwrap()
-        );
+        assert!(config.can_use_create2_deployer().await.unwrap());
         config._get_runner(None, false, false).await.unwrap();
 
         let provider = handle.http_provider();
@@ -1995,7 +2278,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -2028,7 +2311,7 @@ mod tests {
         let mut config = ScriptConfig::<EthEvmNetwork>::new(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
+            ExecutorBuilder::<EthEvmNetwork>::new,
             false,
             TempoOpts::default(),
             Some(7),
@@ -2065,7 +2348,7 @@ mod tests {
         let mut script = ScriptConfig::<MonadEvmNetwork>::new(
             config,
             evm_opts,
-            ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ExecutorBuilder::<MonadEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -2096,7 +2379,7 @@ mod tests {
         let mut script = ScriptConfig::<TempoEvmNetwork>::new(
             config,
             evm_opts,
-            ExecutorBuilder::<TempoEvmNetwork>::new(),
+            ExecutorBuilder::<TempoEvmNetwork>::new,
             false,
             TempoOpts::default(),
             None,
@@ -2207,7 +2490,7 @@ mod tests {
             .preprocess::<TempoEvmNetwork>(
                 Config::default(),
                 evm_opts,
-                ExecutorBuilder::<TempoEvmNetwork>::new(),
+                ExecutorBuilder::<TempoEvmNetwork>::new,
             )
             .await
             .unwrap();
@@ -2238,7 +2521,7 @@ mod tests {
             .preprocess::<TempoEvmNetwork>(
                 Config::default(),
                 evm_opts,
-                ExecutorBuilder::<TempoEvmNetwork>::new(),
+                ExecutorBuilder::<TempoEvmNetwork>::new,
             )
             .await
             .unwrap();
@@ -2268,7 +2551,7 @@ mod tests {
             .preprocess::<TempoEvmNetwork>(
                 Config::default(),
                 evm_opts,
-                ExecutorBuilder::<TempoEvmNetwork>::new(),
+                ExecutorBuilder::<TempoEvmNetwork>::new,
             )
             .await
             .unwrap();
@@ -2298,7 +2581,7 @@ mod tests {
             .preprocess::<TempoEvmNetwork>(
                 Config::default(),
                 evm_opts,
-                ExecutorBuilder::<TempoEvmNetwork>::new(),
+                ExecutorBuilder::<TempoEvmNetwork>::new,
             )
             .await
             .unwrap();
@@ -2328,7 +2611,7 @@ mod tests {
             .preprocess::<TempoEvmNetwork>(
                 Config::default(),
                 evm_opts,
-                ExecutorBuilder::<TempoEvmNetwork>::new(),
+                ExecutorBuilder::<TempoEvmNetwork>::new,
             )
             .await
             .unwrap();
@@ -2407,7 +2690,7 @@ mod tests {
             .preprocess::<TempoEvmNetwork>(
                 Config::default(),
                 evm_opts,
-                ExecutorBuilder::<TempoEvmNetwork>::new(),
+                ExecutorBuilder::<TempoEvmNetwork>::new,
             )
             .await
         {
@@ -2789,7 +3072,7 @@ mod tests {
             .preprocess::<EthEvmNetwork>(
                 Config::default(),
                 EvmOpts { sender, ..Default::default() },
-                ExecutorBuilder::<EthEvmNetwork>::new(),
+                ExecutorBuilder::<EthEvmNetwork>::new,
             )
             .await
             .unwrap();
@@ -2801,7 +3084,7 @@ mod tests {
             .preprocess::<EthEvmNetwork>(
                 Config::default(),
                 EvmOpts::default(),
-                ExecutorBuilder::<EthEvmNetwork>::new(),
+                ExecutorBuilder::<EthEvmNetwork>::new,
             )
             .await
             .unwrap();

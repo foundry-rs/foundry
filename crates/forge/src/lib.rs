@@ -23,19 +23,33 @@ pub mod brutalizer;
 
 pub mod gas_report;
 
+#[cfg(feature = "revm")]
 pub mod multi_runner;
+#[cfg(feature = "revm")]
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
+#[cfg(feature = "revm")]
 pub mod mutation;
 
 pub mod workspace;
 
+#[cfg(feature = "revm")]
 mod runner;
+#[cfg(feature = "revm")]
 pub use runner::ContractRunner;
 
+mod ethereum_runner;
+mod invariant_failure;
+pub mod test_artifacts;
+mod test_config;
+pub mod test_options;
+
+#[cfg(feature = "revm")]
 mod progress;
 pub mod result;
+#[cfg(feature = "revm")]
 mod symbolic_minimizer;
+#[cfg(feature = "revm")]
 mod symbolic_regression;
 
 // TODO: remove

@@ -1,9 +1,6 @@
 //! Test outcomes.
 
-use crate::{
-    fuzz::{BaseCounterExample, BasicTxDetails},
-    gas_report::GasReport,
-};
+use crate::gas_report::GasReport;
 use alloy_primitives::{
     Address, B256, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
@@ -12,18 +9,15 @@ use eyre::Report;
 use foundry_common::{ContractsByArtifact, get_contract_name, shell};
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
-    core::{Breakpoints, evm::FoundryEvmNetwork},
-    coverage::HitMaps,
+    core::Breakpoints,
     decode::SkipReason,
-    executors::{
-        RawCallResult,
-        invariant::{CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics},
-    },
-    fuzz::{
-        CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
-        strategies::EvmFuzzState,
-    },
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
+};
+use foundry_evm_coverage::HitMaps;
+use foundry_evm_fuzz::{
+    BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzFixtures,
+    FuzzTestResult,
+    invariant::{CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics},
 };
 use foundry_evm_symbolic::{SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment};
 use serde::{Deserialize, Serialize};
@@ -31,10 +25,17 @@ use std::{
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     path::PathBuf,
-    sync::OnceLock,
     time::Duration,
 };
 use yansi::Paint;
+
+#[cfg(feature = "revm")]
+use foundry_evm_fuzz::strategies::EvmFuzzState;
+#[cfg(feature = "revm")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "revm")]
+use foundry_evm::{core::evm::FoundryEvmNetwork, executors::RawCallResult};
 
 const INVARIANT_CAMPAIGN_FALLBACK_NAME: &str = "Invariant campaign";
 const SYMBOLIC_RESULT_SCHEMA_VERSION: u32 = 1;
@@ -1632,6 +1633,7 @@ impl TestResult {
 
     /// Returns the result for single test. Merges execution results (logs, labeled addresses,
     /// traces and coverages) in initial setup results.
+    #[cfg(feature = "revm")]
     pub fn single_result<FEN: FoundryEvmNetwork>(
         &mut self,
         success: bool,
@@ -1893,11 +1895,13 @@ impl TestResult {
     }
 
     /// Merges the given raw call result into `self`.
+    #[cfg(feature = "revm")]
     pub fn extend<FEN: FoundryEvmNetwork>(&mut self, call_result: RawCallResult<FEN>) {
         extend!(self, call_result, TraceKind::Execution);
     }
 
     /// Merges the given pre-test setup result into `self`.
+    #[cfg(feature = "revm")]
     pub(crate) fn extend_setup<FEN: FoundryEvmNetwork>(&mut self, call_result: RawCallResult<FEN>) {
         extend!(self, call_result, TraceKind::Setup);
     }
@@ -2140,6 +2144,7 @@ pub struct TestSetup {
     /// The active fork's block number after setup, if any.
     pub fork_block_number: Option<u64>,
     /// Cached setup-derived fuzz dictionary for stateless fuzz tests.
+    #[cfg(feature = "revm")]
     pub(crate) fuzz_state: OnceLock<EvmFuzzState>,
 
     /// The reason the setup failed, if it did.
@@ -2159,6 +2164,7 @@ impl TestSetup {
         Self { reason: Some(reason), skipped: true, ..Default::default() }
     }
 
+    #[cfg(feature = "revm")]
     pub fn extend<FEN: FoundryEvmNetwork>(
         &mut self,
         raw: RawCallResult<FEN>,

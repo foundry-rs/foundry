@@ -1,11 +1,12 @@
 //! Shared helpers for reading on-disk corpus directories.
 
+use crate::BasicTxDetails;
 use eyre::{Result, eyre};
-use foundry_evm_fuzz::BasicTxDetails;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
+use tracing::debug;
 use uuid::Uuid;
 
 const WORKER_DIR_PREFIX: &str = "worker";
@@ -71,7 +72,7 @@ pub fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
 }
 
 /// Reads every parseable corpus entry while surfacing directory and file-type failures.
-pub(crate) fn read_corpus_dir_strict(path: &Path) -> Result<Vec<CorpusDirEntry>> {
+pub fn read_corpus_dir_strict(path: &Path) -> Result<Vec<CorpusDirEntry>> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;

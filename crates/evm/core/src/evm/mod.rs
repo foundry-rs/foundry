@@ -2,19 +2,29 @@
 //!
 //! Each network module owns its network marker and concrete EVM implementations.
 
+use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
+use alloy_network::Network;
+use alloy_primitives::Signature;
+use alloy_rlp::Decodable;
+use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+
+#[cfg(feature = "revm")]
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
 };
-use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
+#[cfg(feature = "revm")]
 use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap};
-use alloy_network::Network;
-use alloy_primitives::{Address, Signature, U256};
-use alloy_rlp::Decodable;
-use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
+#[cfg(feature = "revm")]
+use alloy_primitives::{Address, U256};
+#[cfg(feature = "revm")]
 use foundry_config::ExecutionSpec;
+#[cfg(feature = "revm")]
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
+#[cfg(feature = "revm")]
 use revm::{
     Database,
     context::{
@@ -31,8 +41,8 @@ use revm::{
     primitives::hardfork::SpecId,
     state::{AccountStatus, EvmState},
 };
-use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, ops::DerefMut};
+#[cfg(feature = "revm")]
+use std::ops::DerefMut;
 
 #[cfg(feature = "base")]
 pub mod base;
@@ -41,9 +51,11 @@ pub mod eth;
 pub mod monad;
 #[cfg(feature = "optimism")]
 pub mod op;
+#[cfg(feature = "revm")]
 pub mod tempo;
 
 pub use eth::*;
+#[cfg(feature = "revm")]
 pub use tempo::*;
 
 #[cfg(feature = "base")]
@@ -55,7 +67,9 @@ pub use monad::*;
 #[cfg(feature = "optimism")]
 pub use op::*;
 
-/// Foundry's compatibility trait associating a [`Network`] with a [`FoundryEvmFactory`].
+/// Associates Foundry tooling with its transaction network.
+///
+/// The optional `revm` feature also associates the legacy execution factory.
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     type Network: Network<
             TxEnvelope: Decodable
@@ -70,9 +84,11 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
                                     + Serialize,
             ReceiptResponse: FoundryReceiptResponse,
         >;
+    #[cfg(feature = "revm")]
     type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
 }
 
+#[cfg(feature = "revm")]
 pub trait FoundryEvmFactory:
     EvmFactory<
         Spec: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
@@ -155,6 +171,7 @@ pub trait FoundryEvmFactory:
 ///
 /// This abstracts over the concrete EVM type (`FoundryEvm`, future `TempoEvm`, etc.)
 /// so that cheatcode impls can build and run nested EVMs without knowing the concrete type.
+#[cfg(feature = "revm")]
 pub trait NestedEvm {
     /// The spec type.
     type Spec;
@@ -206,19 +223,28 @@ pub trait NestedEvm {
 }
 
 /// Converts a network-specific halt reason into an [`InstructionResult`].
+#[cfg(feature = "revm")]
 pub trait IntoInstructionResult {
     fn into_instruction_result(self) -> InstructionResult;
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
+#[cfg(feature = "revm")]
 pub type EvmFactoryFor<FEN> = <FEN as FoundryEvmNetwork>::EvmFactory;
+#[cfg(feature = "revm")]
 pub type FoundryContextFor<'db, FEN> =
     <EvmFactoryFor<FEN> as FoundryEvmFactory>::FoundryContext<'db>;
+#[cfg(feature = "revm")]
 pub type TxEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Tx;
+#[cfg(feature = "revm")]
 pub type HaltReasonFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::HaltReason;
+#[cfg(feature = "revm")]
 pub type SpecFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Spec;
+#[cfg(feature = "revm")]
 pub type BlockEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::BlockEnv;
+#[cfg(feature = "revm")]
 pub type PrecompilesFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Precompiles;
+#[cfg(feature = "revm")]
 pub type EvmEnvFor<FEN> = EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>;
 pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
 pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
@@ -226,9 +252,11 @@ pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionR
 pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
 pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
+#[cfg(feature = "revm")]
 pub type ChainFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::Chain;
 
 /// Boxed nested EVM produced by a Foundry EVM factory.
+#[cfg(feature = "revm")]
 pub type NestedEvmFor<'db, F> = Box<
     dyn NestedEvm<
             Spec = <F as EvmFactory>::Spec,
@@ -240,6 +268,7 @@ pub type NestedEvmFor<'db, F> = Box<
 >;
 
 /// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
+#[cfg(feature = "revm")]
 pub type NestedEvmClosure<'a, F> = &'a mut dyn for<'j> FnMut(
     &mut dyn NestedEvm<
         Spec = <F as EvmFactory>::Spec,
@@ -252,6 +281,7 @@ pub type NestedEvmClosure<'a, F> = &'a mut dyn for<'j> FnMut(
     -> Result<(), EVMError<DatabaseError>>;
 
 /// Nested EVM closure for a Foundry EVM network.
+#[cfg(feature = "revm")]
 pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<'a, EvmFactoryFor<FEN>>;
 
 /// Runs a child operation with the parent's environment, journal, and native chain state.
@@ -263,6 +293,7 @@ pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<'a, EvmFactoryFor<FEN>>
 /// Both inspector adapters use this operation so inheritance and write-back remain paired. The
 /// existing Monad journal bridge is retained here until native journal lifecycle ownership
 /// migrates.
+#[cfg(feature = "revm")]
 pub fn with_inherited_evm<F, I>(
     ecx: &mut F::FoundryContext<'_>,
     inspector: I,
@@ -310,6 +341,7 @@ where
 /// Preserve account flags, including local creation, while making accounts outside the protocol
 /// warm-address set cold. All storage starts cold with its current value as the child's original
 /// value. The parent's state is unchanged.
+#[cfg(feature = "revm")]
 pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
     let mut state = journal.state.clone();
     for (address, account) in &mut state {
@@ -331,6 +363,7 @@ pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
 /// accounts and slots keep their child metadata. This operates on the EVM's returned state, not on
 /// an unfiltered write set; the caller retains responsibility for execution errors and
 /// family-specific reconciliation.
+#[cfg(feature = "revm")]
 pub fn merge_child_state(parent: &mut EvmState, child: EvmState, remove_absent: bool) {
     if remove_absent {
         parent.retain(|address, parent_account| {
@@ -364,6 +397,7 @@ pub fn merge_child_state(parent: &mut EvmState, child: EvmState, remove_absent: 
 }
 
 /// Runs a nested frame with inspection and settles its gas into the parent frame.
+#[cfg(feature = "revm")]
 pub(crate) fn run_inspected_frame<H>(
     evm: &mut H::Evm,
     mut handler: H,
@@ -387,6 +421,7 @@ where
 }
 
 /// Get the call inputs for the CREATE2 factory.
+#[cfg(feature = "revm")]
 pub fn get_create2_factory_call_inputs<T: JournalTr>(
     salt: U256,
     inputs: &CreateInputs,
@@ -411,6 +446,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
     })
 }
 
+#[cfg(feature = "revm")]
 #[cfg(test)]
 mod tests {
     use super::*;

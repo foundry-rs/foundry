@@ -18,6 +18,8 @@ use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use std::{cell::Cell, fmt::Write, hash::Hash};
 
+pub use foundry_evm_fuzz::invariant::{CheckSequenceFailureSite, CheckSequenceOutcome};
+
 const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
 
 /// Shrinker for a call sequence failure.
@@ -189,30 +191,6 @@ pub struct CheckSequenceOptions<'a> {
     pub expect_assertion_failure: bool,
     pub call_after_invariant: bool,
     pub rd: Option<&'a RevertDecoder>,
-}
-
-/// Concrete failure site observed while replaying a sequence through [`check_sequence`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CheckSequenceFailureSite {
-    SequenceCall { target: Address, selector: Selector, fingerprint: B256 },
-    Invariant { target: Address, selector: Selector, fingerprint: B256 },
-    AfterInvariant { target: Address, selector: Selector, fingerprint: B256 },
-}
-
-/// Outcome from replaying an invariant call sequence through [`check_sequence`].
-#[derive(Clone, Debug)]
-pub struct CheckSequenceOutcome {
-    pub success: bool,
-    pub replayed_entirely: bool,
-    pub reason: Option<String>,
-    pub calls_count: usize,
-    pub reverts: usize,
-    pub failure_site: Option<CheckSequenceFailureSite>,
-    /// Whether replay stopped on an assertion in a sequence call rather than a plain revert or
-    /// terminal invariant check.
-    pub sequence_assertion_failure: bool,
-    /// Innermost reverter for a sequence assertion, used to recognize legacy handler identities.
-    pub sequence_reverter: Option<Address>,
 }
 
 pub struct ShrunkSequence {

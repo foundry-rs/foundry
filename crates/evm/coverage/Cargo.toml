@@ -16,18 +16,24 @@ workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-compilers.workspace = true
+foundry-config.workspace = true
 foundry-evm-core.workspace = true
 
 alloy-primitives.workspace = true
 eyre.workspace = true
-revm.workspace = true
+revm = { workspace = true, optional = true }
 semver.workspace = true
+evm2.workspace = true
 tracing.workspace = true
 rayon.workspace = true
 solar.workspace = true
 
+[dev-dependencies]
+alloy-consensus.workspace = true
+
 [features]
-default = ["optimism"]
-monad = ["foundry-evm-core/monad"]
-base = ["foundry-common/base", "foundry-evm-core/base"]
-optimism = ["foundry-common/optimism", "foundry-evm-core/optimism"]
+default = ["optimism", "revm"]
+revm = ["dep:revm", "foundry-evm-core/revm"]
+monad = ["revm", "foundry-evm-core/monad"]
+base = ["revm", "foundry-common/base", "foundry-evm-core/base"]
+optimism = ["revm", "foundry-common/optimism", "foundry-evm-core/optimism"]

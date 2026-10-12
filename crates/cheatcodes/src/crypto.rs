@@ -1,6 +1,10 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{
+    Cheatcode, Cheatcodes, Result,
+    Vm::*,
+    wallet::{parse_wallet, validate_private_key},
+};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
@@ -17,7 +21,7 @@ use k256::{
     AffinePoint, EncodedPoint, FieldBytes, FieldElement, ProjectivePoint, Scalar,
     ecdsa::{SigningKey, hazmat},
     elliptic_curve::{
-        bigint::{ArrayEncoding, U256 as K256U256},
+        bigint::U256 as K256U256,
         group::Group,
         ops::Reduce,
         sec1::{FromEncodedPoint, ToEncodedPoint},
@@ -589,18 +593,6 @@ fn encode_projective_point(point: ProjectivePoint) -> Result {
     Ok((x, y, U256::ONE).abi_encode())
 }
 
-fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> {
-    ensure!(!private_key.is_zero(), "private key cannot be 0");
-    let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
-    ensure!(
-        *private_key < order,
-        "private key must be less than the {curve:?} curve order ({order})",
-        curve = C::default(),
-    );
-
-    Ok(())
-}
-
 fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
     validate_private_key::<k256::Secp256k1>(private_key)?;
     Ok(SigningKey::from_bytes((&private_key.to_be_bytes()).into())?)
@@ -650,10 +642,6 @@ fn verify_ed25519(signature: &[u8], namespace: &[u8], message: &[u8], public_key
     let combined = [namespace, message].concat();
     let valid = verification_key.verify(&Ed25519Signature::from(sig_bytes), &combined).is_ok();
     Ok(valid.abi_encode())
-}
-
-pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
-    parse_private_key(private_key).map(PrivateKeySigner::from)
 }
 
 pub(super) fn with_private_key_signer<FEN: FoundryEvmNetwork, R>(
@@ -733,7 +721,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{FixedBytes, hex::FromHex};
     use alloy_sol_types::SolCall;
-    use k256::elliptic_curve::Curve;
+    use k256::elliptic_curve::{Curve, bigint::ArrayEncoding};
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
     use tempo_hardfork::TempoHardfork;

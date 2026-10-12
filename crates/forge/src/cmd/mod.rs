@@ -20,7 +20,12 @@ pub mod doc;
 pub mod eip712;
 pub mod flatten;
 pub mod fmt;
+#[cfg(feature = "revm")]
 pub mod fuzz;
+#[cfg(not(feature = "revm"))]
+#[path = "fuzz_native.rs"]
+pub mod fuzz;
+mod fuzz_run;
 pub mod geiger;
 pub mod init;
 pub mod inspect;

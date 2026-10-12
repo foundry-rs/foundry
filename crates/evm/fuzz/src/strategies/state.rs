@@ -1,33 +1,32 @@
 use crate::{
-    BasicTxDetails, Fuzzer,
-    invariant::{
-        FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent, TargetedContracts,
-    },
+    BasicTxDetails,
+    invariant::{FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent},
     strategies::literals::LiteralsDictionary,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
-    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, HashSet, IndexSet},
+    map::{AddressIndexSet, B256IndexSet, HashMap, HashSet, IndexSet},
 };
-use foundry_common::{
-    ignore_metadata_hash,
-    mapping_slots::MappingSlots,
-    slot_identifier::{SlotIdentifier, SlotInfo},
-};
+use foundry_common::{ignore_metadata_hash, slot_identifier::SlotInfo};
 use foundry_config::FuzzDictionaryConfig;
-use foundry_evm_core::{
-    bytecode::InstIter, eip2935::is_history_storage_address, utils::StateChangeset,
-};
-use revm::{
-    database::{CacheDB, DatabaseRef, DbAccount},
-    state::AccountInfo,
-};
+use foundry_evm_core::{bytecode::InstIter, eip2935::is_history_storage_address};
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
-#[cfg(test)]
-use revm::database::InMemoryDB;
+#[cfg(feature = "revm")]
+use crate::{Fuzzer, invariant::TargetedContracts};
+#[cfg(feature = "revm")]
+use alloy_primitives::map::AddressMap;
+#[cfg(feature = "revm")]
+use foundry_common::{mapping_slots::MappingSlots, slot_identifier::SlotIdentifier};
+#[cfg(feature = "revm")]
+use foundry_evm_core::utils::StateChangeset;
+#[cfg(feature = "revm")]
+use revm::{
+    database::{CacheDB, DatabaseRef},
+    state::AccountInfo,
+};
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -69,9 +68,10 @@ pub(crate) trait DictionaryRead: Clone + 'static {
 impl EvmFuzzState {
     #[cfg(test)]
     pub(crate) fn test() -> Self {
-        Self::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
+        Self::empty(&[], FuzzDictionaryConfig::default(), None)
     }
 
+    #[cfg(feature = "revm")]
     pub fn new<DB: DatabaseRef>(
         deployed_libs: &[Address],
         db: &CacheDB<DB>,
@@ -82,14 +82,20 @@ impl EvmFuzzState {
         let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);
 
-        // Create fuzz dictionary and insert values from db state.
-        let mut dictionary = FuzzDictionary::new(config);
-        dictionary.insert_db_values(accs);
-        if let Some(literals) = literals {
-            dictionary.literal_values = literals.clone();
+        let mut state = Self::empty(deployed_libs, config, literals);
+        for (address, account) in accs {
+            let code = account
+                .info
+                .code
+                .as_ref()
+                .map(|code| (account.info.code_hash(), code.original_byte_slice()));
+            state.seed_account(
+                *address,
+                code,
+                account.storage.iter().map(|(slot, value)| (*slot, *value)),
+            );
         }
-
-        Self { inner: Arc::new(dictionary), deployed_libs: deployed_libs.to_vec() }
+        state
     }
 
     pub fn stateless_worker(&self) -> FuzzState {
@@ -127,6 +133,46 @@ impl EvmFuzzState {
     pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
         Arc::make_mut(&mut self.inner).seed_literals(map);
     }
+
+    /// Creates a dictionary seed before populating accepted accounts in address order.
+    pub fn empty(
+        deployed_libs: &[Address],
+        config: FuzzDictionaryConfig,
+        literals: Option<&LiteralsDictionary>,
+    ) -> Self {
+        let mut dictionary = FuzzDictionary::new(config);
+        if let Some(literals) = literals {
+            dictionary.literal_values = literals.clone();
+        }
+        Self { inner: Arc::new(dictionary), deployed_libs: deployed_libs.to_vec() }
+    }
+
+    /// Seeds one accepted account without depending on an execution engine's database types.
+    pub fn seed_account(
+        &mut self,
+        address: Address,
+        code: Option<(B256, &[u8])>,
+        storage: impl IntoIterator<Item = (U256, U256)>,
+    ) {
+        if is_history_storage_address(&address) {
+            return;
+        }
+        let dictionary = Arc::make_mut(&mut self.inner);
+        dictionary.insert_value(address.into_word());
+        if let Some((hash, bytes)) = code {
+            dictionary.insert_push_bytes(&address, hash, bytes);
+        }
+        if dictionary.config.include_storage {
+            let mut slots = storage.into_iter().collect::<Vec<_>>();
+            slots.sort_unstable_by_key(|(slot, _)| *slot);
+            for (slot, value) in slots {
+                dictionary.insert_storage_value(&slot, &value, None);
+            }
+        }
+        dictionary.db_state_values = dictionary.state_values.len();
+        dictionary.db_addresses = dictionary.addresses.len();
+        dictionary.db_push_bytecode_hashes = dictionary.push_bytecode_hashes.len();
+    }
 }
 
 impl FuzzState {
@@ -145,6 +191,7 @@ impl FuzzState {
         }
     }
 
+    #[cfg(feature = "revm")]
     pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
         if fuzzer.collected_values.is_empty() {
             return;
@@ -160,6 +207,7 @@ impl FuzzState {
     /// Collects state changes from a [StateChangeset] and logs into a worker state
     /// according to the given [FuzzDictionaryConfig].
     #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "revm")]
     pub fn collect_values_from_call(
         &self,
         fuzzed_contracts: &FuzzRunIdentifiedContracts,
@@ -174,21 +222,66 @@ impl FuzzState {
             return;
         }
 
+        self.collect_call_output(fuzzed_contracts, tx, result, logs, run_depth);
         let FuzzStateInner::Invariant(inner) = &self.inner else { return };
         let mut dict = inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
-        let (target_contract, target_function) = if logs.is_empty() && result.is_empty() {
-            (None, None)
-        } else {
-            targets.fuzzed_artifacts(tx)
-        };
+        dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
+    }
+
+    /// Collects typed return values and event samples without depending on execution state types.
+    pub fn collect_call_output(
+        &self,
+        fuzzed_contracts: &FuzzRunIdentifiedContracts,
+        tx: &BasicTxDetails,
+        result: &Bytes,
+        logs: &[Log],
+        run_depth: u32,
+    ) {
+        if logs.is_empty() && result.is_empty() {
+            return;
+        }
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        let mut dict = inner.borrow_mut();
+        let targets = fuzzed_contracts.targets();
+        let (target_contract, target_function) = targets.fuzzed_artifacts(tx);
         if !logs.is_empty() {
             dict.insert_logs_values(target_contract, logs, run_depth);
         }
         if !result.is_empty() {
             dict.insert_result_values(target_function, result, run_depth);
         }
-        dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
+    }
+
+    /// Collects an account observed by a finalized transaction, including deployed push bytes.
+    pub fn collect_account(&self, address: Address, code: Option<(B256, &[u8])>) {
+        if is_history_storage_address(&address) {
+            return;
+        }
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        let mut dictionary = inner.borrow_mut();
+        dictionary.insert_value(address.into_word());
+        if let Some((hash, bytes)) = code {
+            dictionary.insert_push_bytes(&address, hash, bytes);
+        }
+    }
+
+    /// Collects finalized bytecode emitted separately from account information.
+    pub fn collect_bytecode(&self, hash: B256, bytes: &[u8]) {
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        inner.borrow_mut().insert_bytecode(hash, bytes);
+    }
+
+    /// Collects a finalized storage word without retaining an execution engine's state types.
+    pub fn collect_storage(&self, address: Address, slot: U256, value: U256) {
+        if is_history_storage_address(&address) {
+            return;
+        }
+        let FuzzStateInner::Invariant(inner) = &self.inner else { return };
+        let mut dictionary = inner.borrow_mut();
+        if dictionary.config.include_storage {
+            dictionary.insert_storage_value(&slot, &value, None);
+        }
     }
 
     /// Collects typed trace-cmp operands from sancov-instrumented code.
@@ -261,6 +354,7 @@ impl From<EvmFuzzState> for FuzzState {
 /// Maximum number of persistent values from sancov trace-cmp.
 const MAX_PERSISTENT_VALUES: usize = 2048;
 /// Maximum cached storage slot layout lookups per fuzz dictionary.
+#[cfg(feature = "revm")]
 const MAX_SLOT_INFO_CACHE_ENTRIES: usize = 4096;
 
 #[derive(Clone)]
@@ -295,8 +389,10 @@ pub struct FuzzDictionary {
     /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
     persistent_values: B256IndexSet,
     /// Parsed storage layout identifiers keyed by the layout allocation.
+    #[cfg(feature = "revm")]
     slot_identifiers: HashMap<usize, SlotIdentifier>,
     /// Cached non-mapping storage slot identification keyed by layout allocation and slot.
+    #[cfg(feature = "revm")]
     slot_info_cache: HashMap<(usize, B256), Option<SlotInfo>>,
 
     misses: usize,
@@ -335,7 +431,9 @@ impl FuzzDictionary {
             sample_values: Default::default(),
             literal_values: Default::default(),
             persistent_values: Default::default(),
+            #[cfg(feature = "revm")]
             slot_identifiers: Default::default(),
+            #[cfg(feature = "revm")]
             slot_info_cache: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
@@ -353,43 +451,6 @@ impl FuzzDictionary {
         self.sample_values
             .extend(self.literal_values.get().words.iter().map(|(k, v)| (k.clone(), v.clone())));
         self.samples_seeded = true;
-    }
-
-    /// Insert values from initial db state into fuzz dictionary.
-    /// These values are persisted across invariant runs.
-    fn insert_db_values(&mut self, db_state: Vec<(&Address, &DbAccount)>) {
-        for (address, account) in db_state {
-            if is_history_storage_address(address) {
-                continue;
-            }
-
-            // Insert basic account information
-            self.insert_value(address.into_word());
-            // Insert push bytes
-            self.insert_push_bytes_values(address, &account.info);
-            // Insert storage values.
-            if self.config.include_storage {
-                // Sort storage values before inserting to ensure deterministic dictionary.
-                let mut values = account.storage.iter().collect::<Vec<_>>();
-                values.sort_unstable_by_key(|(slot, _)| **slot);
-                for (slot, value) in values {
-                    self.insert_storage_value(slot, value, None);
-                }
-            }
-        }
-
-        // We need at least some state data if DB is empty,
-        // otherwise we can't select random data for state fuzzing.
-        if self.values().is_empty() {
-            // Prefill with a random address.
-            self.insert_value(Address::random().into_word());
-        }
-
-        // Record number of values and addresses inserted from db to be used for reverting at the
-        // end of each run.
-        self.db_state_values = self.state_values.len();
-        self.db_addresses = self.addresses.len();
-        self.db_push_bytecode_hashes = self.push_bytecode_hashes.len();
     }
 
     /// Insert values collected from call result into fuzz dictionary.
@@ -491,6 +552,7 @@ impl FuzzDictionary {
 
     /// Insert values from call state changeset into fuzz dictionary.
     /// These values are removed at the end of current run.
+    #[cfg(feature = "revm")]
     fn insert_new_state_values(
         &mut self,
         state_changeset: &StateChangeset,
@@ -535,6 +597,7 @@ impl FuzzDictionary {
         }
     }
 
+    #[cfg(feature = "revm")]
     fn identify_storage_slot(
         &mut self,
         key: usize,
@@ -564,20 +627,28 @@ impl FuzzDictionary {
     /// Insert values from push bytes into fuzz dictionary.
     /// Values are collected only once for a given bytecode.
     /// If values are newly collected then they are removed at the end of current run.
+    #[cfg(feature = "revm")]
     fn insert_push_bytes_values(&mut self, address: &Address, account_info: &AccountInfo) {
-        if !self.config.include_push_bytes {
-            return;
-        }
-
         let Some(code) = &account_info.code else {
             return;
         };
-        self.insert_address(*address);
-        if self.values_full() {
+        self.insert_push_bytes(address, account_info.code_hash(), code.original_byte_slice());
+    }
+
+    fn insert_push_bytes(&mut self, address: &Address, code_hash: B256, code: &[u8]) {
+        if !self.config.include_push_bytes {
             return;
         }
-        if self.push_bytecode_hashes.insert(account_info.code_hash()) {
-            self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
+        self.insert_address(*address);
+        self.insert_bytecode(code_hash, code);
+    }
+
+    fn insert_bytecode(&mut self, code_hash: B256, code: &[u8]) {
+        if !self.config.include_push_bytes || self.values_full() {
+            return;
+        }
+        if self.push_bytecode_hashes.insert(code_hash) {
+            self.collect_push_bytes(ignore_metadata_hash(code));
         }
     }
 
@@ -833,13 +904,13 @@ impl FuzzDictionary {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
 
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
-    use revm::bytecode::Bytecode;
+    use revm::{bytecode::Bytecode, database::InMemoryDB};
 
     fn account_with_code(raw: &'static [u8]) -> AccountInfo {
         AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(raw)))

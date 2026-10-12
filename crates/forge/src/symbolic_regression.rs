@@ -14,7 +14,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub(crate) const SYMBOLIC_REGRESSION_MARKER: &str = "__foundry_symbolic_regression_marker";
+pub(crate) use crate::test_config::SYMBOLIC_REGRESSION_MARKER;
 
 /// Configuration for emitting Solidity regression tests from symbolic counterexamples.
 #[derive(Clone, Debug)]

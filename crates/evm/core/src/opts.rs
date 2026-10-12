@@ -1,8 +1,6 @@
 use crate::{
-    EvmEnv, FoundryBlock, FoundryTransaction,
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{CreateFork, Fork},
-    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
@@ -19,13 +17,23 @@ use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
     provider::{ProviderBuilder, is_rpc_method_not_found},
 };
-use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit, evm_spec_id};
+use foundry_config::{Chain, Config, FoundryHardfork, GasLimit};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use revm::{context::CfgEnv, primitives::hardfork::SpecId};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;
+
+#[cfg(feature = "revm")]
+use crate::{
+    EvmEnv, FoundryBlock, FoundryTransaction,
+    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
+};
+#[cfg(feature = "revm")]
+use foundry_compilers::artifacts::EvmVersion;
+#[cfg(feature = "revm")]
+use foundry_config::{ExecutionSpec, evm_spec_id};
+#[cfg(feature = "revm")]
+use revm::{context::CfgEnv, primitives::hardfork::SpecId};
 
 /// EVM execution options, including the configured remote fork.
 ///
@@ -526,7 +534,7 @@ impl EvmOpts {
     /// it changes. The result binds the configured RPC source, configured selector, exact block
     /// number and hash, and [`ForkContext`]. When the selector is implicit `latest`, only the
     /// returned [`Fork`] is pinned.
-    pub(crate) async fn prepare_fork(&self) -> eyre::Result<Option<Fork>> {
+    pub async fn prepare_fork(&self) -> eyre::Result<Option<Fork>> {
         let Some(fork_url) = &self.fork_url else { return Ok(None) };
         let client = self.fork_rpc_client(fork_url)?;
         let provider = RootProvider::<AnyNetwork>::new(client.clone());
@@ -541,10 +549,7 @@ impl EvmOpts {
     }
 
     /// Returns whether the configured CREATE2 deployer existed at the resolved fork block.
-    pub(crate) async fn can_use_create2_deployer_at(
-        &self,
-        fork: Option<&Fork>,
-    ) -> eyre::Result<bool> {
+    pub async fn can_use_create2_deployer_at(&self, fork: Option<&Fork>) -> eyre::Result<bool> {
         let Some(_) = &self.fork_url else {
             eyre::ensure!(fork.is_none(), "resolved fork provided without a configured fork");
             return Ok(self.create2_deployer == DEFAULT_CREATE2_DEPLOYER);
@@ -598,7 +603,7 @@ impl EvmOpts {
     }
 
     /// Returns an account nonce at the exact block and endpoint identity of `fork`.
-    pub(crate) async fn transaction_count_at_fork(
+    pub async fn transaction_count_at_fork(
         &self,
         account: Address,
         fork: &Fork,
@@ -921,6 +926,7 @@ impl EvmOpts {
     /// Returns standalone execution environments and the remote source context, if any.
     ///
     /// Execution workflows with a backend use its selected block through `Backend::env`.
+    #[cfg(feature = "revm")]
     pub async fn env_with_fork_context<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
@@ -970,7 +976,8 @@ impl EvmOpts {
     }
 
     /// Returns the EVM and transaction environments at an already resolved fork.
-    pub(crate) async fn env_at_fork<
+    #[cfg(feature = "revm")]
+    pub async fn env_at_fork<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
         TX: FoundryTransaction + Default,
@@ -1093,6 +1100,7 @@ impl EvmOpts {
         Ok((block, actual, context))
     }
 
+    #[cfg(feature = "revm")]
     pub(crate) fn fork_env_from_block<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
@@ -1119,6 +1127,7 @@ impl EvmOpts {
     }
 
     /// Returns the [`EvmEnv`] configured with only local settings.
+    #[cfg(feature = "revm")]
     fn local_evm_env<SPEC: Into<SpecId> + Default + Clone, BLOCK: FoundryBlock + Default>(
         &self,
     ) -> EvmEnv<SPEC, BLOCK> {
@@ -1135,6 +1144,7 @@ impl EvmOpts {
     }
 
     /// Returns the `TxEnv` with gas price and chain ID from a stable fork snapshot.
+    #[cfg(feature = "revm")]
     fn fork_tx_env<TX: FoundryTransaction + Default>(
         &self,
         gas_price: u128,
@@ -1149,6 +1159,7 @@ impl EvmOpts {
     }
 
     /// Returns the `TxEnv` configured from local settings only.
+    #[cfg(feature = "revm")]
     fn local_tx_env<TX: FoundryTransaction + Default>(&self) -> TX {
         let mut tx_env = TX::default();
         tx_env.set_caller(self.sender);
@@ -1158,6 +1169,7 @@ impl EvmOpts {
     }
 
     /// Builds a [`CfgEnv`] from the options, using the provided [`ChainId`].
+    #[cfg(feature = "revm")]
     fn cfg_env<SPEC: Into<SpecId> + Default + Clone>(&self, chain_id: ChainId) -> CfgEnv<SPEC> {
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
@@ -1255,6 +1267,7 @@ impl EvmOpts {
 }
 
 /// Describes how an execution spec should use a source chain's hardfork schedule.
+#[cfg(feature = "revm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutionSpecContext {
     /// Local execution without a fork.
@@ -1275,6 +1288,7 @@ pub enum ExecutionSpecContext {
     },
 }
 
+#[cfg(feature = "revm")]
 impl ExecutionSpecContext {
     /// Returns a local fork execution context.
     pub const fn fork(
@@ -1326,6 +1340,7 @@ impl ExecutionSpecContext {
 ///
 /// Returns the exact namespaced hardfork, when applicable, so execution and trace decoding can use
 /// the same hardfork.
+#[cfg(feature = "revm")]
 pub fn resolve_execution_spec<SPEC, BLOCK>(
     evm_version: EvmVersion,
     configured_hardfork: Option<FoundryHardfork>,
@@ -1413,6 +1428,7 @@ fn fork_endpoint_description(endpoint: &str) -> String {
         .unwrap_or_else(|| "configured provider".to_string())
 }
 
+#[cfg(feature = "revm")]
 async fn option_try_or_else<T, E>(
     option: Option<T>,
     f: impl AsyncFnOnce() -> Result<T, E>,
@@ -1420,7 +1436,7 @@ async fn option_try_or_else<T, E>(
     if let Some(value) = option { Ok(value) } else { f().await }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use alloy_chains::NamedChain;

@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, address, b256, hex};
+use alloy_primitives::{Address, B256, U256, address, b256, hex, uint};
 
 pub use foundry_evm_networks::MONAD_CHEATCODE_ADDRESS;
 
@@ -67,6 +67,13 @@ pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!(
 /// This is calculated as `keccak256([`DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE`])`.
 pub const DEFAULT_CREATE2_DEPLOYER_CODEHASH: B256 =
     b256!("0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");
+
+/// `bytes32("failed")`, as a storage slot key into [`CHEATCODE_ADDRESS`].
+///
+/// Used by all `forge-std` test contracts and newer `DSTest` test contracts as a global marker for
+/// a failed test.
+pub const GLOBAL_FAIL_SLOT: U256 =
+    uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
 #[cfg(test)]
 mod tests {

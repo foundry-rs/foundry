@@ -1,60 +1,39 @@
 use super::{fuzz::FuzzRunArgs, watch::WatchArgs};
 use crate::{
-    MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
+    brutalizer,
     decode::decode_console_logs,
-    gas_report::GasReport,
-    multi_runner::{
-        FuzzFailureReplayConfig, FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode,
-        FuzzMinimizeObservation, MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig,
-        TestFunctionMatcher, is_generated_symbolic_regression_contract,
-    },
-    mutation::{MutationRunConfig, run_mutation_testing},
     result::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
-        SymbolicReplayStatus, TestKind, TestKindReport, TestOutcome, TestResult, TestStatus,
+        SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
     },
-    runner::{effective_test_function_kind, inline_config_for},
-    symbolic_regression::{
-        SymbolicRegression, SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
-        collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
+    test_config::{
+        SymbolicArtifactReplayConfig, TestFunctionMatcher, inline_config_for,
+        is_generated_symbolic_regression_contract,
     },
-    traces::{
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
-        debug::{ContractSources, DebugTraceIdentifier},
-        decode_trace_arena, folded_stack_trace,
-        identifier::SignaturesIdentifier,
-        render_trace_arena_inner, speedscope,
-    },
+    test_options::{FuzzFailureReplayConfig, MultiNetworkConfig},
+    traces::InternalTraceMode,
     workspace,
 };
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
-use dialoguer::{Select, console::Term};
-use eyre::{Context, OptionExt, Result, bail};
+use eyre::{Context, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs, TracingArgs},
-    utils::{self, FoundryPathExt, LoadConfig},
+    utils::{FoundryPathExt, LoadConfig},
 };
 use foundry_common::{
-    ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
+    EmptyTestFilter, TestFilter, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project_cached},
-    external_compiler::is_external_artifact,
-    fs,
-    fs::canonicalize_path,
-    sh_status, sh_warn, shell,
+    fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries,
-        output_selection::ContractOutputSelection,
+        BytecodeObject, ConfigurableContractArtifact, output_selection::ContractOutputSelection,
     },
-    compilers::{
-        Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
-    },
+    compilers::{Language, multi::MultiCompilerLanguage},
     utils::source_files_iter,
 };
 use foundry_config::{
@@ -64,35 +43,85 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
     filter::GlobMatcher,
-    fs_permissions::FsAccessPermission,
 };
+use foundry_evm::opts::EvmOpts;
+use foundry_evm_coverage::ShowmapDomain;
+use foundry_evm_fuzz::{BaseCounterExample, CounterExample};
+use foundry_evm_networks::NetworkVariant;
+use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
+use rand::Rng;
+use regex::Regex;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tempfile::TempDir;
+
+#[cfg(feature = "revm")]
+use crate::{
+    MultiContractRunner, MultiContractRunnerBuilder,
+    gas_report::GasReport,
+    multi_runner::{
+        FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode, FuzzMinimizeObservation,
+    },
+    mutation::{MutationRunConfig, run_mutation_testing},
+    result::TestKind,
+    symbolic_regression::{
+        SymbolicRegression, SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
+        collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
+    },
+    test_options::ShowmapConfig,
+    traces::{
+        CallTraceDecoderBuilder, TraceKind,
+        debug::{ContractSources, DebugTraceIdentifier},
+        decode_trace_arena, folded_stack_trace,
+        identifier::SignaturesIdentifier,
+        render_trace_arena_inner, speedscope,
+    },
+};
+#[cfg(feature = "revm")]
+use dialoguer::{Select, console::Term};
+#[cfg(not(feature = "revm"))]
+use evm2::interpreter::opcode::OpCode;
+#[cfg(feature = "revm")]
+use eyre::OptionExt;
+#[cfg(feature = "revm")]
+use foundry_cli::utils;
+#[cfg(feature = "revm")]
+use foundry_common::{
+    ContractsByArtifact, TestFunctionExt, external_compiler::is_external_artifact,
+    fs::canonicalize_path,
+};
+#[cfg(feature = "revm")]
+use foundry_compilers::{artifacts::Libraries, compilers::multi::MultiCompiler};
+#[cfg(feature = "revm")]
+use foundry_config::fs_permissions::FsAccessPermission;
+#[cfg(feature = "revm")]
 use foundry_debugger::{Debugger, DebuggerLayout};
+#[cfg(feature = "revm")]
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
-    executors::{ExecutorBuilder, ShowmapDomain},
-    fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
-    opts::EvmOpts,
+    executors::ExecutorBuilder,
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
         trace_arena_at_depth,
     },
 };
-use foundry_evm_networks::NetworkVariant;
+#[cfg(feature = "revm")]
+use foundry_evm_fuzz::BasicTxDetails;
+#[cfg(feature = "revm")]
 use foundry_tui::tui_mode;
-use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use rand::Rng;
-use regex::Regex;
+#[cfg(feature = "revm")]
 use revm::{bytecode::opcode::OpCode, context::Transaction};
+#[cfg(feature = "revm")]
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Write,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::channel},
-    time::{Duration, Instant},
-};
-use tempfile::TempDir;
+#[cfg(feature = "revm")]
+use std::sync::{Mutex, mpsc::channel};
+#[cfg(feature = "revm")]
 use yansi::Paint;
 
 #[cfg(feature = "base")]
@@ -104,14 +133,19 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 
+#[cfg(feature = "revm")]
 mod evm_profile_server;
 mod filter;
 mod summary;
 use filter::RerunFailures;
-use summary::{TestSummaryReport, format_invariant_metrics_table};
+use summary::TestSummaryReport;
+
+#[cfg(feature = "revm")]
+use summary::format_invariant_metrics_table;
 
 pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 
+#[cfg(feature = "revm")]
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
 const AUTO_CORPUS_DIR: &str = "corpus";
@@ -119,6 +153,7 @@ const AUTO_CORPUS_DIR: &str = "corpus";
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
 
+#[cfg(feature = "revm")]
 fn validate_showmap_config(showmap: &ShowmapConfig) -> Result<()> {
     for (kind, name) in [("approach", &showmap.approach), ("trial", &showmap.trial)] {
         let path = Path::new(name);
@@ -137,18 +172,22 @@ fn validate_showmap_config(showmap: &ShowmapConfig) -> Result<()> {
 }
 
 /// Compiled runners for every network pass of a `forge fuzz` minimization command.
+#[cfg(feature = "revm")]
 pub(crate) struct FuzzMinimizeReplaySession {
     filter: ProjectPathsAwareFilter,
     passes: Vec<FuzzMinimizeReplayPass>,
 }
 
+#[cfg(feature = "revm")]
 type FuzzMinimizeReplay = Box<dyn Fn(&ProjectPathsAwareFilter, FuzzMinimizeConfig) -> Result<()>>;
 
+#[cfg(feature = "revm")]
 struct FuzzMinimizeReplayPass {
     target_count: usize,
     replay: FuzzMinimizeReplay,
 }
 
+#[cfg(feature = "revm")]
 impl FuzzMinimizeReplaySession {
     pub(crate) fn replay(
         &self,
@@ -177,6 +216,7 @@ impl FuzzMinimizeReplaySession {
     }
 }
 
+#[cfg(feature = "revm")]
 fn fuzz_minimize_pass<FEN: FoundryEvmNetwork>(
     runner: MultiContractRunner<FEN>,
     filter: &ProjectPathsAwareFilter,
@@ -202,6 +242,7 @@ fn fuzz_minimize_pass<FEN: FoundryEvmNetwork>(
     FuzzMinimizeReplayPass { target_count, replay: Box::new(replay) }
 }
 
+#[cfg(feature = "revm")]
 fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
     runner: &MultiContractRunner<FEN>,
     filter: &dyn TestFilter,
@@ -222,6 +263,7 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
 }
 
 /// Evaluates `$body` with `$fen` bound to the concrete network type selected by `$evm_opts`.
+#[cfg(feature = "revm")]
 macro_rules! dispatch_network {
     ($evm_opts:expr, | $fen:ident | $body:expr) => {
         match $evm_opts.networks.execution_network() {
@@ -267,6 +309,7 @@ enum TraceOutputKind {
     EvmProfile(EvmProfileFormat),
 }
 
+#[cfg(feature = "revm")]
 impl TraceOutputKind {
     const fn label(self) -> &'static str {
         match self {
@@ -305,6 +348,7 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) fuzz_input: Option<FuzzFailureReplayConfig>,
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
+    #[cfg(feature = "revm")]
     pub(crate) selected_sources: BTreeSet<PathBuf>,
 }
 
@@ -317,6 +361,7 @@ impl TestExecutionOptions {
             fuzz_input: None,
             replay_symbolic_artifact: None,
             inline_config,
+            #[cfg(feature = "revm")]
             selected_sources: BTreeSet::new(),
         }
     }
@@ -327,6 +372,7 @@ impl TestExecutionOptions {
 }
 
 /// Config and EVM options for one network pass of a multi-network run.
+#[cfg(feature = "revm")]
 struct NetworkPass {
     config: Config,
     evm_opts: EvmOpts,
@@ -334,6 +380,7 @@ struct NetworkPass {
 }
 
 /// Splits a run into the default network pass and one override pass per annotated network.
+#[cfg(feature = "revm")]
 fn network_passes(
     config: Config,
     evm_opts: EvmOpts,
@@ -364,6 +411,7 @@ struct CompiledTestProject {
     filter: ProjectPathsAwareFilter,
     inline_config: Arc<InlineConfig>,
     replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+    #[cfg(feature = "revm")]
     selected_sources: BTreeSet<PathBuf>,
     /// Keeps the brutalized copy of the project alive while its tests run.
     _brutalized_workspace: Option<TempDir>,
@@ -481,6 +529,7 @@ pub struct TestArgs {
 
     /// Internal showmap/replay override used by `forge fuzz replay`.
     #[arg(skip)]
+    #[cfg(feature = "revm")]
     pub(crate) showmap_override: Option<ShowmapConfig>,
 
     /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
@@ -514,6 +563,7 @@ pub struct TestArgs {
 
     /// Debugger layout to use.
     #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    #[cfg(feature = "revm")]
     debug_layout: Option<DebuggerLayout>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
@@ -1181,6 +1231,7 @@ impl TestArgs {
     }
 
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
+    #[cfg(feature = "revm")]
     fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         let showmap = match (&self.showmap_override, &self.showmap_out) {
             (Some(showmap), _) => showmap.clone(),
@@ -1215,7 +1266,7 @@ impl TestArgs {
     /// Restricts this test invocation to fuzz and invariant tests and enables a default fuzz corpus
     /// dir after user config is loaded.
     pub(crate) const fn enable_fuzz_only_with_auto_fuzz_corpus(&mut self) {
-        self.fuzz_only = true;
+        self.enable_fuzz_only();
         self.auto_fuzz_corpus = true;
     }
 
@@ -1244,11 +1295,13 @@ impl TestArgs {
 
     /// Overrides showmap config for callers that reuse replay mode without the
     /// `forge test --showmap-*` CLI flags.
+    #[cfg(feature = "revm")]
     pub(crate) fn set_showmap_override(&mut self, showmap: ShowmapConfig) {
         self.showmap_override = Some(showmap);
     }
 
     /// Sets replay-critical options for internal fuzz minimizer callers.
+    #[cfg(feature = "revm")]
     pub(crate) fn set_fuzz_minimize_replay_options(
         &mut self,
         global: GlobalArgs,
@@ -1263,10 +1316,12 @@ impl TestArgs {
     }
 
     /// Replays persisted fuzz failures without running a new fuzz campaign.
+    #[cfg(feature = "revm")]
     pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
         self.fuzz_failure_replay = true;
     }
 
+    #[cfg(feature = "revm")]
     fn warn_unsupported_engine_flags(
         &self,
         output: &ProjectCompileOutput,
@@ -1437,7 +1492,11 @@ impl TestArgs {
                 "symbolic counterexample artifact {display} test.contract must be `path:Contract`, got `{contract}`"
             );
         }
-        Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
+        Ok(Some(SymbolicArtifactReplayConfig {
+            artifact,
+            #[cfg(feature = "revm")]
+            path: path.clone(),
+        }))
     }
 
     fn load_fuzz_input(
@@ -1606,6 +1665,7 @@ impl TestArgs {
             &compiled.filter,
             TestExecutionOptions {
                 replay_symbolic_artifact: compiled.replay_symbolic_artifact,
+                #[cfg(feature = "revm")]
                 selected_sources: compiled.selected_sources,
                 ..TestExecutionOptions::default_run(compiled.inline_config)
             },
@@ -1683,7 +1743,7 @@ impl TestArgs {
             .external_compilers(&config)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
-        let (output, selected_sources, inline_config) = if self.list {
+        let (output, _selected_sources, inline_config) = if self.list {
             let compiler = compiler.external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
@@ -1739,11 +1799,13 @@ impl TestArgs {
             filter,
             inline_config,
             replay_symbolic_artifact,
-            selected_sources,
+            #[cfg(feature = "revm")]
+            selected_sources: _selected_sources,
             _brutalized_workspace: brutalized_workspace,
         })
     }
 
+    #[cfg(feature = "revm")]
     pub(crate) async fn prepare_fuzz_minimize_replay(
         &mut self,
         corpus_dir: &Path,
@@ -1805,13 +1867,15 @@ impl TestArgs {
     /// See [`Self::compile_and_run`] for more details.
     pub(crate) async fn run_tests(
         &mut self,
-        project_root: &Path,
+        _project_root: &Path,
         mut config: Config,
         mut evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
         mut execution: TestExecutionOptions,
     ) -> Result<TestOutcome> {
+        #[cfg(feature = "revm")]
+        let project_root = _project_root;
         self.ensure_mutation_mode_compatible(execution.coverage)?;
 
         if config.fuzz.run == Some(0) {
@@ -1831,6 +1895,7 @@ impl TestArgs {
 
         execution.fuzz_input =
             self.load_fuzz_input(output, &config, &execution.inline_config, filter)?;
+        #[cfg(feature = "revm")]
         self.warn_unsupported_engine_flags(
             output,
             &config,
@@ -1839,7 +1904,6 @@ impl TestArgs {
             &execution.multi_network,
         )?;
 
-        let mut filter = filter.clone();
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
 
         // Generate a random fuzz seed if none provided, for reproducibility.
@@ -1864,6 +1928,7 @@ impl TestArgs {
         // Enable internal tracing for more informative flamegraph/profile. Simple tracing is
         // upgraded to full tracing in `run_tests_inner` when exactly one test matches.
         config.tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        #[cfg(feature = "revm")]
         let json_trace_depth = config.tracing.trace_depth;
         execution.decode_internal = if config.tracing.decode_internal || trace_output.is_some() {
             InternalTraceMode::Simple
@@ -1876,11 +1941,22 @@ impl TestArgs {
         // Inline configuration starts from this base config. Materialize the inferred execution
         // network so unrelated inline overrides cannot erase the fork's EVM family.
         config.networks = evm_opts.networks;
+        #[cfg(feature = "revm")]
         let verbosity = evm_opts.verbosity;
 
-        // Box each network's run so the dispatch arms' locals stay off this frame.
-        dispatch_network!(&evm_opts, |Net| {
-            Box::pin(async {
+        if evm_opts.networks.execution_network() == NetworkVariant::Ethereum {
+            return self.run_ethereum_tests(config, evm_opts, output, filter, execution).await;
+        }
+
+        #[cfg(not(feature = "revm"))]
+        bail!("native EVM2 execution currently supports Ethereum only");
+
+        #[cfg(feature = "revm")]
+        {
+            let mut filter = filter.clone();
+            // Box each network's run so the dispatch arms' locals stay off this frame.
+            dispatch_network!(&evm_opts, |Net| {
+                Box::pin(async {
                 let backend = Backend::<Net>::spawn(evm_opts.get_fork(
                     &config,
                     evm_opts.env.chain_id.unwrap_or_default(),
@@ -2091,10 +2167,12 @@ impl TestArgs {
                 Ok::<_, eyre::Report>(outcome)
             })
             .await
-        })
+            })
+        }
     }
 
     /// Renders the flamegraph, flamechart or EVM profile of the single executed test.
+    #[cfg(feature = "revm")]
     async fn render_trace_output(
         &self,
         trace_output: TraceOutputKind,
@@ -2176,7 +2254,89 @@ impl TestArgs {
         Ok(())
     }
 
+    /// Runs the Ethereum pass through the native EVM2 executor.
+    async fn run_ethereum_tests(
+        &self,
+        config: Config,
+        opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        filter: &ProjectPathsAwareFilter,
+        execution: TestExecutionOptions,
+    ) -> Result<TestOutcome> {
+        if self.debug
+            || self.gas_report
+            || self.evm_profile.is_some()
+            || self.flamegraph
+            || self.flamechart
+            || self.mutate.is_some()
+            || self.showmap_out.is_some()
+        {
+            bail!("native EVM2 tracing/coverage/debug execution is not migrated yet");
+        }
+        if self.fuzz_failure_replay || execution.fuzz_input.is_some() {
+            bail!("native EVM2 fuzz failure replay is not migrated yet");
+        }
+        if execution.replay_symbolic_artifact.is_some() {
+            bail!("symbolic artifact execution requires the REVM compatibility feature");
+        }
+        if !execution.multi_network.all_override_networks.is_empty()
+            || execution.multi_network.pass_network.is_some()
+            || !execution.inline_config.referenced_override_networks(&config.profile).is_empty()
+        {
+            bail!("native EVM2 execution currently supports a single Ethereum network pass");
+        }
+        let timer = Instant::now();
+        let config = Arc::new(config);
+        let runner = crate::ethereum_runner::EthereumRunner::new(
+            config.clone(),
+            execution.inline_config,
+            execution.coverage,
+            output,
+            opts,
+        )
+        .await?;
+        let results = runner.run(filter, self.fuzz_only)?;
+        let outcome = TestOutcome::new(
+            Some(runner.artifacts.known_contracts),
+            results,
+            self.allow_failure,
+            config.fuzz.seed,
+        );
+        if let Some(path) = &self.json_file {
+            fs::write_json_file(
+                path,
+                outcome.json_file_results.as_ref().unwrap_or(&outcome.results),
+            )?;
+        }
+        if self.junit {
+            sh_println!("{}", junit_xml_report(&outcome.results, config.verbosity).to_string()?)?;
+        } else if shell::is_json() {
+            sh_println!("{}", serde_json::to_string(&outcome.results)?)?;
+        } else {
+            for (name, suite) in &outcome.results {
+                sh_println!()?;
+                let count = suite.test_results.len();
+                let tests = if count == 1 { "test" } else { "tests" };
+                sh_println!("Ran {count} {tests} for {name}")?;
+                for (test, result) in &suite.test_results {
+                    sh_println!("{}", result.short_result_with_suite(test, name))?;
+                    if config.verbosity >= 2 && !result.decoded_logs.is_empty() {
+                        sh_println!("Logs:")?;
+                        for log in &result.decoded_logs {
+                            sh_println!("  {log}")?;
+                        }
+                        sh_println!()?;
+                    }
+                }
+                sh_println!("{}", suite.summary())?;
+            }
+            self.print_summary(&outcome, timer.elapsed())?;
+        }
+        Ok(outcome)
+    }
+
     /// Builds the test runner for the network selected by `evm_opts`.
+    #[cfg(feature = "revm")]
     async fn build_runner<FEN: FoundryEvmNetwork>(
         &self,
         config: Arc<Config>,
@@ -2217,6 +2377,7 @@ impl TestArgs {
     }
 
     /// Builds the runner for one network pass and runs its tests.
+    #[cfg(feature = "revm")]
     async fn run_network_pass(
         &self,
         pass: NetworkPass,
@@ -2226,6 +2387,7 @@ impl TestArgs {
     ) -> Result<(Libraries, TestOutcome)> {
         let NetworkPass { config, evm_opts, multi_network } = pass;
         let execution = TestExecutionOptions { multi_network, ..execution };
+        #[cfg(feature = "revm")]
         let verbosity = evm_opts.verbosity;
         let config = Arc::new(config);
         dispatch_network!(&evm_opts, |Net| {
@@ -2252,6 +2414,7 @@ impl TestArgs {
 
     /// Emits symbolic regression tests for the counterexample artifacts in `results` when
     /// `--emit-regression` is set, and attaches them to the results.
+    #[cfg(feature = "revm")]
     fn emit_symbolic_regressions(
         &self,
         config: &Config,
@@ -2287,6 +2450,7 @@ impl TestArgs {
     }
 
     /// Run all tests that matches the filter predicate from a test runner
+    #[cfg(feature = "revm")]
     async fn run_tests_inner<FEN: FoundryEvmNetwork>(
         &self,
         mut runner: MultiContractRunner<FEN>,
@@ -2822,6 +2986,7 @@ impl TestArgs {
     ///
     /// The CLI flags override the config and environment, so `--gas-snapshot-check=false` disables
     /// a check enabled in the config. Exits with code 1 if differences are found.
+    #[cfg(feature = "revm")]
     fn check_and_write_gas_snapshots(
         &self,
         config: &Config,
@@ -2924,6 +3089,7 @@ fn enabled_flags<const N: usize>(flags: [(bool, &'static str); N]) -> Vec<&'stat
     flags.into_iter().filter_map(|(enabled, name)| enabled.then_some(name)).collect()
 }
 
+#[cfg(feature = "revm")]
 fn prepare_results_for_json(
     results: &mut BTreeMap<String, SuiteResult>,
     verbosity: u8,
@@ -2959,6 +3125,7 @@ fn prepare_results_for_json(
 /// into each per-mutant TempDir for performance (see `workspace::copy_project`). That isolation
 /// breaks down if tests can write to those shared trees, either via `vm.writeFile` (broad
 /// `fs_permissions`) or arbitrary `ffi` calls.
+#[cfg(feature = "revm")]
 fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
     if config.ffi {
         bail!(
@@ -3216,6 +3383,7 @@ const fn apply_mutation_compiler_overrides(config: &mut Config) {
 }
 
 /// Returns whether an ABI-discovered contract could be included in the test runner.
+#[cfg(feature = "revm")]
 fn is_runnable_test_contract(
     output: &ProjectCompileOutput,
     config: &Config,
@@ -3342,7 +3510,8 @@ fn matching_fuzz_replay_targets(
                 continue;
             }
             let function_config = inline_config_for(config, inline_config, &contract, Some(func))?;
-            if effective_test_function_kind(kind, &function_config, func).is_fuzz_test()
+            if crate::test_config::effective_test_function_kind(kind, &function_config, func)
+                .is_fuzz_test()
                 && func.selector() == selector
             {
                 targets.push((contract.clone(), func.signature()));
@@ -3356,6 +3525,7 @@ fn matching_fuzz_replay_targets(
 ///
 /// For suites that appear in both, test results are combined (function-level pass routing ensures
 /// each function appears in exactly one pass, so there are no key conflicts in practice).
+#[cfg(feature = "revm")]
 fn merge_outcomes(base: &mut TestOutcome, mut other: TestOutcome) {
     if let Some(other_results) = other.json_file_results.take() {
         let base_results = base.json_file_results.get_or_insert_with(|| base.results.clone());
@@ -3367,6 +3537,7 @@ fn merge_outcomes(base: &mut TestOutcome, mut other: TestOutcome) {
     }
 }
 
+#[cfg(feature = "revm")]
 fn merge_suite_results(
     base: &mut BTreeMap<String, SuiteResult>,
     other: BTreeMap<String, SuiteResult>,
@@ -3382,6 +3553,7 @@ fn merge_suite_results(
     }
 }
 
+#[cfg(feature = "revm")]
 fn collect_matching_debug_tests(
     matching_tests: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
 ) -> Vec<RerunFailure> {
@@ -3398,6 +3570,7 @@ fn collect_matching_debug_tests(
         .collect()
 }
 
+#[cfg(feature = "revm")]
 fn format_matching_debug_tests(matching_tests: &[RerunFailure]) -> String {
     if matching_tests.is_empty() {
         return String::new();
@@ -3452,6 +3625,7 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
 }
 
 /// Replace the last run failures, clearing the record when the run succeeds.
+#[cfg(feature = "revm")]
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() == 0 {
         let _ = fs::remove_file(&config.test_failures_file);
@@ -3477,6 +3651,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
 
 /// Returns the rerun keys of a failed test: its failed invariant predicates, or the test name when
 /// no predicate failed.
+#[cfg(feature = "revm")]
 fn rerun_filter_matches<'a>(
     test_name: &'a str,
     test_result: &'a TestResult,

@@ -525,7 +525,8 @@ async fn cast_run_hints_archive_endpoint_for_missing_state(cmd: _) {
 Error: the RPC endpoint does not have the historical state for the transaction's block; use an archive endpoint
 
 Context:
-- database error: failed to get account for [..]: server returned an error response: error code -32000: missing trie node
+- Error #0: database error: failed to get account for [..]
+- Error #1: server returned an error response: error code -32000: missing trie node
 
 "#]]);
 }
@@ -546,7 +547,7 @@ async fn cast_run_hints_remote_trace_for_unknown_transaction_type(cmd: _) {
 Error: cannot replay transaction [..] locally; `--debug-trace-transaction` renders the node's own trace instead
 
 Context:
-- cannot convert unknown transaction type 0x71 to TxEnv
+- cannot convert unknown transaction type 0x71 to an EVM2 transaction
 
 "#]]);
 }

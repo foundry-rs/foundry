@@ -3,17 +3,18 @@
 use super::{PreSimulationState, RpcSimulationContext};
 use crate::{
     ScriptResult,
-    runner::{GasSearch, ScriptRunner, needs_more_gas},
+    gas_search::GasSearch,
+    runner::{ScriptRunner, needs_more_gas},
     simulate::FilledTransactionsState,
     transaction::ScriptTransactionBuilder,
 };
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_evm::EvmEnv;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, TxKind, U256, map::HashMap};
 use eyre::{Result, WrapErr};
 use foundry_common::TransactionMaybeSigned;
 use foundry_evm::{
+    EvmEnv,
     backend::DatabaseExt,
     core::{
         FoundryBlock, FoundryTransaction,
@@ -163,10 +164,13 @@ impl PreSimulationState<MonadEvmNetwork> {
 
         let mut contexts = HashMap::default();
         for (rpc, context) in self.build_runners().await? {
+            let super::SimulationRunner::Legacy(runner) = context.runner else {
+                eyre::bail!("Monad simulation requires its legacy runner");
+            };
             contexts.insert(
                 rpc,
                 RpcSimulationContext {
-                    runner: MonadSimulation::new(context.runner)?,
+                    runner: MonadSimulation::new(*runner)?,
                     decoder: context.decoder,
                 },
             );

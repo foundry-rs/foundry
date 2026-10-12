@@ -1,18 +1,11 @@
 //! Implementations of [`Environment`](spec::Group::Environment) cheatcodes.
 
+pub(crate) use crate::context::FORGE_CONTEXT;
 use crate::{Cheatcode, Cheatcodes, Error, Result, Vm::*, string};
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
 use foundry_evm_core::evm::FoundryEvmNetwork;
-use std::{env, sync::OnceLock};
-
-/// Stores the forge execution context for the duration of the program.
-pub static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
-
-/// Returns the current forge execution context, if it has been set.
-pub fn current_execution_context() -> Option<ForgeContext> {
-    FORGE_CONTEXT.get().copied()
-}
+use std::env;
 
 impl Cheatcode for setEnvCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
@@ -266,12 +259,6 @@ impl Cheatcode for isContextCall {
         let Self { context } = self;
         Ok((FORGE_CONTEXT.get() == Some(context)).abi_encode())
     }
-}
-
-/// Set `forge` command current execution context for the duration of the program.
-/// Execution context is immutable, subsequent calls of this function won't change the context.
-pub fn set_execution_context(context: ForgeContext) {
-    let _ = FORGE_CONTEXT.set(context);
 }
 
 fn env(key: &str, ty: &DynSolType) -> Result {

@@ -1,9 +1,21 @@
+use crate::evm::FoundryEvmNetwork;
+use alloy_network::Ethereum;
+
+#[cfg(feature = "revm")]
+use crate::{
+    FoundryContextExt, FoundryInspectorExt,
+    backend::{DatabaseExt, JournaledState},
+    evm::{FoundryEvmFactory, IntoInstructionResult, NestedEvm, NestedEvmFor, run_inspected_frame},
+};
+#[cfg(feature = "revm")]
 use alloy_evm::{
     EthEvm, EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
-use alloy_network::Ethereum;
+#[cfg(feature = "revm")]
 use foundry_evm_networks::apply_bsc_p256_precompile;
+#[cfg(feature = "revm")]
 use foundry_fork_db::DatabaseError;
+#[cfg(feature = "revm")]
 use revm::{
     context::{
         BlockEnv, Evm as RevmEvm, Journal, TxEnv,
@@ -15,24 +27,19 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 
-use crate::{
-    FoundryContextExt, FoundryInspectorExt,
-    backend::{DatabaseExt, JournaledState},
-    evm::{
-        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
-        run_inspected_frame,
-    },
-};
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EthEvmNetwork;
+
 impl FoundryEvmNetwork for EthEvmNetwork {
     type Network = Ethereum;
+    #[cfg(feature = "revm")]
     type EvmFactory = EthEvmFactory;
 }
 
+#[cfg(feature = "revm")]
 type EthEvmHandler<'db, I> = MainnetHandler<EthRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
 
+#[cfg(feature = "revm")]
 pub type EthRevmEvm<'db, I> = RevmEvm<
     EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>,
     I,
@@ -41,12 +48,14 @@ pub type EthRevmEvm<'db, I> = RevmEvm<
     EthFrame,
 >;
 
+#[cfg(feature = "revm")]
 impl IntoInstructionResult for HaltReason {
     fn into_instruction_result(self) -> InstructionResult {
         self.into()
     }
 }
 
+#[cfg(feature = "revm")]
 impl FoundryEvmFactory for EthEvmFactory {
     type Chain = ();
     type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
@@ -83,6 +92,7 @@ impl FoundryEvmFactory for EthEvmFactory {
     }
 }
 
+#[cfg(feature = "revm")]
 impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> NestedEvm
     for EthRevmEvm<'db, I>
 {

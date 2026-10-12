@@ -353,6 +353,11 @@ svm = { package = "svm-rs", version = "0.5.28", default-features = false, featur
     "rustls",
 ] }
 
+## evm2
+evm2 = { git = "https://github.com/mablr/evm2", rev = "4bb7fed03529403417de444f9ece20e15acc6ec7", default-features = false, features = ["std", "map-foldhash", "sha3-keccak"] }
+evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "4bb7fed03529403417de444f9ece20e15acc6ec7" }
+evm2-macros = { git = "https://github.com/mablr/evm2", rev = "4bb7fed03529403417de444f9ece20e15acc6ec7" }
+
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }
 alloy-contract = { version = "2.5.0", default-features = false }

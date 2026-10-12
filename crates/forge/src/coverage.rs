@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use foundry_evm::coverage::*;
+pub use foundry_evm_coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {

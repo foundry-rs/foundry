@@ -18,7 +18,7 @@ foundry-evm-hardforks.workspace = true
 
 alloy-chains.workspace = true
 alloy-eips.workspace = true
-alloy-evm.workspace = true
+alloy-evm = { workspace = true, optional = true }
 alloy-op-hardforks = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = [
     "serde",
@@ -30,7 +30,7 @@ alloy-primitives = { workspace = true, features = [
 # Base
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 
-revm = { workspace = true, features = [
+revm = { workspace = true, optional = true, features = [
     "std",
     "serde",
     "memory_limit",
@@ -51,7 +51,8 @@ tempo-contracts.workspace = true
 serde_json.workspace = true
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = ["dep:revm", "dep:alloy-evm", "foundry-evm-hardforks/revm"]
 monad = ["dep:monad-revm", "foundry-evm-hardforks/monad"]
 optimism = ["dep:alloy-op-hardforks", "foundry-evm-hardforks/optimism"]
 base = ["dep:base-common-precompiles", "foundry-evm-hardforks/base"]

@@ -13,6 +13,8 @@ mod etherscan;
 
 pub mod provider;
 
+mod ethereum;
+
 pub mod bytecode;
 pub use bytecode::VerifyBytecodeArgs;
 

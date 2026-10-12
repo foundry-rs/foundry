@@ -1,8 +1,13 @@
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes};
 use foundry_common::TransactionMaybeSigned;
-use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "revm")]
+use revm_inspectors::tracing::types::CallKind;
+
+#[cfg(not(feature = "revm"))]
+use evm2_inspectors::tracing::types::CallKind;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

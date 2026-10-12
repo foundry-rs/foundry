@@ -1,5 +1,6 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedTraceStep,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedCallLog, DecodedCallTrace,
+    DecodedTraceStep, InstructionResult, OpCode,
     debug::DebugTraceIdentifier,
     erc8021,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
@@ -33,17 +34,12 @@ use foundry_evm_networks::{
     NetworkConfigs, NetworkVariant, TEMPO_PRECOMPILES, celo::transfer::CELO_TRANSFER_LABEL,
 };
 use itertools::Itertools;
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
-    IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve,
-    ITIP20Factory, ITIP403Registry, IValidatorConfig,
-};
-use tempo_precompiles::{
-    PATH_USD_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS, nonce::INonce,
-    tip20::ITIP20,
+    INonce, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20,
+    ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry, IValidatorConfig, PATH_USD_ADDRESS,
+    RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 
 #[cfg(feature = "base")]
@@ -1254,10 +1250,10 @@ impl CallTraceDecoder {
                     None => None,
                 };
                 let Some(decoded) = decoded else {
-                    return Some(vec![self.revert_decoder.decode(data, None)]);
+                    return Some(vec![self.revert_decoder.decode_data(data)]);
                 };
                 let Some(first) = decoded.first() else {
-                    return Some(vec![self.revert_decoder.decode(data, None)]);
+                    return Some(vec![self.revert_decoder.decode_data(data)]);
                 };
                 let expected_revert = match first {
                     DynSolValue::Bytes(bytes) => bytes.as_slice(),
@@ -1265,7 +1261,7 @@ impl CallTraceDecoder {
                     _ => return None,
                 };
                 Some(
-                    std::iter::once(self.revert_decoder.decode(expected_revert, None))
+                    std::iter::once(self.revert_decoder.decode_data(expected_revert))
                         .chain(decoded.iter().skip(1).map(|value| self.format_value(value)))
                         .collect(),
                 )
@@ -1484,7 +1480,7 @@ impl CallTraceDecoder {
         // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
         // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
         // not exists anymore.
-        if trace.status.is_none_or(|s| s.is_ok()) || trace.success {
+        if trace.status.is_none_or(crate::successful_status) || trace.success {
             return None;
         }
         Some(self.decode_revert_at(trace.address, &trace.output, trace.status).await)
@@ -1507,7 +1503,21 @@ impl CallTraceDecoder {
         {
             return format!("{}({})", error.name, decoded.iter().map(format_token).format(", "));
         }
-        self.revert_decoder.decode(output, status)
+        #[cfg(feature = "revm")]
+        return self.revert_decoder.decode(output, status);
+
+        #[cfg(not(feature = "revm"))]
+        {
+            // Match the legacy decoder's status fallback before short binary payloads.
+            if output.len() < SELECTOR_LEN
+                && !(output.is_ascii() && !output.is_empty())
+                && let Some(status) = status
+                && !status.is_success()
+            {
+                return format!("EvmError: {status:?}");
+            }
+            self.revert_decoder.decode_data(output)
+        }
     }
 
     async fn decode_revert_at(
@@ -1726,7 +1736,7 @@ impl CallTraceDecoder {
             .iter()
             .filter(|&n| {
                 // Only consider reverted traces whose output the revert decoder cannot decode.
-                n.trace.status.is_some_and(|s| !s.is_ok())
+                n.trace.status.is_some_and(|s| !crate::successful_status(s))
                     && !n.trace.success
                     && self.revert_decoder.maybe_decode_known(&n.trace.output).is_none()
             })
@@ -1921,7 +1931,7 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
     use std::borrow::Cow;
-    use tempo_precompiles::{
+    use tempo_contracts::precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
         TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
         VALIDATOR_CONFIG_V2_ADDRESS,
@@ -2541,7 +2551,7 @@ mod tests {
         data.extend_from_slice(&args);
         let trace = CallTrace {
             address,
-            kind: revm_inspectors::tracing::types::CallKind::Create,
+            kind: crate::CallKind::Create,
             data: data.into(),
             ..Default::default()
         };
@@ -2621,25 +2631,25 @@ mod tests {
             (
                 "expectRevert(bytes4)",
                 expect_revert_bytes4_data,
-                Some(vec![decoder.revert_decoder.decode(expected_revert_bytes4.as_slice(), None)]),
+                Some(vec![decoder.revert_decoder.decode_data(expected_revert_bytes4.as_slice())]),
             ),
             (
                 "expectRevert(bytes)",
                 expect_revert_bytes_data,
-                Some(vec![decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None)]),
+                Some(vec![decoder.revert_decoder.decode_data(expected_revert_bytes.as_slice())]),
             ),
             (
                 "expectRevert(bytes4)",
                 expect_revert_runtime_data.clone(),
                 Some(vec![
-                    decoder.revert_decoder.decode(expect_revert_runtime_data.as_slice(), None),
+                    decoder.revert_decoder.decode_data(expect_revert_runtime_data.as_slice()),
                 ]),
             ),
             (
                 "expectRevert(bytes4,address)",
                 expect_revert_bytes4_address_data,
                 Some(vec![
-                    decoder.revert_decoder.decode(expected_revert_bytes4.as_slice(), None),
+                    decoder.revert_decoder.decode_data(expected_revert_bytes4.as_slice()),
                     decoder.format_value(&DynSolValue::Address(reverter)),
                 ]),
             ),
@@ -2647,7 +2657,7 @@ mod tests {
                 "expectRevert(bytes,uint64)",
                 expect_revert_bytes_count_data,
                 Some(vec![
-                    decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None),
+                    decoder.revert_decoder.decode_data(expected_revert_bytes.as_slice()),
                     decoder
                         .format_value(&DynSolValue::Uint(alloy_primitives::U256::from(count), 64)),
                 ]),
@@ -2656,7 +2666,7 @@ mod tests {
                 "expectRevert(bytes,address,uint64)",
                 expect_revert_bytes_address_count_data,
                 Some(vec![
-                    decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None),
+                    decoder.revert_decoder.decode_data(expected_revert_bytes.as_slice()),
                     decoder.format_value(&DynSolValue::Address(reverter)),
                     decoder
                         .format_value(&DynSolValue::Uint(alloy_primitives::U256::from(count), 64)),
@@ -2666,7 +2676,7 @@ mod tests {
                 "expectRevert()",
                 expect_revert_runtime_data.clone(),
                 Some(vec![
-                    decoder.revert_decoder.decode(expect_revert_runtime_data.as_slice(), None),
+                    decoder.revert_decoder.decode_data(expect_revert_runtime_data.as_slice()),
                 ]),
             ),
             // Should redact private key from traces in all cases:
@@ -3765,7 +3775,7 @@ mod tests {
         // The precompile's custom errors decode by name in reverts.
         let revert = decoder
             .revert_decoder
-            .decode(IStorageCredits::InvalidMode {}.abi_encode().as_slice(), None);
+            .decode_data(IStorageCredits::InvalidMode {}.abi_encode().as_slice());
         assert!(revert.contains("InvalidMode"), "{revert}");
 
         // `balanceOf(address)` collides with `ITIP20`'s selector; the global map must keep
@@ -3894,7 +3904,8 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_tempo_precompiles() {
-        use foundry_evm_core::tempo::{TEMPO_PRECOMPILE_ADDRESSES, TIP20_CHANNEL_RESERVE_ADDRESS};
+        use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
+        use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
         // Decoder with Tempo chain ID (4217).
         let decoder = CallTraceDecoderBuilder::new()
@@ -4169,7 +4180,7 @@ mod tests {
 
     #[test]
     fn test_tempo_hardfork_none_does_not_remove_user_reserve_label() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+        use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
         let reserve_label = "UserReserve".to_string();
         let decoder = CallTraceDecoderBuilder::new()
@@ -4470,7 +4481,7 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_future_tempo_precompiles() {
-        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+        use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
@@ -4500,7 +4511,7 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_does_not_skip_tempo_precompiles_on_other_chains() {
-        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
+        use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 
         // Decoder with Ethereum mainnet chain ID (1).
         let mut decoder = CallTraceDecoder::new().clone();
@@ -4617,5 +4628,20 @@ mod tests {
             Some(143),
             Some(MonadHardfork::MonadNine.into()),
         ));
+    }
+    #[tokio::test]
+    async fn decode_revert_preserves_short_payload_status_precedence() {
+        let decoder = CallTraceDecoder::default();
+        for output in [&[][..], &[0xff][..], "é".as_bytes()] {
+            assert_eq!(
+                decoder.decode_revert(output, Some(InstructionResult::OutOfGas)).await,
+                "EvmError: OutOfGas",
+            );
+        }
+        assert_eq!(decoder.decode_revert(b"abc", Some(InstructionResult::OutOfGas)).await, "abc",);
+        assert_eq!(
+            decoder.decode_revert(&[0xff; 4], Some(InstructionResult::OutOfGas)).await,
+            "custom error 0xffffffff",
+        );
     }
 }

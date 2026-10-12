@@ -12,12 +12,11 @@
 use alloy_primitives::{Address, Bytes, LogData, U256};
 use alloy_rpc_types::trace::geth::{CallConfig, CallFrame, CallLogFrame};
 use alloy_transport::TransportError;
-use foundry_evm::traces::{
-    CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
-};
-use revm::interpreter::InstructionResult;
-
 pub use foundry_common::provider::is_rpc_method_not_found as is_method_not_found_error;
+use foundry_evm::traces::{
+    CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, InstructionResult,
+    TraceMemberOrder,
+};
 
 /// Returns the `callTracer` config for remote traces: every nested call, with its logs.
 ///

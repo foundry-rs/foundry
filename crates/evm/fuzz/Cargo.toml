@@ -25,6 +25,7 @@ solar.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
+alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = [
     "serde",
     "getrandom",
@@ -32,7 +33,7 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
     "map-indexmap",
 ] }
-revm = { workspace = true, features = [
+revm = { workspace = true, optional = true, features = [
     "std",
     "serde",
     "memory_limit",
@@ -50,17 +51,27 @@ rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [features]
-default = ["optimism"]
-monad = ["foundry-evm-core/monad"]
+default = ["optimism", "revm"]
+revm = [
+    "dep:revm",
+    "foundry-common/revm",
+    "foundry-evm-core/revm",
+    "foundry-evm-coverage/revm",
+    "foundry-evm-traces/revm",
+]
+monad = ["revm", "foundry-evm-core/monad"]
 base = [
+    "revm",
     "foundry-common/base",
     "foundry-evm-core/base",
     "foundry-evm-coverage/base",
     "foundry-evm-traces/base",
 ]
 optimism = [
+    "revm",
     "foundry-common/optimism",
     "foundry-evm-core/optimism",
     "foundry-evm-coverage/optimism",

@@ -1,4 +1,4 @@
-use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
+use super::{JsonResult, NestedValue, ScriptResult};
 use crate::{
     ScriptArgs, ScriptConfig,
     build::{CompiledState, LinkedBuildData},
@@ -13,19 +13,17 @@ use alloy_primitives::{
 };
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
-use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
+use foundry_cheatcodes::{BroadcastableTransactions, Wallets};
+use foundry_cli::utils::ensure_clean_constructor;
 use foundry_common::{
     ContractsByArtifact,
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
 use foundry_config::{Chain, NamedChain};
-use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
         debug::ContractSources,
@@ -37,8 +35,16 @@ use foundry_evm::{
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::join_all;
 use itertools::Itertools;
-use std::path::Path;
 use yansi::Paint;
+
+#[cfg(feature = "revm")]
+use crate::runner::ScriptRunner;
+#[cfg(feature = "revm")]
+use foundry_cli::utils::needs_setup;
+#[cfg(feature = "revm")]
+use foundry_debugger::Debugger;
+#[cfg(feature = "revm")]
+use std::path::Path;
 
 /// State after linking, contains the linked build data along with library addresses and optional
 /// array of libraries that need to be predeployed.
@@ -117,17 +123,30 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
     }
 
     async fn execute_inner(mut self, restricted: bool) -> Result<ExecutedState<FEN>> {
-        let mut runner = self
-            .script_config
-            .get_runner_with_cheatcodes(
-                self.build_data.known_contracts.clone(),
-                self.script_wallets.clone(),
-                self.args.debug,
-                self.build_data.build_data.target.clone(),
-                restricted,
-            )
-            .await?;
-        let result = self.execute_with_runner(&mut runner).await?;
+        let result = if self.script_config.evm_opts.networks.execution_network()
+            == foundry_evm_networks::NetworkVariant::Ethereum
+        {
+            crate::ethereum::execute(&self, restricted).await?
+        } else {
+            #[cfg(feature = "revm")]
+            {
+                let mut runner = self
+                    .script_config
+                    .get_runner_with_cheatcodes(
+                        self.build_data.known_contracts.clone(),
+                        self.script_wallets.clone(),
+                        self.args.debug,
+                        self.build_data.build_data.target.clone(),
+                        restricted,
+                    )
+                    .await?;
+                self.execute_with_runner(&mut runner).await?
+            }
+            #[cfg(not(feature = "revm"))]
+            {
+                eyre::bail!("only Ethereum script execution is available without REVM")
+            }
+        };
 
         // If we have a new sender from execution, we need to use it to deploy libraries and relink
         // contracts.
@@ -161,6 +180,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
     }
 
     /// Executes the script using the provided runner and returns the [ScriptResult].
+    #[cfg(feature = "revm")]
     pub async fn execute_with_runner(
         &self,
         runner: &mut ScriptRunner<FEN>,
@@ -597,16 +617,19 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         Ok(())
     }
 
+    #[cfg(feature = "revm")]
     pub fn run_debugger(self) -> Result<()> {
         self.create_debugger().try_run_tui()?;
         Ok(())
     }
 
+    #[cfg(feature = "revm")]
     pub fn dump_debugger(self, path: &Path) -> Result<()> {
         self.create_debugger().dump_to_file(path)?;
         Ok(())
     }
 
+    #[cfg(feature = "revm")]
     fn create_debugger(self) -> Debugger {
         Debugger::builder()
             .traces(

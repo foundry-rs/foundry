@@ -60,10 +60,7 @@ impl BuildData {
         script_config: &ScriptConfig<FEN>,
     ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
-        let can_use_create2 = script_config
-            .backend
-            .can_use_create2_deployer(script_config.evm_opts.create2_deployer)
-            .await?;
+        let can_use_create2 = script_config.can_use_create2_deployer().await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
 

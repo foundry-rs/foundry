@@ -1,24 +1,32 @@
-use std::fmt::{self, Display};
-
+use super::revert_handlers::RevertParameters;
 use crate::{
-    Cheatcode, Cheatcodes, CheatsCtxt, Error, Result,
+    Cheatcode, Result,
     Vm::*,
-    expected_emit::{ExpectedEmit, observe_log},
+    expected_emit::{ExpectedEmit, ExpectedEmitTracker},
 };
 use alloy_primitives::{
-    Address, Bytes, Log, LogData as RawLog, U256, hex, keccak256,
+    Address, Bytes, U256, hex,
     map::{HashMap, hash_map::Entry},
 };
-use alloy_sol_types::{SolCall, SolValue};
-use foundry_evm_core::evm::FoundryEvmNetwork;
 use itertools::Itertools;
-use revm::interpreter::{
-    CallScheme, InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
-};
-use tempo_contracts::precompiles::ISignatureVerifier;
-use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 
-use super::revert_handlers::RevertParameters;
+#[cfg(feature = "revm")]
+use crate::{Cheatcodes, CheatsCtxt, Error, expected_emit::observe_log};
+#[cfg(feature = "revm")]
+use alloy_primitives::{Log, LogData as RawLog, keccak256};
+#[cfg(feature = "revm")]
+use alloy_sol_types::{SolCall, SolValue};
+#[cfg(feature = "revm")]
+use foundry_evm_core::evm::FoundryEvmNetwork;
+#[cfg(feature = "revm")]
+use revm::interpreter::{
+    InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
+};
+#[cfg(feature = "revm")]
+use std::fmt::{self, Display};
+#[cfg(feature = "revm")]
+use tempo_contracts::precompiles::{ISignatureVerifier, SIGNATURE_VERIFIER_ADDRESS};
+
 /// Tracks the expected calls per address.
 ///
 /// For each address, we track the expected calls per call data and optional call scheme. We track
@@ -32,7 +40,8 @@ use super::revert_handlers::RevertParameters;
 pub type ExpectedCallTracker = HashMap<Address, ExpectedCallsForTarget>;
 
 /// Tracks calldata, scheme and count expectations for one target.
-pub type ExpectedCallsForTarget = HashMap<(Bytes, Option<CallScheme>), (ExpectedCallData, u64)>;
+pub type ExpectedCallsForTarget =
+    HashMap<(Bytes, Option<ExpectedCallScheme>), (ExpectedCallData, u64)>;
 
 #[derive(Clone, Debug)]
 pub struct ExpectedCallData {
@@ -58,6 +67,31 @@ pub enum ExpectedCallType {
     NonCount,
     /// The exact number of calls expected.
     Count,
+}
+
+/// Call kinds used by Foundry expectations independently of the execution engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExpectedCallScheme {
+    /// CALL.
+    Call,
+    /// CALLCODE.
+    CallCode,
+    /// DELEGATECALL.
+    DelegateCall,
+    /// STATICCALL.
+    StaticCall,
+}
+
+#[cfg(feature = "revm")]
+impl From<revm::interpreter::CallScheme> for ExpectedCallScheme {
+    fn from(scheme: revm::interpreter::CallScheme) -> Self {
+        match scheme {
+            revm::interpreter::CallScheme::Call => Self::Call,
+            revm::interpreter::CallScheme::CallCode => Self::CallCode,
+            revm::interpreter::CallScheme::DelegateCall => Self::DelegateCall,
+            revm::interpreter::CallScheme::StaticCall => Self::StaticCall,
+        }
+    }
 }
 
 /// The type of expected revert.
@@ -96,6 +130,7 @@ pub struct ExpectedRevert {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "revm")]
 pub struct ExpectedCreate {
     /// The address that deployed the contract
     pub deployer: Address,
@@ -106,11 +141,13 @@ pub struct ExpectedCreate {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "revm")]
 pub enum CreateScheme {
     Create,
     Create2,
 }
 
+#[cfg(feature = "revm")]
 impl Display for CreateScheme {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -120,6 +157,7 @@ impl Display for CreateScheme {
     }
 }
 
+#[cfg(feature = "revm")]
 impl From<revm::context_interface::CreateScheme> for CreateScheme {
     fn from(scheme: revm::context_interface::CreateScheme) -> Self {
         match scheme {
@@ -130,6 +168,7 @@ impl From<revm::context_interface::CreateScheme> for CreateScheme {
     }
 }
 
+#[cfg(feature = "revm")]
 impl CreateScheme {
     pub const fn eq(&self, create_scheme: Self) -> bool {
         matches!(
@@ -139,266 +178,175 @@ impl CreateScheme {
     }
 }
 
-impl Cheatcode for expectCall_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, data } = self;
-        expect_call(state, callee, data, None, None, None, None, 1, ExpectedCallType::NonCount)
-    }
+macro_rules! impl_expect_call {
+    ($call:ident { $callee:ident, $data:ident $(, $field:ident)* }, $value:expr, $gas:expr, $min_gas:expr, $scheme:expr, $count:expr, $kind:ident) => {
+        impl Cheatcode for $call {
+            #[cfg(feature = "revm")]
+            fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+                let Self { $callee, $data $(, $field)* } = self;
+                expect_call(&mut state.expected_calls, $callee, $data, $value, $gas, $min_gas, $scheme, $count, ExpectedCallType::$kind)
+            }
+
+            fn apply_evm2(
+                &self,
+                state: &mut crate::ethereum::Cheatcodes,
+                _: &mut evm2::interpreter::Interpreter<'_, '_, foundry_evm_core::ethereum::FoundryEvmTypes>,
+            ) -> std::result::Result<Bytes, crate::ethereum::ApplyError> {
+                let Self { $callee, $data $(, $field)* } = self;
+                expect_call(&mut state.expected_calls, $callee, $data, $value, $gas, $min_gas, $scheme, $count, ExpectedCallType::$kind)
+                    .map(Bytes::from).map_err(Into::into)
+            }
+        }
+    };
 }
 
-impl Cheatcode for expectCall_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, data, count } = self;
-        expect_call(state, callee, data, None, None, None, None, *count, ExpectedCallType::Count)
-    }
+impl_expect_call!(expectCall_0Call { callee, data }, None, None, None, None, 1, NonCount);
+impl_expect_call!(expectCall_1Call { callee, data, count }, None, None, None, None, *count, Count);
+impl_expect_call!(
+    expectCall_2Call { callee, data, msgValue },
+    Some(msgValue),
+    None,
+    None,
+    None,
+    1,
+    NonCount
+);
+impl_expect_call!(
+    expectCall_3Call { callee, data, msgValue, count },
+    Some(msgValue),
+    None,
+    None,
+    None,
+    *count,
+    Count
+);
+impl_expect_call!(
+    expectCall_4Call { callee, data, msgValue, gas },
+    Some(msgValue),
+    Some(*gas),
+    None,
+    None,
+    1,
+    NonCount
+);
+impl_expect_call!(
+    expectCall_5Call { callee, data, msgValue, gas, count },
+    Some(msgValue),
+    Some(*gas),
+    None,
+    None,
+    *count,
+    Count
+);
+impl_expect_call!(
+    expectDelegateCallCall { callee, data },
+    None,
+    None,
+    None,
+    Some(ExpectedCallScheme::DelegateCall),
+    1,
+    NonCount
+);
+impl_expect_call!(
+    expectCallMinGas_0Call { callee, data, msgValue, minGas },
+    Some(msgValue),
+    None,
+    Some(*minGas),
+    None,
+    1,
+    NonCount
+);
+impl_expect_call!(
+    expectCallMinGas_1Call { callee, data, msgValue, minGas, count },
+    Some(msgValue),
+    None,
+    Some(*minGas),
+    None,
+    *count,
+    Count
+);
+
+macro_rules! impl_expect_emit {
+    ($call:ident { $($field:ident),* }, $checks:expr, $address:expr, $anonymous:expr, $count:expr) => {
+        impl Cheatcode for $call {
+            #[cfg(feature = "revm")]
+            fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+                let Self { $($field),* } = *self;
+                let depth = ccx.depth();
+                expect_emit(&mut ccx.state.expected_emits, depth, $checks, $address, $anonymous, $count)
+            }
+
+            fn apply_evm2(
+                &self,
+                state: &mut crate::ethereum::Cheatcodes,
+                interp: &mut evm2::interpreter::Interpreter<'_, '_, foundry_evm_core::ethereum::FoundryEvmTypes>,
+            ) -> std::result::Result<Bytes, crate::ethereum::ApplyError> {
+                let Self { $($field),* } = *self;
+                expect_emit(&mut state.expected_emits, usize::from(interp.message().depth) + 1, $checks, $address, $anonymous, $count)
+                    .map(Bytes::from).map_err(Into::into)
+            }
+        }
+    };
 }
 
-impl Cheatcode for expectCall_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, msgValue, data } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            Some(msgValue),
-            None,
-            None,
-            None,
-            1,
-            ExpectedCallType::NonCount,
-        )
-    }
-}
-
-impl Cheatcode for expectCall_3Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, msgValue, data, count } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            Some(msgValue),
-            None,
-            None,
-            None,
-            *count,
-            ExpectedCallType::Count,
-        )
-    }
-}
-
-impl Cheatcode for expectCall_4Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, msgValue, gas, data } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            Some(msgValue),
-            Some(*gas),
-            None,
-            None,
-            1,
-            ExpectedCallType::NonCount,
-        )
-    }
-}
-
-impl Cheatcode for expectCall_5Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, msgValue, gas, data, count } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            Some(msgValue),
-            Some(*gas),
-            None,
-            None,
-            *count,
-            ExpectedCallType::Count,
-        )
-    }
-}
-
-impl Cheatcode for expectDelegateCallCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, data } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            None,
-            None,
-            None,
-            Some(CallScheme::DelegateCall),
-            1,
-            ExpectedCallType::NonCount,
-        )
-    }
-}
-
-impl Cheatcode for expectCallMinGas_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, msgValue, minGas, data } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            Some(msgValue),
-            None,
-            Some(*minGas),
-            None,
-            1,
-            ExpectedCallType::NonCount,
-        )
-    }
-}
-
-impl Cheatcode for expectCallMinGas_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { callee, msgValue, minGas, data, count } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            Some(msgValue),
-            None,
-            Some(*minGas),
-            None,
-            *count,
-            ExpectedCallType::Count,
-        )
-    }
-}
-
-impl Cheatcode for expectEmit_0Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
-        expect_emit(
-            ccx.state,
-            ccx.depth(),
-            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
-            None,
-            false,
-            1,
-        )
-    }
-}
-
-impl Cheatcode for expectEmit_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
-        expect_emit(
-            ccx.state,
-            ccx.depth(),
-            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
-            Some(emitter),
-            false,
-            1,
-        )
-    }
-}
-
-impl Cheatcode for expectEmit_2Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self {} = self;
-        expect_emit(ccx.state, ccx.depth(), [true; 5], None, false, 1)
-    }
-}
-
-impl Cheatcode for expectEmit_3Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.depth(), [true; 5], Some(emitter), false, 1)
-    }
-}
-
-impl Cheatcode for expectEmit_4Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { checkTopic1, checkTopic2, checkTopic3, checkData, count } = *self;
-        expect_emit(
-            ccx.state,
-            ccx.depth(),
-            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
-            None,
-            false,
-            count,
-        )
-    }
-}
-
-impl Cheatcode for expectEmit_5Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter, count } = *self;
-        expect_emit(
-            ccx.state,
-            ccx.depth(),
-            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
-            Some(emitter),
-            false,
-            count,
-        )
-    }
-}
-
-impl Cheatcode for expectEmit_6Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { count } = *self;
-        expect_emit(ccx.state, ccx.depth(), [true; 5], None, false, count)
-    }
-}
-
-impl Cheatcode for expectEmit_7Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { emitter, count } = *self;
-        expect_emit(ccx.state, ccx.depth(), [true; 5], Some(emitter), false, count)
-    }
-}
-
-impl Cheatcode for expectEmitAnonymous_0Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
-        expect_emit(
-            ccx.state,
-            ccx.depth(),
-            [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
-            None,
-            true,
-            1,
-        )
-    }
-}
-
-impl Cheatcode for expectEmitAnonymous_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
-        expect_emit(
-            ccx.state,
-            ccx.depth(),
-            [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
-            Some(emitter),
-            true,
-            1,
-        )
-    }
-}
-
-impl Cheatcode for expectEmitAnonymous_2Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self {} = self;
-        expect_emit(ccx.state, ccx.depth(), [true; 5], None, true, 1)
-    }
-}
-
-impl Cheatcode for expectEmitAnonymous_3Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.depth(), [true; 5], Some(emitter), true, 1)
-    }
-}
+impl_expect_emit!(
+    expectEmit_0Call { checkTopic1, checkTopic2, checkTopic3, checkData },
+    [true, checkTopic1, checkTopic2, checkTopic3, checkData],
+    None,
+    false,
+    1
+);
+impl_expect_emit!(
+    expectEmit_1Call { checkTopic1, checkTopic2, checkTopic3, checkData, emitter },
+    [true, checkTopic1, checkTopic2, checkTopic3, checkData],
+    Some(emitter),
+    false,
+    1
+);
+impl_expect_emit!(expectEmit_2Call {}, [true; 5], None, false, 1);
+impl_expect_emit!(expectEmit_3Call { emitter }, [true; 5], Some(emitter), false, 1);
+impl_expect_emit!(
+    expectEmit_4Call { checkTopic1, checkTopic2, checkTopic3, checkData, count },
+    [true, checkTopic1, checkTopic2, checkTopic3, checkData],
+    None,
+    false,
+    count
+);
+impl_expect_emit!(
+    expectEmit_5Call { checkTopic1, checkTopic2, checkTopic3, checkData, emitter, count },
+    [true, checkTopic1, checkTopic2, checkTopic3, checkData],
+    Some(emitter),
+    false,
+    count
+);
+impl_expect_emit!(expectEmit_6Call { count }, [true; 5], None, false, count);
+impl_expect_emit!(expectEmit_7Call { emitter, count }, [true; 5], Some(emitter), false, count);
+impl_expect_emit!(
+    expectEmitAnonymous_0Call { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData },
+    [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
+    None,
+    true,
+    1
+);
+impl_expect_emit!(
+    expectEmitAnonymous_1Call {
+        checkTopic0,
+        checkTopic1,
+        checkTopic2,
+        checkTopic3,
+        checkData,
+        emitter
+    },
+    [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
+    Some(emitter),
+    true,
+    1
+);
+impl_expect_emit!(expectEmitAnonymous_2Call {}, [true; 5], None, true, 1);
+impl_expect_emit!(expectEmitAnonymous_3Call { emitter }, [true; 5], Some(emitter), true, 1);
 
 impl Cheatcode for expectCreateCall {
+    #[cfg(feature = "revm")]
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bytecode, deployer } = self;
         expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create)
@@ -406,6 +354,7 @@ impl Cheatcode for expectCreateCall {
 }
 
 impl Cheatcode for expectCreate2Call {
+    #[cfg(feature = "revm")]
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bytecode, deployer } = self;
         expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create2)
@@ -413,6 +362,7 @@ impl Cheatcode for expectCreate2Call {
 }
 
 impl Cheatcode for expectTip20LogoURIUpdatedCall {
+    #[cfg(feature = "revm")]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { token, updater, newLogoURI } = self;
         expect_logo_uri_updated(ccx, token, updater, newLogoURI)
@@ -420,6 +370,7 @@ impl Cheatcode for expectTip20LogoURIUpdatedCall {
 }
 
 impl Cheatcode for expectKeychainVerifiedCall {
+    #[cfg(feature = "revm")]
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { account, digest, signature } = self;
         expect_keychain_verified(state, *account, *digest, signature.clone(), false)
@@ -427,6 +378,7 @@ impl Cheatcode for expectKeychainVerifiedCall {
 }
 
 impl Cheatcode for expectKeychainAdminVerifiedCall {
+    #[cfg(feature = "revm")]
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { account, digest, signature } = self;
         expect_keychain_verified(state, *account, *digest, signature.clone(), true)
@@ -434,12 +386,14 @@ impl Cheatcode for expectKeychainAdminVerifiedCall {
 }
 
 impl Cheatcode for expectLogoURIUpdatedCall {
+    #[cfg(feature = "revm")]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { token, updater, newLogoURI } = self;
         expect_logo_uri_updated(ccx, token, updater, newLogoURI)
     }
 }
 
+#[cfg(feature = "revm")]
 fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     account: Address,
@@ -454,7 +408,7 @@ fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
         ISignatureVerifier::verifyKeychainCall { account, hash: digest, signature }.abi_encode()
     };
     expect_call(
-        state,
+        &mut state.expected_calls,
         &SIGNATURE_VERIFIER_ADDRESS,
         &Bytes::from(calldata),
         None,
@@ -466,6 +420,7 @@ fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
     )
 }
 
+#[cfg(feature = "revm")]
 fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     token: &Address,
@@ -489,157 +444,136 @@ fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
-impl Cheatcode for expectRevert_0Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self {} = self;
-        expect_revert(ccx.state, None, ccx.depth(), false, false, None, 1)
-    }
+macro_rules! impl_expect_revert {
+    ($call:ident { $($field:ident),* }, $reason:expr, $cheatcode:expr, $partial:expr, $reverter:expr, $count:expr) => {
+        impl Cheatcode for $call {
+            #[cfg(feature = "revm")]
+            fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+                let Self { $($field),* } = self;
+                let depth = ccx.depth();
+                set_expected_revert(
+                    &mut ccx.state.expected_revert, $reason, depth, $cheatcode, $partial, $reverter, $count,
+                )
+            }
+
+            fn apply_evm2(
+                &self,
+                state: &mut crate::ethereum::Cheatcodes,
+                interp: &mut evm2::interpreter::Interpreter<'_, '_, foundry_evm_core::ethereum::FoundryEvmTypes>,
+            ) -> std::result::Result<Bytes, crate::ethereum::ApplyError> {
+                let Self { $($field),* } = self;
+                set_expected_revert(
+                    &mut state.expected_revert, $reason, usize::from(interp.message().depth) + 1, $cheatcode, $partial, $reverter, $count,
+                ).map(Bytes::from).map_err(Into::into)
+            }
+        }
+    };
 }
 
-impl Cheatcode for expectRevert_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), false, false, None, 1)
-    }
-}
-
-impl Cheatcode for expectRevert_2Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.depth(), false, false, None, 1)
-    }
-}
-
-impl Cheatcode for expectRevert_3Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { reverter } = self;
-        expect_revert(ccx.state, None, ccx.depth(), false, false, Some(*reverter), 1)
-    }
-}
-
-impl Cheatcode for expectRevert_4Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData, reverter } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData.as_ref()),
-            ccx.depth(),
-            false,
-            false,
-            Some(*reverter),
-            1,
-        )
-    }
-}
-
-impl Cheatcode for expectRevert_5Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData, reverter } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.depth(), false, false, Some(*reverter), 1)
-    }
-}
-
-impl Cheatcode for expectRevert_6Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { count } = self;
-        expect_revert(ccx.state, None, ccx.depth(), false, false, None, *count)
-    }
-}
-
-impl Cheatcode for expectRevert_7Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData, count } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), false, false, None, *count)
-    }
-}
-
-impl Cheatcode for expectRevert_8Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData, count } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.depth(), false, false, None, *count)
-    }
-}
-
-impl Cheatcode for expectRevert_9Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { reverter, count } = self;
-        expect_revert(ccx.state, None, ccx.depth(), false, false, Some(*reverter), *count)
-    }
-}
-
-impl Cheatcode for expectRevert_10Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData, reverter, count } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData.as_ref()),
-            ccx.depth(),
-            false,
-            false,
-            Some(*reverter),
-            *count,
-        )
-    }
-}
-
-impl Cheatcode for expectRevert_11Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData, reverter, count } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData),
-            ccx.depth(),
-            false,
-            false,
-            Some(*reverter),
-            *count,
-        )
-    }
-}
-
-impl Cheatcode for expectPartialRevert_0Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), false, true, None, 1)
-    }
-}
-
-impl Cheatcode for expectPartialRevert_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData, reverter } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData.as_ref()),
-            ccx.depth(),
-            false,
-            true,
-            Some(*reverter),
-            1,
-        )
-    }
-}
-
-impl Cheatcode for _expectCheatcodeRevert_0Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        expect_revert(ccx.state, None, ccx.depth(), true, false, None, 1)
-    }
-}
-
-impl Cheatcode for _expectCheatcodeRevert_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), true, false, None, 1)
-    }
-}
-
-impl Cheatcode for _expectCheatcodeRevert_2Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.depth(), true, false, None, 1)
-    }
-}
+impl_expect_revert!(expectRevert_0Call {}, None, false, false, None, 1);
+impl_expect_revert!(
+    expectRevert_1Call { revertData },
+    Some(revertData.as_ref()),
+    false,
+    false,
+    None,
+    1
+);
+impl_expect_revert!(expectRevert_2Call { revertData }, Some(revertData), false, false, None, 1);
+impl_expect_revert!(expectRevert_3Call { reverter }, None, false, false, Some(*reverter), 1);
+impl_expect_revert!(
+    expectRevert_4Call { revertData, reverter },
+    Some(revertData.as_ref()),
+    false,
+    false,
+    Some(*reverter),
+    1
+);
+impl_expect_revert!(
+    expectRevert_5Call { revertData, reverter },
+    Some(revertData),
+    false,
+    false,
+    Some(*reverter),
+    1
+);
+impl_expect_revert!(expectRevert_6Call { count }, None, false, false, None, *count);
+impl_expect_revert!(
+    expectRevert_7Call { revertData, count },
+    Some(revertData.as_ref()),
+    false,
+    false,
+    None,
+    *count
+);
+impl_expect_revert!(
+    expectRevert_8Call { revertData, count },
+    Some(revertData),
+    false,
+    false,
+    None,
+    *count
+);
+impl_expect_revert!(
+    expectRevert_9Call { reverter, count },
+    None,
+    false,
+    false,
+    Some(*reverter),
+    *count
+);
+impl_expect_revert!(
+    expectRevert_10Call { revertData, reverter, count },
+    Some(revertData.as_ref()),
+    false,
+    false,
+    Some(*reverter),
+    *count
+);
+impl_expect_revert!(
+    expectRevert_11Call { revertData, reverter, count },
+    Some(revertData),
+    false,
+    false,
+    Some(*reverter),
+    *count
+);
+impl_expect_revert!(
+    expectPartialRevert_0Call { revertData },
+    Some(revertData.as_ref()),
+    false,
+    true,
+    None,
+    1
+);
+impl_expect_revert!(
+    expectPartialRevert_1Call { revertData, reverter },
+    Some(revertData.as_ref()),
+    false,
+    true,
+    Some(*reverter),
+    1
+);
+impl_expect_revert!(_expectCheatcodeRevert_0Call {}, None, true, false, None, 1);
+impl_expect_revert!(
+    _expectCheatcodeRevert_1Call { revertData },
+    Some(revertData.as_ref()),
+    true,
+    false,
+    None,
+    1
+);
+impl_expect_revert!(
+    _expectCheatcodeRevert_2Call { revertData },
+    Some(revertData),
+    true,
+    false,
+    None,
+    1
+);
 
 impl Cheatcode for expectSafeMemoryCall {
+    #[cfg(feature = "revm")]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.depth().try_into()?)
@@ -647,6 +581,7 @@ impl Cheatcode for expectSafeMemoryCall {
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
+    #[cfg(feature = "revm")]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ccx.state.allowed_mem_writes.remove(&ccx.depth().try_into()?);
@@ -655,6 +590,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 }
 
 impl Cheatcode for expectSafeMemoryCallCall {
+    #[cfg(feature = "revm")]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, (ccx.depth() + 1).try_into()?)
@@ -738,18 +674,18 @@ impl ExpectedRevert {
 ///   address(0xc4f3) and selector `0xd34db33f` to be made at least once. If the amount of calls is
 ///   0, the test will fail. If the call is made more than once, the test will pass.
 #[expect(clippy::too_many_arguments)] // It is what it is
-fn expect_call<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn expect_call(
+    tracker: &mut ExpectedCallTracker,
     target: &Address,
     calldata: &Bytes,
     value: Option<&U256>,
     mut gas: Option<u64>,
     mut min_gas: Option<u64>,
-    scheme: Option<CallScheme>,
+    scheme: Option<ExpectedCallScheme>,
     count: u64,
     call_type: ExpectedCallType,
 ) -> Result {
-    let expecteds = state.expected_calls.entry(*target).or_default();
+    let expecteds = tracker.entry(*target).or_default();
 
     if let Some(val) = value
         && *val > U256::ZERO
@@ -810,7 +746,7 @@ pub(crate) fn observe_call(
     input: &[u8],
     value: Option<U256>,
     gas_limit: u64,
-    scheme: CallScheme,
+    scheme: ExpectedCallScheme,
 ) {
     // Match every partial/full calldata.
     for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target {
@@ -881,18 +817,18 @@ pub(crate) fn first_unmet_call(tracker: &ExpectedCallTracker, succeeded: bool) -
     ))
 }
 
-const fn call_scheme_rank(scheme: Option<CallScheme>) -> u8 {
+const fn call_scheme_rank(scheme: Option<ExpectedCallScheme>) -> u8 {
     match scheme {
         None => 0,
-        Some(CallScheme::Call) => 1,
-        Some(CallScheme::CallCode) => 2,
-        Some(CallScheme::DelegateCall) => 3,
-        Some(CallScheme::StaticCall) => 4,
+        Some(ExpectedCallScheme::Call) => 1,
+        Some(ExpectedCallScheme::CallCode) => 2,
+        Some(ExpectedCallScheme::DelegateCall) => 3,
+        Some(ExpectedCallScheme::StaticCall) => 4,
     }
 }
 
-fn expect_emit<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn expect_emit(
+    tracker: &mut ExpectedEmitTracker,
     depth: usize,
     checks: [bool; 5],
     address: Option<Address>,
@@ -909,13 +845,13 @@ fn expect_emit<FEN: FoundryEvmNetwork>(
         count,
         mismatch_error: None,
     };
-    if let Some(found_emit_pos) = state.expected_emits.iter().position(|(emit, _)| emit.found) {
+    if let Some(found_emit_pos) = tracker.iter().position(|(emit, _)| emit.found) {
         // The order of emits already found (back of queue) should not be modified, hence push any
         // new emit before first found emit.
-        state.expected_emits.insert(found_emit_pos, (expected_emit, Default::default()));
+        tracker.insert(found_emit_pos, (expected_emit, Default::default()));
     } else {
         // If no expected emits then push new one at the back of queue.
-        state.expected_emits.push_back((expected_emit, Default::default()));
+        tracker.push_back((expected_emit, Default::default()));
     }
 
     Ok(Default::default())
@@ -925,6 +861,7 @@ fn expect_emit<FEN: FoundryEvmNetwork>(
 /// is available.
 ///
 /// Without an interpreter, the failure reason is returned to the caller instead.
+#[cfg(feature = "revm")]
 pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     log: &Log,
@@ -940,6 +877,7 @@ pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
     None
 }
 
+#[cfg(feature = "revm")]
 fn expect_create<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     bytecode: Bytes,
@@ -952,8 +890,8 @@ fn expect_create<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
-fn expect_revert<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+pub(crate) fn set_expected_revert(
+    expected_revert: &mut Option<ExpectedRevert>,
     reason: Option<&[u8]>,
     depth: usize,
     cheatcode: bool,
@@ -962,10 +900,10 @@ fn expect_revert<FEN: FoundryEvmNetwork>(
     count: u64,
 ) -> Result {
     ensure!(
-        state.expected_revert.is_none(),
+        expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
-    state.expected_revert = Some(ExpectedRevert {
+    *expected_revert = Some(ExpectedRevert {
         reason: reason.map(Bytes::copy_from_slice),
         depth,
         kind: if cheatcode {
@@ -983,6 +921,7 @@ fn expect_revert<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
+#[cfg(feature = "revm")]
 fn expect_safe_memory<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     start: u64,
@@ -999,6 +938,7 @@ fn expect_safe_memory<FEN: FoundryEvmNetwork>(
 /// Removes the first create expectation matched by a completed create.
 ///
 /// `create_scheme` is only called for expectations with a matching deployer.
+#[cfg(feature = "revm")]
 pub(crate) fn observe_create(
     expected_creates: &mut Vec<ExpectedCreate>,
     deployer: Address,
@@ -1015,6 +955,7 @@ pub(crate) fn observe_create(
 }
 
 /// Returns the failure message for the first unmet create expectation, if any.
+#[cfg(feature = "revm")]
 pub(crate) fn first_unmet_create(expected_creates: &[ExpectedCreate]) -> Option<String> {
     let expected_create = expected_creates.first()?;
     Some(format!(
@@ -1044,7 +985,7 @@ mod tests {
 
     fn tracker(
         calldata: Bytes,
-        scheme: Option<CallScheme>,
+        scheme: Option<ExpectedCallScheme>,
         data: ExpectedCallData,
     ) -> ExpectedCallTracker {
         let mut tracker = ExpectedCallTracker::default();
@@ -1052,12 +993,22 @@ mod tests {
         tracker
     }
 
-    fn seen(tracker: &ExpectedCallTracker, calldata: &Bytes, scheme: Option<CallScheme>) -> u64 {
+    fn seen(
+        tracker: &ExpectedCallTracker,
+        calldata: &Bytes,
+        scheme: Option<ExpectedCallScheme>,
+    ) -> u64 {
         tracker[&TARGET][&(calldata.clone(), scheme)].1
     }
 
     fn observe(tracker: &mut ExpectedCallTracker, input: &[u8], value: Option<U256>, gas: u64) {
-        observe_call(tracker.get_mut(&TARGET).unwrap(), input, value, gas, CallScheme::Call);
+        observe_call(
+            tracker.get_mut(&TARGET).unwrap(),
+            input,
+            value,
+            gas,
+            ExpectedCallScheme::Call,
+        );
     }
 
     #[test]
@@ -1150,15 +1101,21 @@ mod tests {
         let calldata = bytes!("771602f7");
         let mut t = tracker(
             calldata.clone(),
-            Some(CallScheme::DelegateCall),
+            Some(ExpectedCallScheme::DelegateCall),
             expected(None, None, None, 1, ExpectedCallType::NonCount),
         );
 
-        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::Call);
-        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 0);
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, ExpectedCallScheme::Call);
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::DelegateCall)), 0);
 
-        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::DelegateCall);
-        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 1);
+        observe_call(
+            t.get_mut(&TARGET).unwrap(),
+            &calldata,
+            None,
+            0,
+            ExpectedCallScheme::DelegateCall,
+        );
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::DelegateCall)), 1);
     }
 
     #[test]
@@ -1190,10 +1147,10 @@ mod tests {
         let high = address!("0000000000000000000000000000000000000002");
         let ordered = [
             (low, bytes!("01"), None, ""),
-            (low, bytes!("01"), Some(CallScheme::Call), ", call type Call"),
-            (low, bytes!("01"), Some(CallScheme::CallCode), ", call type CallCode"),
-            (low, bytes!("01"), Some(CallScheme::DelegateCall), ", call type DelegateCall"),
-            (low, bytes!("01"), Some(CallScheme::StaticCall), ", call type StaticCall"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::Call), ", call type Call"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::CallCode), ", call type CallCode"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::DelegateCall), ", call type DelegateCall"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::StaticCall), ", call type StaticCall"),
             (low, bytes!("02"), None, ""),
             (high, bytes!("00"), None, ""),
             (high, bytes!("01"), None, ""),
@@ -1234,7 +1191,7 @@ mod tests {
         let calldata = bytes!("771602f7");
         let mut t = tracker(
             calldata.clone(),
-            Some(CallScheme::DelegateCall),
+            Some(ExpectedCallScheme::DelegateCall),
             expected(Some(U256::from(1)), Some(2), Some(3), 2, ExpectedCallType::Count),
         );
         t.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 1;

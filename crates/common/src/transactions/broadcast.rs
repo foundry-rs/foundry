@@ -1,7 +1,7 @@
 use alloy_consensus::Transaction;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +89,17 @@ impl<N: Network> TransactionMaybeSigned<N> {
             Self::Unsigned(tx) => tx.authorization_list().cloned(),
         }
         .filter(|auths| !auths.is_empty())
+    }
+
+    /// Returns versioned blob hashes from the signed envelope or unsigned request.
+    pub fn blob_versioned_hashes(&self) -> Option<&[B256]>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        match self {
+            Self::Signed { tx, .. } => tx.blob_versioned_hashes(),
+            Self::Unsigned(tx) => tx.blob_versioned_hashes(),
+        }
     }
 }
 

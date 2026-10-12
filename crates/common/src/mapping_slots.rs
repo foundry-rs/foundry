@@ -1,7 +1,8 @@
-use alloy_primitives::{
-    Address, B256, U256,
-    map::{AddressHashMap, B256HashMap},
-};
+use alloy_primitives::{Address, B256, map::B256HashMap};
+
+#[cfg(feature = "revm")]
+use alloy_primitives::{U256, map::AddressHashMap};
+#[cfg(feature = "revm")]
 use revm::{
     bytecode::opcode,
     interpreter::{Interpreter, interpreter_types::Jumps},
@@ -86,6 +87,7 @@ pub struct PendingMappingHash {
 }
 
 /// Captures a 64-byte Keccak operation before execution.
+#[cfg(feature = "revm")]
 pub fn capture_hash(interpreter: &Interpreter) -> Option<PendingMappingHash> {
     if interpreter.bytecode.opcode() != opcode::KECCAK256
         || interpreter.stack.peek(1).ok()? != U256::from(0x40)
@@ -99,6 +101,7 @@ pub fn capture_hash(interpreter: &Interpreter) -> Option<PendingMappingHash> {
 }
 
 /// Records a successfully executed 64-byte Keccak operation after memory expansion.
+#[cfg(feature = "revm")]
 pub fn record_hash(
     mapping_slots: &mut AddressHashMap<MappingSlots>,
     interpreter: &Interpreter,
@@ -112,6 +115,7 @@ pub fn record_hash(
 }
 
 /// Function to be used in `Inspector::step` to record mapping slots.
+#[cfg(feature = "revm")]
 #[cold]
 pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
     if interpreter.bytecode.opcode() == opcode::SSTORE
@@ -126,6 +130,9 @@ pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Inte
 mod tests {
     use super::*;
     use alloy_primitives::keccak256;
+
+    #[cfg(not(feature = "revm"))]
+    use alloy_primitives::U256;
 
     #[test]
     fn resolves_mapping_keys_from_root_to_leaf() {

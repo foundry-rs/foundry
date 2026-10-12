@@ -1,20 +1,24 @@
 //! # foundry-evm-core
 //!
-//! Generic execution, environment, fork, backend, and state abstractions shared by Foundry tools.
+//! Ethereum execution state, options, and fork sources shared by Foundry tools.
 //!
-//! [`evm::FoundryEvmNetwork`] binds an Alloy network to an [`evm::FoundryEvmFactory`]. The factory
-//! owns the concrete execution types and constructs a Foundry-compatible EVM context, while
-//! `foundry-evm-networks` owns runtime family selection. Keeping those responsibilities separate
-//! allows one compiled binary to dispatch to different execution families at runtime.
+//! Native Ethereum uses [`ethereum`] for EVM2-owned state and RPC backing. The `revm` feature
+//! retains the legacy executor, environment, and network factory adapters.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::{Address, map::HashMap};
+
+#[cfg(feature = "revm")]
+use crate::constants::DEFAULT_CREATE2_DEPLOYER;
+#[cfg(feature = "revm")]
 use auto_impl::auto_impl;
+#[cfg(feature = "revm")]
 use foundry_evm_networks::NetworkConfigs;
+#[cfg(feature = "revm")]
 use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
+#[cfg(feature = "revm")]
 use revm_inspectors::access_list::AccessListInspector;
 
 #[cfg(feature = "optimism")]
@@ -31,9 +35,14 @@ pub mod abi {
     pub use foundry_evm_abi::*;
 }
 
+#[cfg(feature = "revm")]
 pub mod env;
+#[cfg(feature = "revm")]
 pub use env::*;
 
+pub mod ethereum;
+
+#[cfg(feature = "revm")]
 pub mod backend;
 pub mod buffer;
 pub mod bytecode;
@@ -47,6 +56,7 @@ pub mod ic;
 pub mod opts;
 pub mod precompiles;
 pub mod state_snapshot;
+#[cfg(feature = "revm")]
 pub mod tempo;
 pub mod utils;
 
@@ -55,6 +65,7 @@ pub mod utils;
 /// This trait holds Foundry-specific extensions (create2 factory, console logging, temporary Celo
 /// configuration, deployer address). It has no `Inspector<CTX>` supertrait so it can
 /// be used in generic code with `I: FoundryInspectorExt + Inspector<CTX>`.
+#[cfg(feature = "revm")]
 #[auto_impl(&mut, Box)]
 pub trait InspectorExt {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
@@ -84,11 +95,15 @@ pub trait InspectorExt {
 /// A combined inspector trait that integrates revm's [`Inspector`] with Foundry-specific
 /// extensions. Automatically implemented for any type that implements both [`Inspector<CTX>`]
 /// and [`InspectorExt`].
+#[cfg(feature = "revm")]
 pub trait FoundryInspectorExt<CTX: FoundryContextExt>: Inspector<CTX> + InspectorExt {}
 
+#[cfg(feature = "revm")]
 impl<CTX: FoundryContextExt, T> FoundryInspectorExt<CTX> for T where T: Inspector<CTX> + InspectorExt
 {}
 
+#[cfg(feature = "revm")]
 impl InspectorExt for NoOpInspector {}
 
+#[cfg(feature = "revm")]
 impl InspectorExt for AccessListInspector {}

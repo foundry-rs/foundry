@@ -5,9 +5,9 @@ use crate::{
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
+use foundry_cheatcodes::{ForgeContext, set_execution_context};
 use foundry_cli::utils;
 use foundry_common::{sh_warn, shell};
-use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {

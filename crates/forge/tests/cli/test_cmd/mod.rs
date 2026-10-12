@@ -23,6 +23,8 @@ use std::fs;
 mod base;
 mod brutalize;
 mod core;
+mod ethereum;
+mod ethereum_fork_matrix;
 mod exact_fork;
 mod fork_bal;
 mod fork_state_by_number;

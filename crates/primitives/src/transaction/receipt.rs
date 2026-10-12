@@ -556,21 +556,18 @@ mod tests {
         }];
         let logs_bloom = logs_bloom(&logs);
         let receipt = Receipt { status: false.into(), cumulative_gas_used: 0x2a, logs };
-        assert_roundtrip(FoundryReceiptEnvelope::Eip1559(ReceiptWithBloom {
-            receipt: receipt.clone(),
-            logs_bloom,
-        }));
         // A deposit receipt with set deposit fields; op-alloy encodes them only when `Some`, so
         // this catches decode paths that drop them.
         #[cfg(any(feature = "base", feature = "optimism"))]
         assert_roundtrip(FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
             receipt: OpDepositReceipt {
-                inner: receipt,
+                inner: receipt.clone(),
                 deposit_nonce: Some(7),
                 deposit_receipt_version: Some(1),
             },
             logs_bloom,
         }));
+        assert_roundtrip(FoundryReceiptEnvelope::Eip1559(ReceiptWithBloom { receipt, logs_bloom }));
     }
 
     #[test]

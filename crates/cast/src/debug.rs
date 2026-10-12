@@ -3,7 +3,6 @@ use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler, shell};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
-use foundry_debugger::Debugger;
 use foundry_evm::{
     opts::ForkEndpointIdentity,
     traces::{
@@ -15,6 +14,9 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use itertools::Itertools;
+
+#[cfg(feature = "revm")]
+use foundry_debugger::Debugger;
 
 pub(crate) fn select_remote_trace_hardfork(
     configured: Option<FoundryHardfork>,
@@ -114,6 +116,12 @@ pub(crate) async fn handle_traces(
             sources.merge(etherscan_identifier.get_compiled_contracts().await?);
         }
 
+        #[cfg(not(feature = "revm"))]
+        if debug {
+            eyre::bail!("native Ethereum debugger is not migrated yet");
+        }
+
+        #[cfg(feature = "revm")]
         if debug {
             let mut builder = Debugger::builder()
                 .traces(result.traces.expect("missing traces"))

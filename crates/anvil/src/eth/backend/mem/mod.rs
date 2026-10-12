@@ -1485,7 +1485,7 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "monad"))]
-    fn active_monad_context_for_mined_block(
+    const fn active_monad_context_for_mined_block(
         &self,
         _block: &Block,
     ) -> Result<Option<MonadReplayContext>, BlockchainError> {
@@ -1493,7 +1493,7 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "monad"))]
-    fn active_monad_context_before_mined_transaction(
+    const fn active_monad_context_before_mined_transaction(
         &self,
         _block: &Block,
         _current_tx_index: usize,

@@ -702,14 +702,15 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         if let Self::Celo(_) = self {
             return self.check_type(FoundryTxType::Celo).is_ok();
         }
-        if self.as_ref().can_build() || self.complete_tempo().is_ok() {
-            return true;
-        }
+        let can_build = self.as_ref().can_build() || self.complete_tempo().is_ok();
         #[cfg(any(feature = "base", feature = "optimism"))]
-        if self.complete_deposit().is_ok() {
-            return true;
+        {
+            can_build || self.complete_deposit().is_ok()
         }
-        false
+        #[cfg(not(any(feature = "base", feature = "optimism")))]
+        {
+            can_build
+        }
     }
 
     fn output_tx_type(&self) -> FoundryTxType {

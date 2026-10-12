@@ -2,9 +2,7 @@ use super::{
     auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_before_network_resolution},
     call_overrides::CallOverrideOpts,
     fetch_code_via_rpc, print_raw_line,
-    run::{
-        block_num_hash, call_tracer_frame, fetch_contracts_bytecode_from_trace, trace_addresses,
-    },
+    run::{block_num_hash, call_tracer_frame, trace_addresses},
 };
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
@@ -17,13 +15,12 @@ use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
-    BlockResponse, Ethereum, NetworkTransactionBuilder, TransactionBuilder,
-    primitives::HeaderResponse,
+    BlockResponse, Ethereum, Network, TransactionBuilder, primitives::HeaderResponse,
 };
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
+    BlockId, TransactionInput, TransactionRequest,
     trace::geth::{
         GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
         GethDebugTracingOptions,
@@ -51,19 +48,33 @@ use foundry_config::{
     },
 };
 use foundry_evm::{
-    core::{
-        FoundryBlock, FoundryTransaction,
-        decode::RevertDecoder,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
-    },
-    executors::{ExecutorBuilder, TracingExecutor},
+    core::decode::RevertDecoder,
     opts::EvmOpts,
-    traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
+    traces::{SparsedTraceArena, TraceContext},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
+#[cfg(feature = "revm")]
 use revm::context::Block;
 use std::str::FromStr;
+
+#[cfg(feature = "revm")]
+use super::run::fetch_contracts_bytecode_from_trace;
+#[cfg(feature = "revm")]
+use alloy_network::NetworkTransactionBuilder;
+#[cfg(feature = "revm")]
+use alloy_primitives::Address;
+#[cfg(feature = "revm")]
+use alloy_rpc_types::{BlockNumberOrTag, BlockOverrides, state::StateOverride};
+#[cfg(feature = "revm")]
+use foundry_evm::{
+    core::{
+        FoundryBlock, FoundryTransaction,
+        evm::{FoundryEvmNetwork, TempoEvmNetwork, TransactionRequestFor},
+    },
+    executors::{ExecutorBuilder, TracingExecutor},
+    traces::{InternalTraceMode, TraceRequirements},
+};
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -302,53 +313,43 @@ impl CallArgs {
 
         match evm_opts.networks.execution_network() {
             NetworkVariant::Tempo => {
-                self.run_with_network_and_opts::<TempoEvmNetwork>(
+                self.run_with_network_and_opts::<tempo_alloy::TempoNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
-                    ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
                 .await
             }
             #[cfg(feature = "base")]
             NetworkVariant::Base => {
                 super::validate_base_transaction_options(&self.tx)?;
-                self.run_with_network_and_opts::<BaseEvmNetwork>(
+                self.run_with_network_and_opts::<<BaseEvmNetwork as FoundryEvmNetwork>::Network>(
                     config,
                     evm_opts,
                     auth_preflight,
-                    ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
                 .await
             }
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
-                self.run_with_network_and_opts::<MonadEvmNetwork>(
+                self.run_with_network_and_opts::<<MonadEvmNetwork as FoundryEvmNetwork>::Network>(
                     config,
                     evm_opts,
                     auth_preflight,
-                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await
             }
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
-                self.run_with_network_and_opts::<OpEvmNetwork>(
+                self.run_with_network_and_opts::<<OpEvmNetwork as FoundryEvmNetwork>::Network>(
                     config,
                     evm_opts,
                     auth_preflight,
-                    ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
                 .await
             }
             NetworkVariant::Ethereum => {
-                self.run_with_network_and_opts::<EthEvmNetwork>(
-                    config,
-                    evm_opts,
-                    auth_preflight,
-                    ExecutorBuilder::<EthEvmNetwork>::new(),
-                )
-                .await
+                self.run_with_network_and_opts::<Ethereum>(config, evm_opts, auth_preflight).await
             }
         }
     }
@@ -406,13 +407,15 @@ impl CallArgs {
         Ok(())
     }
 
-    async fn run_with_network_and_opts<FEN: FoundryEvmNetwork>(
+    async fn run_with_network_and_opts<N: Network>(
         self,
         mut config: Box<Config>,
         evm_opts: EvmOpts,
         (auth_confirmed, auth_sender): (bool, Option<SenderKind<'static>>),
-        executor_builder: ExecutorBuilder<FEN>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         config.networks = evm_opts.networks;
         let mut state_overrides = self.overrides.get_state_overrides()?;
         let block_overrides = self.overrides.get_block_overrides()?;
@@ -443,7 +446,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
         let endpoint_identity =
             if debug_trace_call { Some(evm_opts.fork_endpoint_identity().await?) } else { None };
         let sender = match auth_sender {
@@ -453,7 +456,7 @@ impl CallArgs {
                     Some(chain) => chain.id(),
                     None => provider.get_chain_id().await?,
                 };
-                read_only_sender::<FEN::Network>(&browser, wallet, &tx, chain_id).await?.0
+                read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?.0
             }
         };
         let from = sender.address();
@@ -635,110 +638,38 @@ impl CallArgs {
         }
 
         if trace {
-            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = block {
-                // Override Config `fork_block_number` (if set) with CLI value.
-                config.fork_block_number = Some(block_number);
+            if evm_opts.networks.execution_network() == NetworkVariant::Ethereum {
+                return super::ethereum::call::<N>(
+                    tx,
+                    from,
+                    config,
+                    evm_opts,
+                    block,
+                    state_overrides,
+                    block_overrides,
+                    evm_version,
+                    with_local_artifacts,
+                    debug,
+                )
+                .await;
             }
-
-            let create2_deployer = evm_opts.create2_deployer;
-            let mut fork = TracingExecutor::<FEN>::get_fork(&mut config, evm_opts).await?;
-            // Modify settings usually set in eth_call while keeping execution gas bounded.
-            fork.evm_env.cfg_env.disable_block_gas_limit = true;
-            fork.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-
-            if let Some(block_overrides) = block_overrides {
-                if let Some(number) = block_overrides.number {
-                    fork.evm_env.block_env.set_number(number.to());
-                }
-                if let Some(time) = block_overrides.time {
-                    fork.evm_env.block_env.set_timestamp(U256::from(time));
-                }
-            }
-            fork.resolve_spec(&config, evm_version);
-            fork.extend_precompile_labels(&mut config);
-            let context = fork.context();
-
-            let trace_requirements = TraceRequirements::none()
-                .with_calls(true)
-                .with_debug(debug)
-                .with_decode_internal(if tracing.decode_internal {
-                    InternalTraceMode::Full
-                } else {
-                    InternalTraceMode::None
-                })
-                .with_state_changes(tracing.verbosity > 4);
-            let mut executor = fork.into_executor(
-                executor_builder,
-                trace_requirements,
-                create2_deployer,
+            #[cfg(feature = "revm")]
+            return legacy_trace_request::<N>(
+                tx,
+                from,
+                config,
+                evm_opts,
+                block,
                 state_overrides,
-            )?;
-
-            let value = tx.value().unwrap_or_default();
-            let input = tx.input().cloned().unwrap_or_default();
-            let tx_kind = tx.kind().expect("set by builder");
-
-            // Apply a user-provided `--gas-limit` to the executor. `prepare_call_env` propagates
-            // the executor's gas limit to the executed call/deploy, so setting it here
-            // is what takes effect; writing it onto the tx env directly would be
-            // overwritten.
-            if let Some(gas_limit) = tx.gas_limit() {
-                executor.set_gas_limit(gas_limit);
-            }
-
-            // `prepare_call_env` zeroes fees for tests, so apply the transaction options to the
-            // prepared env. Like `eth_call`, honour the requested fees without requiring the caller
-            // to afford them. Monad ignores `disable_fee_charge`, so reject priced traces there.
-            // Zero fees keep the zeroed base fee, skipping base fee validation like `eth_call`.
-            let (mut evm_env, mut env_tx) = executor.prepare_call_env(from, tx_kind, input, value);
-            let priority_fee = tx.max_priority_fee_per_gas().unwrap_or_default();
-            let gas_price = tx.max_fee_per_gas().or(tx.gas_price()).unwrap_or_default();
-            if gas_price != 0 || priority_fee != 0 {
-                eyre::ensure!(
-                    !config.networks.execution_network().is_monad(),
-                    "Nonzero fees are not supported for local Monad traces; use --debug-trace-call instead"
-                );
-                evm_env.cfg_env.disable_fee_charge = true;
-                evm_env.block_env.set_basefee(executor.evm_env().block_env.basefee());
-                env_tx.set_gas_price(gas_price);
-                env_tx.set_gas_priority_fee(Some(priority_fee));
-            }
-            if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
-                env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
-            }
-            if let Some(nonce) = tx.nonce() {
-                env_tx.set_nonce(nonce);
-            }
-            env_tx.set_tx_type(tx.output_tx_type().into());
-            if let Some(access_list) = tx.access_list().cloned() {
-                env_tx.set_access_list(access_list);
-            }
-            if let Some(auth) = tx.authorization_list().cloned() {
-                env_tx.set_signed_authorization(auth);
-            }
-
-            let trace = match tx_kind {
-                TxKind::Create => {
-                    let deploy_result = executor.deploy_with_env(evm_env, env_tx, None);
-                    TraceResult::try_from(deploy_result)?
-                }
-                TxKind::Call(_) => TraceResult::from_raw(
-                    executor.transact_with_env(evm_env, env_tx)?,
-                    TraceKind::Execution,
-                ),
-            };
-
-            let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &trace)?;
-            return handle_traces(
-                trace,
-                &config,
-                context,
-                &contracts_bytecode,
-                &tracing,
+                block_overrides,
+                evm_version,
+                tracing,
                 with_local_artifacts,
                 debug,
             )
             .await;
+            #[cfg(not(feature = "revm"))]
+            eyre::bail!("local execution for this network requires legacy compatibility");
         }
 
         let mut call = provider
@@ -962,6 +893,175 @@ impl figment::Provider for CallArgs {
 
         Ok(Map::from([(Config::selected_profile(), map)]))
     }
+}
+
+#[cfg(feature = "revm")]
+#[allow(clippy::too_many_arguments)]
+async fn legacy_trace_request<N: alloy_network::Network>(
+    tx: N::TransactionRequest,
+    from: Address,
+    config: Box<Config>,
+    evm_opts: EvmOpts,
+    block: Option<BlockId>,
+    state_overrides: Option<StateOverride>,
+    block_overrides: Option<BlockOverrides>,
+    evm_version: Option<EvmVersion>,
+    tracing: TracingConfig,
+    with_local_artifacts: bool,
+    debug: bool,
+) -> Result<()> {
+    let tx = serde_json::to_value(tx)?;
+    macro_rules! execute {
+        ($network:ty) => {
+            legacy_trace::<$network>(
+                serde_json::from_value(tx)?,
+                from,
+                config,
+                evm_opts,
+                block,
+                state_overrides,
+                block_overrides,
+                evm_version,
+                tracing,
+                with_local_artifacts,
+                debug,
+                ExecutorBuilder::<$network>::new(),
+            )
+            .await
+        };
+    }
+    match evm_opts.networks.execution_network() {
+        NetworkVariant::Tempo => execute!(TempoEvmNetwork),
+        #[cfg(feature = "base")]
+        NetworkVariant::Base => execute!(BaseEvmNetwork),
+        #[cfg(feature = "monad")]
+        NetworkVariant::Monad => execute!(MonadEvmNetwork),
+        #[cfg(feature = "optimism")]
+        NetworkVariant::Optimism => execute!(OpEvmNetwork),
+        NetworkVariant::Ethereum => eyre::bail!("Ethereum calls use native execution"),
+    }
+}
+
+#[cfg(feature = "revm")]
+#[allow(clippy::too_many_arguments)]
+async fn legacy_trace<FEN: FoundryEvmNetwork>(
+    tx: TransactionRequestFor<FEN>,
+    from: Address,
+    mut config: Box<Config>,
+    evm_opts: EvmOpts,
+    block: Option<BlockId>,
+    state_overrides: Option<StateOverride>,
+    block_overrides: Option<BlockOverrides>,
+    evm_version: Option<EvmVersion>,
+    tracing: TracingConfig,
+    with_local_artifacts: bool,
+    debug: bool,
+    executor_builder: ExecutorBuilder<FEN>,
+) -> Result<()> {
+    if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = block {
+        // Override Config `fork_block_number` (if set) with CLI value.
+        config.fork_block_number = Some(block_number);
+    }
+
+    let create2_deployer = evm_opts.create2_deployer;
+    let mut fork = TracingExecutor::<FEN>::get_fork(&mut config, evm_opts).await?;
+    // Modify settings usually set in eth_call while keeping execution gas bounded.
+    fork.evm_env.cfg_env.disable_block_gas_limit = true;
+    fork.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+
+    if let Some(block_overrides) = block_overrides {
+        if let Some(number) = block_overrides.number {
+            fork.evm_env.block_env.set_number(number.to());
+        }
+        if let Some(time) = block_overrides.time {
+            fork.evm_env.block_env.set_timestamp(U256::from(time));
+        }
+    }
+    fork.resolve_spec(&config, evm_version);
+    fork.extend_precompile_labels(&mut config);
+    let context = fork.context();
+
+    let trace_requirements = TraceRequirements::none()
+        .with_calls(true)
+        .with_debug(debug)
+        .with_decode_internal(if tracing.decode_internal {
+            InternalTraceMode::Full
+        } else {
+            InternalTraceMode::None
+        })
+        .with_state_changes(tracing.verbosity > 4);
+    let mut executor = fork.into_executor(
+        executor_builder,
+        trace_requirements,
+        create2_deployer,
+        state_overrides,
+    )?;
+
+    let value = tx.value().unwrap_or_default();
+    let input = tx.input().cloned().unwrap_or_default();
+    let tx_kind = tx.kind().expect("set by builder");
+
+    // Apply a user-provided `--gas-limit` to the executor. `prepare_call_env` propagates
+    // the executor's gas limit to the executed call/deploy, so setting it here
+    // is what takes effect; writing it onto the tx env directly would be
+    // overwritten.
+    if let Some(gas_limit) = tx.gas_limit() {
+        executor.set_gas_limit(gas_limit);
+    }
+
+    // `prepare_call_env` zeroes fees for tests, so apply the transaction options to the
+    // prepared env. Like `eth_call`, honour the requested fees without requiring the caller
+    // to afford them. Monad ignores `disable_fee_charge`, so reject priced traces there.
+    // Zero fees keep the zeroed base fee, skipping base fee validation like `eth_call`.
+    let (mut evm_env, mut env_tx) = executor.prepare_call_env(from, tx_kind, input, value);
+    let priority_fee = tx.max_priority_fee_per_gas().unwrap_or_default();
+    let gas_price = tx.max_fee_per_gas().or(tx.gas_price()).unwrap_or_default();
+    if gas_price != 0 || priority_fee != 0 {
+        eyre::ensure!(
+            !config.networks.execution_network().is_monad(),
+            "Nonzero fees are not supported for local Monad traces; use --debug-trace-call instead"
+        );
+        evm_env.cfg_env.disable_fee_charge = true;
+        evm_env.block_env.set_basefee(executor.evm_env().block_env.basefee());
+        env_tx.set_gas_price(gas_price);
+        env_tx.set_gas_priority_fee(Some(priority_fee));
+    }
+    if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
+        env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
+    }
+    if let Some(nonce) = tx.nonce() {
+        env_tx.set_nonce(nonce);
+    }
+    env_tx.set_tx_type(tx.output_tx_type().into());
+    if let Some(access_list) = tx.access_list().cloned() {
+        env_tx.set_access_list(access_list);
+    }
+    if let Some(auth) = tx.authorization_list().cloned() {
+        env_tx.set_signed_authorization(auth);
+    }
+
+    let trace = match tx_kind {
+        TxKind::Create => {
+            let deploy_result = executor.deploy_with_env(evm_env, env_tx, None);
+            TraceResult::try_from(deploy_result)?
+        }
+        TxKind::Call(_) => TraceResult::from_raw(
+            executor.transact_with_env(evm_env, env_tx)?,
+            TraceKind::Execution,
+        ),
+    };
+
+    let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &trace)?;
+    handle_traces(
+        trace,
+        &config,
+        context,
+        &contracts_bytecode,
+        &tracing,
+        with_local_artifacts,
+        debug,
+    )
+    .await
 }
 
 #[cfg(test)]

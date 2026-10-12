@@ -1,15 +1,21 @@
-use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{Result, Vm::*};
 use alloy_primitives::{I256, U256, U512, uint};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
-    backend::GLOBAL_FAIL_SLOT,
-    constants::CHEATCODE_ADDRESS,
     decode::ASSERTION_FAILED_PREFIX,
-    evm::FoundryEvmNetwork,
 };
 use itertools::Itertools;
-use revm::context::{ContextTr, JournalTr};
 use std::{borrow::Cow, fmt};
+
+#[cfg(feature = "revm")]
+use crate::{CheatcodesExecutor, CheatsCtxt};
+#[cfg(feature = "revm")]
+use foundry_evm_core::{
+    constants::{CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT},
+    evm::FoundryEvmNetwork,
+};
+#[cfg(feature = "revm")]
+use revm::context::{ContextTr, JournalTr};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = uint!(18_U256);
 
@@ -189,6 +195,7 @@ impl EqRelAssertionError<I256> {
 type ComparisonResult<'a, T> = Result<(), ComparisonAssertionError<'a, T>>;
 
 #[cold]
+#[cfg(feature = "revm")]
 fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     executor: &mut dyn CheatcodesExecutor<FEN>,
@@ -196,15 +203,24 @@ fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
 ) -> Result {
+    handle_assertion_result_mono(ccx, executor, assertion_message(err, error_formatter, error_msg))
+}
+
+#[cold]
+fn assertion_message<'a, E>(
+    err: E,
+    error_formatter: Option<&dyn Fn(&E) -> String>,
+    error_msg: Option<&'a str>,
+) -> Cow<'a, str> {
     let error_msg = error_msg.unwrap_or(ASSERTION_FAILED_PREFIX);
-    let msg = if let Some(error_formatter) = error_formatter {
+    if let Some(error_formatter) = error_formatter {
         Cow::Owned(format!("{error_msg}: {}", error_formatter(&err)))
     } else {
         Cow::Borrowed(error_msg)
-    };
-    handle_assertion_result_mono(ccx, executor, msg)
+    }
 }
 
+#[cfg(feature = "revm")]
 fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     executor: &mut dyn CheatcodesExecutor<FEN>,
@@ -248,6 +264,19 @@ macro_rules! impl_assertions {
 
     (@impl $no_error:ident, $with_error:ident, ($($arg:ident),*), $body:expr, $error_formatter:expr) => {
         impl crate::Cheatcode for $no_error {
+            fn apply_evm2(
+                &self,
+                state: &mut crate::ethereum::Cheatcodes,
+                interp: &mut evm2::interpreter::Interpreter<'_, '_, foundry_evm_core::ethereum::FoundryEvmTypes>,
+            ) -> std::result::Result<alloy_primitives::Bytes, crate::ethereum::ApplyError> {
+                let Self { $($arg),* } = self;
+                match $body {
+                    Ok(()) => Ok(Default::default()),
+                    Err(err) => state.assertion_failure(interp, &assertion_message(err, $error_formatter, None)),
+                }
+            }
+
+            #[cfg(feature = "revm")]
             fn apply_full<FEN: FoundryEvmNetwork>(
                 &self,
                 ccx: &mut CheatsCtxt<'_, '_, FEN>,
@@ -262,6 +291,19 @@ macro_rules! impl_assertions {
         }
 
         impl crate::Cheatcode for $with_error {
+            fn apply_evm2(
+                &self,
+                state: &mut crate::ethereum::Cheatcodes,
+                interp: &mut evm2::interpreter::Interpreter<'_, '_, foundry_evm_core::ethereum::FoundryEvmTypes>,
+            ) -> std::result::Result<alloy_primitives::Bytes, crate::ethereum::ApplyError> {
+                let Self { $($arg,)* err } = self;
+                match $body {
+                    Ok(()) => Ok(Default::default()),
+                    Err(assertion_err) => state.assertion_failure(interp, &assertion_message(assertion_err, $error_formatter, Some(err))),
+                }
+            }
+
+            #[cfg(feature = "revm")]
             fn apply_full<FEN: FoundryEvmNetwork>(
                 &self,
                 ccx: &mut CheatsCtxt<'_, '_, FEN>,

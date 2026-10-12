@@ -1,5 +1,5 @@
 mod sources;
-use crate::CallTraceNode;
+use crate::{CallTraceNode, CallTraceStep, DecodedInternalCall, DecodedTraceStep, OpCode};
 use alloy_dyn_abi::{
     DynSolType, DynSolValue, Specifier,
     parser::{Parameters, Storage},
@@ -7,8 +7,6 @@ use alloy_dyn_abi::{
 use alloy_primitives::U256;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 pub use sources::{ArtifactData, ContractSources, DebugSourceScope, DebugVariable, SourceData};
 
 #[derive(Clone, Debug)]
@@ -446,13 +444,9 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        decode_from_memory, decode_step_parameters, internal_function_identifier, source_span,
-    };
-    use alloy_dyn_abi::{DynSolType, parser::Parameters};
-    use alloy_primitives::{Bytes, U256};
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::CallTraceStep;
+    use super::*;
+    use crate::InstructionResult;
+    use alloy_primitives::Bytes;
 
     fn trace_step(stack: Vec<U256>) -> CallTraceStep {
         CallTraceStep {

@@ -3,7 +3,6 @@ use crate::{
     recovery::{AttemptKind, DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
 };
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{B256, Bytes};
 use eyre::{ContextCompat, Result, bail};
@@ -18,6 +17,9 @@ use std::{
     fmt::{Error, Write},
     path::{Path, PathBuf},
 };
+
+#[cfg(any(test, feature = "revm"))]
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 
 pub(crate) fn completed_transaction_prefix<N: Network>(
     sequence: &ScriptSequence<N>,
@@ -350,6 +352,7 @@ where
         self.recovery.batch_attempt(sequence)
     }
 
+    #[cfg(any(test, feature = "revm"))]
     pub(crate) fn persist_batch_signed_payload(
         &mut self,
         sequence: usize,
@@ -363,6 +366,7 @@ where
         self.recovery.persist_batch_signed_payload(sequence, first_operation, request, payload)
     }
 
+    #[cfg(any(test, feature = "revm"))]
     pub(crate) fn persist_batch_delegated_request(
         &mut self,
         sequence: usize,

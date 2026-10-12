@@ -12,21 +12,16 @@
 //!
 //! [custom EVM integration guide]: https://github.com/foundry-rs/foundry/blob/master/docs/dev/networks.md
 
-use crate::celo::transfer::{CELO_TRANSFER_ADDRESS, PRECOMPILE_ID_CELO_TRANSFER};
+use crate::celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_NAME};
 use alloy_chains::{
     Chain, NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::{
     EthereumHardfork, ExecutionSpec, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
-};
-use revm::precompile::{
-    Precompile as RevmPrecompile,
-    secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -36,6 +31,14 @@ use tempo_contracts::precompiles::{
     STABLECOIN_DEX_ADDRESS, STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
     VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
+};
+
+#[cfg(feature = "revm")]
+use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+#[cfg(feature = "revm")]
+use revm::precompile::{
+    Precompile as RevmPrecompile,
+    secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
 };
 
 #[cfg(feature = "base")]
@@ -55,6 +58,7 @@ use foundry_evm_hardforks::MonadHardfork;
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
 
+#[cfg(feature = "revm")]
 pub mod arbitrum;
 pub mod celo;
 
@@ -116,13 +120,20 @@ pub const BASE_CODE_SENTINEL_ADDRESSES: &[Address] =
     &[ActivationRegistryStorage::ADDRESS, PolicyRegistryStorage::ADDRESS];
 
 /// BSC secp256r1 precompile address introduced by the Haber hardfork.
+#[cfg(feature = "revm")]
 const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
 
+#[cfg(feature = "revm")]
 const BSC_MAINNET_CHAIN_ID: u64 = 56;
+#[cfg(feature = "revm")]
 const BSC_TESTNET_CHAIN_ID: u64 = 97;
+#[cfg(feature = "revm")]
 const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
+#[cfg(feature = "revm")]
 const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
+#[cfg(feature = "revm")]
 const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
+#[cfg(feature = "revm")]
 const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
 
 /// All well-known Tempo precompile addresses.
@@ -634,7 +645,14 @@ impl NetworkConfigs {
     ///
     /// For OP Stack networks, returns Canyon parameters if the Canyon hardfork is active at the
     /// given timestamp, otherwise returns pre-Canyon parameters.
+    #[cfg_attr(
+        not(any(feature = "base", feature = "optimism")),
+        allow(clippy::missing_const_for_fn)
+    )]
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
+        #[cfg(not(any(feature = "base", feature = "optimism")))]
+        let _ = timestamp;
+
         #[cfg(feature = "base")]
         if self.is_base() {
             let canyon_active =
@@ -859,6 +877,7 @@ impl NetworkConfigs {
     }
 
     /// Inject precompiles for configured networks.
+    #[cfg(feature = "revm")]
     pub fn inject_precompiles(self, precompiles: &mut PrecompilesMap) {
         if self.is_celo() {
             precompiles.apply_precompile(&CELO_TRANSFER_ADDRESS, move |_| {
@@ -871,8 +890,7 @@ impl NetworkConfigs {
     pub fn precompiles(self, hardfork: Option<FoundryHardfork>) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
         if self.is_celo() {
-            precompiles
-                .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
+            precompiles.insert(CELO_TRANSFER_NAME.to_string(), CELO_TRANSFER_ADDRESS);
         }
         if self.is_tempo() {
             let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
@@ -925,6 +943,7 @@ impl NetworkConfigs {
 }
 
 /// Applies the BSC P256 precompile active at the given timestamp.
+#[cfg(feature = "revm")]
 pub fn apply_bsc_p256_precompile(
     precompiles: &mut PrecompilesMap,
     chain_id: ChainId,
@@ -963,6 +982,7 @@ impl From<NetworkVariant> for NetworkConfigs {
 
 /// Returns the BSC P256 precompile for the given timestamp. The outer option distinguishes BSC
 /// chains from unrelated chains, while the inner option disables P256 before Haber.
+#[cfg(feature = "revm")]
 const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option<RevmPrecompile>> {
     let (haber_timestamp, osaka_timestamp) = match chain_id {
         BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
@@ -1068,6 +1088,8 @@ pub fn active_base_precompiles(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "revm")]
     use revm::precompile::{
         Precompiles,
         secp256r1::{P256VERIFY_BASE_GAS_FEE, P256VERIFY_BASE_GAS_FEE_OSAKA},
@@ -1640,12 +1662,14 @@ mod tests {
         assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
     }
 
+    #[cfg(feature = "revm")]
     fn bsc_p256_gas_used(chain_id: ChainId, timestamp: u64) -> Option<u64> {
         bsc_p256_precompile(chain_id, timestamp)
             .flatten()
             .map(|precompile| precompile.execute(&[], u64::MAX, 0).unwrap().gas_used)
     }
 
+    #[cfg(feature = "revm")]
     fn assert_bsc_p256_boundaries(chain_id: ChainId, haber_timestamp: u64, osaka_timestamp: u64) {
         assert!(matches!(bsc_p256_precompile(chain_id, haber_timestamp - 1), Some(None)));
         assert_eq!(bsc_p256_gas_used(chain_id, haber_timestamp), Some(P256VERIFY_BASE_GAS_FEE));
@@ -1657,6 +1681,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "revm")]
     fn selects_bsc_p256_at_mainnet_boundaries() {
         assert_bsc_p256_boundaries(
             BSC_MAINNET_CHAIN_ID,
@@ -1666,6 +1691,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "revm")]
     fn selects_bsc_p256_at_testnet_boundaries() {
         assert_bsc_p256_boundaries(
             BSC_TESTNET_CHAIN_ID,
@@ -1675,6 +1701,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "revm")]
     fn removes_bsc_p256_before_haber() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
         assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());

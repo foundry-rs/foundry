@@ -26,12 +26,15 @@ pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 mod error;
 pub use error::FuzzError;
 
+pub mod corpus_io;
 pub mod invariant;
 pub mod sequence;
 pub mod strategies;
 pub use strategies::LiteralMaps;
 
+#[cfg(feature = "revm")]
 mod inspector;
+#[cfg(feature = "revm")]
 pub use inspector::{Fuzzer, ObservedCall};
 
 /// Metadata needed to reproduce a fuzz run.
@@ -542,4 +545,20 @@ pub fn fixture_name(function_name: String) -> String {
 /// Normalize fixture parameter name, for example `_Owner` to `owner`.
 fn normalize_fixture(param_name: &str) -> String {
     param_name.trim_matches('_').to_ascii_lowercase()
+}
+
+/// Returns whether a nested revert can be ignored when fail-on-revert is disabled.
+#[inline]
+pub fn should_ignore_revert(
+    fail_on_revert: bool,
+    target: Address,
+    reverter: Option<Address>,
+    extra_cheatcode_addresses: &[Address],
+) -> bool {
+    !fail_on_revert
+        && reverter.is_some_and(|reverter| {
+            reverter != target
+                && reverter != foundry_evm_core::constants::CHEATCODE_ADDRESS
+                && !extra_cheatcode_addresses.contains(&reverter)
+        })
 }

@@ -19,7 +19,6 @@ use crate::{
             DynamicTargetCtx, StatelessReplayTarget, WorkerCorpus, register_replay_created,
             rollback_replay_created,
         },
-        corpus_io::read_corpus_tree,
         invariant::{
             call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
             snapshot_edge_fingerprint,
@@ -35,7 +34,9 @@ use eyre::Result;
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::MAGIC_ASSUME, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
+use foundry_evm_fuzz::{
+    BasicTxDetails, corpus_io::read_corpus_tree, invariant::FuzzRunIdentifiedContracts,
+};
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -49,33 +50,7 @@ use std::{
 type EvmShowmap = HashMap<(B256, u32), u64>;
 const MAX_REPORTED_REPLAY_FAILURES: usize = 20;
 
-/// Which coverage bitmap(s) to dump.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum ShowmapDomain {
-    #[default]
-    Evm,
-    Sancov,
-    Both,
-}
-
-impl ShowmapDomain {
-    pub const fn includes_evm(self) -> bool {
-        matches!(self, Self::Evm | Self::Both)
-    }
-    pub const fn includes_sancov(self) -> bool {
-        matches!(self, Self::Sancov | Self::Both)
-    }
-}
-
-impl fmt::Display for ShowmapDomain {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Evm => f.write_str("evm"),
-            Self::Sancov => f.write_str("sancov"),
-            Self::Both => f.write_str("both"),
-        }
-    }
-}
+pub use foundry_evm_coverage::ShowmapDomain;
 
 /// Per-replay options.
 #[derive(Clone, Debug)]
@@ -865,7 +840,7 @@ fn write_sancov<W: Write>(out: &mut W, bitmap: &[u64]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executors::{RawCallResult, corpus_io::canonical_replay_dirs};
+    use crate::executors::{RawCallResult, canonical_replay_dirs};
     use foundry_evm_core::evm::EthEvmNetwork;
     use revm::interpreter::InstructionResult;
     use uuid::Uuid;

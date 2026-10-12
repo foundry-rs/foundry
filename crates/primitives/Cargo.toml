@@ -23,7 +23,7 @@ alloy-rpc-types = { workspace = true, features = ["trace"] }
 alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true
 alloy-signer.workspace = true
-alloy-evm.workspace = true
+alloy-evm = { workspace = true, optional = true }
 op-alloy-consensus = { workspace = true, features = ["serde", "alloy-compat"], optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 alloy-op-evm = { workspace = true, optional = true }
@@ -49,17 +49,19 @@ base-common-evm = { workspace = true, optional = true, features = [
 ] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
-revm.workspace = true
+revm = { workspace = true, optional = true }
 serde_json.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 derive_more.workspace = true
 tempo-primitives.workspace = true
 tempo-alloy.workspace = true
-tempo-revm.workspace = true
+tempo-revm = { workspace = true, optional = true }
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = ["dep:revm", "dep:alloy-evm", "dep:tempo-revm"]
 base = [
+    "revm",
     "dep:base-common-consensus",
     "dep:base-common-evm",
     "dep:base-common-rpc-types",
@@ -67,6 +69,7 @@ base = [
     "dep:op-revm",
 ]
 optimism = [
+    "revm",
     "dep:op-alloy-consensus",
     "dep:op-alloy-rpc-types",
     "dep:alloy-op-evm",

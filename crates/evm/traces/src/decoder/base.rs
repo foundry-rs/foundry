@@ -230,7 +230,7 @@ sol! {
 
 #[cfg(test)]
 mod tests {
-    use crate::{CallTrace, CallTraceDecoderBuilder};
+    use crate::{CallTrace, CallTraceDecoderBuilder, InstructionResult};
     use alloy_dyn_abi::{DynSolValue, FunctionExt};
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_sol_types::{SolCall, SolEnum, SolError, SolEvent, SolInterface};
@@ -240,7 +240,6 @@ mod tests {
     };
     use foundry_evm_hardforks::{BaseUpgrade, FoundryHardfork};
     use foundry_evm_networks::NetworkConfigs;
-    use revm::interpreter::InstructionResult;
 
     #[tokio::test]
     async fn registered_abis_decode_base_precompile_calls() {
