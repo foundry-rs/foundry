@@ -336,7 +336,8 @@ edition = "2021"
 
         eyre::ensure!(
             formatted_file == formatted_exp,
-            "File contents do not match expected contents for {file_path:?}"
+            "File contents do not match expected contents for \"{}\"",
+            file_path.display()
         );
         Ok(())
     }
