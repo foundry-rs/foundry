@@ -633,3 +633,20 @@ repl_test!(run_overload_assembly_does_not_shadow_entrypoint, |repl| {
     repl.sendln("uint256(7)");
     repl.expect("Decimal: 7");
 });
+
+// Interactive block comments must keep their contents together until they are closed.
+repl_test!(multiline_block_comment_continues, |repl| {
+    repl.sendln("uint256 value = 1;");
+    repl.sendln_raw("/*\nvalue = 2;\n*/");
+    repl.expect_prompt();
+
+    repl.sendln("value");
+    repl.expect("Decimal: 1");
+
+    // Code preceding an open comment must also wait for the closing delimiter.
+    repl.sendln_raw("value = 3; /*\nvalue = 4;\n*/");
+    repl.expect_prompt();
+
+    repl.sendln("value");
+    repl.expect("Decimal: 3");
+});
