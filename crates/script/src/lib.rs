@@ -2770,6 +2770,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn explicit_sender_takes_precedence_over_sole_private_key() {
+        let temp = tempdir().unwrap();
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+
         let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let key_address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let sender = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
