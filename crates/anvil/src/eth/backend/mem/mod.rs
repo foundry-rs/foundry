@@ -3676,10 +3676,11 @@ impl<N: Network> Backend<N> {
                 // Account-creation gas depends on the nonce: EIP-8037 checks the address a
                 // creation would deploy to, and Tempo charges for nonce 0. So an omitted nonce
                 // must not default to 0. revm rejects a transaction nonce of `u64::MAX` even
-                // without the nonce check, so such a sender keeps the default.
+                // without the nonce check, so such a sender keeps the default outside Tempo,
+                // where falling back to 0 would incorrectly charge account-creation gas.
                 if request.nonce.is_none() {
                     let nonce = tempo_nonce(state, request.from.unwrap_or_default(), U256::ZERO)?;
-                    request.nonce = (nonce != u64::MAX).then_some(nonce);
+                    request.nonce = (self.is_tempo() || nonce != u64::MAX).then_some(nonce);
                 }
                 self.prepare_base_call_env_with_base(
                     WithOtherFields::new(request),
