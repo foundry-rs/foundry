@@ -266,6 +266,8 @@ pub struct BroadcastableTransaction<N: Network = Ethereum> {
     pub rpc: Option<String>,
     /// The transaction to broadcast.
     pub transaction: TransactionMaybeSigned<N>,
+    /// The CREATE address captured from account state for a pre-signed transaction.
+    pub contract_address: Option<Address>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -1669,6 +1671,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc,
                         transaction: TransactionMaybeSigned::new(tx_req),
+                        contract_address: None,
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -2716,6 +2719,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
                     transaction: TransactionMaybeSigned::new(tx_req),
+                    contract_address: None,
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
