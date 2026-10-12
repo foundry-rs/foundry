@@ -38,6 +38,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::EthereumCoverageCollector;
 use std::{
     collections::{BTreeMap, VecDeque},
+    mem,
     sync::Arc,
 };
 
@@ -136,6 +137,18 @@ impl Cheatcodes {
         let mut opts = self.config.evm_opts.clone();
         opts.always_use_create_2_factory = config.always_use_create_2_factory;
         self.config = Arc::new(self.config.clone_with(config, opts));
+    }
+
+    /// Moves this state out for a child engine, leaving a placeholder the caller overwrites when
+    /// the child returns.
+    ///
+    /// A default `CheatsConfig` resolves project paths and remappings from disk, so the placeholder
+    /// is built once per thread instead of on every isolated call.
+    fn take_for_child(&mut self) -> Self {
+        thread_local! {
+            static PLACEHOLDER: Cheatcodes = Cheatcodes::default();
+        }
+        mem::replace(self, PLACEHOLDER.with(Clone::clone))
     }
 
     fn apply(

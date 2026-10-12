@@ -106,7 +106,7 @@ impl Cheatcodes {
         self.isolated_root = Some(message.clone());
         self.isolation_depth = Some(message.depth);
         self.isolated_snapshot_restored = false;
-        child.set_inspector(mem::take(self));
+        child.set_inspector(self.take_for_child());
         let executed = child.transact(&tx).map(|executed| executed.detach());
         let inspector = child.clear_inspector().expect("isolated inspector");
         // SAFETY: The child was given an owned Self, which cannot be replaced while executing.

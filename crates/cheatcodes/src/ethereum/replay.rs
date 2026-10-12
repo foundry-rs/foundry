@@ -84,7 +84,7 @@ impl Cheatcodes {
         self.isolation_depth = Some(depth.saturating_sub(1));
         self.isolated_snapshot_restored = false;
         self.forks.active = Some(id);
-        replay.set_inspector(mem::take(self));
+        replay.set_inspector(self.take_for_child());
         let executed = replay.transact(&tx).map(|executed| executed.detach());
         let inspector = replay.clear_inspector().expect("transaction replay inspector");
         // SAFETY: The engine owns a Self with no borrowed host state, just as in isolated calls.
