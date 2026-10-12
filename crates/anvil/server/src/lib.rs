@@ -8,7 +8,7 @@ extern crate tracing;
 
 use anvil_rpc::{
     error::RpcError,
-    request::RpcMethodCall,
+    request::{Id, RpcMethodCall},
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
@@ -67,6 +67,9 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
             match serde_json::from_value::<Self::Request>(call) {
                 Ok(req) => {
                     let result = self.on_request(req).await;
+                    if let ResponseResult::Error(error) = &result {
+                        self.on_request_error(&method, &id, error);
+                    }
                     RpcResponse::new(id, result)
                 }
                 Err(err) => {
@@ -87,6 +90,10 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
             }
         }
     }
+
+    /// Invoked when a deserialized request returns an error from [`Self::on_request`].
+    /// Deserialization errors are excluded because their messages can contain request parameters.
+    fn on_request_error(&self, _method: &str, _id: &Id, _error: &RpcError) {}
 }
 
 /// Configures an [`axum::Router`] that handles JSON-RPC calls via both HTTP and WS.

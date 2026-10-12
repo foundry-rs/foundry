@@ -1,7 +1,7 @@
 use crate::{RpcHandler, error::RequestError, handler::handle_request};
 use anvil_rpc::{
     error::RpcError,
-    request::Request,
+    request::{Id, Request},
     response::{Response, ResponseResult},
 };
 
@@ -32,6 +32,10 @@ pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
         request: Self::Request,
         cx: PubSubContext<Self>,
     ) -> impl Future<Output = ResponseResult> + Send;
+
+    /// Invoked when a deserialized request returns an error from [`Self::on_request`].
+    /// Deserialization errors are excluded because their messages can contain request parameters.
+    fn on_request_error(&self, _method: &str, _id: &Id, _error: &RpcError) {}
 }
 
 type Subscriptions<SubscriptionId, Subscription> = Arc<Mutex<Vec<(SubscriptionId, Subscription)>>>;
@@ -105,6 +109,10 @@ impl<Handler: PubSubRpcHandler> RpcHandler for ContextAwareHandler<Handler> {
 
     fn on_request(&self, request: Self::Request) -> impl Future<Output = ResponseResult> + Send {
         self.handler.on_request(request, self.context.clone())
+    }
+
+    fn on_request_error(&self, method: &str, id: &Id, error: &RpcError) {
+        self.handler.on_request_error(method, id, error);
     }
 }
 

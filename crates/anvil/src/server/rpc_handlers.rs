@@ -1,7 +1,7 @@
 //! Contains RPC handlers
 use crate::{
     EthApi,
-    eth::error::to_rpc_result,
+    eth::{error::to_rpc_result, macros::node_info},
     pubsub::{EthSubscription, LogsSubscription},
 };
 use alloy_rpc_types::{
@@ -9,7 +9,7 @@ use alloy_rpc_types::{
     pubsub::{Params, SubscriptionKind},
 };
 use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{error::RpcError, request::Id, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 use foundry_primitives::FoundryNetwork;
 
@@ -32,6 +32,10 @@ impl RpcHandler for HttpEthRpcHandler {
 
     fn on_request(&self, request: Self::Request) -> impl Future<Output = ResponseResult> + Send {
         self.api.execute(request)
+    }
+
+    fn on_request_error(&self, method: &str, id: &Id, error: &RpcError) {
+        log_request_error(method, id, error);
     }
 }
 
@@ -158,4 +162,12 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
             EthRpcCall::PubSub(pubsub) => self.on_pub_sub(pubsub, cx).await,
         }
     }
+
+    fn on_request_error(&self, method: &str, id: &Id, error: &RpcError) {
+        log_request_error(method, id, error);
+    }
+}
+
+fn log_request_error(method: &str, id: &Id, error: &RpcError) {
+    node_info!(method, ?id, error = %error, "RPC request failed");
 }

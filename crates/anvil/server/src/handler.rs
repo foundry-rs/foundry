@@ -102,7 +102,7 @@ mod tests {
     use std::{
         pin::pin,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
         task::{Context, Poll, Waker},
@@ -117,7 +117,7 @@ mod tests {
     #[derive(Clone, Debug, serde::Deserialize)]
     #[serde(tag = "method", content = "params")]
     enum TypedRequest {
-        #[serde(rename = "known")]
+        #[serde(rename = "known", alias = "known_alias")]
         Known(Vec<TestParam>),
     }
 
@@ -129,6 +129,11 @@ mod tests {
 
     #[derive(Clone)]
     struct TypedHandler;
+
+    #[derive(Clone, Default)]
+    struct ErrorHandler {
+        errors: Arc<Mutex<Vec<(String, Id, RpcError)>>>,
+    }
 
     impl RpcHandler for TestHandler {
         type Request = serde_json::Value;
@@ -146,6 +151,18 @@ mod tests {
             let TypedRequest::Known(params) = request;
             drop(params);
             ResponseResult::success(())
+        }
+    }
+
+    impl RpcHandler for ErrorHandler {
+        type Request = TypedRequest;
+
+        async fn on_request(&self, _request: Self::Request) -> ResponseResult {
+            ResponseResult::Error(RpcError::internal_error())
+        }
+
+        fn on_request_error(&self, method: &str, id: &Id, error: &RpcError) {
+            self.errors.lock().unwrap().push((method.to_owned(), id.clone(), error.clone()));
         }
     }
 
@@ -265,6 +282,60 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<Response>(&body).unwrap(),
             Response::error(RpcError::parse_error())
+        );
+    }
+
+    #[test]
+    fn request_error_hook_preserves_method_alias_and_id() {
+        let handler = ErrorHandler::default();
+        let id = Id::String("request-7".to_owned());
+        let call = RpcMethodCall {
+            params: RequestParams::Array(vec![serde_json::json!("allowed")]),
+            id: id.clone(),
+            ..typed_call("known_alias")
+        };
+
+        let response = run_ready(handler.on_call(call));
+
+        assert_eq!(response, RpcResponse::new(id.clone(), RpcError::internal_error()));
+        assert_eq!(
+            *handler.errors.lock().unwrap(),
+            vec![("known_alias".to_owned(), id, RpcError::internal_error())]
+        );
+    }
+
+    #[test]
+    fn request_error_hook_excludes_deserialization_errors() {
+        let handler = ErrorHandler::default();
+        let invalid_params = run_ready(handler.on_call(typed_call("known")));
+        let unknown_method = run_ready(handler.on_call(typed_call("unknown")));
+
+        assert_eq!(
+            invalid_params,
+            RpcResponse::new(
+                Id::Number(1),
+                RpcError::invalid_params("unknown variant `bogus`, expected `allowed`")
+            )
+        );
+        assert_eq!(unknown_method, RpcResponse::new(Id::Number(1), RpcError::method_not_found()));
+        assert!(handler.errors.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn request_error_hook_handles_notifications_without_response() {
+        let handler = ErrorHandler::default();
+        let call = RpcCall::Notification(RpcNotification {
+            jsonrpc: Some(Version::V2),
+            method: "known".to_owned(),
+            params: RequestParams::Array(vec![serde_json::json!("allowed")]),
+        });
+
+        let response = run_ready(handle_request(Request::Single(call), handler.clone()));
+
+        assert_eq!(response, None);
+        assert_eq!(
+            *handler.errors.lock().unwrap(),
+            vec![("known".to_owned(), Id::Null, RpcError::internal_error())]
         );
     }
 }
