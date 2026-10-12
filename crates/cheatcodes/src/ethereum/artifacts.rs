@@ -166,7 +166,7 @@ impl Cheatcodes {
             *host.ext(),
         );
         *child.state_mut() = mem::replace(host.state_mut(), State::new(EmptyDB::default()));
-        child.set_inspector(mem::take(self));
+        child.set_inspector(self.take_for_child());
         let result = Host::execute_message(&mut child, &tx_env, message);
         let inspector = child.clear_inspector().expect("native child inspector");
         // SAFETY: This child was given an owned `Self` immediately above. Inspector replacement

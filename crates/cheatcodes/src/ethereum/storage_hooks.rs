@@ -106,7 +106,7 @@ impl Cheatcodes {
         let mocked_calls = mem::take(&mut self.mocked_calls);
         let mocked_functions = mem::take(&mut self.mocked_functions);
         self.storage_hooks.active = true;
-        child.set_inspector(mem::take(self));
+        child.set_inspector(self.take_for_child());
         let mut message = Message::<FoundryEvmTypes> {
             depth,
             gas_limit,
