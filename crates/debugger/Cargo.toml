@@ -15,8 +15,8 @@ workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-compilers.workspace = true
-foundry-evm-traces.workspace = true
-foundry-evm-core.workspace = true
+foundry-evm-traces = { workspace = true, features = ["revm"] }
+foundry-evm-core = { workspace = true, features = ["revm"] }
 foundry-tui.workspace = true
 
 alloy-primitives.workspace = true

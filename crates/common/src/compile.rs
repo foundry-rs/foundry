@@ -33,7 +33,6 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use num_format::{Locale, ToFormattedString};
-use revm::primitives::{eip170, eip3860, hardfork::SpecId};
 use solar::{
     ast::{Arena, ContractKind, ItemKind},
     interface::{Session, source_map::FileName},
@@ -48,6 +47,9 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+
+#[cfg(feature = "revm")]
+use revm::primitives::hardfork::SpecId;
 
 /// A Solar compiler instance, to grant syntactic and semantic analysis capabilities.
 pub type Analysis = Arc<solar::sema::Compiler>;
@@ -511,10 +513,10 @@ impl ProjectCompiler {
 }
 
 // https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_RUNTIME_SIZE_LIMIT: usize = eip170::MAX_CODE_SIZE;
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24_576;
 
 // https://eips.ethereum.org/EIPS/eip-3860
-const CONTRACT_INITCODE_SIZE_LIMIT: usize = eip3860::MAX_INITCODE_SIZE;
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49_152;
 
 // https://eips.ethereum.org/EIPS/eip-7954
 const AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT: usize = 65_536;
@@ -544,8 +546,18 @@ impl ContractSizeLimits {
     }
 
     /// Returns the protocol limits active for an EVM specification.
+    #[cfg(feature = "revm")]
     pub const fn for_spec_id(spec_id: SpecId) -> Self {
         if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
+            Self::new(AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT, AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT)
+        } else {
+            Self::new(CONTRACT_RUNTIME_SIZE_LIMIT, CONTRACT_INITCODE_SIZE_LIMIT)
+        }
+    }
+
+    /// Returns the Ethereum protocol limits active for native execution.
+    pub const fn for_ethereum_spec(spec_id: evm2::SpecId) -> Self {
+        if spec_id.enables(evm2::SpecId::AMSTERDAM) {
             Self::new(AMSTERDAM_CONTRACT_RUNTIME_SIZE_LIMIT, AMSTERDAM_CONTRACT_INITCODE_SIZE_LIMIT)
         } else {
             Self::new(CONTRACT_RUNTIME_SIZE_LIMIT, CONTRACT_INITCODE_SIZE_LIMIT)
@@ -1115,9 +1127,12 @@ mod tests {
 
     #[test]
     fn contract_size_limits_follow_evm_spec() {
-        assert_eq!(ContractSizeLimits::for_spec_id(SpecId::OSAKA), ContractSizeLimits::default());
         assert_eq!(
-            ContractSizeLimits::for_spec_id(SpecId::AMSTERDAM),
+            ContractSizeLimits::for_ethereum_spec(evm2::SpecId::OSAKA),
+            ContractSizeLimits::default()
+        );
+        assert_eq!(
+            ContractSizeLimits::for_ethereum_spec(evm2::SpecId::AMSTERDAM),
             ContractSizeLimits::new(65_536, 131_072)
         );
     }

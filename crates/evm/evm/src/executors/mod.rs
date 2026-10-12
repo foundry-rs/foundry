@@ -78,6 +78,7 @@ use revm::context::TxEnv;
 
 mod builder;
 pub use builder::ExecutorBuilder;
+pub use foundry_evm_fuzz::should_ignore_revert;
 
 mod campaign;
 
@@ -88,13 +89,12 @@ pub mod invariant;
 pub use invariant::InvariantExecutor;
 
 mod corpus;
-mod corpus_io;
 mod sancov;
 mod showmap;
 mod trace;
 
 pub use corpus::{DynamicTargetCtx, StatelessReplayTarget, persist_corpus_seed};
-pub use corpus_io::{
+pub use foundry_evm_fuzz::corpus_io::{
     CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
 };
 pub use showmap::{
@@ -1548,77 +1548,9 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         history_map: &mut Vec<u8>,
         edge_indices: &mut EdgeIndexMap,
     ) -> (bool, bool) {
-        let mut new_coverage = false;
-        let mut is_edge = false;
-        if let Some(x) = &mut self.edge_coverage {
-            match x {
-                EdgeCoverage::Hash(x) => {
-                    if history_map.len() < x.len() {
-                        history_map.resize(x.len(), 0);
-                    }
-                    // Iterate over the current map and the history map together and update
-                    // the history map, if we discover some new coverage, report true
-                    for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
-                        Self::merge_edge_count(*curr, hist, &mut new_coverage, &mut is_edge);
-
-                        // Hash reuses its map; collision-free drains hits.
-                        *curr = 0;
-                    }
-                }
-                EdgeCoverage::CollisionFree(hits) => {
-                    for hit in hits.drain(..) {
-                        let edge_index = edge_indices.edge_index(hit.edge);
-                        if history_map.len() <= edge_index {
-                            history_map.resize(edge_index + 1, 0);
-                        }
-                        Self::merge_edge_count(
-                            hit.count,
-                            &mut history_map[edge_index],
-                            &mut new_coverage,
-                            &mut is_edge,
-                        );
-                    }
-                }
-            }
-        }
-        (new_coverage, is_edge)
-    }
-
-    const fn merge_edge_count(
-        curr: u8,
-        hist: &mut u8,
-        new_coverage: &mut bool,
-        is_edge: &mut bool,
-    ) {
-        let Some(bucket) = Self::bin_count(curr) else {
-            return;
-        };
-
-        // If the old record for this edge pair is lower, update
-        if *hist < bucket {
-            if *hist == 0 {
-                // Counts as an edge the first time we see it, otherwise it's a feature.
-                *is_edge = true;
-            }
-            *hist = bucket;
-            *new_coverage = true;
-        }
-    }
-
-    /// Convert a hitcount into an AFL-style bucket.
-    /// <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    const fn bin_count(count: u8) -> Option<u8> {
-        match count {
-            0 => None,
-            1 => Some(1),
-            2 => Some(2),
-            3 => Some(4),
-            4..=7 => Some(8),
-            8..=15 => Some(16),
-            16..=31 => Some(32),
-            32..=127 => Some(64),
-            128..=255 => Some(128),
-        }
+        self.edge_coverage
+            .as_mut()
+            .map_or((false, false), |coverage| coverage.merge_into(history_map, edge_indices))
     }
 
     /// Update provided history map with sancov coverage info collected during this call.
@@ -1632,7 +1564,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             }
             for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
                 if *curr > 0 {
-                    if let Some(bucket) = Self::bin_count(*curr)
+                    if let Some(bucket) = EdgeCoverage::bin_count(*curr)
                         && *hist < bucket
                     {
                         if *hist == 0 {
@@ -1933,22 +1865,6 @@ impl EvmExecutionCancellation {
             Self::EarlyExit(early_exit) | Self::Campaign { early_exit, .. } => early_exit,
         }
     }
-}
-
-/// Returns whether a nested revert can be ignored when fail-on-revert is disabled.
-#[inline]
-pub fn should_ignore_revert(
-    fail_on_revert: bool,
-    target: Address,
-    reverter: Option<Address>,
-    extra_cheatcode_addresses: &[Address],
-) -> bool {
-    !fail_on_revert
-        && reverter.is_some_and(|reverter| {
-            reverter != target
-                && reverter != CHEATCODE_ADDRESS
-                && !extra_cheatcode_addresses.contains(&reverter)
-        })
 }
 
 #[cfg(test)]

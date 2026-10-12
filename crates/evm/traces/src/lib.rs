@@ -1,6 +1,8 @@
 //! # foundry-evm-traces
 //!
 //! EVM trace identifying and decoding.
+//!
+//! Without the `revm` compatibility feature, rendering and decoding use EVM2 trace types.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -18,8 +20,7 @@ use foundry_common::{
 use foundry_config::{Chain, Config};
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::OpcodeFilter;
+
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -30,6 +31,22 @@ use std::{
 
 use alloy_primitives::{Address, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+#[cfg(feature = "revm")]
+use revm::bytecode::opcode::OpCode;
+#[cfg(feature = "revm")]
+use revm_inspectors::{ColorChoice, tracing::OpcodeFilter};
+
+#[cfg(not(feature = "revm"))]
+use evm2::interpreter::opcode::OpCode;
+#[cfg(not(feature = "revm"))]
+use evm2_inspectors::{ColorChoice, tracing::OpcodeFilter};
+
+#[cfg(feature = "revm")]
+pub use revm::interpreter::InstructionResult;
+
+#[cfg(not(feature = "revm"))]
+pub use evm2::interpreter::InstrStop as InstructionResult;
 
 /// Network context used to identify and decode execution traces.
 #[derive(Clone, Copy, Debug)]
@@ -85,7 +102,19 @@ impl TraceContext {
     }
 }
 
+#[cfg(feature = "revm")]
 pub use revm_inspectors::tracing::{
+    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
+    TraceWriter, TracingInspector, TracingInspectorConfig,
+    types::{
+        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, DecodedCallData,
+        DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep, RecordedMemory,
+        StorageChange, StorageChangeReason, TraceMemberOrder,
+    },
+};
+
+#[cfg(not(feature = "revm"))]
+pub use evm2_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
@@ -501,11 +530,11 @@ fn format_storage_word(value: U256) -> String {
     if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
 }
 
-const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+const fn convert_color_choice(choice: shell::ColorChoice) -> ColorChoice {
     match choice {
-        shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
-        shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
-        shell::ColorChoice::Never => revm_inspectors::ColorChoice::Never,
+        shell::ColorChoice::Auto => ColorChoice::Auto,
+        shell::ColorChoice::Always => ColorChoice::Always,
+        shell::ColorChoice::Never => ColorChoice::Never,
     }
 }
 
@@ -740,7 +769,6 @@ impl TraceRequirements {
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
-    use revm::interpreter::InstructionResult;
 
     #[test]
     fn trace_context_uses_the_execution_network_hardfork_namespace() {
@@ -1077,4 +1105,17 @@ mod tests {
         assert!(!cfg.record_immediate_bytes, "all steps should not record immediate bytes");
         assert!(!cfg.record_state_diff, "all steps should not record state diffs");
     }
+}
+
+/// Native Ethereum trace transfer.
+pub mod ethereum;
+
+#[cfg(feature = "revm")]
+const fn successful_status(status: InstructionResult) -> bool {
+    status.is_ok()
+}
+
+#[cfg(not(feature = "revm"))]
+const fn successful_status(status: InstructionResult) -> bool {
+    status.is_success()
 }

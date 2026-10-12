@@ -23,12 +23,16 @@ path = "tests/ui.rs"
 harness = false
 
 [dependencies]
+evm2 = { workspace = true, features = ["parse"] }
 # lib
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
+foundry-cheatcodes.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-evm-fuzz.workspace = true
+foundry-evm-coverage.workspace = true
 foundry-evm-networks.workspace = true
 foundry-evm-symbolic.workspace = true
 foundry-linking.workspace = true
@@ -51,8 +55,8 @@ forge-verify.workspace = true
 forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
-foundry-debugger.workspace = true
-foundry-tui.workspace = true
+foundry-debugger = { workspace = true, optional = true }
+foundry-tui = { workspace = true, optional = true }
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
 alloy-chains.workspace = true
@@ -62,24 +66,26 @@ alloy-json-abi.workspace = true
 alloy-network.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-rpc-types.workspace = true
 alloy-signer.workspace = true
+alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 
 tempo-alloy.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
-ctrlc = "3"
-dialoguer.workspace = true
+ctrlc = { version = "3", optional = true }
+dialoguer = { workspace = true, optional = true }
 dunce.workspace = true
 flate2.workspace = true
 globset = "0.4"
-indicatif.workspace = true
-inferno = { version = "0.12", default-features = false }
+indicatif = { workspace = true, optional = true }
+inferno = { version = "0.12", default-features = false, optional = true }
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
-revm = { workspace = true, features = ["parse"] }
+revm = { workspace = true, features = ["parse"], optional = true }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
@@ -97,9 +103,9 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
-axum.workspace = true
-tower-http = { workspace = true, features = ["cors"] }
-opener = "0.8"
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, features = ["cors"], optional = true }
+opener = { version = "0.8", optional = true }
 
 # soldeer
 soldeer-commands.workspace = true
@@ -133,8 +139,27 @@ base-common-consensus = { workspace = true, features = ["serde", "std"] }
 rexpect.workspace = true
 
 [features]
-default = ["jemalloc", "asm-keccak", "optimism"]
-asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism", "revm"]
+revm = [
+    "dep:indicatif",
+    "dep:inferno",
+    "dep:opener",
+    "dep:axum",
+    "dep:tower-http",
+    "dep:dialoguer",
+    "dep:foundry-tui",
+    "dep:ctrlc",
+    "dep:revm",
+    "dep:foundry-debugger",
+    "foundry-cheatcodes/revm",
+    "foundry-evm/revm",
+    "foundry-evm-symbolic/revm",
+    "foundry-cli/revm",
+    "foundry-common/revm",
+    "forge-script/revm",
+    "forge-verify/revm",
+]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm?/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
@@ -143,6 +168,7 @@ gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 touch-id = ["foundry-wallets/touch-id"]
 monad = [
+    "revm",
     "anvil/monad",
     "foundry-config/monad",
     "foundry-evm/monad",
@@ -153,6 +179,7 @@ monad = [
     "forge-verify/monad",
 ]
 base = [
+    "revm",
     "anvil/base",
     "foundry-evm/base",
     "foundry-evm-networks/base",
@@ -166,6 +193,7 @@ base = [
     "forge-verify/base",
 ]
 optimism = [
+    "revm",
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",
     "foundry-common/optimism",

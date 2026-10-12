@@ -10,8 +10,13 @@ use alloy_sol_types::{
 };
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
-use revm::interpreter::InstructionResult;
 use std::{fmt, sync::OnceLock};
+
+#[cfg(feature = "revm")]
+use revm::interpreter::InstructionResult;
+
+#[cfg(not(feature = "revm"))]
+use evm2::interpreter::InstrStop as InstructionResult;
 
 /// Stable user-facing fallback for empty revert payloads.
 pub const EMPTY_REVERT_DATA: &str = "<empty revert data>";
@@ -133,17 +138,48 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+        self.maybe_decode_known(err).or_else(|| decode_as_non_empty_string(err)).or_else(|| {
+            if err.len() < SELECTOR_LEN
+                && let Some(status) = status
+                && {
+                    #[cfg(feature = "revm")]
+                    {
+                        !status.is_ok()
+                    }
+                    #[cfg(not(feature = "revm"))]
+                    {
+                        !status.is_success()
+                    }
+                }
+            {
+                Some(format!("EvmError: {status:?}"))
+            } else {
+                Self::maybe_decode_fallback(err)
+            }
+        })
+    }
+
+    /// Decodes revert bytes without an execution-engine status.
+    pub fn decode_data(&self, err: &[u8]) -> String {
+        self.maybe_decode_data(err).unwrap_or_else(|| {
+            if err.is_empty() { EMPTY_REVERT_DATA.to_string() } else { trimmed_hex(err) }
+        })
+    }
+
+    /// Tries to decode revert bytes without an execution-engine status.
+    pub fn maybe_decode_data(&self, err: &[u8]) -> Option<String> {
         self.maybe_decode_known(err)
             .or_else(|| decode_as_non_empty_string(err))
-            .or_else(|| Self::maybe_decode_fallback(err, status))
+            .or_else(|| Self::maybe_decode_fallback(err))
     }
 
     /// Tries to decode the given revert bytes as one of the errors known to this decoder:
     /// Solidity's `Error(string)` and `Panic(uint256)`, `Vm`'s custom errors, or custom errors
     /// registered with this decoder.
     ///
-    /// Unlike [`maybe_decode`](Self::maybe_decode), this returns `None` for unrecognized custom
-    /// errors instead of falling back to a generic `custom error <selector>` representation.
+    /// Unlike [`maybe_decode_data`](Self::maybe_decode_data), this returns `None` for unrecognized
+    /// custom errors instead of falling back to a generic `custom error <selector>`
+    /// representation.
     pub fn maybe_decode_known(&self, err: &[u8]) -> Option<String> {
         // Solidity's `Error(string)` (handled separately in order to strip revert: prefix)
         if let Some(ContractError(Revert(revert))) = RevertReason::decode(err) {
@@ -175,7 +211,7 @@ impl RevertDecoder {
     }
 
     /// Formats revert bytes that could not be decoded as a known error.
-    fn maybe_decode_fallback(err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+    fn maybe_decode_fallback(err: &[u8]) -> Option<String> {
         // Generic custom error.
         if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
             return Some({
@@ -191,11 +227,6 @@ impl RevertDecoder {
             });
         }
 
-        if let Some(status) = status
-            && !status.is_ok()
-        {
-            return Some(format!("EvmError: {status:?}"));
-        }
         if err.is_empty() {
             None
         } else {
@@ -269,7 +300,7 @@ mod tests {
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
         assert_eq!(
-            decoder.decode(data, None),
+            decoder.decode_data(data),
             "custom error 0xe17594de: 756688fe00000000000000000000000000000000000000000000000000000000"
         );
 
@@ -282,13 +313,13 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000004"
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
-        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
+        assert_eq!(decoder.decode_data(data), "ValidationFailed(0x756688fe)");
     }
 
     #[test]
     fn maybe_decode_magic_skip_is_not_skip_marker() {
         let decoder = RevertDecoder::new();
-        let reason = decoder.maybe_decode(crate::constants::MAGIC_SKIP, None).unwrap();
+        let reason = decoder.maybe_decode_data(crate::constants::MAGIC_SKIP).unwrap();
 
         assert_eq!(reason, "FOUNDRY::SKIP");
         assert!(SkipReason::decode_self(&reason).is_none());
@@ -300,6 +331,23 @@ mod tests {
         let data = b".,Bo";
 
         assert_eq!(decoder.maybe_decode_known(data), None);
-        assert_eq!(decoder.maybe_decode(data, None).as_deref(), Some(".,Bo"));
+        assert_eq!(decoder.maybe_decode_data(data).as_deref(), Some(".,Bo"));
+    }
+
+    #[test]
+    fn data_decoding_preserves_fallback_and_status_precedence() {
+        let decoder = RevertDecoder::new();
+        for data in [&b""[..], &[0xff], &[0xff, 0xfe, 0xfd, 0xfc, 0xfb], b"revert reason"] {
+            assert_eq!(decoder.decode_data(data), decoder.decode(data, None));
+        }
+        assert_eq!(decoder.decode_data(&[]), EMPTY_REVERT_DATA);
+        assert_eq!(
+            decoder.decode(&[0xff], Some(InstructionResult::OutOfGas)),
+            "EvmError: OutOfGas"
+        );
+        assert_eq!(
+            decoder.decode(&[0xff, 0xfe, 0xfd, 0xfc], Some(InstructionResult::OutOfGas)),
+            "custom error 0xfffefdfc"
+        );
     }
 }

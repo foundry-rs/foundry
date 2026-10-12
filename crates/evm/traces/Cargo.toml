@@ -32,22 +32,23 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-sol-types.workspace = true
-revm-inspectors.workspace = true
+revm-inspectors = { workspace = true, optional = true }
 
 tempo-contracts.workspace = true
-tempo-precompiles.workspace = true
 monad-revm = { workspace = true, optional = true }
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 
 async-trait.workspace = true
 ciborium.workspace = true
+evm2.workspace = true
+evm2-inspectors.workspace = true
 eyre.workspace = true
 futures.workspace = true
 itertools.workspace = true
 memchr.workspace = true
 rayon.workspace = true
 reqwest.workspace = true
-revm.workspace = true
+revm = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 serde.workspace = true
 solar.workspace = true
@@ -62,14 +63,23 @@ snapbox.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = [
+    "dep:revm",
+    "dep:revm-inspectors",
+    "foundry-evm-core/revm",
+    "foundry-evm-hardforks/revm",
+    "foundry-evm-networks/revm",
+]
 monad = [
+    "revm",
     "dep:monad-revm",
     "foundry-evm-core/monad",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
 ]
 base = [
+    "revm",
     "dep:base-common-precompiles",
     "foundry-common/base",
     "foundry-evm-core/base",
@@ -77,6 +87,7 @@ base = [
     "foundry-evm-networks/base",
 ]
 optimism = [
+    "revm",
     "foundry-common/optimism",
     "foundry-evm-core/optimism",
     "foundry-evm-networks/optimism",

@@ -129,7 +129,7 @@ impl BuildArgs {
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
-            .size_limits(contract_size_limits(&config))
+            .size_limits(contract_size_limits(&config)?)
             .bail(!format_json)
             .compile(&project)?;
 
@@ -316,17 +316,27 @@ impl BuildArgs {
     }
 }
 
-fn contract_size_limits(config: &Config) -> ContractSizeLimits {
-    config
-        .code_size_limit
-        .map(ContractSizeLimits::with_runtime_limit)
-        .or_else(|| {
+fn contract_size_limits(config: &Config) -> Result<ContractSizeLimits> {
+    if let Some(limits) =
+        config.code_size_limit.map(ContractSizeLimits::with_runtime_limit).or_else(|| {
             config
                 .networks
                 .contract_size_limits()
                 .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
         })
-        .unwrap_or_else(|| ContractSizeLimits::for_spec_id(config.evm_spec_id()))
+    {
+        return Ok(limits);
+    }
+    #[cfg(feature = "revm")]
+    return Ok(ContractSizeLimits::for_spec_id(config.evm_spec_id()));
+    #[cfg(not(feature = "revm"))]
+    {
+        let env = foundry_evm::core::ethereum::EthereumEnv::local_from_config(
+            config,
+            &foundry_evm::opts::EvmOpts::default(),
+        )?;
+        Ok(ContractSizeLimits::for_ethereum_spec(env.spec))
+    }
 }
 /// Notice shown on lint-on-build failure; printed separately so it survives single-line
 /// cause-chain rendering.

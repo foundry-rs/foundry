@@ -8,14 +8,18 @@ use alloy_consensus::{
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
     },
 };
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, TransactionResponse, eip2718::Encodable2718,
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash};
 use alloy_rpc_types::ConversionError;
-use revm::context::TxEnv;
 use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction};
+
+#[cfg(feature = "revm")]
+use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
+#[cfg(feature = "revm")]
+use revm::context::TxEnv;
+#[cfg(feature = "revm")]
 use tempo_revm::TempoTxEnv;
 
 #[cfg(all(feature = "base", not(feature = "optimism")))]
@@ -541,6 +545,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
     }
 }
 
+#[cfg(feature = "revm")]
 impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
     fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
         match tx {
@@ -586,12 +591,14 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
     }
 }
 
+#[cfg(feature = "revm")]
 impl FromTxWithEncoded<FoundryTxEnvelope> for TxEnv {
     fn from_encoded_tx(tx: &FoundryTxEnvelope, sender: Address, _encoded: Bytes) -> Self {
         Self::from_recovered_tx(tx, sender)
     }
 }
 
+#[cfg(feature = "revm")]
 impl FromRecoveredTx<FoundryTxEnvelope> for TempoTxEnv {
     fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
         match tx {
@@ -624,6 +631,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TempoTxEnv {
     }
 }
 
+#[cfg(feature = "revm")]
 impl FromTxWithEncoded<FoundryTxEnvelope> for TempoTxEnv {
     fn from_encoded_tx(tx: &FoundryTxEnvelope, sender: Address, _encoded: Bytes) -> Self {
         Self::from_recovered_tx(tx, sender)
@@ -979,6 +987,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "revm")]
     fn test_from_recovered_tx_legacy() {
         let tx = r#"
         {

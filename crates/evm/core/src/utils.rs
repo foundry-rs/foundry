@@ -1,16 +1,28 @@
-use crate::{EvmEnv, FoundryBlock, hardfork::FoundryHardfork};
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
+use alloy_eips::eip7840::BlobParams;
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{ChainId, Selector, U256};
+use alloy_primitives::{ChainId, Selector};
+
+#[cfg(feature = "revm")]
+use crate::{EvmEnv, FoundryBlock, hardfork::FoundryHardfork};
+#[cfg(feature = "revm")]
+use alloy_consensus::BlockHeader;
+#[cfg(feature = "revm")]
+use alloy_primitives::U256;
+#[cfg(feature = "revm")]
 use alloy_provider::{Network, network::BlockResponse};
+#[cfg(feature = "revm")]
 use foundry_config::NamedChain::{
     self, Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Polygon,
     PolygonAmoy,
 };
+#[cfg(feature = "revm")]
 use foundry_evm_networks::NetworkConfigs;
+#[cfg(feature = "revm")]
 use revm::primitives::hardfork::SpecId;
+
+#[cfg(feature = "revm")]
 pub use revm::state::EvmState as StateChangeset;
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
@@ -21,6 +33,7 @@ pub const fn cold_path() {
 }
 
 /// Constructs a generic [`FoundryBlock`] from a block header.
+#[cfg(feature = "revm")]
 pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockHeader) -> BLOCK {
     let mut block = BLOCK::default();
     block.set_number(U256::from(header.number()));
@@ -35,6 +48,7 @@ pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockH
 }
 
 /// Applies chain-specific changes required to replay transactions accepted on-chain.
+#[cfg(feature = "revm")]
 pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut EvmEnv<SPEC, BLOCK>) {
     let chain_id = evm_env.cfg_env.chain_id;
     apply_chain_specific_tx_replay_env_changes_for_chain(evm_env, chain_id);
@@ -44,6 +58,7 @@ pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut Evm
 ///
 /// This keeps fork-specific transaction validation independent from an execution `CHAINID`
 /// override.
+#[cfg(feature = "revm")]
 pub fn apply_chain_specific_tx_replay_env_changes_for_chain<SPEC, BLOCK>(
     evm_env: &mut EvmEnv<SPEC, BLOCK>,
     source_chain_id: ChainId,
@@ -61,6 +76,7 @@ pub fn apply_chain_specific_tx_replay_env_changes_for_chain<SPEC, BLOCK>(
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided), works with any
 /// [`FoundryBlock`] type.
+#[cfg(feature = "revm")]
 pub fn apply_chain_and_block_specific_env_changes<
     N: Network,
     SPEC: Into<SpecId> + Copy,
@@ -79,6 +95,7 @@ pub fn apply_chain_and_block_specific_env_changes<
 /// Applies block normalization for the provided source chain.
 ///
 /// This keeps fork-specific header handling independent from an execution `CHAINID` override.
+#[cfg(feature = "revm")]
 pub fn apply_chain_and_block_specific_env_changes_for_chain<
     N: Network,
     SPEC: Into<SpecId> + Copy,
@@ -181,6 +198,7 @@ pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u
 }
 
 /// Returns the blob params based on the spec id.
+#[cfg(feature = "revm")]
 pub fn get_blob_params_by_spec_id(spec: SpecId) -> BlobParams {
     if spec >= SpecId::AMSTERDAM {
         BlobParams::bpo2()
@@ -194,6 +212,7 @@ pub fn get_blob_params_by_spec_id(spec: SpecId) -> BlobParams {
 }
 
 /// Returns the blob parameters selected by an explicit Foundry hardfork.
+#[cfg(feature = "revm")]
 pub fn get_blob_params_by_hardfork(hardfork: FoundryHardfork) -> BlobParams {
     match hardfork {
         FoundryHardfork::Ethereum(EthereumHardfork::Prague) => BlobParams::prague(),
@@ -211,6 +230,7 @@ pub fn get_blob_params_by_hardfork(hardfork: FoundryHardfork) -> BlobParams {
 }
 
 /// Returns the blob base fee update fraction based on the spec id.
+#[cfg(feature = "revm")]
 pub fn get_blob_base_fee_update_fraction_by_spec_id(spec: SpecId) -> u64 {
     get_blob_params_by_spec_id(spec).update_fraction as u64
 }
@@ -226,7 +246,7 @@ pub fn get_function<'a>(
         .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};

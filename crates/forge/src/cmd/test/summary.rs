@@ -4,10 +4,15 @@ use comfy_table::{
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use foundry_common::shell;
-use foundry_evm::executors::invariant::InvariantMetrics;
-use itertools::Itertools;
 use serde_json::json;
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
+
+#[cfg(feature = "revm")]
+use foundry_evm_fuzz::invariant::InvariantMetrics;
+#[cfg(feature = "revm")]
+use itertools::Itertools;
+#[cfg(feature = "revm")]
+use std::collections::HashMap;
 
 /// Represents a test summary report.
 pub struct TestSummaryReport<'a> {
@@ -117,6 +122,7 @@ fn new_table() -> Table {
 /// |-----------------------+----------------+-------+---------+----------|
 /// | CounterHandler        | doSomething    | 7382  | 160     |4794      |
 /// ╰-----------------------+----------------+-------+---------+----------╯
+#[cfg(feature = "revm")]
 pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,
 ) -> Table {
@@ -148,11 +154,9 @@ pub(crate) fn format_invariant_metrics_table(
     table
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
-    use crate::cmd::test::summary::format_invariant_metrics_table;
-    use foundry_evm::executors::invariant::InvariantMetrics;
-    use std::collections::HashMap;
+    use super::*;
 
     #[test]
     fn test_invariant_metrics_table() {

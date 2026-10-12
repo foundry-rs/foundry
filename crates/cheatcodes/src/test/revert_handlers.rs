@@ -2,14 +2,15 @@ use crate::{Error, Result};
 use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
+#[cfg(feature = "revm")]
 use foundry_evm_core::decode::RevertDecoder;
+#[cfg(feature = "revm")]
 use revm::interpreter::InstructionResult;
 use spec::Vm;
 
-use super::{
-    assume::{AcceptableRevertParameters, AssumeNoRevert},
-    expect::ExpectedRevert,
-};
+#[cfg(feature = "revm")]
+use super::assume::{AcceptableRevertParameters, AssumeNoRevert};
+use super::expect::ExpectedRevert;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -29,6 +30,7 @@ pub(crate) trait RevertParameters {
     fn partial_match(&self) -> bool;
 }
 
+#[cfg(feature = "revm")]
 impl RevertParameters for AcceptableRevertParameters {
     fn reverter(&self) -> Option<Address> {
         self.reverter
@@ -47,7 +49,8 @@ impl RevertParameters for AcceptableRevertParameters {
 fn handle_revert(
     is_cheatcode: bool,
     revert_params: &impl RevertParameters,
-    status: InstructionResult,
+    is_revert: bool,
+    decode: impl Fn(&[u8]) -> String,
     retdata: &Bytes,
     known_contracts: &Option<ContractsByArtifact>,
     reverter: Option<&Address>,
@@ -70,10 +73,10 @@ fn handle_revert(
     };
 
     let actual_revert = if retdata.is_empty() && !expected_reason.is_empty() {
-        if status == InstructionResult::Revert {
+        if is_revert {
             bail!("call reverted as expected, but without data");
         }
-        RevertDecoder::new().decode(retdata, Some(status)).into_bytes()
+        decode(retdata).into_bytes()
     } else {
         retdata.to_vec()
     };
@@ -101,12 +104,8 @@ fn handle_revert(
         return Ok(());
     }
 
-    let (actual, expected) = if let Some(contracts) = known_contracts {
-        let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
-        (
-            &decoder.decode(actual_reason.as_slice(), Some(status)),
-            &decoder.decode(expected_reason, Some(status)),
-        )
+    let (actual, expected) = if known_contracts.is_some() {
+        (&decode(actual_reason.as_slice()), &decode(expected_reason))
     } else {
         (&stringify(&actual_reason), &stringify(expected_reason))
     };
@@ -125,6 +124,7 @@ fn handle_revert(
     Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
 }
 
+#[cfg(feature = "revm")]
 pub(crate) fn handle_assume_no_revert(
     assume_no_revert: &AssumeNoRevert,
     status: InstructionResult,
@@ -143,7 +143,8 @@ pub(crate) fn handle_assume_no_revert(
                 handle_revert(
                     false,
                     reason,
-                    status,
+                    status == InstructionResult::Revert,
+                    |data| decode_with_status(data, status, known_contracts),
                     retdata,
                     known_contracts,
                     assume_no_revert.reverted_by.as_ref(),
@@ -154,6 +155,7 @@ pub(crate) fn handle_assume_no_revert(
     }
 }
 
+#[cfg(feature = "revm")]
 pub(crate) fn handle_expect_revert(
     is_cheatcode: bool,
     is_create: bool,
@@ -162,6 +164,32 @@ pub(crate) fn handle_expect_revert(
     status: InstructionResult,
     retdata: Bytes,
     known_contracts: &Option<ContractsByArtifact>,
+) -> Result<(Option<Address>, Bytes)> {
+    check_expect_revert(
+        is_cheatcode,
+        is_create,
+        internal_expect_revert,
+        expected_revert,
+        status.is_ok(),
+        status == InstructionResult::Revert,
+        retdata,
+        known_contracts,
+        |data| decode_with_status(data, status, known_contracts),
+    )
+}
+
+/// Matches an expected revert without depending on either engine's instruction status.
+#[expect(clippy::too_many_arguments, reason = "Keep matching independent of engine status types.")]
+pub(crate) fn check_expect_revert(
+    is_cheatcode: bool,
+    is_create: bool,
+    internal_expect_revert: bool,
+    expected_revert: &ExpectedRevert,
+    is_success: bool,
+    is_revert: bool,
+    retdata: Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
+    decode: impl Fn(&[u8]) -> String,
 ) -> Result<(Option<Address>, Bytes)> {
     let success_return = || {
         if is_create {
@@ -182,7 +210,7 @@ pub(crate) fn handle_expect_revert(
     if expected_revert.count == 0 {
         // If no specific reason or reverter is expected, we just check if it reverted
         if expected_revert.reverter.is_none() && expected_revert.reason.is_none() {
-            ensure!(status.is_ok(), "call reverted when it was expected not to revert");
+            ensure!(is_success, "call reverted when it was expected not to revert");
             return Ok(success_return());
         }
 
@@ -192,7 +220,7 @@ pub(crate) fn handle_expect_revert(
 
         // If we expect no reverts with a specific reason/reverter, but got a revert,
         // we need to check if it matches our criteria
-        if status.is_ok() {
+        if is_success {
             // No revert occurred, which is what we expected
             Ok(success_return())
         } else {
@@ -265,12 +293,13 @@ pub(crate) fn handle_expect_revert(
             }
         }
     } else {
-        ensure!(!status.is_ok(), "next call did not revert as expected");
+        ensure!(!is_success, "next call did not revert as expected");
 
         handle_revert(
             is_cheatcode,
             expected_revert,
-            status,
+            is_revert,
+            decode,
             &retdata,
             known_contracts,
             expected_revert.reverted_by.as_ref(),
@@ -298,4 +327,17 @@ fn decode_revert(revert: Vec<u8>) -> Vec<u8> {
         return decoded;
     }
     revert
+}
+
+#[cfg(feature = "revm")]
+fn decode_with_status(
+    data: &[u8],
+    status: InstructionResult,
+    known_contracts: &Option<ContractsByArtifact>,
+) -> String {
+    let mut decoder = RevertDecoder::new();
+    if let Some(contracts) = known_contracts {
+        decoder = decoder.with_abis(contracts.values().map(|c| &c.abi));
+    }
+    decoder.decode(data, Some(status))
 }

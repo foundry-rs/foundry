@@ -22,13 +22,15 @@ monad-revm = { workspace = true, optional = true }
 base-common-genesis = { workspace = true, optional = true }
 base-common-evm = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
-revm.workspace = true
+revm = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tempo-hardfork.workspace = true
 foundry-compilers.workspace = true
+evm2.workspace = true
 
 [features]
-default = ["optimism"]
-monad = ["dep:monad-revm"]
-base = ["dep:base-common-genesis", "dep:base-common-evm"]
-optimism = ["dep:alloy-op-hardforks", "dep:op-revm"]
+default = ["optimism", "revm"]
+revm = ["dep:revm"]
+monad = ["dep:monad-revm", "revm"]
+base = ["dep:base-common-genesis", "dep:base-common-evm", "revm"]
+optimism = ["dep:alloy-op-hardforks", "dep:op-revm", "revm"]

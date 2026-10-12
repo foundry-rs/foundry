@@ -126,6 +126,7 @@ pub mod da_estimate;
 pub mod erc20;
 pub mod erc4626;
 pub mod estimate;
+mod ethereum;
 pub mod events;
 pub mod find_block;
 pub mod interface;

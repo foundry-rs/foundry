@@ -13,11 +13,9 @@ use foundry_config::{
     figment::{Figment, Provider},
 };
 use foundry_evm::{
-    core::evm::FoundryEvmNetwork,
-    executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
+        CallTraceDecoder, Traces, decode_trace_arena, identifier::SignaturesCache,
         prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
     },
 };
@@ -26,6 +24,13 @@ use std::{
     path::{Path, PathBuf},
 };
 use yansi::Paint;
+
+#[cfg(feature = "revm")]
+use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
+    executors::{DeployResult, EvmError, RawCallResult},
+    traces::TraceKind,
+};
 
 /// Given a `Project`'s output, finds the contract by path and name and returns its
 /// ABI, creation bytecode, and `ArtifactId`.
@@ -299,6 +304,7 @@ pub struct TraceResult {
     pub gas_used: u64,
 }
 
+#[cfg(feature = "revm")]
 impl TraceResult {
     /// Create a new [`TraceResult`] from a [`RawCallResult`].
     pub fn from_raw<FEN: FoundryEvmNetwork>(
@@ -310,12 +316,14 @@ impl TraceResult {
     }
 }
 
+#[cfg(feature = "revm")]
 impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for TraceResult {
     fn from(result: DeployResult<FEN>) -> Self {
         Self::from_raw(result.raw, TraceKind::Deployment)
     }
 }
 
+#[cfg(feature = "revm")]
 impl<FEN: FoundryEvmNetwork> TryFrom<Result<DeployResult<FEN>, EvmError<FEN>>> for TraceResult {
     type Error = EvmError<FEN>;
 
@@ -328,6 +336,7 @@ impl<FEN: FoundryEvmNetwork> TryFrom<Result<DeployResult<FEN>, EvmError<FEN>>> f
     }
 }
 
+#[cfg(feature = "revm")]
 impl<FEN: FoundryEvmNetwork> From<RawCallResult<FEN>> for TraceResult {
     fn from(result: RawCallResult<FEN>) -> Self {
         Self::from_raw(result, TraceKind::Execution)

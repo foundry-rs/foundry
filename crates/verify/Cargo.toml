@@ -32,7 +32,9 @@ alloy-provider = { workspace = true, features = ["trace-api"] }
 tracing.workspace = true
 foundry-compilers.workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
-revm.workspace = true
+revm = { workspace = true, optional = true }
+evm2.workspace = true
+evm2-inspectors.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 reqwest = { workspace = true, features = ["json"] }
@@ -54,8 +56,10 @@ foundry-test-utils.workspace = true
 tempfile.workspace = true
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = ["dep:revm", "foundry-evm/revm", "foundry-cli/revm", "foundry-common/revm"]
 monad = [
+    "revm",
     "dep:monad-revm",
     "foundry-common/monad",
     "foundry-config/monad",
@@ -64,12 +68,14 @@ monad = [
     "foundry-cli/monad",
 ]
 base = [
+    "revm",
     "foundry-common/base",
     "foundry-evm/base",
     "foundry-evm-networks/base",
     "foundry-cli/base",
 ]
 optimism = [
+    "revm",
     "foundry-common/optimism",
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

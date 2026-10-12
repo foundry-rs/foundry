@@ -34,9 +34,6 @@
 //! - This all happens periodically, there is no clear order in which workers export or import
 //!   entries since it doesn't matter as long as the corpus eventually syncs across all workers
 
-use super::corpus_io::{
-    CorpusDirEntry, canonical_replay_dirs, read_corpus_dir, read_corpus_dir_strict,
-};
 use crate::{
     executors::{
         Executor, RawCallResult,
@@ -63,6 +60,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
+    corpus_io::{CorpusDirEntry, canonical_replay_dirs, read_corpus_dir, read_corpus_dir_strict},
     invariant::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, SenderFilters,
         TargetedContracts,

@@ -71,24 +71,28 @@ tempfile.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = ["foundry-evm/revm"]
 tracy = ["dep:tracing-tracy"]
 tracy-allocator = ["tracy"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
 monad = [
+    "revm",
     "foundry-common/monad",
     "foundry-config/monad",
     "foundry-evm-networks/monad",
     "foundry-evm/monad",
 ]
 base = [
+    "revm",
     "foundry-config/base",
     "foundry-evm-networks/base",
     "foundry-common/base",
     "foundry-evm/base",
 ]
 optimism = [
+    "revm",
     "foundry-evm-networks/optimism",
     "foundry-common/optimism",
     "foundry-evm/optimism",

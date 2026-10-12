@@ -14,22 +14,23 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-foundry-cheatcodes.workspace = true
-foundry-common.workspace = true
-foundry-compilers.workspace = true
-foundry-config.workspace = true
+foundry-cheatcodes = { workspace = true, optional = true }
+foundry-common = { workspace = true, optional = true }
+foundry-compilers = { workspace = true, optional = true }
+foundry-config = { workspace = true, optional = true }
 foundry-evm-core.workspace = true
-foundry-evm-coverage.workspace = true
-foundry-evm-fuzz.workspace = true
-foundry-evm-sancov.workspace = true
+foundry-evm-coverage = { workspace = true, optional = true }
+foundry-evm-fuzz = { workspace = true, optional = true }
+foundry-evm-sancov = { workspace = true, optional = true }
 foundry-evm-hardforks.workspace = true
-foundry-evm-networks.workspace = true
+foundry-evm-networks = { workspace = true, optional = true }
 foundry-evm-traces.workspace = true
 
-alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-eips.workspace = true
-alloy-evm.workspace = true
-alloy-json-abi.workspace = true
+alloy-dyn-abi = { workspace = true, optional = true, features = ["arbitrary", "eip712"] }
+alloy-consensus.workspace = true
+alloy-eips = { workspace = true, optional = true }
+alloy-evm = { workspace = true, optional = true }
+alloy-json-abi = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = [
     "serde",
     "getrandom",
@@ -37,8 +38,8 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-rpc-types = { workspace = true, features = ["trace"] }
-alloy-sol-types.workspace = true
-revm = { workspace = true, default-features = false, features = [
+alloy-sol-types = { workspace = true, optional = true }
+revm = { workspace = true, optional = true, default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
@@ -49,33 +50,74 @@ revm = { workspace = true, default-features = false, features = [
     "arbitrary",
     "c-kzg",
 ] }
-revm-inspectors.workspace = true
-tempo-precompiles.workspace = true
-tempo-primitives.workspace = true
+revm-inspectors = { workspace = true, optional = true }
+tempo-precompiles = { workspace = true, optional = true }
+tempo-primitives = { workspace = true, optional = true }
 
 eyre.workspace = true
-parking_lot.workspace = true
-proptest.workspace = true
-rand.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-indicatif.workspace = true
-serde_json.workspace = true
-serde.workspace = true
-uuid.workspace = true
-rayon.workspace = true
-tokio.workspace = true
+evm2.workspace = true
+parking_lot = { workspace = true, optional = true }
+proptest = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+indicatif = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 # monad
 alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
 
 [dev-dependencies]
+foundry-cheatcodes.workspace = true
+alloy-sol-types.workspace = true
 tempo-revm.workspace = true
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = [
+    "foundry-evm-coverage/revm",
+    "foundry-evm-fuzz/revm",
+    "dep:tracing",
+    "dep:alloy-sol-types",
+    "dep:foundry-cheatcodes",
+    "dep:foundry-common",
+    "dep:foundry-compilers",
+    "dep:foundry-config",
+    "dep:foundry-evm-coverage",
+    "dep:foundry-evm-fuzz",
+    "dep:foundry-evm-sancov",
+    "dep:foundry-evm-networks",
+    "dep:alloy-dyn-abi",
+    "dep:alloy-eips",
+    "dep:alloy-evm",
+    "dep:alloy-json-abi",
+    "dep:revm",
+    "dep:revm-inspectors",
+    "dep:tempo-precompiles",
+    "dep:tempo-primitives",
+    "dep:parking_lot",
+    "dep:proptest",
+    "dep:rand",
+    "dep:thiserror",
+    "dep:indicatif",
+    "dep:serde_json",
+    "dep:serde",
+    "dep:uuid",
+    "dep:rayon",
+    "dep:tokio",
+    "foundry-cheatcodes/revm",
+    "foundry-common/revm",
+    "foundry-evm-core/revm",
+    "foundry-evm-hardforks/revm",
+    "foundry-evm-traces/revm",
+]
 monad = [
+    "revm",
     "dep:monad-revm",
     "dep:alloy-monad-evm",
     "foundry-evm-core/monad",
@@ -87,6 +129,7 @@ monad = [
     "foundry-evm-traces/monad",
 ]
 base = [
+    "revm",
     "foundry-cheatcodes/base",
     "foundry-common/base",
     "foundry-config/base",
@@ -98,6 +141,7 @@ base = [
     "foundry-evm-traces/base",
 ]
 optimism = [
+    "revm",
     "foundry-evm-core/optimism",
     "foundry-evm-hardforks/optimism",
     "foundry-evm-networks/optimism",

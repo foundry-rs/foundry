@@ -9,25 +9,24 @@ use crate::{
 };
 use alloy_consensus::Transaction as ConsensusTransaction;
 use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
+use alloy_primitives::{Address, Bytes, TxKind, hex};
 use alloy_provider::{
     Provider,
     ext::TraceApi,
-    network::{BlockResponse, ReceiptResponse, TransactionResponse, primitives::BlockTransactions},
+    network::{ReceiptResponse, TransactionResponse},
 };
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag,
     trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
 };
 use clap::{Parser, ValueHint};
-use eyre::{Context, OptionExt, Result};
+use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, LoadConfig, read_constructor_args_file},
 };
 use foundry_common::{
-    SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
     provider::{ProviderBuilder, RetryProvider},
     shell,
 };
@@ -35,21 +34,35 @@ use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
+    opts::{EvmOpts, ForkEndpointIdentity},
+};
+use foundry_evm_networks::NetworkVariant;
+use std::path::PathBuf;
+
+#[cfg(feature = "revm")]
+use alloy_primitives::{B256, U256};
+#[cfg(feature = "revm")]
+use alloy_provider::network::{BlockResponse, primitives::BlockTransactions};
+#[cfg(feature = "revm")]
+use eyre::Context;
+#[cfg(feature = "revm")]
+use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
+#[cfg(feature = "revm")]
+use foundry_evm::{
     core::{
         FoundryChain, FoundryTransaction as _,
         env::FromAnyRpcTransaction as _,
-        evm::{ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{ChainFor, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{Executor, ExecutorBuilder, TracingExecutor},
-    opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
-use foundry_evm_networks::NetworkVariant;
+#[cfg(feature = "revm")]
 use revm::{
+    Database,
     context::{Block as _, Transaction as _},
     state::AccountInfo,
 };
-use std::path::PathBuf;
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -178,7 +191,7 @@ impl VerifyBytecodeArgs {
         Ok(evm_opts)
     }
 
-    async fn ensure_endpoint_identity_unchanged(
+    pub(super) async fn ensure_endpoint_identity_unchanged(
         config: &Config,
         expected: Option<&ForkEndpointIdentity>,
     ) -> Result<()> {
@@ -202,7 +215,7 @@ impl VerifyBytecodeArgs {
         Ok(())
     }
 
-    fn apply_endpoint_expectation(
+    pub(super) fn apply_endpoint_expectation(
         evm_opts: &mut EvmOpts,
         endpoint_identity: Option<&ForkEndpointIdentity>,
         network_was_inferred: bool,
@@ -235,13 +248,13 @@ impl VerifyBytecodeArgs {
 
         match config.networks.execution_network() {
             NetworkVariant::Ethereum => {
-                self.run_with_network::<EthEvmNetwork>(
-                    config,
-                    endpoint_identity,
-                    network_was_inferred,
-                    ExecutorBuilder::<EthEvmNetwork>::new(),
-                )
-                .await
+                let Some(verification) = self
+                    .prepare_runtime_verification(config, endpoint_identity, network_was_inferred)
+                    .await?
+                else {
+                    return Ok(());
+                };
+                verification.execute_ethereum().await
             }
             #[cfg(feature = "base")]
             NetworkVariant::Base => {
@@ -263,6 +276,7 @@ impl VerifyBytecodeArgs {
                 )
                 .await
             }
+            #[cfg(feature = "revm")]
             NetworkVariant::Tempo => {
                 self.run_with_network::<TempoEvmNetwork>(
                     config,
@@ -272,33 +286,40 @@ impl VerifyBytecodeArgs {
                 )
                 .await
             }
+            #[cfg(not(feature = "revm"))]
+            NetworkVariant::Tempo => {
+                eyre::bail!("Tempo bytecode execution requires the compatibility build")
+            }
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
-                let Some(mut verification) = self
-                    .prepare_runtime_verification::<MonadEvmNetwork>(
-                        config,
-                        endpoint_identity,
-                        network_was_inferred,
-                        ExecutorBuilder::<MonadEvmNetwork>::new(),
-                    )
+                let Some(verification) = self
+                    .prepare_runtime_verification(config, endpoint_identity, network_was_inferred)
                     .await?
                 else {
                     return Ok(());
                 };
-                let context = replay_monad_block_transactions(
-                    &verification.config,
-                    verification.block.as_ref(),
-                    verification.simulation_block,
-                    verification.transaction.tx_hash(),
-                    &mut verification.executor,
-                    &verification.evm_env,
-                )
-                .await?;
-                verification.finish(context).await
+                let (env, mut executor) =
+                    verification.open_legacy(ExecutorBuilder::<MonadEvmNetwork>::new()).await?;
+                let context =
+                    if let RuntimeDeployment::Creation(transaction) = &verification.deployment {
+                        replay_monad_block_transactions(
+                            &verification.config,
+                            verification.block.as_ref(),
+                            verification.simulation_block,
+                            transaction.tx_hash(),
+                            &mut executor,
+                            &env,
+                        )
+                        .await?
+                    } else {
+                        None
+                    };
+                verification.finish_legacy(executor, env, context).await
             }
         }
     }
 
+    #[cfg(feature = "revm")]
     /// Runs verification for networks whose replay does not require block ancestry.
     async fn run_with_network<FEN: FoundryEvmNetwork>(
         self,
@@ -307,40 +328,36 @@ impl VerifyBytecodeArgs {
         network_was_inferred: bool,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
-        let Some(mut verification) = self
-            .prepare_runtime_verification::<FEN>(
-                config,
-                endpoint_identity,
-                network_was_inferred,
-                executor_builder,
-            )
+        let Some(verification) = self
+            .prepare_runtime_verification(config, endpoint_identity, network_was_inferred)
             .await?
         else {
             return Ok(());
         };
-        let context = replay_block_transactions(
-            verification.block.as_ref(),
-            verification.transaction.tx_hash(),
-            &mut verification.executor,
-            &verification.evm_env,
-        )?;
-        verification.finish(context).await
+        let (env, mut executor) = verification.open_legacy(executor_builder).await?;
+        let context = if let RuntimeDeployment::Creation(transaction) = &verification.deployment {
+            replay_block_transactions(
+                verification.block.as_ref(),
+                transaction.tx_hash(),
+                &mut executor,
+                &env,
+            )?
+        } else {
+            None
+        };
+        verification.finish_legacy(executor, env, context).await
     }
 
-    async fn prepare_runtime_verification<FEN>(
+    async fn prepare_runtime_verification(
         mut self,
         config: Config,
         endpoint_identity: Option<ForkEndpointIdentity>,
         network_was_inferred: bool,
-        executor_builder: ExecutorBuilder<FEN>,
-    ) -> Result<Option<RuntimeVerification<FEN>>>
-    where
-        FEN: FoundryEvmNetwork,
-    {
+    ) -> Result<Option<RuntimeVerification>> {
         // Setup
-        // `AnyNetwork` rather than `FEN::Network`: chains such as Arbitrum and Celo put
+        // Use `AnyNetwork`: chains such as Arbitrum and Celo put
         // transaction types the strict Ethereum envelope cannot decode into every block, which
-        // would fail the full block fetches below for the whole chain. Execution still uses `FEN`.
+        // would fail the full block fetches below for the whole chain.
         let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
 
         // If chain is not set, we try to get it from the RPC.
@@ -551,87 +568,20 @@ impl VerifyBytecodeArgs {
             local_bytecode_vec.extend_from_slice(&constructor_args);
 
             let deploy_block_info = provider.get_block(deploy_block.into()).full().await?;
-            let (mut fork_config, mut evm_opts) = load_fork_config_and_evm_opts(&config)?;
-            Self::apply_endpoint_expectation(
-                &mut evm_opts,
-                endpoint_identity.as_ref(),
+            return Ok(Some(RuntimeVerification {
+                address: self.address,
+                config,
+                endpoint_identity,
                 network_was_inferred,
-            );
-            let (evm_env, _, mut executor) = crate::utils::get_tracing_executor::<FEN>(
-                &mut fork_config,
-                deploy_block,
-                deploy_block,
-                deploy_block_info.as_ref(),
-                evm_opts,
-                executor_builder.clone(),
-            )
-            .await?;
-            Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
-
-            // Setup genesis tx_env and evm_evm.
-            let deployer = Address::with_last_byte(0x1);
-            let mut tx_env = TxEnvFor::<FEN>::default();
-            tx_env.set_caller(deployer);
-            tx_env.set_kind(TxKind::Create);
-            tx_env.set_data(Bytes::from(local_bytecode_vec));
-            tx_env.set_chain_id(Some(evm_env.cfg_env.chain_id));
-            tx_env.set_gas_limit(evm_env.block_env.gas_limit());
-            tx_env.set_gas_price(evm_env.block_env.basefee() as u128);
-
-            // Seed deployer account with funds
-            let account_info = AccountInfo {
-                balance: U256::from(100 * 10_u128.pow(18)),
-                nonce: 0,
-                ..Default::default()
-            };
-            executor.backend_mut().insert_account_info(deployer, account_info);
-
-            let fork_address = if maybe_predeploy || deploy_block == 0 {
-                crate::utils::deploy_contract::<FEN>(
-                    &mut executor,
-                    &evm_env,
-                    &tx_env,
-                    TxKind::Create,
-                    ChainFor::<FEN>::for_transaction(&tx_env),
-                )?
-            } else {
-                executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)?.address
-            };
-
-            // Compare runtime bytecode. The onchain code is read at `deploy_block` to stay
-            // anchored to the same height as the local fork. Predeploys keep reading at the
-            // latest block: their code is stable and genesis state often isn't served by RPCs.
-            let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes::<FEN>(
-                &mut executor,
-                &provider,
-                self.address,
-                fork_address,
-                (!maybe_predeploy).then_some(deploy_block),
-            )
-            .await?;
-            Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
-
-            let match_type = crate::utils::match_bytecodes(
-                deployed_bytecode.original_byte_slice(),
-                &onchain_runtime_code,
-                &constructor_args,
-                true,
-                config.bytecode_hash,
-            );
-
-            crate::utils::print_result(
-                match_type,
-                BytecodeType::Runtime,
-                &mut json_results,
-                etherscan_metadata,
-                &config,
-            );
-
-            if shell::is_json() {
-                sh_println!("{}", serde_json::to_string(&json_results)?)?;
-            }
-
-            return Ok(None);
+                provider,
+                block: deploy_block_info,
+                simulation_block: deploy_block,
+                deployment: RuntimeDeployment::Synthetic { predeploy: maybe_predeploy },
+                local_bytecode_vec,
+                constructor_args,
+                json_results,
+                etherscan_metadata: source_code.and_then(|source| source.items.into_iter().next()),
+            }));
         }
 
         // We can unwrap directly as maybe_predeploy is false
@@ -839,34 +789,15 @@ impl VerifyBytecodeArgs {
             // Fork the chain immediately before `simulation_block`, then execute with the target
             // block's environment and effective runtime hardfork.
             let block = provider.get_block(simulation_block.into()).full().await?;
-            let (mut fork_config, mut evm_opts) = load_fork_config_and_evm_opts(&config)?;
-            Self::apply_endpoint_expectation(
-                &mut evm_opts,
-                endpoint_identity.as_ref(),
-                network_was_inferred,
-            );
-            let (mut evm_env, _tx_env, executor) = crate::utils::get_tracing_executor::<FEN>(
-                &mut fork_config,
-                simulation_block - 1, // env.fork_block_number
-                simulation_block,
-                block.as_ref(),
-                evm_opts,
-                executor_builder,
-            )
-            .await?;
-            Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
-
-            apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
             return Ok(Some(RuntimeVerification {
                 address: self.address,
                 config,
                 endpoint_identity,
                 provider,
-                executor,
-                evm_env,
+                network_was_inferred,
                 block,
                 simulation_block,
-                transaction,
+                deployment: RuntimeDeployment::Creation(Box::new(transaction)),
                 local_bytecode_vec,
                 constructor_args,
                 json_results,
@@ -880,104 +811,187 @@ impl VerifyBytecodeArgs {
     }
 }
 
-/// Prepared runtime verification, before replaying the creation block's prefix.
-struct RuntimeVerification<FEN: FoundryEvmNetwork> {
-    address: Address,
-    config: Config,
-    endpoint_identity: Option<ForkEndpointIdentity>,
-    provider: RetryProvider,
-    executor: TracingExecutor<FEN>,
-    evm_env: EvmEnvFor<FEN>,
-    block: Option<AnyRpcBlock>,
-    simulation_block: u64,
-    transaction: AnyRpcTransaction,
-    local_bytecode_vec: Vec<u8>,
-    constructor_args: Bytes,
-    json_results: Vec<JsonResult>,
-    etherscan_metadata: Option<Metadata>,
+/// Validated bytecode and pinned execution inputs, independent of an execution engine.
+pub(super) struct RuntimeVerification {
+    pub(super) address: Address,
+    pub(super) config: Config,
+    pub(super) endpoint_identity: Option<ForkEndpointIdentity>,
+    pub(super) network_was_inferred: bool,
+    pub(super) provider: RetryProvider,
+    pub(super) block: Option<AnyRpcBlock>,
+    pub(super) simulation_block: u64,
+    pub(super) deployment: RuntimeDeployment,
+    pub(super) local_bytecode_vec: Vec<u8>,
+    pub(super) constructor_args: Bytes,
+    pub(super) json_results: Vec<JsonResult>,
+    pub(super) etherscan_metadata: Option<Metadata>,
 }
 
-impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
-    async fn finish(self, target_context: Option<ChainFor<FEN>>) -> Result<()> {
-        let Self {
-            address,
-            config,
-            endpoint_identity,
-            provider,
-            mut executor,
-            evm_env,
-            simulation_block,
-            transaction,
-            local_bytecode_vec,
-            constructor_args,
-            mut json_results,
-            etherscan_metadata,
-            ..
-        } = self;
-        let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&transaction)?;
-        // Read the call from the decoded env: batched transactions have no top-level `to`/`input`.
-        let kind = tx_env.kind();
-        let target_context =
-            target_context.unwrap_or_else(|| ChainFor::<FEN>::for_transaction(&tx_env));
+pub(super) enum RuntimeDeployment {
+    Synthetic { predeploy: bool },
+    Creation(Box<AnyRpcTransaction>),
+}
 
-        // Replace the `input` with local creation code in the creation tx.
-        if let TxKind::Call(to) = kind {
-            if to == DEFAULT_CREATE2_DEPLOYER {
-                let mut input = tx_env.input()[..32].to_vec(); // Salt
-                input.extend_from_slice(&local_bytecode_vec);
-                tx_env.set_data(Bytes::from(input));
-
-                // Deploy default CREATE2 deployer
-                executor.deploy_create2_deployer()?;
-            }
-        } else {
-            tx_env.set_data(Bytes::from(local_bytecode_vec));
-        }
-
-        let fork_address = crate::utils::deploy_contract::<FEN>(
-            &mut executor,
-            &evm_env,
-            &tx_env,
-            kind,
-            target_context,
-        )?;
-
-        // State committed using deploy_with_env, now get the runtime bytecode from the db.
-        let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes::<FEN>(
-            &mut executor,
-            &provider,
-            address,
-            fork_address,
-            Some(simulation_block),
+impl RuntimeVerification {
+    pub(super) async fn report(
+        mut self,
+        local_code: &[u8],
+        onchain_block: Option<u64>,
+    ) -> Result<()> {
+        let block_id = onchain_block.map_or_else(BlockId::latest, BlockId::number);
+        let onchain_code = self.provider.get_code_at(self.address).block_id(block_id).await?;
+        VerifyBytecodeArgs::ensure_endpoint_identity_unchanged(
+            &self.config,
+            self.endpoint_identity.as_ref(),
         )
         .await?;
-        VerifyBytecodeArgs::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref())
-            .await?;
-
-        // Compare the onchain runtime bytecode with the runtime code from the fork.
         let match_type = crate::utils::match_bytecodes(
-            fork_runtime_code.original_byte_slice(),
-            &onchain_runtime_code,
-            &constructor_args,
+            local_code,
+            &onchain_code,
+            &self.constructor_args,
             true,
-            config.bytecode_hash,
+            self.config.bytecode_hash,
         );
-
         crate::utils::print_result(
             match_type,
             BytecodeType::Runtime,
-            &mut json_results,
-            etherscan_metadata.as_ref(),
-            &config,
+            &mut self.json_results,
+            self.etherscan_metadata.as_ref(),
+            &self.config,
         );
         if shell::is_json() {
-            sh_println!("{}", serde_json::to_string(&json_results)?)?;
+            sh_println!("{}", serde_json::to_string(&self.json_results)?)?;
         }
         Ok(())
+    }
+
+    #[cfg(feature = "revm")]
+    async fn open_legacy<FEN: FoundryEvmNetwork>(
+        &self,
+        executor_builder: ExecutorBuilder<FEN>,
+    ) -> Result<(EvmEnvFor<FEN>, TracingExecutor<FEN>)> {
+        let (mut fork_config, mut evm_opts) = load_fork_config_and_evm_opts(&self.config)?;
+        VerifyBytecodeArgs::apply_endpoint_expectation(
+            &mut evm_opts,
+            self.endpoint_identity.as_ref(),
+            self.network_was_inferred,
+        );
+        let fork_block = match &self.deployment {
+            RuntimeDeployment::Synthetic { .. } => self.simulation_block,
+            RuntimeDeployment::Creation(_) => self
+                .simulation_block
+                .checked_sub(1)
+                .ok_or_else(|| eyre::eyre!("cannot replay a creation transaction at genesis"))?,
+        };
+        let (mut evm_env, _, executor) = crate::utils::get_tracing_executor::<FEN>(
+            &mut fork_config,
+            fork_block,
+            self.simulation_block,
+            self.block.as_ref(),
+            evm_opts,
+            executor_builder,
+        )
+        .await?;
+        VerifyBytecodeArgs::ensure_endpoint_identity_unchanged(
+            &self.config,
+            self.endpoint_identity.as_ref(),
+        )
+        .await?;
+        if matches!(self.deployment, RuntimeDeployment::Creation(_)) {
+            let chain = self.config.chain.map_or_else(
+                || {
+                    self.endpoint_identity
+                        .as_ref()
+                        .map_or(evm_env.cfg_env.chain_id, |i| i.source_chain_id)
+                },
+                |chain| chain.id(),
+            );
+            apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain);
+        }
+        Ok((evm_env, executor))
+    }
+
+    #[cfg(feature = "revm")]
+    async fn finish_legacy<FEN: FoundryEvmNetwork>(
+        self,
+        mut executor: TracingExecutor<FEN>,
+        evm_env: EvmEnvFor<FEN>,
+        target_context: Option<ChainFor<FEN>>,
+    ) -> Result<()> {
+        let (fork_address, onchain_block) = match &self.deployment {
+            RuntimeDeployment::Synthetic { predeploy } => {
+                let deployer = Address::with_last_byte(1);
+                let mut tx_env = TxEnvFor::<FEN>::default();
+                tx_env.set_caller(deployer);
+                tx_env.set_kind(TxKind::Create);
+                tx_env.set_data(Bytes::from(self.local_bytecode_vec.clone()));
+                tx_env.set_chain_id(Some(evm_env.cfg_env.chain_id));
+                tx_env.set_gas_limit(evm_env.block_env.gas_limit());
+                tx_env.set_gas_price(evm_env.block_env.basefee() as u128);
+                executor.backend_mut().insert_account_info(
+                    deployer,
+                    AccountInfo {
+                        balance: U256::from(100 * 10_u128.pow(18)),
+                        nonce: 0,
+                        ..Default::default()
+                    },
+                );
+                let address = if *predeploy || self.simulation_block == 0 {
+                    crate::utils::deploy_contract::<FEN>(
+                        &mut executor,
+                        &evm_env,
+                        &tx_env,
+                        TxKind::Create,
+                        ChainFor::<FEN>::for_transaction(&tx_env),
+                    )?
+                } else {
+                    executor.deploy_with_env(evm_env.clone(), tx_env, None)?.address
+                };
+                (address, (!predeploy).then_some(self.simulation_block))
+            }
+            RuntimeDeployment::Creation(transaction) => {
+                let local_bytecode_vec = self.local_bytecode_vec.clone();
+                let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(transaction)?;
+                // Read the call from the decoded env: batched transactions have no top-level
+                // `to`/`input`.
+                let kind = tx_env.kind();
+                let target_context =
+                    target_context.unwrap_or_else(|| ChainFor::<FEN>::for_transaction(&tx_env));
+
+                // Replace the `input` with local creation code in the creation tx.
+                if let TxKind::Call(to) = kind {
+                    if to == DEFAULT_CREATE2_DEPLOYER {
+                        let mut input = tx_env.input()[..32].to_vec(); // Salt
+                        input.extend_from_slice(&local_bytecode_vec);
+                        tx_env.set_data(Bytes::from(input));
+
+                        // Deploy default CREATE2 deployer
+                        executor.deploy_create2_deployer()?;
+                    }
+                } else {
+                    tx_env.set_data(Bytes::from(local_bytecode_vec));
+                }
+
+                let fork_address = crate::utils::deploy_contract::<FEN>(
+                    &mut executor,
+                    &evm_env,
+                    &tx_env,
+                    kind,
+                    target_context,
+                )?;
+
+                (fork_address, Some(self.simulation_block))
+            }
+        };
+        let code = executor.backend_mut().basic(fork_address)?
+            .and_then(|info| info.code)
+            .ok_or_else(|| eyre::eyre!("Bytecode does not exist for contract deployed on fork at address {fork_address}"))?;
+        self.report(code.original_byte_slice(), onchain_block).await
     }
 }
 
 /// Replays ordinary transactions preceding `target_hash` and returns its execution context.
+#[cfg(feature = "revm")]
 fn replay_block_transactions<FEN: FoundryEvmNetwork>(
     block: Option<&AnyRpcBlock>,
     target_hash: B256,
@@ -1068,6 +1082,7 @@ async fn replay_monad_block_transactions(
     Ok(Some(block_context.transaction(target_index)))
 }
 
+#[cfg(feature = "revm")]
 fn execute_replay_transaction<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     evm_env: &EvmEnvFor<FEN>,
@@ -1105,19 +1120,21 @@ async fn monad_block_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_network::{AnyHeader, AnyRpcHeader};
-    use foundry_evm::core::backend::Backend;
     use foundry_evm_networks::NetworkConfigs;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_canned_method, spawn_rpc_proxy_method_not_found_before,
     };
     use std::sync::atomic::Ordering;
 
-    #[cfg(not(feature = "monad"))]
-    use foundry_evm::EvmEnv;
-    #[cfg(not(feature = "monad"))]
-    use revm::context::TxEnv;
+    #[cfg(feature = "revm")]
+    use alloy_network::{AnyHeader, AnyRpcHeader};
+    #[cfg(feature = "revm")]
+    use foundry_evm::core::{backend::Backend, evm::EthEvmNetwork};
 
+    #[cfg(not(feature = "revm"))]
+    use alloy_primitives::B256;
+
+    #[cfg(feature = "revm")]
     fn replay_block(transactions: Vec<AnyRpcTransaction>) -> AnyRpcBlock {
         AnyRpcBlock::new(
             alloy_rpc_types::Block::new(
@@ -1128,6 +1145,7 @@ mod tests {
         )
     }
 
+    #[cfg(feature = "revm")]
     fn replay_transaction(
         caller: Address,
         nonce: u64,
@@ -1145,14 +1163,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "revm")]
     fn replay_prefix_excludes_target_and_skips_system_envelopes() {
         let caller = Address::with_last_byte(0x42);
         let recipient = Address::with_last_byte(0x43);
         let target = B256::with_last_byte(2);
-        let env = EvmEnv::default();
+        let env = EvmEnvFor::<EthEvmNetwork>::default();
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::new().build(
             env.clone(),
-            TxEnv::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
             Backend::spawn(None).unwrap(),
             Default::default(),
         );
@@ -1177,12 +1196,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "revm")]
     fn replay_missing_target_does_not_execute_prefix() {
         let caller = Address::with_last_byte(0x42);
-        let env = EvmEnv::default();
+        let env = EvmEnvFor::<EthEvmNetwork>::default();
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::new().build(
             env.clone(),
-            TxEnv::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
             Backend::spawn(None).unwrap(),
             Default::default(),
         );

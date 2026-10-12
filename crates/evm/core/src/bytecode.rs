@@ -1,4 +1,4 @@
-use revm::bytecode::{OpCode, opcode};
+use evm2::interpreter::{op as opcode, opcode::OpCode};
 use std::{fmt, slice};
 
 /// An iterator that yields opcodes and their immediate data.
@@ -160,7 +160,7 @@ pub fn format_bytecode_to<W: fmt::Write + ?Sized>(bytecode: &[u8], w: &mut W) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use revm::bytecode::opcode as op;
+    use evm2::interpreter::op;
 
     fn o(op: u8) -> OpCode {
         OpCode::new_or_unknown(op)

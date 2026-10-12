@@ -1,5 +1,8 @@
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
+
+#[cfg(feature = "revm")]
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+#[cfg(feature = "revm")]
 use foundry_evm_core::evm::FoundryEvmNetwork;
 
 /// Prank information.
@@ -83,6 +86,7 @@ pub(crate) struct PrankChanges {
     pub(crate) used: Option<Prank>,
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for prank_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender } = self;
@@ -90,6 +94,7 @@ impl Cheatcode for prank_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for startPrank_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender } = self;
@@ -97,6 +102,7 @@ impl Cheatcode for startPrank_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for prank_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin } = self;
@@ -104,6 +110,7 @@ impl Cheatcode for prank_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for startPrank_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin } = self;
@@ -111,6 +118,7 @@ impl Cheatcode for startPrank_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for prank_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, delegateCall } = self;
@@ -118,6 +126,7 @@ impl Cheatcode for prank_2Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for startPrank_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, delegateCall } = self;
@@ -125,6 +134,7 @@ impl Cheatcode for startPrank_2Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for prank_3Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
@@ -132,6 +142,7 @@ impl Cheatcode for prank_3Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for startPrank_3Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
@@ -139,6 +150,7 @@ impl Cheatcode for startPrank_3Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for stopPrankCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
@@ -147,6 +159,7 @@ impl Cheatcode for stopPrankCall {
     }
 }
 
+#[cfg(feature = "revm")]
 fn prank<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     new_caller: &Address,

@@ -1,19 +1,18 @@
-use crate::{CallTrace, DecodedCallData};
+use crate::{CallTrace, DecodedCallData, DecodedCallTrace};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
 use foundry_config::{Chain, NamedChain};
-use foundry_evm_core::{
-    precompiles::{
-        BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
-        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
-        EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
-    },
-    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses},
+use foundry_evm_core::precompiles::{
+    BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
+    BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
+    EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
 };
 use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{
+    NetworkConfigs, TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses,
+};
 use itertools::Itertools;
-use revm_inspectors::tracing::types::DecodedCallTrace;
+use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
 sol! {
 /// EVM precompiles interface. For illustration purposes only, as precompiles don't follow the
@@ -519,7 +518,7 @@ pub(crate) fn is_known_precompile(
         },
         |networks| networks.is_tempo(),
     );
-    if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
+    if is_tempo_context && (is_tempo_precompile || address == PATH_USD_ADDRESS) {
         return true;
     }
     // Monad precompiles (only on a Monad chain or in an explicitly configured Monad context).

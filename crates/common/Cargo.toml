@@ -50,7 +50,8 @@ op-alloy-rpc-types = { workspace = true, optional = true }
 base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
-revm.workspace = true
+evm2.workspace = true
+revm = { workspace = true, optional = true }
 
 solar.workspace = true
 
@@ -103,7 +104,8 @@ foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = ["dep:revm"]
 monad = ["foundry-config/monad"]
 base = [
     "dep:base-common-network",

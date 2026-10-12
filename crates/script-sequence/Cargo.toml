@@ -23,13 +23,15 @@ eyre.workspace = true
 serde_json.workspace = true
 walkdir.workspace = true
 
-revm-inspectors.workspace = true
+revm-inspectors = { workspace = true, optional = true }
+evm2-inspectors.workspace = true
 
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = ["dep:revm-inspectors"]
 monad = ["foundry-common/monad", "foundry-config/monad"]
 base = ["foundry-common/base"]
 optimism = ["foundry-common/optimism"]

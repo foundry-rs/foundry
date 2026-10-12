@@ -20,20 +20,24 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
-foundry-evm-fuzz.workspace = true
+foundry-evm-coverage.workspace = true
+foundry-evm-fuzz = { workspace = true, optional = true }
 foundry-evm-traces.workspace = true
 foundry-wallets.workspace = true
-forge-script-sequence.workspace = true
+forge-script-sequence = { workspace = true, optional = true }
 
-solar.workspace = true
+solar = { workspace = true, optional = true }
+evm2.workspace = true
+evm2-inspectors.workspace = true
 
 alloy-dyn-abi.workspace = true
-alloy-evm.workspace = true
+alloy-eips.workspace = true
+alloy-evm = { workspace = true, optional = true }
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
-alloy-genesis.workspace = true
+alloy-genesis = { workspace = true, optional = true }
 alloy-sol-types.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["k256"] }
 alloy-signer.workspace = true
 alloy-signer-local = { workspace = true, features = [
@@ -43,37 +47,37 @@ alloy-signer-local = { workspace = true, features = [
 parking_lot.workspace = true
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-network.workspace = true
-alloy-rlp.workspace = true
-alloy-chains.workspace = true
-alloy-ens.workspace = true
+alloy-rlp = { workspace = true, optional = true }
+alloy-chains = { workspace = true, optional = true }
+alloy-ens = { workspace = true, optional = true }
 
-base64.workspace = true
-dialoguer.workspace = true
+base64 = { workspace = true, optional = true }
+dialoguer = { workspace = true, optional = true }
 eyre.workspace = true
 itertools.workspace = true
-jsonpath_lib.workspace = true
+jsonpath_lib = { workspace = true, optional = true }
 k256 = { workspace = true, features = ["expose-field"] }
 memchr.workspace = true
-p256 = "0.13"
-ed25519-consensus = "2.1"
+p256 = { version = "0.13", optional = true }
+ed25519-consensus = { version = "2.1", optional = true }
 ecdsa = "0.16"
-rand.workspace = true
+rand = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
-revm.workspace = true
+revm = { workspace = true, optional = true }
 semver.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-toml = { workspace = true, features = ["preserve_order"] }
-toml_edit.workspace = true
+toml = { workspace = true, optional = true, features = ["preserve_order"] }
+toml_edit = { workspace = true, optional = true }
 tracing.workspace = true
-walkdir.workspace = true
-proptest.workspace = true
-serde.workspace = true
+walkdir = { workspace = true, optional = true }
+proptest = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 
-tempo-hardfork.workspace = true
-tempo-contracts.workspace = true
-tempo-precompiles.workspace = true
-tempo-primitives.workspace = true
+tempo-hardfork = { workspace = true, optional = true }
+tempo-contracts = { workspace = true, optional = true }
+tempo-precompiles = { workspace = true, optional = true }
+tempo-primitives = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempo-alloy.workspace = true
@@ -81,8 +85,41 @@ tempfile.workspace = true
 tempo-precompiles = { workspace = true, features = ["test-utils"] }
 
 [features]
-default = ["optimism"]
+default = ["optimism", "revm"]
+revm = [
+    "forge-script-sequence/revm",
+    "foundry-evm-fuzz/revm",
+    "dep:tempo-contracts",
+    "dep:solar",
+    "dep:serde",
+    "dep:alloy-provider",
+    "dep:foundry-evm-fuzz",
+    "dep:forge-script-sequence",
+    "dep:alloy-evm",
+    "dep:alloy-genesis",
+    "dep:alloy-rlp",
+    "dep:alloy-chains",
+    "dep:alloy-ens",
+    "dep:base64",
+    "dep:dialoguer",
+    "dep:jsonpath_lib",
+    "dep:p256",
+    "dep:ed25519-consensus",
+    "dep:rand",
+    "dep:revm",
+    "dep:toml",
+    "dep:toml_edit",
+    "dep:walkdir",
+    "dep:proptest",
+    "dep:tempo-hardfork",
+    "dep:tempo-precompiles",
+    "dep:tempo-primitives",
+    "foundry-common/revm",
+    "foundry-evm-core/revm",
+    "foundry-evm-traces/revm",
+]
 monad = [
+    "revm",
     "dep:monad-revm",
     "foundry-config/monad",
     "foundry-evm-core/monad",
@@ -90,12 +127,14 @@ monad = [
     "foundry-evm-traces/monad",
 ]
 base = [
+    "revm",
     "foundry-common/base",
     "foundry-evm-core/base",
     "foundry-evm-fuzz/base",
     "foundry-evm-traces/base",
 ]
 optimism = [
+    "revm",
     "foundry-common/optimism",
     "foundry-evm-core/optimism",
     "foundry-evm-fuzz/optimism",

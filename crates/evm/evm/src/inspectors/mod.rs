@@ -22,9 +22,8 @@ pub use script::ScriptExecutionInspector;
 mod stack;
 pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
 
-mod edge_cov;
-pub(crate) use edge_cov::MAX_EDGE_COUNT;
-pub use edge_cov::{
+pub(crate) use foundry_evm_coverage::MAX_EDGE_COUNT;
+pub use foundry_evm_coverage::{
     CmpOperands, EdgeCovConfig, EdgeCovHit, EdgeCovInspector, EdgeCovKind, EdgeCoverage,
     EdgeIndexMap, EdgeKey,
 };

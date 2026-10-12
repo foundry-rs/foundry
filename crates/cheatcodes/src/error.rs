@@ -5,9 +5,11 @@ use alloy_signer_local::LocalSignerError;
 use alloy_sol_types::SolError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
+#[cfg(feature = "revm")]
 use foundry_evm_core::backend::{BackendError, DatabaseError};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
+#[cfg(feature = "revm")]
 use revm::context_interface::result::EVMError;
 use std::{borrow::Cow, fmt};
 
@@ -257,6 +259,9 @@ macro_rules! impl_from {
     )*};
 }
 
+#[cfg(feature = "revm")]
+impl_from!(BackendError, DatabaseError, jsonpath_lib::JsonPathError);
+
 impl_from!(
     alloy_sol_types::Error,
     alloy_dyn_abi::Error,
@@ -264,9 +269,6 @@ impl_from!(
     alloy_consensus::crypto::RecoveryError,
     FsPathError,
     hex::FromHexError,
-    BackendError,
-    DatabaseError,
-    jsonpath_lib::JsonPathError,
     serde_json::Error,
     SignatureError,
     std::io::Error,
@@ -279,6 +281,7 @@ impl_from!(
     WalletSignerError,
 );
 
+#[cfg(feature = "revm")]
 impl<T: Into<BackendError>> From<EVMError<T>> for Error {
     fn from(err: EVMError<T>) -> Self {
         Self::display(BackendError::from(err))

@@ -2,21 +2,31 @@
 
 #![warn(unused_crate_dependencies)]
 
+#[cfg(feature = "revm")]
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
+#[cfg(feature = "revm")]
 use alloy_json_abi::Function;
+#[cfg(feature = "revm")]
 use alloy_primitives::{
     Address, B256, Bytes, I256, Keccak256, U256, hex, keccak256,
     map::{HashMap, HashSet, IndexSet},
 };
+#[cfg(feature = "revm")]
 use alloy_signer::SignerSync;
+#[cfg(feature = "revm")]
 use alloy_signer_local::{
     PrivateKeySigner,
     coins_bip39::{English, Wordlist},
 };
+#[cfg(feature = "revm")]
 use alloy_sol_types::SolCall;
+#[cfg(feature = "revm")]
 use base64::prelude::*;
+#[cfg(feature = "revm")]
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
+#[cfg(feature = "revm")]
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
+#[cfg(feature = "revm")]
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
@@ -29,7 +39,7 @@ use foundry_evm::{
         primitives::hardfork::SpecId,
     },
 };
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "revm")]
 use std::{
     collections::VecDeque,
     fmt::{self, Write as _},
@@ -45,17 +55,26 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(feature = "revm")]
 use thiserror::Error;
+#[cfg(feature = "revm")]
 use tracing::{debug, trace, trace_span, warn};
 
+#[cfg(feature = "revm")]
 mod abi;
+#[cfg(feature = "revm")]
 mod consts;
+#[cfg(feature = "revm")]
 mod executor;
+#[cfg(feature = "revm")]
 mod runtime;
 
+#[cfg(feature = "revm")]
 pub(crate) use consts::*;
+#[cfg(feature = "revm")]
 pub use runtime::{SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
 
+#[cfg(feature = "revm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SymbolicVmCheatcode {
     CreateAddress,
@@ -75,6 +94,7 @@ enum SymbolicVmCheatcode {
     SnapshotState,
 }
 
+#[cfg(feature = "revm")]
 impl SymbolicVmCheatcode {
     fn from_selector(selector: [u8; 4]) -> Option<Self> {
         match selector {
@@ -133,6 +153,7 @@ impl SymbolicVmCheatcode {
 /// candidate failure that must be replayed concretely, and `Incomplete` as a failing
 /// test because the symbolic engine could not prove the property with the supported
 /// semantics and configured resource limits.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug)]
 pub enum SymbolicRunResult {
     /// All explored paths completed without a feasible failure.
@@ -163,6 +184,7 @@ pub enum SymbolicRunResult {
 }
 
 /// One concrete symbolic input materialized from a solver model.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug)]
 pub struct SymbolicConcreteInput {
     /// ABI-typed argument values extracted from the solver model.
@@ -172,6 +194,7 @@ pub struct SymbolicConcreteInput {
 }
 
 /// Result of best-effort symbolic exploration toward one branch target.
+#[cfg(feature = "revm")]
 #[derive(Debug)]
 pub struct SymbolicBranchTargetSearchResult {
     /// Concrete inputs whose completed root path reached the requested branch outcome.
@@ -181,6 +204,7 @@ pub struct SymbolicBranchTargetSearchResult {
 }
 
 /// A concrete invariant target selected from Foundry's invariant discovery.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantTarget {
     /// Address that receives the sequence call.
@@ -192,6 +216,7 @@ pub struct SymbolicInvariantTarget {
 }
 
 /// Input for best-effort invariant candidate search after one symbolic handler call.
+#[cfg(feature = "revm")]
 pub struct SymbolicInvariantCandidateInput<'a, FEN: FoundryEvmNetwork> {
     /// Concrete Foundry executor containing the replayed invariant frontier prefix.
     pub executor: &'a Executor<FEN>,
@@ -210,6 +235,7 @@ pub struct SymbolicInvariantCandidateInput<'a, FEN: FoundryEvmNetwork> {
 }
 
 /// One unconfirmed symbolic input produced by invariant candidate search.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantCandidate {
     /// Index within [`SymbolicInvariantCandidateInput::invariants`] predicted to fail.
@@ -221,6 +247,7 @@ pub struct SymbolicInvariantCandidate {
 }
 
 /// An execution or solver limitation encountered during best-effort candidate search.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolicInvariantSearchLimitation {
     /// Category describing why part of the search could not complete.
@@ -229,6 +256,7 @@ pub struct SymbolicInvariantSearchLimitation {
     pub reason: String,
 }
 
+#[cfg(feature = "revm")]
 impl From<SymbolicError> for SymbolicInvariantSearchLimitation {
     fn from(error: SymbolicError) -> Self {
         Self { kind: error.stop_reason(), reason: error.to_string() }
@@ -236,6 +264,7 @@ impl From<SymbolicError> for SymbolicInvariantSearchLimitation {
 }
 
 /// Result of best-effort invariant candidate search after one symbolic handler call.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantCandidateSearchResult {
     /// Unconfirmed candidates that must be replayed concretely by the caller.
@@ -246,6 +275,7 @@ pub struct SymbolicInvariantCandidateSearchResult {
 }
 
 /// Input for bounded symbolic invariant execution.
+#[cfg(feature = "revm")]
 pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
     /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
     pub executor: &'a Executor<FEN>,
@@ -273,18 +303,8 @@ pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
     pub ffi_enabled: bool,
 }
 
-/// One concrete storage value required to replay a symbolic invariant candidate.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SymbolicStorageAssignment {
-    /// Account whose storage slot should be initialized.
-    pub address: Address,
-    /// Concrete storage slot.
-    pub slot: U256,
-    /// Concrete value extracted from the solver model.
-    pub value: U256,
-}
-
 /// Outcome of bounded symbolic invariant execution.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug)]
 pub enum SymbolicInvariantRunResult {
     /// No feasible invariant failure was found within the configured sequence depth.
@@ -312,6 +332,7 @@ pub enum SymbolicInvariantRunResult {
 }
 
 /// Part of a symbolic invariant run that produced a replayable counterexample.
+#[cfg(feature = "revm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SymbolicInvariantCounterexampleKind {
     /// An `invariant_*` or `afterInvariant` check failed.
@@ -321,6 +342,7 @@ pub enum SymbolicInvariantCounterexampleKind {
 }
 
 /// One concrete step in a symbolic invariant counterexample sequence.
+#[cfg(feature = "revm")]
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantStep {
     /// Sender used for the call.
@@ -339,67 +361,13 @@ pub struct SymbolicInvariantStep {
     pub calldata: Bytes,
 }
 
-/// High-level reason a symbolic run stopped without a proof or replayed counterexample.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SymbolicStopReason {
-    /// The executor reached a supported-but-incomplete semantic boundary.
-    Stuck,
-    /// Every explored execution path ended in an ordinary revert.
-    RevertAll,
-    /// The solver timed out or returned `unknown`.
-    Timeout,
-    /// An internal engine, backend, or solver process error occurred.
-    Error,
-}
-
-/// Symbolic execution counters.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SymbolicStats {
-    /// Number of explored symbolic paths.
-    pub paths: usize,
-    /// Number of normalized solver queries issued during the run.
-    pub solver_queries: usize,
-    /// Number of queries sent to the SMT backend after local fast paths.
-    #[serde(default)]
-    pub smt_queries: usize,
-    /// Number of satisfiability checks requested by the executor.
-    #[serde(default)]
-    pub sat_queries: usize,
-    /// Number of concrete model requests requested by the executor.
-    #[serde(default)]
-    pub model_queries: usize,
-    /// Number of satisfiability checks served from the normalized cache.
-    #[serde(default)]
-    pub sat_cache_hits: usize,
-    /// Number of model requests served from the normalized model cache.
-    #[serde(default)]
-    pub model_cache_hits: usize,
-    /// Number of satisfiable witnesses produced by local hard-arithmetic search.
-    #[serde(default)]
-    pub heuristic_witnesses: usize,
-    /// Wall-clock time spent waiting on backend solver subprocesses, in milliseconds.
-    #[serde(default)]
-    pub solver_time_ms: u64,
-    /// Total SMT-LIB input bytes sent to backend solver subprocesses.
-    #[serde(default)]
-    pub smt_input_bytes: u64,
-    /// Largest single SMT-LIB query input sent to a backend solver subprocess, in bytes.
-    #[serde(default)]
-    pub smt_max_query_bytes: u64,
-    /// Wall-clock time spent building SMT-LIB query strings, in milliseconds.
-    #[serde(default)]
-    pub smt_build_time_ms: u64,
-    /// Longest single backend solver subprocess query, in milliseconds.
-    #[serde(default)]
-    pub smt_max_query_time_ms: u64,
-}
-
 /// SMT-LIB-backed symbolic executor.
 ///
 /// This executor is intentionally separate from the concrete revm executor used by
 /// Foundry. It consumes bytecode and state from an existing [`Executor`], explores
 /// symbolic branches, and returns either a proof result, a counterexample candidate,
 /// or an incomplete result.
+#[cfg(feature = "revm")]
 pub struct SymbolicExecutor {
     config: SymbolicConfig,
     cx: runtime::SymCx,
@@ -410,6 +378,7 @@ pub struct SymbolicExecutor {
     stateless_retry_safe: bool,
 }
 
+#[cfg(feature = "revm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DeferredPathMode {
     Skip,
@@ -417,9 +386,13 @@ enum DeferredPathMode {
     Drain,
 }
 
+#[cfg(feature = "revm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DeferredIncomplete {
     Unsupported(&'static str),
     SolverUnknown,
     HardArithmetic,
 }
+
+mod report;
+pub use report::{SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment};

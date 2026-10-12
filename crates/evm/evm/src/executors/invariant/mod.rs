@@ -21,7 +21,7 @@ use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256, keccak256,
     map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
 };
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::SolCall;
 use campaign::{
     InvariantCampaignAggregator, InvariantCampaignSpec, InvariantCampaignState,
     InvariantWorkerOutput, InvariantWorkerPlan,
@@ -44,8 +44,8 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzCase, FuzzFixtures, ObservedCall,
     invariant::{
-        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
-        SenderFilters, TargetedContract, TargetedContracts,
+        ArtifactFilters, FuzzRunIdentifiedContracts, IInvariantTest, InvariantContract,
+        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{EvmFuzzState, FuzzState, TxGenerator, override_call_strat},
 };
@@ -59,13 +59,15 @@ use proptest::{
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use result::{assert_after_invariant, can_continue, invariant_preflight_check};
 use revm::state::Account;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap as Map, HashSet, btree_map::Entry},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+pub use foundry_evm_fuzz::invariant::InvariantMetrics;
 
 mod error;
 pub(crate) use error::snapshot_edge_fingerprint;
@@ -100,82 +102,6 @@ const MIN_ESTIMATED_CALLS_PER_INVARIANT_WORKER: u64 =
     MIN_RUNS_PER_INVARIANT_WORKER as u64 * DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP as u64;
 /// Share of parallel workers reserved for selector focus mode.
 const INVARIANT_FOCUS_WORKER_DIVISOR: usize = 8;
-
-sol! {
-    interface IInvariantTest {
-        #[derive(Default)]
-        struct FuzzSelector {
-            address addr;
-            bytes4[] selectors;
-        }
-
-        #[derive(Default)]
-        struct FuzzArtifactSelector {
-            string artifact;
-            bytes4[] selectors;
-        }
-
-        #[derive(Default)]
-        struct FuzzInterface {
-            address addr;
-            string[] artifacts;
-        }
-
-        function afterInvariant() external;
-
-        #[derive(Default)]
-        function excludeArtifacts() public view returns (string[] memory excludedArtifacts);
-
-        #[derive(Default)]
-        function excludeContracts() public view returns (address[] memory excludedContracts);
-
-        #[derive(Default)]
-        function excludeSelectors() public view returns (FuzzSelector[] memory excludedSelectors);
-
-        #[derive(Default)]
-        function excludeSenders() public view returns (address[] memory excludedSenders);
-
-        #[derive(Default)]
-        function targetArtifacts() public view returns (string[] memory targetedArtifacts);
-
-        #[derive(Default)]
-        function targetArtifactSelectors() public view returns (FuzzArtifactSelector[] memory targetedArtifactSelectors);
-
-        #[derive(Default)]
-        function targetContracts() public view returns (address[] memory targetedContracts);
-
-        #[derive(Default)]
-        function targetSelectors() public view returns (FuzzSelector[] memory targetedSelectors);
-
-        #[derive(Default)]
-        function targetSenders() public view returns (address[] memory targetedSenders);
-
-        #[derive(Default)]
-        function targetInterfaces() public view returns (FuzzInterface[] memory targetedInterfaces);
-    }
-}
-
-/// Contains invariant metrics for a single fuzzed selector.
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub struct InvariantMetrics {
-    // Count of fuzzed selector calls.
-    pub calls: usize,
-    // Count of fuzzed selector reverts.
-    pub reverts: usize,
-    // Count of fuzzed selector discards (through assume cheatcodes).
-    pub discards: usize,
-}
-
-impl InvariantMetrics {
-    const fn record_call(&mut self, reverted: bool, discarded: bool) {
-        self.calls += 1;
-        if discarded {
-            self.discards += 1;
-        } else if reverted {
-            self.reverts += 1;
-        }
-    }
-}
 
 /// Campaign-level throughput metrics for invariant progress reporting.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

@@ -1,9 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use alloy_network::{AnyNetwork, AnyRpcBlock};
-use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256};
-use alloy_provider::{Provider, network::BlockResponse};
-use alloy_rpc_types::BlockId;
+use alloy_primitives::Bytes;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
@@ -24,6 +21,19 @@ use foundry_compilers::{
     utils::canonicalize,
 };
 use foundry_config::Config;
+use foundry_evm::opts::EvmOpts;
+use reqwest::Url;
+use semver::{BuildMetadata, Version};
+use serde::{Deserialize, Serialize};
+use yansi::Paint;
+
+#[cfg(feature = "revm")]
+use alloy_network::{AnyNetwork, AnyRpcBlock};
+#[cfg(feature = "revm")]
+use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
+#[cfg(feature = "revm")]
+use alloy_provider::network::BlockResponse;
+#[cfg(feature = "revm")]
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
@@ -32,20 +42,16 @@ use foundry_evm::{
         evm::{BlockEnvFor, ChainFor, EvmEnvFor, FoundryEvmNetwork, TxEnvFor},
     },
     executors::{ExecutorBuilder, TracingExecutor},
-    opts::EvmOpts,
     traces::TraceRequirements,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
+#[cfg(feature = "revm")]
 use foundry_evm_networks::NetworkConfigs;
-use reqwest::Url;
+#[cfg(feature = "revm")]
 use revm::{
-    bytecode::Bytecode,
     context::{Block as _, Transaction as _},
     database::Database,
 };
-use semver::{BuildMetadata, Version};
-use serde::{Deserialize, Serialize};
-use yansi::Paint;
 
 #[cfg(all(test, feature = "monad"))]
 use foundry_config::FoundryHardfork;
@@ -357,6 +363,7 @@ pub fn load_fork_config_and_evm_opts(config: &Config) -> Result<(Config, EvmOpts
     Ok((fork_config, evm_opts))
 }
 
+#[cfg(feature = "revm")]
 pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
@@ -417,6 +424,7 @@ where
     )
 }
 
+#[cfg(feature = "revm")]
 pub fn configure_env_block<FEN>(
     evm_env: &mut EvmEnvFor<FEN>,
     block: &AnyRpcBlock,
@@ -436,6 +444,7 @@ pub fn configure_env_block<FEN>(
     );
 }
 
+#[cfg(feature = "revm")]
 pub fn deploy_contract<FEN>(
     executor: &mut TracingExecutor<FEN>,
     evm_env: &EvmEnvFor<FEN>,
@@ -481,39 +490,6 @@ where
     }
 
     Ok(address)
-}
-
-pub async fn get_runtime_codes<FEN>(
-    executor: &mut TracingExecutor<FEN>,
-    provider: &impl Provider<AnyNetwork>,
-    address: Address,
-    fork_address: Address,
-    block: Option<u64>,
-) -> Result<(Bytecode, Bytes)>
-where
-    FEN: FoundryEvmNetwork,
-{
-    let fork_runtime_code = executor
-        .backend_mut()
-        .basic(fork_address)?
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "Failed to get runtime code for contract deployed on fork at address {}",
-                fork_address
-            )
-        })?
-        .code
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "Bytecode does not exist for contract deployed on fork at address {}",
-                fork_address
-            )
-        })?;
-
-    let block_id = block.map_or_else(BlockId::latest, BlockId::number);
-    let onchain_runtime_code = provider.get_code_at(address).block_id(block_id).await?;
-
-    Ok((fork_runtime_code, onchain_runtime_code))
 }
 
 /// Returns `true` if the URL only consists of host.
@@ -563,8 +539,7 @@ pub fn wrap_verifier_url_error(
 /// # Example
 ///
 /// ```ignore
-/// use semver::{BuildMetadata, Version};
-/// let version = Version::new(1, 2, 3);
+/// /// let version = Version::new(1, 2, 3);
 /// let version = ensure_solc_build_metadata(version).await?;
 /// assert_ne!(version.build, BuildMetadata::EMPTY);
 /// ```
@@ -585,6 +560,9 @@ mod tests {
     use foundry_compilers::PathStyle;
     use foundry_config::NamedChain;
     use foundry_test_utils::{TestProject, util::SOLC_VERSION};
+
+    #[cfg(not(feature = "revm"))]
+    use alloy_primitives::{Address, U256};
 
     #[cfg(feature = "monad")]
     use foundry_evm::{EvmEnv, hardforks::MonadHardfork};

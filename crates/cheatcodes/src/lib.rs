@@ -6,6 +6,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(elided_lifetimes_in_paths)] // Cheats context uses 3 lifetimes
 
+#[cfg(feature = "revm")]
 #[macro_use]
 extern crate foundry_common;
 
@@ -15,7 +16,11 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::Address;
+
+#[cfg(feature = "revm")]
+use alloy_primitives::{B256, U256};
+#[cfg(feature = "revm")]
 use foundry_evm_core::{
     FoundryTransaction,
     backend::{DatabaseExt, LocalForkId},
@@ -23,62 +28,94 @@ use foundry_evm_core::{
     evm::{FoundryContextFor, FoundryEvmNetwork, SpecFor},
     fork::CreateFork,
 };
+#[cfg(feature = "revm")]
 use revm::context::{Block, Cfg, ContextTr, JournalTr, Transaction};
 
 pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
+#[cfg(feature = "revm")]
 pub use foundry_evm_core::evm::NestedEvmClosureFor;
-pub use inspector::{
-    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-};
+#[cfg(feature = "revm")]
+pub use inspector::{Cheatcodes, CheatcodesExecutor};
 pub use spec::{CheatcodeDef, Vm};
 
 #[macro_use]
 mod error;
 
+#[cfg(feature = "revm")]
 mod base64;
 
 mod config;
 
+#[cfg(feature = "revm")]
 mod crypto;
 
+#[cfg(feature = "revm")]
 mod version;
 
+mod context;
+#[cfg(feature = "revm")]
 mod env;
-pub use env::{current_execution_context, set_execution_context};
+pub use context::{current_execution_context, set_execution_context};
 
+mod wallet;
+
+#[cfg(feature = "revm")]
 mod evm;
+#[cfg(not(feature = "revm"))]
+#[path = "evm/native.rs"]
+mod evm;
+
+pub mod ethereum;
 
 mod expected_emit;
 
+#[cfg(feature = "revm")]
 mod external_storage;
 
+#[cfg(feature = "revm")]
+mod fs;
+#[cfg(not(feature = "revm"))]
+#[path = "fs/artifacts.rs"]
 mod fs;
 
+#[cfg(feature = "revm")]
 mod inspector;
+#[cfg(feature = "revm")]
 pub use inspector::CheatcodeAnalysis;
 
+#[cfg(feature = "revm")]
 mod json;
 
 #[cfg(feature = "monad")]
 mod monad;
 
 mod script;
-pub use script::{Wallets, WalletsInner};
+pub use script::{BroadcastableTransaction, BroadcastableTransactions, Wallets, WalletsInner};
 
+#[cfg(feature = "revm")]
 mod state;
+#[cfg(feature = "revm")]
 pub use state::CheatcodesCore;
 
+#[cfg(feature = "revm")]
 mod string;
 
+#[cfg(feature = "revm")]
 mod tempo;
 
+#[cfg(feature = "revm")]
+mod test;
+#[cfg(not(feature = "revm"))]
+#[path = "test/native.rs"]
 mod test;
 pub use test::expect::ExpectedCallTracker;
 
+#[cfg(feature = "revm")]
 mod toml;
 
+#[cfg(feature = "revm")]
 mod utils;
 
 /// Cheatcode implementation.
@@ -86,6 +123,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode to the given state.
     ///
     /// Implement this function if you need cheatcode state but no access to the EVM context.
+    #[cfg(feature = "revm")]
     fn apply_context(&self, _state: &mut CheatcodesCore) -> Result {
         self.apply_context_free()
     }
@@ -94,6 +132,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
+    #[cfg(feature = "revm")]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         self.apply_context(&mut ccx.state.core)
     }
@@ -102,6 +141,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ///
     /// Implement this function if you need access to the executor.
     #[inline(always)]
+    #[cfg(feature = "revm")]
     fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
         ccx: &mut CheatsCtxt<'_, '_, FEN>,
@@ -114,13 +154,32 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode without accessing cheatcode state or the EVM context.
     ///
     /// This may still read or modify external host state, such as environment variables.
+    #[cfg(feature = "revm")]
     fn apply_context_free(&self) -> Result {
         unimplemented!("{}", Self::CHEATCODE.func.id)
+    }
+
+    /// Applies this cheatcode to a live native Ethereum execution session.
+    fn apply_evm2(
+        &self,
+        _state: &mut ethereum::Cheatcodes,
+        _interp: &mut evm2::interpreter::Interpreter<
+            '_,
+            '_,
+            foundry_evm_core::ethereum::FoundryEvmTypes,
+        >,
+    ) -> std::result::Result<alloy_primitives::Bytes, ethereum::ApplyError> {
+        Err(Error::from(format!(
+            "{} has not been migrated to EVM2",
+            Self::CHEATCODE.func.signature
+        ))
+        .into())
     }
 }
 
 /// The cheatcode context.
-pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork> {
+#[cfg(feature = "revm")]
+pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes<FEN>,
     /// The EVM context.
@@ -133,6 +192,7 @@ pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork> {
     pub(crate) is_static: bool,
 }
 
+#[cfg(feature = "revm")]
 impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
     pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
         if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
@@ -270,6 +330,16 @@ impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
 }
 
 #[cold]
+#[cfg(feature = "revm")]
 fn precompile_error(address: &Address) -> Error {
     fmt_err!("cannot use precompile {address} as an argument")
+}
+
+/// A callback registered for a storage access hook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageHook {
+    /// Contract that receives the callback.
+    pub callback_target: Address,
+    /// Callback function selector.
+    pub callback_selector: [u8; 4],
 }

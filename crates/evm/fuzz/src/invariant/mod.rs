@@ -1,5 +1,7 @@
+use crate::BasicTxDetails;
 use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{Address, B256, Bytes, Selector, map::HashMap};
+use foundry_common::ContractsByArtifact;
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -11,15 +13,21 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "revm")]
+use foundry_common::ContractsByAddress;
+#[cfg(feature = "revm")]
+use foundry_evm_core::utils::StateChangeset;
+
+mod interface;
+pub use interface::IInvariantTest;
+
 mod call_override;
 pub use call_override::RandomCallGenerator;
 
 mod filters;
-use crate::BasicTxDetails;
 pub use filters::{ArtifactFilters, SenderFilters};
-use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::utils::StateChangeset;
 
+#[cfg(feature = "revm")]
 type DynamicTargetArtifactMatchCache =
     Rc<RefCell<HashMap<(Address, B256), Option<CachedTargetContract>>>>;
 type FuzzedFunction = (Address, Function);
@@ -39,6 +47,7 @@ pub struct FuzzRunIdentifiedContracts {
     fuzzed_functions_generation: Rc<Cell<u64>>,
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
+    #[cfg(feature = "revm")]
     artifact_matches: DynamicTargetArtifactMatchCache,
 }
 
@@ -51,6 +60,7 @@ impl FuzzRunIdentifiedContracts {
             fuzzed_functions: Rc::new(RefCell::new(fuzzed_functions)),
             fuzzed_functions_generation: Rc::new(Cell::new(0)),
             is_updatable,
+            #[cfg(feature = "revm")]
             artifact_matches: Rc::new(RefCell::new(HashMap::default())),
         }
     }
@@ -85,6 +95,7 @@ impl FuzzRunIdentifiedContracts {
 
     /// If targets are updatable, collect all contracts created during an invariant run (which
     /// haven't been discovered yet).
+    #[cfg(feature = "revm")]
     pub fn collect_created_contracts(
         &self,
         state_changeset: &StateChangeset,
@@ -133,6 +144,7 @@ impl FuzzRunIdentifiedContracts {
         Ok(())
     }
 
+    #[cfg(feature = "revm")]
     fn target_contract_for_code(
         &self,
         address: Address,
@@ -165,6 +177,16 @@ impl FuzzRunIdentifiedContracts {
         Ok(cached_match)
     }
 
+    /// Registers an owned target discovered by an execution engine during the current run.
+    pub fn add_created_contract(&self, address: Address, contract: TargetedContract) -> bool {
+        if !self.is_updatable || self.targets.borrow().contains_key(&address) {
+            return false;
+        }
+        self.targets.borrow_mut().inner.insert(address, contract);
+        self.refresh_fuzzed_functions();
+        true
+    }
+
     /// Clears targeted contracts created during an invariant run.
     pub fn clear_created_contracts(&self, created_contracts: Vec<Address>) {
         let mut targets_changed = false;
@@ -181,6 +203,7 @@ impl FuzzRunIdentifiedContracts {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "revm")]
 struct CachedTargetContract {
     identifier: String,
     abi: JsonAbi,
@@ -189,6 +212,7 @@ struct CachedTargetContract {
     event_lookup: Arc<TargetedContractEvents>,
 }
 
+#[cfg(feature = "revm")]
 impl CachedTargetContract {
     fn into_targeted_contract(self) -> TargetedContract {
         TargetedContract::from_parts(
@@ -678,7 +702,7 @@ pub fn is_optimization_invariant(func: &Function) -> bool {
     func.outputs.len() == 1 && func.outputs[0].ty == "int256"
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use crate::CallDetails;
@@ -965,4 +989,51 @@ mod tests {
         assert_eq!(cleared, initial);
         assert_eq!(identified.fuzzed_functions_generation(), 2);
     }
+}
+
+/// Contains invariant metrics for a single fuzzed selector.
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct InvariantMetrics {
+    // Count of fuzzed selector calls.
+    pub calls: usize,
+    // Count of fuzzed selector reverts.
+    pub reverts: usize,
+    // Count of fuzzed selector discards (through assume cheatcodes).
+    pub discards: usize,
+}
+
+impl InvariantMetrics {
+    /// Records one selector call and its revert or discard outcome.
+    pub const fn record_call(&mut self, reverted: bool, discarded: bool) {
+        self.calls += 1;
+        if discarded {
+            self.discards += 1;
+        } else if reverted {
+            self.reverts += 1;
+        }
+    }
+}
+
+/// Concrete failure site observed while replaying a sequence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckSequenceFailureSite {
+    SequenceCall { target: Address, selector: Selector, fingerprint: B256 },
+    Invariant { target: Address, selector: Selector, fingerprint: B256 },
+    AfterInvariant { target: Address, selector: Selector, fingerprint: B256 },
+}
+
+/// Outcome from replaying an invariant call sequence.
+#[derive(Clone, Debug)]
+pub struct CheckSequenceOutcome {
+    pub success: bool,
+    pub replayed_entirely: bool,
+    pub reason: Option<String>,
+    pub calls_count: usize,
+    pub reverts: usize,
+    pub failure_site: Option<CheckSequenceFailureSite>,
+    /// Whether replay stopped on an assertion in a sequence call rather than a plain revert or
+    /// terminal invariant check.
+    pub sequence_assertion_failure: bool,
+    /// Innermost reverter for a sequence assertion, used to recognize legacy handler identities.
+    pub sequence_reverter: Option<Address>,
 }

@@ -10,12 +10,12 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use foundry_compilers::artifacts::EvmVersion;
-use revm::bytecode::opcode::{
+use evm2::interpreter::opcode::op::{
     AND, CALL, CLZ, CODECOPY, CREATE, DUP6, EQ, GAS, INVALID, ISZERO, JUMPDEST, JUMPI, MCOPY,
     MSTORE, MUL, OR, POP, PUSH0, PUSH1, PUSH2, PUSH3, RETURN, RETURNDATASIZE, SLOTNUM, STATICCALL,
     STOP, SWAP1,
 };
+use foundry_compilers::artifacts::EvmVersion;
 
 /// Probed features in activation order, each paired with the EVM version that introduced it and
 /// runtime code that halts exceptionally unless the feature is active.
@@ -143,11 +143,12 @@ fn deploy_code(runtime: &[u8]) -> Vec<u8> {
 mod tests {
 
     use super::*;
+    use alloy_consensus::{TxLegacy, transaction::Recovered};
     use alloy_primitives::TxKind;
-    use revm::{
-        Context, ExecuteEvm, MainBuilder, MainContext, context::TxEnv, database::InMemoryDB,
-        primitives::hardfork::SpecId,
+    use evm2::{
+        ExecutionConfig, SpecId, Version, env::BlockEnvExt, ethereum::TxEnvelope, evm::EmptyDB,
     };
+    use foundry_evm::ethereum::Executor;
 
     #[test]
     fn detects_executed_spec() {
@@ -160,20 +161,25 @@ mod tests {
             (SpecId::OSAKA, EvmVersion::Osaka),
             (SpecId::AMSTERDAM, EvmVersion::Amsterdam),
         ] {
-            let result = Context::mainnet()
-                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(spec))
-                .with_db(InMemoryDB::default())
-                .build_mainnet()
-                .transact(
-                    TxEnv::builder()
-                        .kind(TxKind::Create)
-                        .data(probe_code())
-                        .gas_limit(PROBE_CALL_GAS)
-                        .build()
-                        .unwrap(),
-                )
+            let executor = Executor::new(
+                EmptyDB::default(),
+                spec,
+                ExecutionConfig::for_spec_and_version(spec, Version::new(spec)),
+                BlockEnvExt::default(),
+            );
+            let result = executor
+                .call(&Recovered::new_unchecked(
+                    TxEnvelope::Legacy(TxLegacy {
+                        to: TxKind::Create,
+                        input: probe_code(),
+                        gas_limit: PROBE_CALL_GAS,
+                        ..Default::default()
+                    }),
+                    alloy_primitives::Address::ZERO,
+                ))
                 .unwrap();
-            let output = result.result.into_output().unwrap();
+            assert!(result.status, "{spec:?}: {result:?}");
+            let output = result.output;
             assert_eq!(evm_version_from_mask(U256::from_be_slice(&output)), expected, "{spec:?}");
         }
     }

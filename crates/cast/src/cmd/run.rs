@@ -1,4 +1,4 @@
-use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc};
+use super::fetch_code_via_rpc;
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
     evm_version::probe_evm_version,
@@ -7,20 +7,19 @@ use crate::{
         is_missing_state_message,
     },
     traces::TraceKind,
-    utils::{
-        apply_chain_and_block_specific_env_changes_for_chain,
-        apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
-    },
 };
-use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
-use alloy_eips::{BlockNumHash, eip7928::compute_block_access_list_hash};
+use alloy_consensus::{BlockHeader, Transaction, transaction::Recovered};
+use alloy_eips::{
+    BlockNumHash,
+    eip7928::{BlockAccessList, compute_block_access_list_hash},
+};
 use alloy_network::{
-    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope,
-    BlockResponse, Network, ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network,
+    ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, U256,
-    map::{AddressHashMap, AddressSet, B256HashMap},
+    Address, B256, Bytes,
+    map::{AddressHashMap, AddressSet},
 };
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
@@ -29,10 +28,18 @@ use alloy_rpc_types::{
 };
 use alloy_transport::TransportError;
 use clap::Parser;
-use eyre::{Result, WrapErr};
+use evm2::{
+    EvmFeatures, ExecutionConfig, SpecId as NativeSpecId,
+    ethereum::TxEnvelope as NativeTxEnvelope,
+    evm::{
+        BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx,
+        bal::{Bal as NativeBal, BlockAccessIndex as NativeBlockAccessIndex},
+    },
+};
+use eyre::{Result, WrapErr, ensure};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts, TracingArgs},
-    utils::{TraceResult, init_progress},
+    utils::TraceResult,
 };
 use foundry_common::{
     SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
@@ -48,25 +55,57 @@ use foundry_config::{
     },
 };
 use foundry_evm::{
+    core::ethereum::{EthereumEnv, EthereumFork},
+    ethereum::Executor as NativeExecutor,
+    hardforks::{FoundryHardfork, ethereum_spec_from_evm_version},
+    opts::EvmOpts,
+    traces::{SparsedTraceArena, TraceContext},
+};
+use foundry_evm_networks::NetworkVariant;
+use std::sync::Arc;
+
+#[cfg(feature = "revm")]
+use super::MAX_CONCURRENT_RPC_REQUESTS;
+#[cfg(feature = "revm")]
+use crate::utils::{
+    apply_chain_and_block_specific_env_changes_for_chain,
+    apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
+};
+#[cfg(feature = "revm")]
+use alloy_consensus::transaction::SignerRecoverable;
+#[cfg(feature = "revm")]
+use alloy_network::AnyTransactionReceipt;
+#[cfg(feature = "revm")]
+use alloy_primitives::map::B256HashMap;
+#[cfg(feature = "revm")]
+use foundry_cli::utils::init_progress;
+#[cfg(feature = "revm")]
+use foundry_evm::{
     core::{
         FoundryBlock as _, FoundryTransaction as _,
         env::FromAnyRpcTransaction as _,
-        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{Executor, ExecutorBuilder, TracingExecutor},
-    hardforks::FoundryHardfork,
-    opts::EvmOpts,
-    traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
+    traces::{InternalTraceMode, TraceRequirements},
 };
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+#[cfg(feature = "revm")]
 use futures::{StreamExt, TryFutureExt};
+#[cfg(feature = "revm")]
 use revm::{
     DatabaseRef,
     context::Block,
     primitives::hardfork::SpecId,
     state::bal::{Bal, BlockAccessIndex},
 };
-use std::sync::Arc;
+
+#[cfg(any(test, feature = "revm"))]
+use alloy_primitives::U256;
+#[cfg(any(test, feature = "revm"))]
+use foundry_evm_networks::NetworkConfigs;
+
+#[cfg(all(test, not(feature = "revm")))]
+use evm2::SpecId;
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -179,6 +218,7 @@ pub struct RunArgs {
 struct TargetFetch {
     tx: AnyRpcTransaction,
     provider: RetryProvider,
+    #[cfg(feature = "revm")]
     compute_units_per_second: Option<u64>,
 }
 
@@ -190,6 +230,7 @@ struct MonadPrepared {
 }
 
 /// Chain-specific gas limits for transactions replayed by `cast run`.
+#[cfg(feature = "revm")]
 enum ReplayGasLimits {
     Unchanged,
     Nitro(B256HashMap<u64>),
@@ -197,6 +238,7 @@ enum ReplayGasLimits {
 
 /// State assembled by [`RunArgs::prepare`] and consumed by the network-specific `execute_*`
 /// methods below.
+#[cfg(feature = "revm")]
 struct PreparedRun<FEN: FoundryEvmNetwork> {
     args: RunArgs,
     config: Box<Config>,
@@ -275,6 +317,7 @@ impl RunArgs {
     /// Replays the transaction locally with the EVM of its network.
     async fn replay(self, config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
         match evm_opts.networks.execution_network() {
+            #[cfg(feature = "revm")]
             NetworkVariant::Tempo => {
                 self.run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new()).await
             }
@@ -300,12 +343,227 @@ impl RunArgs {
             NetworkVariant::Optimism => {
                 self.run_with_evm(config, evm_opts, ExecutorBuilder::<OpEvmNetwork>::new()).await
             }
-            NetworkVariant::Ethereum => {
-                self.run_with_evm(config, evm_opts, ExecutorBuilder::<EthEvmNetwork>::new()).await
-            }
+            NetworkVariant::Ethereum => self.run_native(config, evm_opts).await,
+            #[cfg(not(feature = "revm"))]
+            _ => eyre::bail!("local replay for this network requires legacy compatibility"),
         }
     }
 
+    async fn run_native(mut self, mut config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
+        let target = self.fetch_target(&config).await?;
+        let endpoint_is_anvil = evm_opts
+            .fork_endpoint
+            .as_ref()
+            .is_some_and(|identity| identity.reported_hardfork.is_some());
+        if let Some(chain) = target.tx.chain_id().map(alloy_chains::Chain::from_id)
+            && chain.is_elastic()
+            && !endpoint_is_anvil
+        {
+            eyre::bail!(
+                "{chain} executes EraVM bytecode, which cannot be replayed locally; {REMOTE_TRACE_HINT}"
+            );
+        }
+        let tx = native_transaction(&target.tx).wrap_err_with(|| {
+            format!(
+                "cannot replay transaction {:?} locally; {REMOTE_TRACE_HINT}",
+                target.tx.tx_hash()
+            )
+        })?;
+        let number = target.tx.block_number().ok_or_else(|| eyre::eyre!("tx is still pending"))?;
+        ensure!(number > 0, "cannot replay a transaction in genesis");
+        let block = target
+            .provider
+            .get_block(number.into())
+            .full()
+            .await?
+            .ok_or_else(|| eyre::eyre!("transaction block is unavailable"))?;
+        ensure!(target.tx.block_hash() == Some(block.header.hash), "transaction block changed");
+        let txs = full_transactions(&block)?;
+        let index = txs
+            .iter()
+            .position(|candidate| candidate.tx_hash() == target.tx.tx_hash())
+            .ok_or_else(|| {
+                eyre::eyre!("transaction {:?} is missing from its block", target.tx.tx_hash())
+            })?;
+        let tracing = self.configure_tracing(&mut config, &evm_opts);
+        ensure!(
+            !self.debug && !self.trace_printer && !tracing.decode_internal,
+            "native EVM2 opcode debugging is not migrated yet"
+        );
+        ensure!(
+            !is_system_transaction(&target.tx) || self.replay_system_txes,
+            "system transaction replay requires --replay-system-txes"
+        );
+        let mut fork =
+            EthereumFork::open(&config, &evm_opts, Some(BlockId::hash(block.header.hash))).await?;
+        let mut version = self.evm_version;
+        if version.is_none()
+            && config.hardfork.is_none()
+            && FoundryHardfork::from_chain_and_timestamp(
+                fork.fork.context().source_chain_id,
+                block.header.timestamp(),
+            )
+            .is_none()
+        {
+            version = probe_evm_version(&target.provider, BlockId::number(number))
+                .await
+                .or_else(|| block.header.excess_blob_gas().is_some().then_some(EvmVersion::Cancun));
+        }
+        let mut env = fork.env;
+        if let Some(version) = version {
+            let block = env.block;
+            let chain_id = env.version.chain_id;
+            env = EthereumEnv::local(ethereum_spec_from_evm_version(version), &evm_opts);
+            env.block = block;
+            env.version.chain_id = chain_id;
+        }
+        env.version.features.remove(EvmFeatures::BLOCK_GAS_LIMIT_CHECK);
+        if !self.enable_tx_gas_limit {
+            env.version.tx_gas_limit_cap = u64::MAX;
+        }
+        fork.env = env;
+        let database = fork.parent_database().await?;
+        let mut executor = NativeExecutor::new(
+            database,
+            env.spec,
+            ExecutionConfig::for_spec_and_version(env.spec, env.version),
+            env.block,
+        );
+        if env.spec >= NativeSpecId::CANCUN
+            && let Some(root) = block.header.parent_beacon_block_root()
+        {
+            let _ = executor.system_call(SystemTx::new(
+                BEACON_ROOTS_ADDRESS,
+                Bytes::copy_from_slice(root.as_slice()),
+            ))?;
+        }
+        if env.spec >= NativeSpecId::PRAGUE {
+            let _ = executor.system_call(SystemTx::new(
+                HISTORY_STORAGE_ADDRESS,
+                Bytes::copy_from_slice(block.header.parent_hash().as_slice()),
+            ))?;
+        }
+        let prestate_applied = if !self.quick
+            && self.prestate_tracer
+            && let Ok(trace) = target
+                .provider
+                .debug_trace_transaction(
+                    target.tx.tx_hash(),
+                    GethDebugTracingOptions::prestate_tracer(PreStateConfig::default()),
+                )
+                .await
+            && let Ok(frame) = trace.try_into_pre_state_frame()
+        {
+            executor.apply_prestate(frame.into_pre_state())?;
+            true
+        } else {
+            false
+        };
+        let bal = if !self.quick
+            && !self.no_bal
+            && !prestate_applied
+            && self.evm_version.is_none()
+            && config.hardfork.is_none()
+            && env.spec >= NativeSpecId::CANCUN
+        {
+            fetch_block_access_list(&target.provider, &block)
+                .await?
+                .map(NativeBal::try_from)
+                .transpose()
+                .wrap_err("invalid block access list")?
+        } else {
+            None
+        };
+        let bal_applied = bal.is_some();
+        if let Some(bal) = bal {
+            trace!("reading prestate from block access list, skipping block replay");
+            executor.set_bal(Arc::new(bal), NativeBlockAccessIndex::new(index as u64 + 1));
+        }
+        if !self.quick && !prestate_applied && !bal_applied {
+            sh_status!("Executing previous transactions from the block.")?;
+            for previous in &txs[..index] {
+                if !is_system_transaction(previous) || self.replay_system_txes {
+                    let _ =
+                        executor.transact(&native_transaction(previous)?).wrap_err_with(|| {
+                            format!(
+                                "failed to replay preceding transaction {:?}",
+                                previous.tx_hash()
+                            )
+                        })?;
+                }
+            }
+        }
+        let inspector = super::ethereum::tracing_inspector(tracing.verbosity);
+        if let Some(to) = Transaction::to(&target.tx) {
+            trace!(tx=?target.tx.tx_hash(), ?to, "executing call transaction");
+        } else {
+            trace!(tx=?target.tx.tx_hash(), "executing create transaction");
+        }
+        let (result, inspector) = executor.inspect_transact(&tx, inspector);
+        let result = result?;
+        trace!(tx_hash=?target.tx.tx_hash(), "completed execution");
+        let kind =
+            if target.tx.to().is_some() { TraceKind::Execution } else { TraceKind::Deployment };
+        let trace = super::ethereum::trace_result(&result, &inspector, kind);
+        let mut contracts = AddressHashMap::default();
+        for address in trace_addresses(&trace) {
+            let code = executor.code(address)?;
+            if !code.is_empty() {
+                contracts.insert(address, code.original_bytes());
+            }
+        }
+        let hardfork = version.is_none().then_some(fork.hardfork).flatten();
+        config.labels.extend(foundry_evm_networks::resolved_precompile_labels(hardfork));
+        let context = fork.fork.context();
+        handle_traces(
+            trace,
+            &config,
+            TraceContext::new(
+                foundry_config::Chain::from_id(context.source_chain_id),
+                evm_opts.networks,
+                hardfork,
+            ),
+            &contracts,
+            &tracing,
+            self.with_local_artifacts,
+            false,
+        )
+        .await?;
+        if let Ok(Some(receipt)) =
+            target.provider.get_transaction_receipt(target.tx.tx_hash()).await
+        {
+            let outcome = |success| if success { "succeeded" } else { "reverted" };
+            let mut differences = Vec::new();
+            if receipt.status() != result.status {
+                differences.push(format!(
+                    "it {} on-chain but {} in the replay",
+                    outcome(receipt.status()),
+                    outcome(result.status)
+                ));
+            }
+            if receipt.gas_used() != result.tx_gas_used() {
+                differences.push(format!(
+                    "it used {} gas on-chain but {} in the replay",
+                    receipt.gas_used(),
+                    result.tx_gas_used()
+                ));
+            }
+            if !differences.is_empty() {
+                let hint = if self.quick {
+                    "`--quick` skips the transactions before it in the block, which can change the result; run without it to replay them first"
+                } else {
+                    "The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace"
+                };
+                sh_warn!(
+                    "the replay does not match the transaction's receipt: {}. {hint}.",
+                    differences.join(", and ")
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "revm")]
     async fn run_with_evm<FEN: FoundryEvmNetwork>(
         self,
         config: Box<Config>,
@@ -357,7 +615,12 @@ impl RunArgs {
             .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
             .ok_or_else(|| eyre::eyre!("tx not found: {tx_hash:?}"))?;
         ensure_requested_transaction(tx_hash, &tx)?;
-        Ok(TargetFetch { tx, provider, compute_units_per_second })
+        Ok(TargetFetch {
+            tx,
+            provider,
+            #[cfg(feature = "revm")]
+            compute_units_per_second,
+        })
     }
 
     /// Fetches the trace from the node via `debug_traceTransaction` (callTracer) instead of
@@ -483,6 +746,7 @@ impl RunArgs {
         .await
     }
 
+    #[cfg(feature = "revm")]
     async fn prepare<FEN: FoundryEvmNetwork>(
         mut self,
         mut config: Box<Config>,
@@ -631,7 +895,12 @@ impl RunArgs {
             && spec_id.is_enabled_in(SpecId::CANCUN)
             && let Some(block) = &block
         {
-            fetch_block_access_list(&provider, block).await?
+            fetch_block_access_list(&provider, block)
+                .await?
+                .map(Bal::try_from_alloy)
+                .transpose()
+                .wrap_err("invalid block access list")?
+                .map(Arc::new)
         } else {
             None
         };
@@ -676,7 +945,7 @@ impl RunArgs {
 async fn fetch_block_access_list(
     provider: &RetryProvider,
     block: &AnyRpcBlock,
-) -> Result<Option<Arc<Bal>>> {
+) -> Result<Option<BlockAccessList>> {
     let header = block.header();
     let bal = match provider.get_block_access_list(BlockId::hash(header.hash)).await {
         Ok(Some(bal)) => bal,
@@ -695,9 +964,10 @@ async fn fetch_block_access_list(
         )?;
         return Ok(None);
     }
-    Ok(Some(Arc::new(Bal::try_from_alloy(bal).wrap_err("invalid block access list")?)))
+    Ok(Some(bal))
 }
 
+#[cfg(feature = "revm")]
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     fn transaction_env(&self, tx: &AnyRpcTransaction) -> Result<TxEnvFor<FEN>> {
         let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
@@ -950,6 +1220,19 @@ impl PreparedRun<MonadEvmNetwork> {
     }
 }
 
+fn native_transaction(tx: &AnyRpcTransaction) -> Result<Recovered<NativeTxEnvelope>> {
+    let AnyTxEnvelope::Ethereum(envelope) = tx.inner.inner.inner() else {
+        eyre::bail!(
+            "cannot convert unknown transaction type {:#x} to an EVM2 transaction",
+            tx.transaction_type().unwrap_or_default()
+        );
+    };
+    Ok(Recovered::new_unchecked(
+        envelope.clone().map_eip4844(alloy_consensus::TxEip4844::from).into(),
+        tx.from(),
+    ))
+}
+
 fn is_system_transaction(tx: &AnyRpcTransaction) -> bool {
     is_known_system_sender(tx.from()) || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
 }
@@ -961,6 +1244,7 @@ fn full_transactions(block: &AnyRpcBlock) -> Result<&[AnyRpcTransaction]> {
     Ok(txs)
 }
 
+#[cfg(feature = "revm")]
 impl ReplayGasLimits {
     async fn fetch(chain_id: u64, provider: &RetryProvider, tx_hashes: Vec<B256>) -> Result<Self> {
         if !foundry_evm_networks::arbitrum::is_arbitrum_chain(chain_id) {
@@ -993,6 +1277,7 @@ impl ReplayGasLimits {
     }
 }
 
+#[cfg(feature = "revm")]
 async fn fetch_nitro_l1_gas_used(provider: &RetryProvider, tx_hash: B256) -> Result<(B256, u64)> {
     let receipt = provider
         .get_transaction_receipt(tx_hash)
@@ -1003,6 +1288,7 @@ async fn fetch_nitro_l1_gas_used(provider: &RetryProvider, tx_hash: B256) -> Res
     Ok((tx_hash, l1_gas_used))
 }
 
+#[cfg(any(test, feature = "revm"))]
 fn parse_nitro_l1_gas_used(field: Option<&serde_json::Value>) -> Result<u64> {
     let field = field.ok_or_else(|| eyre::eyre!("missing `gasUsedForL1` receipt field"))?;
     let value = serde_json::from_value::<U256>(field.clone())
@@ -1010,6 +1296,7 @@ fn parse_nitro_l1_gas_used(field: Option<&serde_json::Value>) -> Result<u64> {
     value.try_into().map_err(|_| eyre::eyre!("`gasUsedForL1` value {value} exceeds u64::MAX"))
 }
 
+#[cfg(any(test, feature = "revm"))]
 fn nitro_execution_gas_limit(tx_hash: B256, gas_limit: u64, l1_gas_used: u64) -> Result<u64> {
     gas_limit.checked_sub(l1_gas_used).ok_or_else(|| {
         eyre::eyre!(
@@ -1092,12 +1379,13 @@ fn ensure_requested_transaction(requested: B256, tx: &AnyRpcTransaction) -> Resu
     Ok(())
 }
 
-const fn parent_beacon_block_root_for_network(
+#[cfg(any(test, feature = "revm"))]
+fn parent_beacon_block_root_for_network(
     networks: NetworkConfigs,
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
 ) -> Option<B256> {
-    if networks.is_monad() || !spec_id.is_enabled_in(SpecId::CANCUN) {
+    if networks.is_monad() || spec_id < SpecId::CANCUN {
         return None;
     }
 
@@ -1107,6 +1395,7 @@ const fn parent_beacon_block_root_for_network(
     parent_beacon_block_root
 }
 
+#[cfg(feature = "revm")]
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,

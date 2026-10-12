@@ -3,6 +3,61 @@
 use super::*;
 use alloy_primitives::bytes;
 
+#[casttest]
+async fn cast_native_call_trace_state_override(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let target = Address::with_last_byte(0xc0);
+    api.anvil_set_code(target, bytes!("60005460005260206000f3")).await.unwrap();
+    api.anvil_set_storage_at(target, U256::ZERO, B256::from(U256::from(7))).await.unwrap();
+    let override_state = format!("{target}:0x0:0x2a");
+
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        &target.to_string(),
+        "--trace",
+        "--override-state",
+        &override_state,
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+...
+    └─ ← [Return] 0x000000000000000000000000000000000000000000000000000000000000002a
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+}
+
+#[casttest]
+async fn cast_native_call_trace_revert(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let target = Address::with_last_byte(0xc0);
+    api.anvil_set_code(target, bytes!("60006000fd")).await.unwrap();
+
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args(["call", &target.to_string(), "--trace", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+...
+    └─ ← [Revert] EvmError: Revert
+
+
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: Transaction failed.
+
+"#]]);
+}
+
 #[forgetest_init]
 async fn cast_call_custom_override(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;

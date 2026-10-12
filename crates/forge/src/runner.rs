@@ -1,9 +1,12 @@
 //! The Forge test runner.
 
+pub(crate) use crate::test_config::effective_test_function_kind;
+
 use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
+    invariant_failure::{InvariantPersistedFailure, PersistedFingerprintProvenance},
     multi_runner::{
         FuzzMinimizeConfig, FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment,
         TestContract, TestFunctionMatcher, TestRunnerConfig,
@@ -22,6 +25,10 @@ use crate::{
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
+    },
+    test_config::{
+        InvariantCampaignSelection, contract_short_name, fuzz_test_path_name, fuzzer_with_cases,
+        inline_config_for, select_invariant_campaigns,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -77,9 +84,9 @@ use foundry_evm_symbolic::{
     SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
 };
 use itertools::Itertools;
-use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
+use proptest::test_runner::{TestError, TestRunner};
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -292,27 +299,6 @@ pub(crate) struct InvariantCampaignScope<'a> {
     pub pass_network: Option<&'a NetworkVariant>,
 }
 
-struct InvariantCampaignSelection<'a> {
-    matched_boolean_invariant_fns: Vec<&'a Function>,
-    merge_boolean_suite: bool,
-    shared_boolean_namespace: bool,
-    boolean_suite_anchor: Option<&'a Function>,
-    optimization_anchors: usize,
-}
-
-impl InvariantCampaignSelection<'_> {
-    const fn anchor_count(&self) -> usize {
-        self.optimization_anchors
-            + if self.matched_boolean_invariant_fns.is_empty() {
-                0
-            } else if self.merge_boolean_suite {
-                1
-            } else {
-                self.matched_boolean_invariant_fns.len()
-            }
-    }
-}
-
 pub(crate) fn count_runnable_invariant_campaign_anchors(
     abi: &JsonAbi,
     filter: &dyn TestFilter,
@@ -360,94 +346,6 @@ pub(crate) fn function_matches_network_pass(
     match pass_network {
         None => func_network.is_none_or(|network| !all_override_networks.contains(&network)),
         Some(target) => func_network.as_ref() == Some(target),
-    }
-}
-
-pub(crate) fn inline_config_for(
-    config: &Config,
-    inline_config: &InlineConfig,
-    contract_name: &str,
-    func: Option<&Function>,
-) -> Result<Config> {
-    let function = func.map(|f| f.name.as_str()).unwrap_or("");
-    Ok(config.merge_inline_provider(inline_config.provide(contract_name, function))?)
-}
-
-fn invariant_suite_configs_match(
-    config: &Config,
-    inline_config: &InlineConfig,
-    contract_name: &str,
-    funcs: &[&Function],
-) -> bool {
-    let Some((anchor, rest)) = funcs.split_first() else {
-        return true;
-    };
-    let anchor_config = match inline_config_for(config, inline_config, contract_name, Some(anchor))
-    {
-        Ok(config) => config.invariant,
-        Err(_) => return false,
-    };
-    rest.iter().all(|func| {
-        inline_config_for(config, inline_config, contract_name, Some(func))
-            .map(|config| config.invariant == anchor_config)
-            .unwrap_or(false)
-    })
-}
-
-fn select_invariant_campaigns<'a>(
-    invariant_fns: &[&'a Function],
-    functions: &[&'a Function],
-    config: &Config,
-    inline_config: &InlineConfig,
-    contract_name: &str,
-) -> InvariantCampaignSelection<'a> {
-    let boolean_invariant_fns = invariant_fns
-        .iter()
-        .copied()
-        .filter(|func| !is_optimization_invariant(func))
-        .collect::<Vec<_>>();
-    let matched_boolean_invariant_fns = functions
-        .iter()
-        .copied()
-        .filter(|func| func.is_invariant_test() && !is_optimization_invariant(func))
-        .collect::<Vec<_>>();
-    let optimization_anchors = functions
-        .iter()
-        .filter(|func| func.is_invariant_test() && is_optimization_invariant(func))
-        .count();
-
-    // Merge compatible selected predicates even when an excluded predicate has different config.
-    // Decide the corpus/frontier namespace separately from the full suite so filtering cannot
-    // move an isolated campaign into the contract-level namespace.
-    let canonical_boolean_anchor = boolean_invariant_fns.first().copied();
-    let merge_boolean_suite = !matched_boolean_invariant_fns.is_empty()
-        && invariant_suite_configs_match(
-            config,
-            inline_config,
-            contract_name,
-            &matched_boolean_invariant_fns,
-        );
-    let shared_boolean_namespace = merge_boolean_suite
-        && invariant_suite_configs_match(
-            config,
-            inline_config,
-            contract_name,
-            &boolean_invariant_fns,
-        );
-    let boolean_suite_anchor = merge_boolean_suite
-        .then(|| {
-            canonical_boolean_anchor
-                .filter(|anchor| matched_boolean_invariant_fns.contains(anchor))
-                .or_else(|| matched_boolean_invariant_fns.first().copied())
-        })
-        .flatten();
-
-    InvariantCampaignSelection {
-        matched_boolean_invariant_fns,
-        merge_boolean_suite,
-        shared_boolean_namespace,
-        boolean_suite_anchor,
-        optimization_anchors,
     }
 }
 
@@ -5344,56 +5242,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     }
 }
 
-fn fuzzer_with_cases(seed: Option<U256>, cases: u32, max_global_rejects: u32) -> TestRunner {
-    let config = proptest::test_runner::Config {
-        cases,
-        max_global_rejects,
-        // Disable proptest shrink: for fuzz tests we provide single counterexample,
-        // for invariant tests we shrink outside proptest.
-        max_shrink_iters: 0,
-        ..Default::default()
-    };
-
-    if let Some(seed) = seed {
-        trace!(target: "forge::test", %seed, "building deterministic fuzzer");
-        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
-        TestRunner::new_with_rng(config, rng)
-    } else {
-        trace!(target: "forge::test", "building stochastic fuzzer");
-        TestRunner::new(config)
-    }
-}
-
-/// Holds data about a persisted invariant failure.
-#[derive(Serialize, Deserialize)]
-struct InvariantPersistedFailure {
-    /// Recorded counterexample.
-    call_sequence: Vec<BaseCounterExample>,
-    /// Invariant settings when the counterexample was generated.
-    /// Used to determine if the counterexample is still valid.
-    settings: InvariantSettings,
-    /// Whether the persisted failure came from a handler assertion instead of the invariant body.
-    #[serde(default)]
-    assertion_failure: bool,
-    /// Concrete setup-storage assignments required before replaying this failure.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    storage: Vec<SymbolicStorageAssignment>,
-    /// Exact failure site required to accept a persisted symbolic handler rerun.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    failure_site: Option<SymbolicInvariantFailureSite>,
-    /// Versioned configuration used to produce a reproducible edge fingerprint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    fingerprint_provenance: Option<PersistedFingerprintProvenance>,
-}
-
-/// Reproducible edge-fingerprint algorithms and their capture configuration.
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(tag = "algorithm", rename_all = "snake_case")]
-enum PersistedFingerprintProvenance {
-    CollisionFreeV1 { include_call_depth: bool },
-    HashV1 { include_call_depth: bool },
-}
-
 impl PersistedFingerprintProvenance {
     fn from_corpus(config: &FuzzCorpusConfig) -> Option<Self> {
         config.collect_evm_edge_coverage().then(|| {
@@ -5611,37 +5459,6 @@ fn frontier_filter_display<T: std::fmt::Display>(values: &[T]) -> String {
     if values.is_empty() { "any".to_string() } else { values.iter().format(", ").to_string() }
 }
 
-/// Returns the contract name without the file path prefix.
-fn contract_short_name(contract_name: &str) -> &str {
-    contract_name.split(':').next_back().unwrap()
-}
-
-/// Returns a stable path component that distinguishes overloaded fuzz tests.
-fn fuzz_test_path_name<'a>(
-    abi: &JsonAbi,
-    func: &'a Function,
-    config: &FuzzConfig,
-    contract_name: &str,
-) -> Cow<'a, str> {
-    let test_name = format!("{}-{:x}", func.name, func.selector());
-    let overloaded = abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1);
-    let contract = contract_short_name(contract_name);
-    let has_qualified_artifact = config
-        .failure_persist_dir
-        .as_ref()
-        .is_some_and(|dir| dir.join("failures").join(contract).join(&test_name).exists())
-        || [&config.corpus.corpus_dir, &config.corpus.frontier_dir]
-            .into_iter()
-            .flatten()
-            .any(|dir| dir.join(contract).join(&test_name).exists());
-
-    if overloaded || has_qualified_artifact {
-        Cow::Owned(test_name)
-    } else {
-        Cow::Borrowed(&func.name)
-    }
-}
-
 /// Returns whether any canonical replay directory under `dir` holds a corpus entry.
 fn corpus_has_entries(dir: &Path) -> bool {
     canonical_replay_dirs(dir).iter().any(|dir| read_corpus_dir(dir).next().is_some())
@@ -5786,6 +5603,7 @@ fn record_invariant_failure(
             call_sequence: call_sequence.to_owned(),
             settings: settings.clone(),
             assertion_failure,
+            execution_failure: None,
             storage: storage.to_vec(),
             failure_site,
             fingerprint_provenance,
@@ -5848,18 +5666,6 @@ fn invariant_handler_failure_name(
 
 fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
-}
-
-pub(crate) fn effective_test_function_kind(
-    kind: TestFunctionKind,
-    config: &Config,
-    func: &Function,
-) -> TestFunctionKind {
-    if should_symbolically_import_fuzz_corpus(config, func) {
-        TestFunctionKind::SymbolicTest
-    } else {
-        kind
-    }
 }
 
 fn symbolic_invariant_unsupported_domain_reason(

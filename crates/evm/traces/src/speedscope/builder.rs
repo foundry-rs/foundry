@@ -4,11 +4,8 @@
 //! Gas consumption is used as the value unit, so flame graph widths represent gas usage.
 
 use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
+use crate::{CallTraceArena, CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder};
 use alloy_primitives::{hex::ToHexExt, map::HashMap};
-use revm_inspectors::tracing::{
-    CallTraceArena,
-    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
-};
 use std::borrow::Cow;
 
 struct SpeedscopeBuilder<'a> {
@@ -169,8 +166,9 @@ const fn call_gas_used(node: &CallTraceNode, isolate: bool) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CallKind, CallTrace, DecodedCallData, DecodedCallTrace};
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+    use crate::{
+        CallKind, CallTrace, DecodedCallData, DecodedCallTrace, InstructionResult, OpCode,
+    };
     use snapbox::prelude::*;
 
     fn trace_step(gas_cost: u64) -> CallTraceStep {

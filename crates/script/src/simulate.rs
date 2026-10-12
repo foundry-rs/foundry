@@ -1,7 +1,6 @@
 use super::{
     multi_sequence::MultiChainSequence,
     providers::{ProviderInfo, ProvidersManager},
-    runner::ScriptRunner,
     sequence::ScriptSequenceKind,
     transaction::ScriptTransactionBuilder,
 };
@@ -10,12 +9,12 @@ use crate::{
     broadcast::{BundledState, estimate_gas},
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData, build_trace_decoder_for_context},
+    prepare_script_source,
     sequence::get_commit_hash,
 };
 use alloy_chains::{Chain, NamedChain};
-use alloy_evm::revm::context::Block;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
+use alloy_primitives::{Address, map::HashMap, utils::format_units};
 use alloy_provider::Provider;
 use dialoguer::Confirm;
 use eyre::{Context, Result};
@@ -23,21 +22,30 @@ use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
-    ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, shell,
-    tempo::known_fee_token_symbol,
+    ContractData, ContractsByArtifact, TransactionMaybeSigned,
+    provider::fee::resolve_broadcast_eip1559_fees, shell, tempo::known_fee_token_symbol,
 };
 use foundry_evm::{
-    core::{FoundryBlock, evm::FoundryEvmNetwork},
+    core::{ethereum::EthereumFork, evm::FoundryEvmNetwork},
     traces::{
         CallTraceDecoder, Traces, debug::ContractSources, decode_trace_arena, prune_trace_depth,
         render_trace_arena_inner,
     },
 };
+use foundry_evm_networks::NetworkVariant;
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use std::{
     collections::{BTreeMap, VecDeque},
+    marker::PhantomData,
     mem,
 };
+
+#[cfg(feature = "revm")]
+use crate::runner::ScriptRunner;
+#[cfg(feature = "revm")]
+use alloy_primitives::U256;
+#[cfg(feature = "revm")]
+use foundry_evm::{core::FoundryBlock, revm::context::Block};
 
 #[cfg(feature = "monad")]
 mod monad;
@@ -60,6 +68,26 @@ pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
 
 type SimulationOutcome<N> = (String, Option<TransactionWithMetadata<N>>, bool, Traces);
 
+enum SimulationRunner<FEN: FoundryEvmNetwork> {
+    Ethereum(Box<crate::ethereum::Simulation>, PhantomData<FEN>),
+    #[cfg(feature = "revm")]
+    Legacy(Box<ScriptRunner<FEN>>),
+}
+
+impl<FEN: FoundryEvmNetwork> SimulationRunner<FEN> {
+    fn simulate(
+        &mut self,
+        tx: &TransactionMaybeSigned<FEN::Network>,
+        is_fixed_gas_limit: bool,
+    ) -> Result<ScriptResult<FEN::Network>> {
+        match self {
+            Self::Ethereum(runner, _) => runner.execute(tx, is_fixed_gas_limit),
+            #[cfg(feature = "revm")]
+            Self::Legacy(runner) => runner.simulate(tx, is_fixed_gas_limit),
+        }
+    }
+}
+
 struct RpcSimulationContext<R> {
     runner: R,
     decoder: CallTraceDecoder,
@@ -72,10 +100,41 @@ async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
     known_contracts: &ContractsByArtifact,
     sources: &ContractSources,
     execution_result: &ScriptResult<FEN::Network>,
-) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
+) -> Result<(String, RpcSimulationContext<SimulationRunner<FEN>>)> {
     let mut script_config = script_config.clone();
-    script_config.select_rpc(rpc.clone()).await?;
-    let runner = script_config._get_runner(None, false, false).await?;
+    let runner = if script_config.evm_opts.networks.execution_network() == NetworkVariant::Ethereum
+    {
+        let active_networks = script_config.evm_opts.networks;
+        script_config.evm_opts.set_fork_url(rpc.clone());
+        prepare_script_source(
+            &mut script_config.config,
+            &mut script_config.evm_opts,
+            Some(active_networks),
+        )
+        .await?;
+        let fork = EthereumFork::open(&script_config.config, &script_config.evm_opts, None).await?;
+        script_config.source_chain_id = Some(fork.fork.context().source_chain_id);
+        script_config.hardfork = script_config.config.hardfork;
+        let mut runner = crate::ethereum::Simulation::from_fork(
+            fork,
+            &script_config.config,
+            &script_config.evm_opts,
+        )?;
+        if script_config.sender_nonce_override.is_some() {
+            runner.set_sender_nonce(script_config.evm_opts.sender, script_config.sender_nonce)?;
+        }
+        SimulationRunner::Ethereum(Box::new(runner), PhantomData)
+    } else {
+        #[cfg(feature = "revm")]
+        {
+            script_config.select_rpc(rpc.clone()).await?;
+            SimulationRunner::Legacy(Box::new(script_config._get_runner(None, false, false).await?))
+        }
+        #[cfg(not(feature = "revm"))]
+        {
+            eyre::bail!("only Ethereum script execution is available without REVM")
+        }
+    };
     let decoder = build_trace_decoder_for_context(
         args,
         &script_config,
@@ -196,7 +255,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     async fn simulate_and_fill_with_contexts(
         &self,
         transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
-        mut contexts: HashMap<String, RpcSimulationContext<ScriptRunner<FEN>>>,
+        mut contexts: HashMap<String, RpcSimulationContext<SimulationRunner<FEN>>>,
     ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         trace!(target: "script", "executing onchain simulation");
 
@@ -220,12 +279,24 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    let block_number = runner.executor.evm_env().block_env.number() + U256::ONE;
-                    runner.executor.evm_env_mut().block_env.set_number(block_number);
+                    match &mut *runner {
+                        SimulationRunner::Ethereum(runner, _) => runner.advance_block(),
+                        #[cfg(feature = "revm")]
+                        SimulationRunner::Legacy(runner) => {
+                            let block_number =
+                                runner.executor.evm_env().block_env.number() + U256::ONE;
+                            runner.executor.evm_env_mut().block_env.set_number(block_number);
+                        }
+                    }
                 }
 
                 let is_noop_tx = if let Some(to) = to {
-                    runner.executor.is_empty_code(to)? && tx.value().unwrap_or_default().is_zero()
+                    let empty = match &*runner {
+                        SimulationRunner::Ethereum(runner, _) => runner.is_empty_code(to)?,
+                        #[cfg(feature = "revm")]
+                        SimulationRunner::Legacy(runner) => runner.executor.is_empty_code(to)?,
+                    };
+                    empty && tx.value().unwrap_or_default().is_zero()
                 } else {
                     false
                 };
@@ -328,10 +399,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             .collect()
     }
 
-    /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
+    /// Builds one native or legacy simulator for every RPC used in the script.
     async fn build_runners(
         &self,
-    ) -> Result<Vec<(String, RpcSimulationContext<ScriptRunner<FEN>>)>> {
+    ) -> Result<Vec<(String, RpcSimulationContext<SimulationRunner<FEN>>)>> {
         let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
 
         if !shell::is_json() {
@@ -425,7 +496,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             evm_opts,
-            ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ExecutorBuilder::<MonadEvmNetwork>::new,
             false,
             TempoOpts::default(),
             Some(0),
@@ -462,7 +533,9 @@ mod tests {
         .collect::<HashMap<_, _>>();
 
         let monad_eight = contexts.get(&monad_eight_rpc).unwrap();
-        let monad_eight_runner = &monad_eight.runner;
+        let SimulationRunner::Legacy(monad_eight_runner) = &monad_eight.runner else {
+            panic!("Monad simulation must use its legacy runner");
+        };
         assert_eq!(monad_eight_runner.executor.evm_env().cfg_env.chain_id, 42);
         assert_eq!(monad_eight_runner.executor.evm_env().block_env.number(), U256::ZERO);
         assert_eq!(monad_eight_runner.evm_opts.fork_block_number, Some(0));
@@ -474,7 +547,9 @@ mod tests {
         assert!(!monad_eight.decoder.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
 
         let monad_nine = contexts.get(&monad_nine_rpc).unwrap();
-        let monad_nine_runner = &monad_nine.runner;
+        let SimulationRunner::Legacy(monad_nine_runner) = &monad_nine.runner else {
+            panic!("Monad simulation must use its legacy runner");
+        };
         assert_eq!(monad_nine_runner.executor.evm_env().cfg_env.chain_id, 42);
         assert_eq!(monad_nine_runner.executor.evm_env().block_env.number(), U256::ZERO);
         assert_eq!(monad_nine_runner.evm_opts.fork_block_number, Some(0));
@@ -516,7 +591,7 @@ mod tests {
                 networks: NetworkConfigs::with_monad(),
                 ..Default::default()
             },
-            ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ExecutorBuilder::<MonadEvmNetwork>::new,
             false,
             TempoOpts::default(),
             Some(0),
@@ -572,7 +647,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             EvmOpts { fork_url: Some(monad.http_endpoint()), ..Default::default() },
-            ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ExecutorBuilder::<MonadEvmNetwork>::new,
             false,
             TempoOpts::default(),
             Some(0),

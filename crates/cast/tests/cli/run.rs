@@ -5,6 +5,68 @@ use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 
+#[casttest]
+async fn cast_native_run_replays_preceding_storage_write(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let target = Address::with_last_byte(0xc0);
+    // Return the old value, then store calldata in slot zero.
+    api.anvil_set_code(target, bytes!("60005460005260003560005560206000f3")).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let first = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(target)
+                .with_nonce(nonce)
+                .with_gas_limit(100_000)
+                .with_input(Bytes::copy_from_slice(&U256::from(7).to_be_bytes::<32>()))
+                .into(),
+        )
+        .await
+        .unwrap();
+    let second = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(target)
+                .with_nonce(nonce + 1)
+                .with_gas_limit(100_000)
+                .with_input(Bytes::copy_from_slice(&U256::from(9).to_be_bytes::<32>()))
+                .into(),
+        )
+        .await
+        .unwrap();
+    api.evm_mine(None).await.unwrap();
+    first.get_receipt().await.unwrap();
+    let receipt = second.get_receipt().await.unwrap();
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "run",
+        &receipt.transaction_hash().to_string(),
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+...
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000007
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]])
+    .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/2705>
 #[casttest]
 fn run_succeeds(cmd: _) {
@@ -659,19 +721,32 @@ async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
     let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(receipt.gas_used(), 46_064);
 
-    let output = cmd
-        .args([
+    for prestate in [false, true] {
+        cmd.cast_fuse().args([
             "run",
             &receipt.tx_hash().to_string(),
             "--rpc-url",
             &handle.http_endpoint(),
             "--evm-version",
             "prague",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("Gas used: 46064"), "{output}");
+        ]);
+        if prestate {
+            cmd.arg("--prestate-tracer");
+        }
+        cmd.with_no_redact()
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+Gas used: 46064
+
+"#]])
+            .stderr_eq(if prestate {
+                ""
+            } else {
+                "Executing previous transactions from the block.\n"
+            });
+    }
 }
 
 // Prints the ERC-8021 attribution codes appended to the transaction calldata.

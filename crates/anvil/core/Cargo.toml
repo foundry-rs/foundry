@@ -14,8 +14,8 @@ workspace = true
 
 [dependencies]
 foundry-common.workspace = true
-foundry-evm.workspace = true
-foundry-primitives = { workspace = true, default-features = false }
+foundry-evm = { workspace = true, features = ["revm"] }
+foundry-primitives = { workspace = true, features = ["revm"], default-features = false }
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",

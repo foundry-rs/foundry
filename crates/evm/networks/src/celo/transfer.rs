@@ -11,10 +11,16 @@
 //! - to address (32 bytes, left-padded)
 //! - value (32 bytes, big-endian U256)
 
+#[cfg(feature = "revm")]
 use std::borrow::Cow;
 
+#[cfg(feature = "revm")]
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
+
+#[cfg(feature = "revm")]
+use alloy_primitives::U256;
+#[cfg(feature = "revm")]
 use revm::precompile::{
     PrecompileError, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult,
 };
@@ -25,14 +31,20 @@ pub const CELO_TRANSFER_LABEL: &str = "CELO_TRANSFER_PRECOMPILE";
 /// Address of the Celo transfer precompile.
 pub const CELO_TRANSFER_ADDRESS: Address = Address::with_last_byte(0xfd);
 
+/// Name of the Celo transfer precompile.
+pub const CELO_TRANSFER_NAME: &str = "celo transfer";
+
 /// ID for the [Celo transfer precompile](CELO_TRANSFER_ADDRESS).
+#[cfg(feature = "revm")]
 pub static PRECOMPILE_ID_CELO_TRANSFER: PrecompileId =
-    PrecompileId::Custom(Cow::Borrowed("celo transfer"));
+    PrecompileId::Custom(Cow::Borrowed(CELO_TRANSFER_NAME));
 
 /// Gas cost for Celo transfer precompile.
+#[cfg(feature = "revm")]
 const CELO_TRANSFER_GAS_COST: u64 = 9000;
 
 /// Returns the Celo native transfer.
+#[cfg(feature = "revm")]
 pub fn precompile() -> DynPrecompile {
     DynPrecompile::new_stateful(PRECOMPILE_ID_CELO_TRANSFER.clone(), celo_transfer_precompile)
 }
@@ -40,6 +52,7 @@ pub fn precompile() -> DynPrecompile {
 /// Celo transfer precompile implementation.
 ///
 /// Uses load_account to modify balances directly, making it compatible with PrecompilesMap.
+#[cfg(feature = "revm")]
 pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileResult {
     // Check minimum gas requirement
     if input.gas() < CELO_TRANSFER_GAS_COST {

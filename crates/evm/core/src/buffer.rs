@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use revm::bytecode::opcode;
+use evm2::interpreter::op as opcode;
 
 /// Used to keep track of which buffer is currently active to be drawn by the debugger.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

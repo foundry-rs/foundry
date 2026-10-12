@@ -1,5 +1,6 @@
 //! Foundry's main executor backend abstraction and implementation.
 
+pub use crate::constants::GLOBAL_FAIL_SLOT;
 use crate::{
     FoundryBlock, FoundryChain, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
@@ -23,7 +24,7 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::AddressSet, uint};
+use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::AddressSet};
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
@@ -193,13 +194,6 @@ impl ForkPosition {
 /// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
-
-/// `bytes32("failed")`, as a storage slot key into [`CHEATCODE_ADDRESS`].
-///
-/// Used by all `forge-std` test contracts and newer `DSTest` test contracts as a global marker for
-/// a failed test.
-pub const GLOBAL_FAIL_SLOT: U256 =
-    uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
 pub type JournaledState = JournalInner<JournalEntry>;
 

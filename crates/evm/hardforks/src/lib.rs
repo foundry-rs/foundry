@@ -6,12 +6,14 @@
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_compilers::artifacts::EvmVersion;
-use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 use std::{
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(feature = "revm")]
+use revm::primitives::hardfork::SpecId;
 
 #[cfg(all(feature = "optimism", not(feature = "base")))]
 use alloy_chains::NamedChain;
@@ -20,6 +22,9 @@ use op_revm::OpSpecId;
 
 pub use alloy_hardforks::EthereumHardfork;
 pub use tempo_hardfork::TempoHardfork;
+
+mod ethereum;
+pub use ethereum::{ethereum_spec_from_evm_version, ethereum_spec_id};
 
 #[cfg(feature = "base")]
 pub use base_common_evm::BaseSpecId;
@@ -294,6 +299,7 @@ impl From<FoundryHardfork> for MonadHardfork {
     }
 }
 
+#[cfg(feature = "revm")]
 impl From<FoundryHardfork> for SpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
@@ -320,6 +326,7 @@ impl From<FoundryHardfork> for OpSpecId {
 }
 
 /// Map an `EthereumHardfork` enum into its corresponding `SpecId`.
+#[cfg(feature = "revm")]
 pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
     match hardfork {
         EthereumHardfork::Frontier => SpecId::FRONTIER,
@@ -386,6 +393,7 @@ pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
 }
 
 /// Map a `TempoHardfork` enum into its corresponding Ethereum `SpecId`.
+#[cfg(feature = "revm")]
 pub const fn spec_id_from_tempo_hardfork(_: TempoHardfork) -> SpecId {
     SpecId::OSAKA
 }
@@ -434,6 +442,7 @@ pub trait ExecutionSpec: FromEvmVersion {
     }
 }
 
+#[cfg(feature = "revm")]
 impl FromEvmVersion for SpecId {
     fn from_evm_version(version: EvmVersion) -> Self {
         match version {
@@ -456,6 +465,7 @@ impl FromEvmVersion for SpecId {
     }
 }
 
+#[cfg(feature = "revm")]
 impl ExecutionSpec for SpecId {
     // Returns the user-facing name for the active execution spec.
     fn evm_version_name(&self) -> String {
@@ -718,6 +728,7 @@ mod tests {
     use tempo_hardfork::constants::{mainnet::*, moderato::*};
 
     #[test]
+    #[cfg(feature = "revm")]
     fn test_ethereum_spec_id_mapping() {
         for (hardfork, expected) in [
             (EthereumHardfork::Frontier, SpecId::FRONTIER),
@@ -751,6 +762,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "revm")]
     fn test_tempo_spec_id_mapping() {
         assert_eq!(spec_id_from_tempo_hardfork(TempoHardfork::Genesis), SpecId::OSAKA);
         assert_eq!(spec_id_from_tempo_hardfork(TempoHardfork::T8), SpecId::OSAKA);

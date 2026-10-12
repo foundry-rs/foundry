@@ -669,7 +669,7 @@ fn replace_operand(
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use crate::{
@@ -689,7 +689,7 @@ mod tests {
         runner.rng().random()
     }
 
-    fn forced_weights(kind: usize) -> FuzzCorpusMutationWeights {
+    const fn forced_weights(kind: usize) -> FuzzCorpusMutationWeights {
         let mut weights = FuzzCorpusMutationWeights {
             mutation_weight_splice: 0,
             mutation_weight_repeat: 0,

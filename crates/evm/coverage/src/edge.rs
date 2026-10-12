@@ -1,11 +1,16 @@
+//! Shared edge and comparison feedback with concrete engine observation adapters.
+
 use alloy_primitives::{
     Address, U256,
     map::{Entry, HashMap},
 };
 use core::fmt;
+use evm2::interpreter::op as opcode;
+use foundry_evm_core::ethereum::FoundryEvmTypes;
+
+#[cfg(feature = "revm")]
 use revm::{
     Inspector,
-    bytecode::opcode,
     context::{ContextTr, JournalTr},
     interpreter::{
         Interpreter,
@@ -13,8 +18,8 @@ use revm::{
     },
 };
 
-// Default capacity for the hitcount buffer.
-pub(crate) const MAX_EDGE_COUNT: usize = 65536;
+/// Default capacity for the legacy hashed hitcount buffer.
+pub const MAX_EDGE_COUNT: usize = 65536;
 
 // Maximum number of unique comparison sites to track for CmpLog-style feedback.
 const MAX_CMP_LOG_SITES: usize = 1024;
@@ -148,6 +153,86 @@ impl EdgeCoverage {
         match self {
             Self::Hash(hitcount) => hitcount.iter().all(|&count| count == 0),
             Self::CollisionFree(hits) => hits.is_empty(),
+        }
+    }
+
+    /// Drains observed hits into the campaign's stable edge history.
+    ///
+    /// Returns whether coverage increased and whether any edge was first seen. Later higher
+    /// hitcount buckets are features, while repeated or lower counts add no coverage.
+    pub fn merge_into(
+        &mut self,
+        history_map: &mut Vec<u8>,
+        edge_indices: &mut EdgeIndexMap,
+    ) -> (bool, bool) {
+        let mut new_coverage = false;
+        let mut is_edge = false;
+        match self {
+            Self::Hash(x) => {
+                if history_map.len() < x.len() {
+                    history_map.resize(x.len(), 0);
+                }
+                // Iterate over the current map and the history map together and update
+                // the history map, if we discover some new coverage, report true
+                for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
+                    Self::merge_edge_count(*curr, hist, &mut new_coverage, &mut is_edge);
+
+                    // Hash reuses its map; collision-free drains hits.
+                    *curr = 0;
+                }
+            }
+            Self::CollisionFree(hits) => {
+                for hit in hits.drain(..) {
+                    let edge_index = edge_indices.edge_index(hit.edge);
+                    if history_map.len() <= edge_index {
+                        history_map.resize(edge_index + 1, 0);
+                    }
+                    Self::merge_edge_count(
+                        hit.count,
+                        &mut history_map[edge_index],
+                        &mut new_coverage,
+                        &mut is_edge,
+                    );
+                }
+            }
+        }
+        (new_coverage, is_edge)
+    }
+
+    const fn merge_edge_count(
+        curr: u8,
+        hist: &mut u8,
+        new_coverage: &mut bool,
+        is_edge: &mut bool,
+    ) {
+        let Some(bucket) = Self::bin_count(curr) else {
+            return;
+        };
+
+        // If the old record for this edge pair is lower, update
+        if *hist < bucket {
+            if *hist == 0 {
+                // Counts as an edge the first time we see it, otherwise it's a feature.
+                *is_edge = true;
+            }
+            *hist = bucket;
+            *new_coverage = true;
+        }
+    }
+
+    /// Convert a hitcount into an AFL-style bucket.
+    /// <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
+    pub const fn bin_count(count: u8) -> Option<u8> {
+        match count {
+            0 => None,
+            1 => Some(1),
+            2 => Some(2),
+            3 => Some(4),
+            4..=7 => Some(8),
+            8..=15 => Some(16),
+            16..=31 => Some(32),
+            32..=127 => Some(64),
+            128..=255 => Some(128),
         }
     }
 }
@@ -336,67 +421,51 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
-    fn do_step<CTX>(&mut self, interp: &mut Interpreter, context: &mut CTX)
-    where
-        CTX: ContextTr,
-    {
-        let address = interp.input.target_address();
-        let depth = context.journal_ref().depth();
-        let current_pc = interp.bytecode.pc();
-
-        match interp.bytecode.opcode() {
-            opcode::JUMP => {
-                // unconditional jump
-                if let Ok(jump_dest) = interp.stack.peek(0) {
-                    self.store_hit(address, depth, current_pc, jump_dest);
-                }
-            }
-            opcode::JUMPI => {
-                if let Ok(stack_value) = interp.stack.peek(1) {
-                    let jump_dest = if stack_value.is_zero() {
-                        // fall through
-                        Ok(U256::from(current_pc + 1))
-                    } else {
-                        // branch taken
-                        interp.stack.peek(0)
-                    };
-
-                    if let Ok(jump_dest) = jump_dest {
-                        self.store_hit(address, depth, current_pc, jump_dest);
-                    }
-                }
-            }
-            _ => {
-                // no-op
-            }
-        }
+    const fn observes(&self, op: u8) -> bool {
+        (self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI))
+            || (self.cmp_log.is_some()
+                && matches!(
+                    op,
+                    opcode::EQ
+                        | opcode::LT
+                        | opcode::GT
+                        | opcode::SLT
+                        | opcode::SGT
+                        | opcode::ISZERO
+                ))
     }
 
     #[cold]
-    fn do_cmp_step(&mut self, interp: &mut Interpreter) {
-        if self.cmp_log.is_none() {
-            return;
-        }
-
-        let address = interp.input.target_address();
-        let current_pc = interp.bytecode.pc();
-
-        match interp.bytecode.opcode() {
+    fn observe(
+        &mut self,
+        address: Address,
+        depth: usize,
+        pc: usize,
+        op: u8,
+        operands: [Option<U256>; 2],
+    ) {
+        match op {
+            opcode::JUMP => {
+                if let Some(destination) = operands[0] {
+                    self.store_hit(address, depth, pc, destination);
+                }
+            }
+            opcode::JUMPI => {
+                if let Some(condition) = operands[1]
+                    && let Some(destination) =
+                        if condition.is_zero() { Some(U256::from(pc + 1)) } else { operands[0] }
+                {
+                    self.store_hit(address, depth, pc, destination);
+                }
+            }
             op @ (opcode::EQ | opcode::LT | opcode::SLT | opcode::GT | opcode::SGT) => {
-                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(CmpOperands { op1, op2, pc: current_pc, address, opcode: op });
+                if let [Some(op1), Some(op2)] = operands {
+                    self.store_cmp(CmpOperands { op1, op2, pc, address, opcode: op });
                 }
             }
             op @ opcode::ISZERO => {
-                if let Ok(op1) = interp.stack.peek(0) {
-                    self.store_cmp(CmpOperands {
-                        op1,
-                        op2: U256::ZERO,
-                        pc: current_pc,
-                        address,
-                        opcode: op,
-                    });
+                if let Some(op1) = operands[0] {
+                    self.store_cmp(CmpOperands { op1, op2: U256::ZERO, pc, address, opcode: op });
                 }
             }
             _ => {}
@@ -429,6 +498,7 @@ impl From<EdgeCovInspector> for EdgeCoverage {
     }
 }
 
+#[cfg(feature = "revm")]
 impl<CTX> Inspector<CTX> for EdgeCovInspector
 where
     CTX: ContextTr,
@@ -436,16 +506,32 @@ where
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let op = interp.bytecode.opcode();
-        if self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI) {
-            self.do_step(interp, context);
-        }
-        if self.cmp_log.is_some()
-            && matches!(
+        if self.observes(op) {
+            self.observe(
+                interp.input.target_address(),
+                context.journal_ref().depth(),
+                interp.bytecode.pc(),
                 op,
-                opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
-            )
-        {
-            self.do_cmp_step(interp);
+                [interp.stack.peek(0).ok(), interp.stack.peek(1).ok()],
+            );
+        }
+    }
+}
+
+impl evm2::Inspector<FoundryEvmTypes> for EdgeCovInspector {
+    #[inline]
+    fn step(&mut self, interp: &mut evm2::interpreter::Interpreter<'_, '_, FoundryEvmTypes>) {
+        let op = interp.opcode();
+        if self.observes(op) {
+            let message = interp.message();
+            // REVM's live journal depth includes the currently executing frame.
+            self.observe(
+                message.destination,
+                usize::from(message.depth) + 1,
+                interp.pc(),
+                op,
+                [interp.stack().peek(0), interp.stack().peek(1)],
+            );
         }
     }
 }
@@ -476,6 +562,18 @@ fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::{TxLegacy, transaction::Recovered};
+    use alloy_primitives::{Bytes, TxKind};
+    use evm2::{
+        Evm, Precompiles, SpecId,
+        bytecode::Bytecode,
+        env::BlockEnvExt,
+        ethereum::ethereum_tx_registry,
+        evm::{AccountInfo, InMemoryDB},
+    };
+
+    #[cfg(feature = "revm")]
+    use revm::{Context, InspectEvm, MainBuilder, MainContext};
 
     fn dense_counts(inspector: &EdgeCovInspector) -> Vec<u8> {
         inspector.dense_hits().into_iter().map(|hit| hit.count).collect()
@@ -691,5 +789,141 @@ mod tests {
 
         assert_eq!(inspector.get_cmp_log().len(), usize::from(MAX_CMP_OBSERVATIONS_PER_SITE) + 1);
         assert_eq!(inspector.get_cmp_log().last().unwrap().pc, 2);
+    }
+
+    #[test]
+    fn native_feedback_observes_taken_fallthrough_and_reverted_execution() {
+        let contract = Address::repeat_byte(0x42);
+        let cases = [(false, false), (true, false), (true, true)];
+        let mut history = Vec::new();
+        let mut indices = EdgeIndexMap::default();
+        for (taken, revert) in cases {
+            // EQ feeds JUMPI. A failed root must retain its observations, while reset clears them.
+            let mut code = vec![
+                opcode::PUSH1,
+                7,
+                opcode::PUSH1,
+                if taken { 7 } else { 8 },
+                opcode::EQ,
+                opcode::PUSH1,
+                9,
+                opcode::JUMPI,
+                opcode::STOP,
+                opcode::JUMPDEST,
+            ];
+            if revert {
+                code.extend([opcode::PUSH0, opcode::PUSH0, opcode::REVERT]);
+            } else {
+                code.push(opcode::STOP);
+            }
+            let mut database = InMemoryDB::default();
+            database.insert_account_info(
+                &contract,
+                AccountInfo::default()
+                    .with_code(Bytecode::new_legacy(Bytes::copy_from_slice(&code))),
+            );
+            let mut evm = Evm::<FoundryEvmTypes>::new(
+                SpecId::CANCUN,
+                BlockEnvExt::default(),
+                ethereum_tx_registry(SpecId::CANCUN),
+                database,
+                Precompiles::base(SpecId::CANCUN),
+            );
+            let mut inspector =
+                EdgeCovInspector::with_config(EdgeCovConfig::new(EdgeCovKind::CollisionFree, true));
+            inspector.enable_cmp_log(true);
+            evm.set_inspector(inspector);
+            let tx = Recovered::new_unchecked(
+                evm2::ethereum::TxEnvelope::Legacy(TxLegacy {
+                    to: TxKind::Call(contract),
+                    gas_limit: 100_000,
+                    ..Default::default()
+                }),
+                Address::ZERO,
+            );
+            let result = evm.transact(&tx).unwrap().detach();
+            assert_eq!(result.result.status, !revert);
+            let mut inspector = *evm.clear_inspector_as::<EdgeCovInspector>().unwrap();
+            assert_eq!(
+                inspector.dense_hits(),
+                vec![EdgeCovHit {
+                    edge: EdgeKey {
+                        address: contract,
+                        depth: Some(1),
+                        pc: 7,
+                        jump_dest: U256::from(if taken { 9 } else { 8 })
+                    },
+                    count: 1
+                }]
+            );
+            assert_eq!(
+                inspector.get_cmp_log(),
+                &[CmpOperands {
+                    op1: U256::from(if taken { 7 } else { 8 }),
+                    op2: U256::from(7),
+                    pc: 4,
+                    address: contract,
+                    opcode: opcode::EQ
+                }]
+            );
+            #[cfg(feature = "revm")]
+            {
+                let mut legacy_db = revm::database::InMemoryDB::default();
+                legacy_db.insert_account_info(
+                    contract,
+                    revm::state::AccountInfo::default()
+                        .with_code(revm::bytecode::Bytecode::new_raw(Bytes::from(code))),
+                );
+                let mut legacy_inspector = EdgeCovInspector::with_config(EdgeCovConfig::new(
+                    EdgeCovKind::CollisionFree,
+                    true,
+                ));
+                legacy_inspector.enable_cmp_log(true);
+                let mut legacy = Context::mainnet()
+                    .with_db(legacy_db)
+                    .build_mainnet_with_inspector(&mut legacy_inspector);
+                let result = legacy
+                    .inspect_one_tx(
+                        revm::context::TxEnv::builder()
+                            .caller(Address::ZERO)
+                            .kind(TxKind::Call(contract))
+                            .gas_limit(100_000)
+                            .build()
+                            .unwrap(),
+                    )
+                    .unwrap();
+                assert_eq!(result.is_success(), !revert);
+                drop(legacy);
+                assert_eq!(legacy_inspector.dense_hits(), inspector.dense_hits());
+                assert_eq!(legacy_inspector.get_cmp_log(), inspector.get_cmp_log());
+            }
+            let mut feedback = EdgeCoverage::from(inspector.clone());
+            assert_eq!(feedback.merge_into(&mut history, &mut indices), (!revert, !revert));
+            assert!(feedback.is_empty());
+            assert_eq!(feedback.merge_into(&mut history, &mut indices), (false, false));
+            inspector.reset();
+            assert!(inspector.dense_hits().is_empty());
+            assert!(inspector.get_cmp_log().is_empty());
+        }
+    }
+
+    #[test]
+    fn history_distinguishes_new_edges_from_hitcount_features() {
+        for kind in [EdgeCovKind::Hash, EdgeCovKind::CollisionFree] {
+            let mut history = Vec::new();
+            let mut indices = EdgeIndexMap::default();
+            let mut inspector = EdgeCovInspector::with_config(EdgeCovConfig::new(kind, false));
+            for (count, expected) in [(1, (true, true)), (4, (true, false)), (2, (false, false))] {
+                inspector.reset();
+                for _ in 0..count {
+                    inspector.store_hit(Address::ZERO, 0, 42, U256::ONE);
+                }
+                let mut coverage = EdgeCoverage::from(inspector.clone());
+                assert_eq!(coverage.merge_into(&mut history, &mut indices), expected);
+                assert!(coverage.is_empty());
+                assert_eq!(coverage.merge_into(&mut history, &mut indices), (false, false));
+            }
+            assert_eq!(history.iter().filter(|&&bucket| bucket != 0).count(), 1);
+        }
     }
 }

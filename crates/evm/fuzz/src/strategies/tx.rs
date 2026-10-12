@@ -117,6 +117,11 @@ impl TxGenerator {
         Ok(self.strategy.new_tree(runner).map_err(|_| eyre!("Could not generate case"))?.current())
     }
 
+    /// Returns the underlying strategy for execution through a proptest runner.
+    pub fn into_strategy(self) -> BoxedStrategy<BasicTxDetails> {
+        self.strategy
+    }
+
     /// Generates calldata and payable value for one contract call.
     pub(crate) fn call_strategy<S: DictionaryRead>(
         state: &S,
@@ -177,8 +182,6 @@ mod tests {
     use super::*;
     use crate::invariant::{TargetedContract, TargetedContracts};
     use alloy_json_abi::JsonAbi;
-    use foundry_config::FuzzDictionaryConfig;
-    use revm::database::InMemoryDB;
 
     #[test]
     fn zero_delay_is_disabled() {
@@ -223,9 +226,7 @@ mod tests {
         targets.insert(retained, TargetedContract::new("Retained".into(), abi.clone()));
         targets.insert(removed, TargetedContract::new("Removed".into(), abi));
         let identified = FuzzRunIdentifiedContracts::new(targets, false);
-        let state =
-            EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
-                .into_invariant();
+        let state = EvmFuzzState::test().into_invariant();
         let generator = TxGenerator::invariant(
             state,
             SenderFilters::default(),
