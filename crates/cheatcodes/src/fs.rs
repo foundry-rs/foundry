@@ -1215,6 +1215,7 @@ mod tests {
             BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
         },
     };
+    use foundry_evm_core::evm::TempoEvmNetwork;
     use std::{env, fs as stdfs, str::FromStr, sync::Arc};
     use tempfile::TempDir;
     use tempo_alloy::TempoNetwork;
