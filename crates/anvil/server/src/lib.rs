@@ -54,8 +54,6 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// "<name>", "params": "<params>" }`
     fn on_call(&self, call: RpcMethodCall) -> impl Future<Output = RpcResponse> + Send {
         async move {
-            // Request payloads can contain signed transactions and RPC credentials.
-            trace!(target: "rpc", id = ?call.id, method = ?call.method, "received method call");
             let RpcMethodCall { method, params, id, .. } = call;
 
             let params: serde_json::Value = params.into();
