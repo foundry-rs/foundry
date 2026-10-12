@@ -94,7 +94,6 @@ mod monad;
 mod script;
 pub use script::{BroadcastableTransaction, BroadcastableTransactions, Wallets, WalletsInner};
 
-#[cfg(feature = "revm")]
 mod string;
 
 #[cfg(feature = "revm")]
@@ -115,13 +114,20 @@ mod utils;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef {
+    /// Applies this cheatcode without any execution engine state.
+    ///
+    /// Implement this function to share the cheatcode between both execution engines.
+    fn apply_core(&self) -> Result {
+        Err(fmt_err!("{} has not been migrated to EVM2", Self::CHEATCODE.func.signature))
+    }
+
     /// Applies this cheatcode to the given state.
     ///
     /// Implement this function if you don't need access to the EVM data.
     #[cfg(feature = "revm")]
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let _ = state;
-        unimplemented!("{}", Self::CHEATCODE.func.id)
+        self.apply_core()
     }
 
     /// Applies this cheatcode to the given context.
@@ -157,11 +163,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
             foundry_evm_core::ethereum::FoundryEvmTypes,
         >,
     ) -> std::result::Result<alloy_primitives::Bytes, ethereum::ApplyError> {
-        Err(Error::from(format!(
-            "{} has not been migrated to EVM2",
-            Self::CHEATCODE.func.signature
-        ))
-        .into())
+        Ok(self.apply_core()?.into())
     }
 }
 

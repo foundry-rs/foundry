@@ -4280,3 +4280,76 @@ contract NativeCoverageInvariantTest {
         }
     }
 }
+
+#[forgetest_init]
+fn ethereum_native_string_fixtures_and_errors(prj: _, cmd: _) {
+    for (name, contents) in [
+        (
+            "StringUtils.t.sol",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testdata/default/cheats/StringUtils.t.sol"
+            )),
+        ),
+        (
+            "ToString.t.sol",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testdata/default/cheats/ToString.t.sol"
+            )),
+        ),
+        (
+            "Parse.t.sol",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testdata/default/cheats/Parse.t.sol"
+            )),
+        ),
+    ] {
+        prj.add_test(name, contents);
+    }
+    prj.add_test(
+        "NativeStringErrors.t.sol",
+        r#"
+import "utils/Test.sol";
+
+contract NativeStringErrorsTest is Test {
+    function testParseErrors() public {
+        vm._expectCheatcodeRevert(
+            "failed parsing \"ff\" as type `uint256`: missing hex prefix (\"0x\") for hex string"
+        );
+        vm.parseUint("ff");
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "utils/Test.sol",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/Test.sol")),
+    );
+    prj.add_source(
+        "utils/DSTest.sol",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/DSTest.sol")),
+    );
+    prj.add_source(
+        "utils/Vm.sol",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/Vm.sol")),
+    );
+    prj.add_source(
+        "utils/console.sol",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/console.sol")),
+    );
+    cmd.args([
+        "test",
+        "--remappings",
+        "utils/=src/utils/",
+        "--mc",
+        "^(StringManipulationTest|ToStringTest|ParseTest|NativeStringErrorsTest)$",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 test suites [ELAPSED]: 28 tests passed, 0 failed, 0 skipped (28 total tests)
+...
+"#]]);
+}

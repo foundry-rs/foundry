@@ -863,6 +863,7 @@ impl Cheatcodes {
                     assertTrue_0,
                     assertTrue_1,
                     clearMockedCalls,
+                    contains,
                     expectCallMinGas_0,
                     expectCallMinGas_1,
                     expectCall_0,
@@ -898,6 +899,7 @@ impl Cheatcodes {
                     expectRevert_7,
                     expectRevert_8,
                     expectRevert_9,
+                    indexOf,
                     mockCallRevert_0,
                     mockCallRevert_1,
                     mockCallRevert_2,
@@ -909,7 +911,24 @@ impl Cheatcodes {
                     mockCall_4,
                     mockCalls_0,
                     mockCalls_1,
-                    mockFunction
+                    mockFunction,
+                    parseAddress,
+                    parseBool,
+                    parseBytes,
+                    parseBytes32,
+                    parseInt,
+                    parseUint,
+                    replace,
+                    split,
+                    toLowercase,
+                    toString_0,
+                    toString_1,
+                    toString_2,
+                    toString_3,
+                    toString_4,
+                    toString_5,
+                    toUppercase,
+                    trim
                 );
             }
         }
