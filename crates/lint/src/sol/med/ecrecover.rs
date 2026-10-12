@@ -152,9 +152,6 @@ impl FlowState {
 /// A place written by an assignment, paired with the expression it receives.
 type Pair<'gcx> = (Option<ValueKey>, Option<&'gcx Expr<'gcx>>);
 
-/// The `s` argument of an `ecrecover` call.
-type Signature<'gcx> = &'gcx Expr<'gcx>;
-
 struct Analyzer<'gcx> {
     gcx: Gcx<'gcx>,
     returns: &'gcx [VariableId],
@@ -317,7 +314,7 @@ impl<'gcx> Analyzer<'gcx> {
     fn ecrecover_call(
         &self,
         expr: &'gcx Expr<'gcx>,
-    ) -> Option<(&'gcx Expr<'gcx>, Signature<'gcx>)> {
+    ) -> Option<(&'gcx Expr<'gcx>, &'gcx Expr<'gcx>)> {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args) = &expr.kind else { return None };
         let callee = self.gcx.resolved_builtin(callee.peel_parens());
