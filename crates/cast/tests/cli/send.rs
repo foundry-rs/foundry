@@ -1,6 +1,7 @@
 //! CLI tests for send commands.
 
 use super::*;
+use foundry_test_utils::snapbox::{cmd::OutputAssert, data::DataFormat};
 use std::{process::Stdio, time::Duration};
 
 #[casttest]
@@ -815,4 +816,142 @@ async fn publish_raw_transaction(cmd: _) {
         .args(["publish", &raw, "--async", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(format!("{hash}\n"));
+}
+
+#[casttest]
+async fn send_confirmation_timeout(prj: _) {
+    for sync in [false, true] {
+        let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+        let wallet = handle.dev_wallets().next().unwrap();
+        let mut command = tokio::process::Command::from(prj.cast_bin());
+        command
+            .args([
+                "send",
+                &wallet.address().to_string(),
+                "--private-key",
+                &hex::encode(wallet.to_bytes()),
+                "--rpc-url",
+                &handle.http_endpoint(),
+                "--confirmations",
+                "3",
+                "--timeout",
+                "1",
+            ])
+            .kill_on_drop(true);
+        if sync {
+            command.arg("--sync");
+        }
+
+        let output = tokio::time::timeout(Duration::from_secs(10), command.output())
+            .await
+            .expect("confirmation timeout was not enforced")
+            .unwrap();
+        OutputAssert::new(output).failure().stdout_eq("").stderr_eq(str![[r#"
+Error: transaction was not confirmed within the timeout
+
+"#]]);
+        // The transaction was mined, but the chain did not reach the requested depth.
+        assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 1);
+    }
+}
+
+#[casttest]
+async fn send_waits_for_confirmations(prj: _) {
+    for sync in [false, true] {
+        let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+        let provider = ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+        let wallet = handle.dev_wallets().next().unwrap();
+        let (endpoint, requests) =
+            spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getTransactionReceipt")
+                .await;
+        let mut command = tokio::process::Command::from(prj.cast_bin());
+        command
+            .args([
+                "send",
+                &wallet.address().to_string(),
+                "--private-key",
+                &hex::encode(wallet.to_bytes()),
+                "--rpc-url",
+                &endpoint,
+                "--confirmations",
+                "3",
+                "--timeout",
+                "15",
+                "--json",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        if sync {
+            command.arg("--sync");
+        }
+        let mut child = command.spawn().unwrap();
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while requests.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            while provider.get_block_number().await.unwrap() < 1 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        for height in 1..3 {
+            assert_eq!(provider.get_block_number().await.unwrap(), height);
+            assert!(tokio::time::timeout(Duration::from_millis(250), child.wait()).await.is_err());
+            api.mine_one().await.unwrap();
+        }
+
+        let output = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
+            .await
+            .unwrap()
+            .unwrap();
+        let receipts = provider.get_block_receipts(1.into()).await.unwrap().unwrap();
+        assert_eq!(receipts.len(), 1);
+        let receipt = provider
+            .get_transaction_receipt(receipts[0].transaction_hash())
+            .await
+            .unwrap()
+            .unwrap();
+        let output = OutputAssert::new(output).success().stderr_eq("");
+        assert_data_eq!(
+            output.get_output().stdout.clone().into_data().is(DataFormat::Json).unordered(),
+            serde_json::to_string(&receipt).unwrap().into_data().is(DataFormat::Json).unordered(),
+        );
+        assert_eq!(provider.get_block_number().await.unwrap(), 3);
+    }
+}
+
+#[casttest]
+async fn send_async_ignores_confirmations(prj: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test().with_no_mining(true)).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let mut command = tokio::process::Command::from(prj.cast_bin());
+    command
+        .args([
+            "send",
+            &wallet.address().to_string(),
+            "--private-key",
+            &hex::encode(wallet.to_bytes()),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--confirmations",
+            "3",
+            "--timeout",
+            "1",
+            "--async",
+        ])
+        .kill_on_drop(true);
+    let output =
+        tokio::time::timeout(Duration::from_secs(10), command.output()).await.unwrap().unwrap();
+    OutputAssert::new(output)
+        .success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq("");
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 1);
 }

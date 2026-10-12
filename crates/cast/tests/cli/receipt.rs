@@ -1,6 +1,8 @@
 //! CLI tests for receipt commands.
 
 use super::*;
+use foundry_test_utils::snapbox::cmd::OutputAssert;
+use std::{process::Stdio, time::Duration};
 
 // tests that revert reason is only present if transaction has reverted.
 
@@ -103,4 +105,94 @@ blobGasUsed          {}
 to                   0x91b5d4111a4C038153b24e31F75ccdC47123595d
 ...
 "#, "", "", "", ""));
+}
+
+#[casttest]
+async fn receipt_waits_for_confirmations(prj: _) {
+    for mined in [true, false] {
+        let (api, handle) = anvil::spawn(NodeConfig::test().with_no_mining(!mined)).await;
+        let provider = handle.http_provider();
+        let from = handle.dev_wallets().next().unwrap().address();
+        let pending = provider
+            .send_transaction(TransactionRequest::default().from(from).to(from).into())
+            .await
+            .unwrap();
+        let hash = pending.tx_hash().to_string();
+        if mined {
+            assert_eq!(pending.get_receipt().await.unwrap().block_number(), Some(1));
+        } else {
+            assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_none());
+        }
+        let (endpoint, requests) =
+            spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getTransactionReceipt")
+                .await;
+        let mut child = tokio::process::Command::from(prj.cast_bin())
+            .args(["receipt", &hash, "blockNumber", "--confirmations", "3", "--rpc-url", &endpoint])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+
+        // Ensure Cast has queried the receipt before checking that it keeps waiting.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while requests.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        for height in u64::from(mined)..3 {
+            assert_eq!(provider.get_block_number().await.unwrap(), height);
+            assert!(tokio::time::timeout(Duration::from_millis(250), child.wait()).await.is_err());
+            api.mine_one().await.unwrap();
+        }
+
+        let output = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
+            .await
+            .unwrap()
+            .unwrap();
+        OutputAssert::new(output).success().stdout_eq("1\n").stderr_eq("");
+        assert_eq!(provider.get_block_number().await.unwrap(), 3);
+    }
+}
+
+#[casttest]
+async fn receipt_confirmation_compatibility(prj: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let receipt = provider
+        .send_transaction(TransactionRequest::default().from(from).to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash().to_string();
+    for (confirmations, cast_async) in [("0", false), ("1", false), ("3", true), ("3", false)] {
+        if confirmations == "3" && !cast_async {
+            api.mine_one().await.unwrap();
+            api.mine_one().await.unwrap();
+        }
+        let mut command = tokio::process::Command::from(prj.cast_bin());
+        command
+            .args([
+                "receipt",
+                &hash,
+                "blockNumber",
+                "--confirmations",
+                confirmations,
+                "--rpc-url",
+                &handle.http_endpoint(),
+            ])
+            .kill_on_drop(true);
+        if cast_async {
+            command.arg("--async");
+        }
+
+        let output =
+            tokio::time::timeout(Duration::from_secs(10), command.output()).await.unwrap().unwrap();
+        OutputAssert::new(output).success().stdout_eq("1\n").stderr_eq("");
+    }
 }

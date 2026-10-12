@@ -550,8 +550,8 @@ impl SendOptions {
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
         match receipt {
-            Some(receipt) => sh_println!("{receipt}")?,
-            None => self.print_tx_result(provider, tx_hash).await?,
+            Some(receipt) if self.confirmations <= 1 => sh_println!("{receipt}")?,
+            _ => self.print_tx_result(provider, tx_hash).await?,
         }
         Ok(tx_hash)
     }
