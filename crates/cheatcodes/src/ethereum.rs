@@ -38,7 +38,6 @@ use foundry_evm_core::{
 use foundry_evm_coverage::EthereumCoverageCollector;
 use std::{
     collections::{BTreeMap, VecDeque},
-    mem,
     sync::Arc,
 };
 
@@ -79,7 +78,7 @@ impl From<evm2::DatabaseError> for ApplyError {
 }
 
 /// Inspector state owned by an Ethereum execution session.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Cheatcodes {
     config: Arc<CheatsConfig>,
     /// All observed logs, including console messages and logs from reverted frames.
@@ -126,10 +125,53 @@ pub struct Cheatcodes {
     script_failure: Option<(u16, Bytes)>,
 }
 
+// This is not derived because calling this in `fn new` with `..Default::default()` creates a second
+// `CheatsConfig` which is unused, and inside it `ProjectPathsConfig` is relatively expensive to
+// create.
+impl Default for Cheatcodes {
+    fn default() -> Self {
+        Self::new(Arc::default())
+    }
+}
+
 impl Cheatcodes {
     /// Creates native cheatcode state with the shared Foundry policy.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
-        Self { config, ..Default::default() }
+        Self {
+            config,
+            logs: Default::default(),
+            pranks: Default::default(),
+            expected_revert: Default::default(),
+            expected_calls: Default::default(),
+            mocked_calls: Default::default(),
+            mocked_functions: Default::default(),
+            expected_emits: Default::default(),
+            pending_emit_failure: Default::default(),
+            emit_failure: Default::default(),
+            skip_payloads: Default::default(),
+            snapshot_failure: Default::default(),
+            reverter: Default::default(),
+            snapshots: Default::default(),
+            transaction_epoch: Default::default(),
+            snapshot_frames: Default::default(),
+            deploy_code_depth: Default::default(),
+            isolated_root: Default::default(),
+            replay_depth: Default::default(),
+            isolation_depth: Default::default(),
+            isolated_snapshot_restored: Default::default(),
+            forks: Default::default(),
+            broadcast: Default::default(),
+            active_delegations: Default::default(),
+            active_blob_sidecar: Default::default(),
+            dynamic_gas_limit: Default::default(),
+            storage_hooks: Default::default(),
+            wallets: Default::default(),
+            transactions: Default::default(),
+            tracing: Default::default(),
+            line_coverage: Default::default(),
+            script_address: Default::default(),
+            script_failure: Default::default(),
+        }
     }
 
     /// Applies effective per-test policy while retaining the owning artifact context.
@@ -137,18 +179,6 @@ impl Cheatcodes {
         let mut opts = self.config.evm_opts.clone();
         opts.always_use_create_2_factory = config.always_use_create_2_factory;
         self.config = Arc::new(self.config.clone_with(config, opts));
-    }
-
-    /// Moves this state out for a child engine, leaving a placeholder the caller overwrites when
-    /// the child returns.
-    ///
-    /// A default `CheatsConfig` resolves project paths and remappings from disk, so the placeholder
-    /// is built once per thread instead of on every isolated call.
-    fn take_for_child(&mut self) -> Self {
-        thread_local! {
-            static PLACEHOLDER: Cheatcodes = Cheatcodes::default();
-        }
-        mem::replace(self, PLACEHOLDER.with(Clone::clone))
     }
 
     fn apply(
