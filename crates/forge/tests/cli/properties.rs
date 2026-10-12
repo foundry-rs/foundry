@@ -623,13 +623,29 @@ no candidate reproducibly resolved a mutation survivor
 fn properties_reports_possible_bugs(prj: _, cmd: _) {
     const GENERATOR: &str = r#"#!/bin/sh
 set -eu
-if grep -q '"round": 3' "$1"; then
+prompt="$1"
+output="$2"
+# Runs the prompt's check command on a candidate file and ignores its result.
+check() {
+    set -- $(sed -n '/"check_command": \[/,/\]/p' "$prompt" | sed -e '1d;$d' -e 's/^ *"//' -e 's/",*$//' -e "s|^CANDIDATE_JSON\$|$1|")
+    "$@" > /dev/null 2>&1 || true
+}
+if grep -q '"round": 3' "$prompt"; then
     echo "generator quota exceeded" >&2
     exit 3
 fi
-if grep -q '"round": 2' "$1"; then
-grep -q '"possible_bugs"' "$1"
-cat > "$2" <<'JSON'
+if grep -q '"round": 2' "$prompt"; then
+grep -q '"possible_bugs"' "$prompt"
+# The generator checks a property of the documented cap, then removes it.
+cat > removed.json <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "the documented cap is 100 ether",
+  "files": [{"path": "test/generated/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]
+}
+JSON
+check removed.json
+cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "large fees are capped at the current cap",
@@ -638,17 +654,19 @@ cat > "$2" <<'JSON'
 JSON
 exit 0
 fi
-grep -q '"likely_equivalent": "the comparisons agree when the operand is unsigned"' "$1"
-grep -q '"check_command"' "$1"
-grep -q 'context-marker: rounding notes' "$1"
-grep -q 'CANDIDATE_JSON' "$1"
-cat > "$2" <<'JSON'
+grep -q '"likely_equivalent": "the comparisons agree when the operand is unsigned"' "$prompt"
+grep -q '"check_command"' "$prompt"
+grep -q 'context-marker: rounding notes' "$prompt"
+grep -q 'CANDIDATE_JSON' "$prompt"
+cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "the documented cap is 100 ether",
   "files": [{"path": "test/generated/FeeCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCapTest {\n    function testFuzzCap(uint256 amount) public pure {\n        amount = amount % 1e30;\n        uint256 expected = amount / 100;\n        if (expected > 100 ether) expected = 100 ether;\n        require(Fee.fee(amount) == expected, \"fee\");\n    }\n}\n"}]
 }
 JSON
+# A checked failure that the candidate keeps is reported once.
+check "$output"
 "#;
 
     prj.add_source(
@@ -718,6 +736,8 @@ contract FeeTest {
     .stdout_eq(str![[r#"
 possible bug: FeeCapTest::testFuzzCap (seed 24301: fee; counterexample: [..]; seed 12648430: fee; counterexample: [..])
   the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
+possible bug: FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+  observed during generator checks, later removed; journal: cache/properties/check-failures.jsonl
 added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
   test/generated/FeeCurrentCap.t.sol (kept after a possible bug was reported; review it together with that report)
 
@@ -735,6 +755,16 @@ Error: generator failed in round 3 (exit status: 3): generator quota exceeded
     assert_eq!(rounds[0]["possible_bugs"].as_array().unwrap().len(), 1);
     assert_eq!(rounds[1]["after_possible_bug"], true);
     assert!(!prj.root().join("test/generated/FeeCap.t.sol").exists());
+    // The journal keeps the removed test's source for review.
+    let journal = fs::read_to_string(prj.root().join("cache/properties/check-failures.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(journal.len(), 2);
+    assert_eq!(journal[1]["test"], "FeeRemovedTest::testDocumentedCap");
+    assert_eq!(journal[1]["path"], "test/generated/FeeRemoved.t.sol");
+    assert!(journal[1]["source"].as_str().unwrap().contains("function testDocumentedCap()"));
 }
 
 #[cfg(unix)]

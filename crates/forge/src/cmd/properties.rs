@@ -34,6 +34,8 @@ const MAX_CANDIDATE_BYTES: usize = 256 * 1024;
 // Bound each source-context section so it cannot dominate the prompt.
 const MAX_PROMPT_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_PROJECT_CONTEXT_FILES: usize = 2;
+/// Records every test that fails on every seed in a `--check` run, one JSON object per line.
+const CHECK_JOURNAL: &str = "check-failures.jsonl";
 /// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
 /// contract or test name, and no project file is under the absolute path
 /// `/forge-properties-none`.
@@ -237,6 +239,24 @@ struct MutationResultSummary {
     summary: crate::mutation::MutationSummaryJson,
 }
 
+/// A candidate test that fails on every seed.
+#[derive(Debug, Deserialize, Serialize)]
+struct CheckFailure {
+    /// `Contract::test`.
+    test: String,
+    path: PathBuf,
+    reason: String,
+    /// Source of the file that holds the test. Only `--check` records it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+}
+
+impl std::fmt::Display for CheckFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.test, self.reason)
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct Evaluation {
     candidate_digest: String,
@@ -342,6 +362,15 @@ impl PropertiesArgs {
         let contract_filter_args = contract_filter
             .map(|contract| vec!["--match-contract".to_string(), contract.to_string()])
             .unwrap_or_default();
+        let cache_root = config.cache_path.join("properties");
+        fs::create_dir_all(&cache_root)?;
+        // Generator checks of this campaign start a new journal.
+        let journal = cache_root.join(CHECK_JOURNAL);
+        if let Err(error) = fs::remove_file(&journal)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error).wrap_err("failed to reset the check journal");
+        }
         let baseline =
             self.run_mutations(&forge, &config, &config.root, &contract_filter_args, None)?;
         let baseline_tests = list_tests(&forge, &config.root, &contract_filter_args)?;
@@ -350,8 +379,6 @@ impl PropertiesArgs {
             .iter()
             .map(|result| PromptMutation { seed: &result.seed, summary: &result.output.summary })
             .collect::<Vec<_>>();
-        let cache_root = config.cache_path.join("properties");
-        fs::create_dir_all(&cache_root)?;
 
         let check_command = [forge.as_os_str(), "properties".as_ref(), "--root".as_ref()]
             .into_iter()
@@ -530,6 +557,31 @@ impl PropertiesArgs {
                 )?;
             }
         }
+        // A generator can remove a failing test after a check. Report the failures that no
+        // evaluation reported and that the final candidate does not keep.
+        let journal_path = journal.strip_prefix(&config.root).unwrap_or(&journal);
+        for failure in read_check_journal(&journal)? {
+            let reported = evaluations.iter().flat_map(|evaluation| &evaluation.possible_bugs).any(
+                |possible_bug| {
+                    possible_bug
+                        .strip_prefix(&failure.test)
+                        .is_some_and(|rest| rest.starts_with(" ("))
+                },
+            );
+            let name =
+                failure.test.rsplit_once("::").map_or(failure.test.as_str(), |(_, name)| name);
+            let kept = current_candidate.as_ref().is_some_and(|candidate| {
+                candidate.files.iter().any(|file| {
+                    file.path == failure.path && file.content.contains(&format!("function {name}("))
+                })
+            });
+            if !reported && !kept {
+                sh_println!(
+                    "possible bug: {failure}\n  observed during generator checks, later removed; journal: {}",
+                    journal_path.display()
+                )?;
+            }
+        }
         if let Some(candidate) = current_candidate {
             // Evaluation rejects paths that already exist or leave the project, so this adds files
             // without overwriting.
@@ -595,8 +647,9 @@ impl PropertiesArgs {
             return Ok((evaluation, vec![], BTreeSet::new()));
         }
         let candidate_workspace = candidate_workspace(config, candidate, &self.mutate)?;
-        let (mut reasons, possible_bugs, tests) =
+        let (mut reasons, failures, tests) =
             self.check_candidate_tests(forge, candidate_workspace.path(), config, candidate)?;
+        let possible_bugs = failures.iter().map(ToString::to_string).collect();
 
         let candidate_results = if reasons.is_empty() {
             // Run exactly the baseline tests and the generated tests. Widening filters instead
@@ -721,7 +774,7 @@ impl PropertiesArgs {
         workspace: &Path,
         config: &Config,
         candidate: &Candidate,
-    ) -> Result<(Vec<String>, Vec<String>, Vec<RerunFailure>)> {
+    ) -> Result<(Vec<String>, Vec<CheckFailure>, Vec<RerunFailure>)> {
         let paths = candidate
             .files
             .iter()
@@ -769,8 +822,14 @@ impl PropertiesArgs {
             .iter()
             .filter(|(_, seed_failures)| seed_failures.len() == self.seed.len())
             .map(|((contract, test), seed_failures)| {
+                let path = contract.rsplit_once(':').map_or(contract.as_str(), |(path, _)| path);
                 let test = RerunFailure { contract: contract.clone(), test: test.clone() };
-                format!("{} ({})", test_display_name(&test), seed_failures.join("; "))
+                CheckFailure {
+                    test: test_display_name(&test),
+                    path: PathBuf::from(path),
+                    reason: seed_failures.join("; "),
+                    source: None,
+                }
             })
             .collect();
         let tests =
@@ -787,8 +846,32 @@ impl PropertiesArgs {
     ) -> Result<()> {
         let candidate = read_candidate(path, generated_tests)?;
         let workspace = candidate_workspace(config, &candidate, &[])?;
-        let (reasons, possible_bugs, _) =
+        let (reasons, mut failures, _) =
             self.check_candidate_tests(forge, workspace.path(), config, &candidate)?;
+        let possible_bugs = failures.iter().map(ToString::to_string).collect::<Vec<_>>();
+        // Generators often remove a failing test before they return, so the campaign report
+        // needs this record to show the possible bug.
+        if !failures.is_empty() {
+            let mut lines = Vec::new();
+            for failure in &mut failures {
+                failure.source = candidate
+                    .files
+                    .iter()
+                    .find(|file| file.path == failure.path)
+                    .map(|file| file.content.clone());
+                serde_json::to_writer(&mut lines, failure)?;
+                lines.push(b'\n');
+            }
+            let journal = config.cache_path.join("properties").join(CHECK_JOURNAL);
+            fs::create_dir_all(journal.parent().expect("journal path has a parent"))?;
+            // One write per check keeps the lines of concurrent checks apart.
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&journal)
+                .and_then(|mut file| file.write_all(&lines))
+                .wrap_err("failed to write the check journal")?;
+        }
         let passed = reasons.is_empty();
         sh_println!(
             "{}",
@@ -1361,6 +1444,28 @@ fn accumulate_candidate(
     candidate.files.extend(proposal.files.iter().cloned());
     validate_candidate(&candidate, generated_tests)?;
     Ok(candidate)
+}
+
+/// Reads the check journal. Returns the last failure of each test, in the order of first record.
+fn read_check_journal(path: &Path) -> Result<Vec<CheckFailure>> {
+    let journal = match fs::read_to_string(path) {
+        Ok(journal) => journal,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => return Err(error).wrap_err("failed to read the check journal"),
+    };
+    let mut failures = Vec::<CheckFailure>::new();
+    for line in journal.lines().filter(|line| !line.trim().is_empty()) {
+        let failure =
+            serde_json::from_str::<CheckFailure>(line).wrap_err("invalid check journal entry")?;
+        match failures
+            .iter_mut()
+            .find(|known| known.test == failure.test && known.path == failure.path)
+        {
+            Some(known) => *known = failure,
+            None => failures.push(failure),
+        }
+    }
+    Ok(failures)
 }
 
 fn read_candidate(path: &Path, generated_tests: &Path) -> Result<Candidate> {
