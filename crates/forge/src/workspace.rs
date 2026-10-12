@@ -139,6 +139,15 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 }
 
 fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    // Keep the project spelling when the workspace has the same path, for example through a
+    // linked library. A canonical path can leave the workspace through that link, and then one
+    // source file has two paths: one from a remapping and one from a direct import.
+    let lexical = normalize_path(&root.join(path));
+    if let Ok(rel) = lexical.strip_prefix(normalize_path(root))
+        && temp_path.join(rel).exists()
+    {
+        return temp_path.join(rel);
+    }
     let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
     if rel.is_absolute() { resolved } else { temp_path.join(rel) }

@@ -335,6 +335,107 @@ added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(
 
 #[cfg(unix)]
 #[forgetest_init]
+fn properties_keeps_library_paths_in_nested_workspaces(prj: _, cmd: _) {
+    const GENERATOR: &str = r#"#!/bin/sh
+set -eu
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "exercise the lower comparison boundary",
+  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}]
+}
+JSON
+"#;
+
+    // The source imports the library through a remapping and the test imports it by its project
+    // path. Both must name the same file in candidate mutation runs, or the types differ.
+    fs::create_dir_all(prj.root().join("lib/example")).unwrap();
+    fs::write(
+        prj.root().join("lib/example/Kind.sol"),
+        "pragma solidity ^0.8.20;\nenum Kind { Small, Large }\n",
+    )
+    .unwrap();
+    prj.add_source(
+        "Arithmetic.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Kind} from "example/Kind.sol";
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+
+    function kind(uint256 value) external pure returns (Kind) {
+        return value < 10 ? Kind.Small : Kind.Large;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Kind} from "lib/example/Kind.sol";
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+        require(arithmetic.kind(1) == Kind.Small);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.remappings = vec![
+            "example/=lib/example/"
+                .parse::<foundry_compilers::artifacts::remappings::Remapping>()
+                .unwrap()
+                .into(),
+        ];
+    });
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "properties",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Arithmetic.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^ArithmeticTest$",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
+  test/generated/ArithmeticLower.t.sol
+
+"#]]);
+}
+
+#[cfg(unix)]
+#[forgetest_init]
 fn properties_mutation_selection_includes_generated_tests(prj: _, cmd: _) {
     const GENERATOR: &str = r#"#!/bin/sh
 set -eu
