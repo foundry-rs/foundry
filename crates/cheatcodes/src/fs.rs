@@ -1034,6 +1034,10 @@ impl Cheatcode for getBroadcastCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
+        // `state.config.broadcast` comes from the project's own `foundry.toml`, not from
+        // caller-controlled Solidity input, so `fs_permissions` is intentionally not checked
+        // here. The values returned (tx hash, block number, status, address) are public
+        // on-chain data.
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
@@ -1049,6 +1053,10 @@ impl Cheatcode for getBroadcasts_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
+        // `state.config.broadcast` comes from the project's own `foundry.toml`, not from
+        // caller-controlled Solidity input, so `fs_permissions` is intentionally not checked
+        // here. The values returned (tx hash, block number, status, address) are public
+        // on-chain data.
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
@@ -1070,6 +1078,10 @@ impl Cheatcode for getBroadcasts_1Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
+        // `state.config.broadcast` comes from the project's own `foundry.toml`, not from
+        // caller-controlled Solidity input, so `fs_permissions` is intentionally not checked
+        // here. The values returned (tx hash, block number, status, address) are public
+        // on-chain data.
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
         let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
@@ -1091,6 +1103,10 @@ impl Cheatcode for getDeployment_0Call {
         let Self { contractName } = self;
         let chain_id = ccx.chain_id();
 
+        // `ccx.state.config.broadcast` comes from the project's own `foundry.toml`, not from
+        // caller-controlled Solidity input, so `fs_permissions` is intentionally not checked
+        // here. The values returned (tx hash, block number, status, address) are public
+        // on-chain data.
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             chain_id,
@@ -1106,6 +1122,10 @@ impl Cheatcode for getDeployment_1Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
+        // `state.config.broadcast` comes from the project's own `foundry.toml`, not from
+        // caller-controlled Solidity input, so `fs_permissions` is intentionally not checked
+        // here. The values returned (tx hash, block number, status, address) are public
+        // on-chain data.
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
@@ -1121,6 +1141,10 @@ impl Cheatcode for getDeploymentsCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
+        // `state.config.broadcast` comes from the project's own `foundry.toml`, not from
+        // caller-controlled Solidity input, so `fs_permissions` is intentionally not checked
+        // here. The values returned (tx hash, block number, status, address) are public
+        // on-chain data.
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
