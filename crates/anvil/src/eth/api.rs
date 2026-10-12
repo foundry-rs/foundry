@@ -2119,7 +2119,7 @@ impl EthApi<FoundryNetwork> {
         } else {
             Some(self.lifecycle_lock.read().await)
         };
-        let response = match request.clone() {
+        let response = match request {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
@@ -2604,7 +2604,6 @@ impl EthApi<FoundryNetwork> {
 
         if let ResponseResult::Error(err) = &response {
             node_info!("\nRPC request failed:");
-            node_info!("    Request: {:?}", request);
             node_info!("    Error: {}\n", err);
         }
 

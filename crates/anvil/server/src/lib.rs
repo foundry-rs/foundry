@@ -54,7 +54,8 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// "<name>", "params": "<params>" }`
     fn on_call(&self, call: RpcMethodCall) -> impl Future<Output = RpcResponse> + Send {
         async move {
-            trace!(target: "rpc",  id = ?call.id , method = ?call.method, params = ?call.params, "received method call");
+            // Request payloads can contain signed transactions and RPC credentials.
+            trace!(target: "rpc", id = ?call.id, method = ?call.method, "received method call");
             let RpcMethodCall { method, params, id, .. } = call;
 
             let params: serde_json::Value = params.into();
@@ -78,7 +79,8 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
                         error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
                         RpcResponse::new(id, RpcError::method_not_found())
                     } else {
-                        error!(target: "rpc", ?method, ?err, "failed to deserialize method");
+                        // Deserialization errors can echo sensitive parameter values.
+                        error!(target: "rpc", ?method, "failed to deserialize method");
                         RpcResponse::new(id, RpcError::invalid_params(err))
                     }
                 }
