@@ -30,7 +30,7 @@ pub struct IgnoredTraces {
 }
 
 impl Cheatcode for labelCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { account, newLabel } = self;
         state.labels.insert(*account, newLabel.clone());
         Ok(Default::default())
@@ -38,7 +38,7 @@ impl Cheatcode for labelCall {
 }
 
 impl Cheatcode for getLabelCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { account } = self;
         Ok(match state.labels.get(account) {
             Some(label) => label.abi_encode(),
@@ -48,7 +48,7 @@ impl Cheatcode for getLabelCall {
 }
 
 impl Cheatcode for computeCreateAddressCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { nonce, deployer } = self;
         ensure!(*nonce <= U256::from(u64::MAX), "nonce must be less than 2^64");
         Ok(deployer.create(nonce.to()).abi_encode())
@@ -56,28 +56,28 @@ impl Cheatcode for computeCreateAddressCall {
 }
 
 impl Cheatcode for computeCreate2Address_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { salt, initCodeHash, deployer } = self;
         Ok(deployer.create2(salt, initCodeHash).abi_encode())
     }
 }
 
 impl Cheatcode for computeCreate2Address_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { salt, initCodeHash } = self;
         Ok(DEFAULT_CREATE2_DEPLOYER.create2(salt, initCodeHash).abi_encode())
     }
 }
 
 impl Cheatcode for ensNamehashCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         Ok(namehash(name).abi_encode())
     }
 }
 
 impl Cheatcode for bound_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { current, min, max } = *self;
         let Some(mutated) = U256::bound(current, min, max, state.test_runner()) else {
             bail!("cannot bound {current} in [{min}, {max}] range")
@@ -87,7 +87,7 @@ impl Cheatcode for bound_0Call {
 }
 
 impl Cheatcode for bound_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { current, min, max } = *self;
         let Some(mutated) = I256::bound(current, min, max, state.test_runner()) else {
             bail!("cannot bound {current} in [{min}, {max}] range")
@@ -97,27 +97,27 @@ impl Cheatcode for bound_1Call {
 }
 
 impl Cheatcode for randomUint_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         random_uint(state, None, None)
     }
 }
 
 impl Cheatcode for randomUint_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { min, max } = *self;
         random_uint(state, None, Some((min, max)))
     }
 }
 
 impl Cheatcode for randomUint_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bits } = *self;
         random_uint(state, Some(bits), None)
     }
 }
 
 impl Cheatcode for randomAddressCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         Ok(DynSolType::Address
             .value_strategy()
             .new_tree(state.test_runner())
@@ -128,27 +128,27 @@ impl Cheatcode for randomAddressCall {
 }
 
 impl Cheatcode for randomInt_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         random_int(state, None)
     }
 }
 
 impl Cheatcode for randomInt_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bits } = *self;
         random_int(state, Some(bits))
     }
 }
 
 impl Cheatcode for randomBoolCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let rand_bool: bool = state.rng().random();
         Ok(rand_bool.abi_encode())
     }
 }
 
 impl Cheatcode for randomBytesCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { len } = *self;
         let len = usize::try_from(len)
             .map_err(|_| fmt_err!("bytes length cannot exceed {}", usize::MAX))?;
@@ -159,14 +159,14 @@ impl Cheatcode for randomBytesCall {
 }
 
 impl Cheatcode for randomBytes4Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let rand_u32 = state.rng().next_u32();
         Ok(B32::from(rand_u32).abi_encode())
     }
 }
 
 impl Cheatcode for randomBytes8Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let rand_u64 = state.rng().next_u64();
         Ok(B64::from(rand_u64).abi_encode())
     }
@@ -219,7 +219,7 @@ impl Cheatcode for resumeTracingCall {
 }
 
 impl Cheatcode for interceptInitcodeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         if state.intercept_next_create_call {
             bail!("vm.interceptInitcode() has already been called")
@@ -272,7 +272,7 @@ impl Cheatcode for copyStorageCall {
 }
 
 impl Cheatcode for sortCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { array } = self;
 
         let mut sorted_values = array.clone();
@@ -283,7 +283,7 @@ impl Cheatcode for sortCall {
 }
 
 impl Cheatcode for shuffleCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { array } = self;
 
         let mut shuffled_values = array.clone();
@@ -353,7 +353,7 @@ fn random_int<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>, bits: Option<
 }
 
 impl Cheatcode for eip712HashType_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { typeNameOrDefinition } = self;
 
         let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
@@ -363,7 +363,7 @@ impl Cheatcode for eip712HashType_0Call {
 }
 
 impl Cheatcode for eip712HashType_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bindingsPath, typeName } = self;
 
         let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
@@ -374,7 +374,7 @@ impl Cheatcode for eip712HashType_1Call {
 }
 
 impl Cheatcode for eip712HashStruct_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { typeNameOrDefinition, abiEncodedData } = self;
 
         let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
@@ -385,7 +385,7 @@ impl Cheatcode for eip712HashStruct_0Call {
 }
 
 impl Cheatcode for eip712HashStruct_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bindingsPath, typeName, abiEncodedData } = self;
 
         let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
@@ -396,7 +396,7 @@ impl Cheatcode for eip712HashStruct_1Call {
 }
 
 impl Cheatcode for eip712HashTypedDataCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { jsonData } = self;
         let typed_data: TypedData = serde_json::from_str(jsonData)?;
         let digest = typed_data.eip712_signing_hash()?;
@@ -498,7 +498,7 @@ fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -
 }
 
 impl Cheatcode for toRlpCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { data } = self;
 
         let mut buf = Vec::new();
@@ -509,7 +509,7 @@ impl Cheatcode for toRlpCall {
 }
 
 impl Cheatcode for fromRlpCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { rlp } = self;
 
         let decoded: Vec<Bytes> = Vec::<Bytes>::decode(&mut rlp.as_ref())

@@ -82,10 +82,9 @@ mod utils;
 pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode to the given state.
     ///
-    /// Implement this function if you don't need access to the EVM data.
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let _ = state;
-        unimplemented!("{}", Self::CHEATCODE.func.id)
+    /// Implement this function if you need cheatcode state but no access to the EVM context.
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        self.apply_context_free()
     }
 
     /// Applies this cheatcode to the given context.
@@ -93,7 +92,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        self.apply(ccx.state)
+        self.apply_context(ccx.state)
     }
 
     /// Applies this cheatcode to the given context and executor.
@@ -107,6 +106,13 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ) -> Result {
         let _ = executor;
         self.apply_stateful(ccx)
+    }
+
+    /// Applies this cheatcode without accessing cheatcode state or the EVM context.
+    ///
+    /// This may still read or modify external host state, such as environment variables.
+    fn apply_context_free(&self) -> Result {
+        unimplemented!("{}", Self::CHEATCODE.func.id)
     }
 }
 
