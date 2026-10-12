@@ -10,7 +10,7 @@ use evm2::{
     interpreter::{Host, InstrStop, Interpreter, Message, op},
 };
 use foundry_evm_core::{constants::CHEATCODE_ADDRESS, ethereum::FoundryEvmTypes};
-use std::mem;
+use std::{mem, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct StorageHooks {
@@ -106,7 +106,7 @@ impl Cheatcodes {
         let mocked_calls = mem::take(&mut self.mocked_calls);
         let mocked_functions = mem::take(&mut self.mocked_functions);
         self.storage_hooks.active = true;
-        child.set_inspector(self.take_for_child());
+        child.set_inspector(mem::replace(self, Self::new(Arc::clone(&self.config))));
         let mut message = Message::<FoundryEvmTypes> {
             depth,
             gas_limit,
