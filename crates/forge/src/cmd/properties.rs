@@ -146,9 +146,40 @@ struct Candidate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     generator: Option<GeneratorMetadata>,
     files: Vec<CandidateFile>,
+    /// The audit's hypotheses, each proved or refuted by a test in `files`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hypotheses: Vec<Hypothesis>,
     /// Why each test that the generator expects to fail is a possible bug, by `Contract::test`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     evidence: BTreeMap<String, Evidence>,
+}
+
+/// One claim of the audit: what the documentation demands and how a test proves it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct Hypothesis {
+    /// Short identifier that names the test which proves the hypothesis.
+    id: String,
+    /// The audit lens that produced the hypothesis: `spec`, `state`, or `code`.
+    lens: String,
+    /// The function under test.
+    function: String,
+    /// The documented behavior and where the documentation states it.
+    claim: String,
+    /// The concrete input or setup sequence, the call, and the result the documentation demands.
+    recipe: String,
+    result: HypothesisResult,
+}
+
+/// What the test of a hypothesis showed.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum HypothesisResult {
+    /// The test fails: the code violates the claim.
+    Finding,
+    /// The test passes: the code meets the claim.
+    Refuted,
+    /// No test could reach the state the recipe needs.
+    NotTestable,
 }
 
 /// The documentation behind a test that the generator expects to fail.
@@ -289,6 +320,9 @@ struct Round {
     generator: Option<GeneratorMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rationale: Option<String>,
+    /// How many hypotheses the audit listed, by result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audit: Option<AuditSummary>,
     /// Proposed files that Forge kept.
     kept: Vec<PathBuf>,
     reasons: Vec<String>,
@@ -300,6 +334,40 @@ struct Round {
     killed_survivors: Option<usize>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     warnings: Vec<String>,
+}
+
+/// The hypothesis counts of one proposal, by result.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+struct AuditSummary {
+    hypotheses: usize,
+    findings: usize,
+    refuted: usize,
+    not_testable: usize,
+}
+
+impl AuditSummary {
+    fn new(hypotheses: &[Hypothesis]) -> Option<Self> {
+        if hypotheses.is_empty() {
+            return None;
+        }
+        let count = |result| hypotheses.iter().filter(|h| h.result == result).count();
+        Some(Self {
+            hypotheses: hypotheses.len(),
+            findings: count(HypothesisResult::Finding),
+            refuted: count(HypothesisResult::Refuted),
+            not_testable: count(HypothesisResult::NotTestable),
+        })
+    }
+}
+
+impl std::fmt::Display for AuditSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "audited {} hypotheses: {} findings, {} refuted, {} not testable",
+            self.hypotheses, self.findings, self.refuted, self.not_testable
+        )
+    }
 }
 
 /// A candidate test that fails on every seed.
@@ -525,6 +593,14 @@ impl Campaign<'_> {
                                     "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testProperty() external {{}}\n}}\n"
                                 ),
                             }],
+                            hypotheses: vec![Hypothesis {
+                                id: "testProperty".to_string(),
+                                lens: "spec".to_string(),
+                                function: "Contract.function".to_string(),
+                                claim: "The documented behavior and its source (path:line, or a standard and its clause).".to_string(),
+                                recipe: "The concrete setup, the call, and the result the documentation demands.".to_string(),
+                                result: HypothesisResult::Finding,
+                            }],
                             evidence: BTreeMap::from([(
                                 format!("{example_contract}::testProperty"),
                                 Evidence {
@@ -536,7 +612,7 @@ impl Campaign<'_> {
                                 },
                             )]),
                         },
-                        note: "Return one JSON object with exactly this shape. Keep schema unchanged and replace the example's rationale, files, generator metadata, and evidence. Forge runs every test in the files on every seed. It keeps a file only if all of its tests pass on every seed, and it reports the tests that fail on every seed as possible bugs. Each file path must be new relative to current_candidate. The generator object is optional. Add one evidence entry, keyed by Contract::test, for every test that fails against the current implementation.",
+                        note: "Return one JSON object with exactly this shape. Keep schema unchanged and replace the example's rationale, files, generator metadata, hypotheses, and evidence. Forge runs every test in the files on every seed. It keeps a file only if all of its tests pass on every seed, and it reports the tests that fail on every seed as possible bugs. Each file path must be new relative to current_candidate. The generator object is optional. List every hypothesis of the audit in hypotheses, with its result. Add one evidence entry, keyed by Contract::test, for every test that fails against the current implementation.",
                     },
                 };
                 fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
@@ -562,6 +638,7 @@ impl Campaign<'_> {
                     Ok(proposal) => {
                         record.generator = proposal.generator.clone();
                         record.rationale = Some(proposal.rationale.clone());
+                        record.audit = AuditSummary::new(&proposal.hypotheses);
                         if let Err(error) = self.evaluate(&proposal, &mut record) {
                             record.reasons.push(error.to_string());
                         }
@@ -748,6 +825,15 @@ impl Campaign<'_> {
         possible_bugs.sort_by(|(a, _), (b, _)| a.report_key().cmp(&b.report_key()));
         for (failure, note) in &possible_bugs {
             sh_println!("{failure}\n  {note}")?;
+        }
+        for round in &self.rounds {
+            if let Some(audit) = &round.audit {
+                let phase = match round.phase {
+                    Phase::Audit => "audit",
+                    Phase::Mutation => "mutation",
+                };
+                sh_println!("{phase} round {}: {audit}", round.round)?;
+            }
         }
 
         let Some(current) = &self.current else {
@@ -1393,6 +1479,7 @@ fn merge_candidate(
         candidate.generator = None;
     }
     candidate.files.extend(proposal.files.iter().cloned());
+    candidate.hypotheses.extend(proposal.hypotheses.iter().cloned());
     candidate.evidence.extend(proposal.evidence.clone());
     validate_candidate(&candidate, generated_tests)
         .wrap_err("the proposal does not fit next to the kept files")?;

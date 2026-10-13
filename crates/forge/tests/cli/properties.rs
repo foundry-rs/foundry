@@ -86,7 +86,7 @@ fn properties_reports_possible_bugs_by_evidence(prj: _, cmd: _) {
         &prj,
         r#"
 grep -q '^  "phase": "audit"' "$prompt"
-grep -q 'Audit first, test second' "$prompt"
+grep -q 'audit first, test second' "$prompt"
 grep -q '"path": "src/Fee.sol"' "$prompt"
 grep -q 'context-marker: rounding notes' "$prompt"
 if grep -q '"survivors"' "$prompt"; then exit 1; fi
