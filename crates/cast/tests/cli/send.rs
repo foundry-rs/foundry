@@ -906,15 +906,11 @@ async fn send_waits_for_confirmations(prj: _) {
             .unwrap();
         let receipts = provider.get_block_receipts(1.into()).await.unwrap().unwrap();
         assert_eq!(receipts.len(), 1);
-        let receipt = provider
-            .get_transaction_receipt(receipts[0].transaction_hash())
-            .await
-            .unwrap()
-            .unwrap();
+        let receipt = &receipts[0];
         let output = OutputAssert::new(output).success().stderr_eq("");
         assert_data_eq!(
             output.get_output().stdout.clone().into_data().is(DataFormat::Json).unordered(),
-            serde_json::to_string(&receipt).unwrap().into_data().is(DataFormat::Json).unordered(),
+            serde_json::to_string(receipt).unwrap().into_data().is(DataFormat::Json).unordered(),
         );
         assert_eq!(provider.get_block_number().await.unwrap(), 3);
     }

@@ -368,33 +368,20 @@ where
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-            Some(receipt) if cast_async || confs <= 1 => {
-                // Async mode or no confirmations required, return immediately.
+            Some(receipt)
+                if cast_async || confs <= 1 || {
+                    // An old receipt needs no new block notification if it is already deep enough.
+                    let latest = self.provider.get_block_number().await?;
+                    receipt
+                        .block_number()
+                        .and_then(|block| latest.checked_sub(block))
+                        .is_some_and(|depth| depth >= confs - 1)
+                } =>
+            {
                 receipt
             }
-            Some(receipt) => {
-                // Receipt exists; check if it already has enough confirmations.
-                let latest = self.provider.get_block_number().await?;
-                let current_depth = receipt
-                    .block_number()
-                    .and_then(|block| latest.checked_sub(block))
-                    .map(|d| d + 1);
-
-                if current_depth.is_some_and(|d| d >= confs) {
-                    // Already has the required confirmation depth, return immediately.
-                    receipt
-                } else {
-                    // Transaction is mined but needs more confirmations.
-                    // Do not apply timeout here; only inclusion should be bounded.
-                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                        .with_required_confirmations(confs)
-                        .get_receipt()
-                        .await?
-                }
-            }
             None if cast_async => eyre::bail!("tx not found: {tx_hash:?}"),
-            None => {
-                // Transaction not yet mined; apply timeout to the inclusion wait.
+            _ => {
                 PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
                     .with_required_confirmations(confs)
                     .with_timeout(timeout.map(Duration::from_secs))
@@ -648,9 +635,7 @@ where
 
     /// Populates the blob sidecar for the transaction if any blob data was provided.
     pub fn with_blob_data(mut self, blob_data: Option<Vec<u8>>) -> Result<Self> {
-        let Some(blob_data) = blob_data else {
-            return Ok(self);
-        };
+        let Some(blob_data) = blob_data else { return Ok(self) };
 
         let mut coder = SidecarBuilder::<SimpleCoder>::default();
         coder.ingest(&blob_data);
@@ -927,9 +912,7 @@ where
 
 /// Tries to decode a custom error name and inputs from revert data.
 pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
-    let Some(selector) = data.get(..4) else {
-        return Ok(None);
-    };
+    let Some(selector) = data.get(..4) else { return Ok(None) };
     let Some(known_error) =
         SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
     else {
