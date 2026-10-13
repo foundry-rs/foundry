@@ -302,7 +302,7 @@ contract EnumUser {
 }
 
 #[forgetest]
-fn bind_stale_untracked_enum_artifacts_fall_back_to_udvt(prj: _, cmd: _) {
+fn bind_ignores_stale_untracked_enum_artifacts(prj: _, cmd: _) {
     prj.add_source(
         "A.sol",
         r#"
@@ -330,8 +330,10 @@ contract EnumUser {
         .assert_success();
 
     let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
-    assert!(binding.contains("pub struct Status"), "{binding}");
-    assert!(!binding.contains("pub enum Status"), "{binding}");
+    // After FOUN1-39 fix, bind only sees the current artifact from the cache,
+    // not the orphaned A.sol/EnumUser.json, so it generates a proper enum.
+    assert!(binding.contains("pub enum Status"), "{binding}");
+    assert!(!binding.contains("pub struct Status"), "{binding}");
 }
 
 #[forgetest]

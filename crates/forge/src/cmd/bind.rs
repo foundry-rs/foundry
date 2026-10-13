@@ -13,7 +13,7 @@ use foundry_compilers::{
     cache::CompilerCache,
     multi::{MultiCompilerParser, MultiCompilerSettings},
 };
-use foundry_config::impl_figment_convert;
+use foundry_config::{Config, impl_figment_convert};
 use regex::Regex;
 use solar::ast::{Item, ItemKind};
 use std::{
@@ -139,7 +139,7 @@ impl BindArgs {
             cached_enum_definitions(
                 &paths,
                 &artifacts,
-                self.get_json_files(&artifacts)?.map(|(_, path)| path),
+                self.get_json_files(&config, &artifacts)?.map(|(_, path)| path),
             )
         } else {
             let mut project = config.project()?;
@@ -156,7 +156,7 @@ impl BindArgs {
         if bindings_root.exists() {
             if !self.overwrite {
                 sh_status!("Bindings found. Checking for consistency.")?;
-                let mut bindings = self.get_solmacrogen(&artifacts)?;
+                let mut bindings = self.get_solmacrogen(&config, &artifacts)?;
                 bindings.generate_bindings(!self.skip_extra_derives, &sol_config)?;
                 return self.check_existing_bindings(&bindings, &bindings_root);
             }
@@ -165,7 +165,7 @@ impl BindArgs {
             fs::remove_dir_all(&bindings_root)?;
         }
 
-        self.generate_bindings(&artifacts, &bindings_root, &sol_config)?;
+        self.generate_bindings(&config, &artifacts, &bindings_root, &sol_config)?;
 
         sh_status!("Bindings have been generated to {}", bindings_root.display())?;
         Ok(())
@@ -195,7 +195,46 @@ impl BindArgs {
     }
 
     /// Returns an iterator over the JSON files and the contract name in the `artifacts` directory.
-    fn get_json_files(&self, artifacts: &Path) -> Result<impl Iterator<Item = (String, PathBuf)>> {
+    fn get_json_files(
+        &self,
+        config: &Config,
+        artifacts: &Path,
+    ) -> Result<impl Iterator<Item = (String, PathBuf)>> {
+        let filter = self.get_filter()?;
+
+        // Try to use the compiler cache to get only current artifacts.
+        let paths: ProjectPathsConfig<MultiCompilerSettings> = config.project_paths();
+        if let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&paths) {
+            let cached_artifacts = cache
+                .entries()
+                .flat_map(|entry| entry.artifacts.values())
+                .flat_map(|versions| versions.values())
+                .flat_map(|profiles| profiles.values())
+                .filter_map(move |artifact| {
+                    let path = artifacts.join(&artifact.path);
+                    if !path.exists() {
+                        return None;
+                    }
+
+                    let stem = path.file_stem()?.to_str()?;
+                    if stem.ends_with(".metadata") {
+                        return None;
+                    }
+
+                    let name = stem.split('.').next().unwrap();
+                    let name = name.replace(char::is_whitespace, "").replace(['-', '$'], "_");
+
+                    Some((name, path))
+                })
+                .filter(move |(name, _path)| filter.is_match(name))
+                .collect::<Vec<_>>();
+
+            if !cached_artifacts.is_empty() {
+                return Ok(cached_artifacts.into_iter());
+            }
+        }
+
+        // Fall back to filesystem scan if cache is unavailable or empty.
         let filter = self.get_filter()?;
         Ok(json_files(artifacts)
             .filter_map(|path| {
@@ -222,13 +261,15 @@ impl BindArgs {
 
                 Some((name, path))
             })
-            .filter(move |(name, _path)| filter.is_match(name)))
+            .filter(move |(name, _path)| filter.is_match(name))
+            .collect::<Vec<_>>()
+            .into_iter())
     }
 
-    fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
+    fn get_solmacrogen(&self, config: &Config, artifacts: &Path) -> Result<MultiSolMacroGen> {
         let mut dup = HashSet::<String>::default();
         let instances = self
-            .get_json_files(artifacts)?
+            .get_json_files(config, artifacts)?
             .filter_map(|(name, path)| {
                 trace!(?path, "parsing SolMacroGen from file");
                 dup.insert(name.clone()).then(|| SolMacroGen::new(path, name))
@@ -264,11 +305,12 @@ impl BindArgs {
     /// Generate the bindings
     fn generate_bindings(
         &self,
+        config: &Config,
         artifacts: &Path,
         bindings_root: &Path,
         sol_config: &ToSolConfig,
     ) -> Result<()> {
-        let mut bindings = self.get_solmacrogen(artifacts)?;
+        let mut bindings = self.get_solmacrogen(config, artifacts)?;
         sh_status!("Generating bindings for {} contracts", bindings.instances.len())?;
 
         if self.module {
