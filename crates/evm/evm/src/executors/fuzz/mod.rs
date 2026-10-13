@@ -330,7 +330,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         {
             let run = failure.fuzz.run.unwrap_or(1);
             let worker = failure.fuzz.worker.unwrap_or(0) as usize;
-            cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
+            cheats.core.set_seed(Self::fuzz_run_seed(seed, worker, run));
         }
 
         let mut tx = BasicTxDetails {
@@ -800,7 +800,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 {
                     let run = failure.fuzz.run.unwrap_or(1);
                     let worker = failure.fuzz.worker.unwrap_or(worker_id as u32) as usize;
-                    cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
+                    cheats.core.set_seed(Self::fuzz_run_seed(seed, worker, run));
                 }
 
                 (
@@ -842,7 +842,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
                     && let Some(seed) = self.config.seed
                 {
-                    cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
+                    cheats.core.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
                 let input = match corpus.new_sequence(&mut runner) {
