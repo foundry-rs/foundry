@@ -5,7 +5,7 @@ use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
-use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
+use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
@@ -367,54 +367,27 @@ where
         cast_async: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-        let receipt = async {
-            let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-                Some(receipt) if cast_async || confs <= 1 => receipt,
-                None if cast_async => eyre::bail!("tx not found: {tx_hash:?}"),
-                None if confs <= 1 => {
-                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                        .with_required_confirmations(confs)
-                        .with_timeout(timeout.map(Duration::from_secs))
-                        .get_receipt()
-                        .await?
-                }
-                _ => {
-                    let mut waited = false;
-                    loop {
-                        // Check before watching so an old receipt needs no new block notification.
-                        // Fetch the receipt after the head to account for re-inclusion after a
-                        // reorg.
-                        let latest = self.provider.get_block_number().await?;
-                        if let Some(receipt) =
-                            self.provider.get_transaction_receipt(tx_hash).await?
-                            && let Some(block) = receipt.block_number()
-                            && latest.checked_sub(block).is_some_and(|depth| depth >= confs - 1)
-                        {
-                            break receipt;
-                        }
-
-                        // A stale heartbeat can report confirmation again after a reorg.
-                        if waited {
-                            tokio::time::sleep(self.provider.client().poll_interval()).await;
-                        }
-                        PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                            .with_required_confirmations(confs)
-                            .with_timeout(timeout.map(Duration::from_secs))
-                            .watch()
-                            .await?;
-                        waited = true;
-                    }
-                }
-            };
-            Ok(receipt)
-        };
-        // Alloy's timeout only covers unconfirmed transactions, not additional confirmations.
-        let receipt = if let Some(timeout) = timeout.filter(|_| !cast_async) {
-            tokio::time::timeout(Duration::from_secs(timeout), receipt)
-                .await
-                .map_err(|_| PendingTransactionError::TxWatcher(WatchTxError::Timeout))??
-        } else {
-            receipt.await?
+        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
+            Some(receipt)
+                if cast_async || confs <= 1 || {
+                    // An old receipt needs no new block notification if it is already deep enough.
+                    let latest = self.provider.get_block_number().await?;
+                    receipt
+                        .block_number()
+                        .and_then(|block| latest.checked_sub(block))
+                        .is_some_and(|depth| depth >= confs - 1)
+                } =>
+            {
+                receipt
+            }
+            None if cast_async => eyre::bail!("tx not found: {tx_hash:?}"),
+            _ => {
+                PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+                    .with_required_confirmations(confs)
+                    .with_timeout(timeout.map(Duration::from_secs))
+                    .get_receipt()
+                    .await?
+            }
         };
         Ok(self.finish(receipt, field).await?.1)
     }
@@ -961,7 +934,6 @@ mod tests {
     use alloy_network::{Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
-    use alloy_rpc_types::{Block, BlockTransactions, Transaction};
     use alloy_sol_types::SolValue;
     use alloy_transport::{TransportFut, mock::MockTransport};
     use clap::Parser;
@@ -971,10 +943,7 @@ mod tests {
         task::{Context, Poll},
     };
     use tempo_alloy::TempoNetwork;
-    use tokio::{
-        sync::{Barrier, Notify},
-        time::timeout,
-    };
+    use tokio::{sync::Barrier, time::timeout};
     use tower::Service;
 
     #[derive(Clone)]
@@ -1167,8 +1136,10 @@ mod tests {
         assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2)));
     }
 
-    fn successful_receipt(block: u64) -> serde_json::Value {
-        serde_json::json!({
+    #[tokio::test]
+    async fn receipt_with_enough_confirmations_needs_no_new_block() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({
             "type": "0x0",
             "status": "0x1",
             "cumulativeGasUsed": "0x5208",
@@ -1176,130 +1147,15 @@ mod tests {
             "logsBloom": format!("0x{}", "00".repeat(256)),
             "transactionHash": B256::ZERO,
             "transactionIndex": "0x0",
-            "blockHash": format!("0x{block:064x}"),
-            "blockNumber": U64::from(block),
+            "blockHash": B256::ZERO,
+            "blockNumber": "0x1",
             "gasUsed": "0x5208",
             "effectiveGasPrice": "0x1",
             "from": Address::ZERO,
             "to": Address::ZERO,
             "contractAddress": null,
-        })
-    }
-
-    struct ReceiptChain {
-        head: u64,
-        receipt_block: Option<u64>,
-        reorg: Option<Option<u64>>,
-    }
-
-    #[derive(Clone)]
-    struct ReceiptTransport {
-        chain: Arc<Mutex<ReceiptChain>>,
-        watching: Arc<Notify>,
-        refetched: Arc<Notify>,
-    }
-
-    impl Service<RequestPacket> for ReceiptTransport {
-        type Response = ResponsePacket;
-        type Error = TransportError;
-        type Future = TransportFut<'static>;
-
-        fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-
-        fn call(&mut self, req: RequestPacket) -> Self::Future {
-            let RequestPacket::Single(request) = &req else { panic!("unexpected batch") };
-            let mut chain = self.chain.lock().unwrap();
-            let response = match request.method() {
-                "eth_blockNumber" => serde_json::json!(U64::from(chain.head)),
-                "eth_getTransactionReceipt" => {
-                    if chain.reorg.is_none() {
-                        self.refetched.notify_one();
-                    }
-                    chain.receipt_block.map(successful_receipt).into()
-                }
-                "eth_getBlockByNumber" => {
-                    let (number, _) =
-                        serde_json::from_str::<(U64, bool)>(request.params().unwrap().get())
-                            .unwrap();
-                    let number = number.to::<u64>();
-                    let mut block = Block::<Transaction>::default();
-                    block.header.number = number;
-                    block.transactions =
-                        BlockTransactions::Hashes(if chain.receipt_block == Some(number) {
-                            vec![B256::ZERO]
-                        } else {
-                            vec![]
-                        });
-                    if number == 1 {
-                        self.watching.notify_one();
-                    }
-                    // Change inclusion while delivering the old receipt's final confirmation.
-                    if number == 3
-                        && let Some(receipt_block) = chain.reorg.take()
-                    {
-                        chain.receipt_block = receipt_block;
-                    }
-                    serde_json::to_value(block).unwrap()
-                }
-                method => panic!("unexpected RPC method: {method}"),
-            };
-            let asserter = Asserter::new();
-            asserter.push_success(&response);
-            MockTransport::new(asserter).call(req)
-        }
-    }
-
-    async fn receipt_after_reorg(receipt_block: Option<u64>) {
-        let transport = ReceiptTransport {
-            chain: Arc::new(Mutex::new(ReceiptChain {
-                head: 1,
-                receipt_block: Some(1),
-                reorg: Some(receipt_block),
-            })),
-            watching: Arc::new(Notify::new()),
-            refetched: Arc::new(Notify::new()),
-        };
-        let provider = ProviderBuilder::new_with_network::<Ethereum>()
-            .connect_client(RpcClient::new(transport.clone(), true));
-        provider.client().set_poll_interval(Duration::from_millis(1));
-        let mut result = tokio::spawn(async move {
-            CastTxSender::new(provider)
-                .receipt(B256::ZERO.to_string(), Some("blockNumber".into()), 3, Some(5), false)
-                .await
-        });
-        timeout(Duration::from_secs(2), transport.watching.notified()).await.unwrap();
-        transport.chain.lock().unwrap().head = 3;
-        timeout(Duration::from_secs(2), transport.refetched.notified()).await.unwrap();
-        assert!(timeout(Duration::from_millis(50), &mut result).await.is_err());
-
-        let block = receipt_block.unwrap_or(4);
-        {
-            let mut chain = transport.chain.lock().unwrap();
-            chain.receipt_block = Some(block);
-            chain.head = block + 2;
-        }
-        let actual = timeout(Duration::from_secs(2), result).await.unwrap().unwrap().unwrap();
-        assert_eq!(actual, block.to_string());
-    }
-
-    #[tokio::test]
-    async fn receipt_rechecks_confirmations_after_reinclusion() {
-        receipt_after_reorg(Some(3)).await;
-    }
-
-    #[tokio::test]
-    async fn receipt_retries_when_receipt_disappears_after_confirmation() {
-        receipt_after_reorg(None).await;
-    }
-
-    #[tokio::test]
-    async fn receipt_with_enough_confirmations_needs_no_new_block() {
-        let asserter = Asserter::new();
-        asserter.push_success(&successful_receipt(1));
+        }));
         asserter.push_success(&U64::from(3));
-        asserter.push_success(&successful_receipt(1));
         let provider =
             ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(asserter);
         let sender = CastTxSender::new(provider);

@@ -819,40 +819,35 @@ async fn publish_raw_transaction(cmd: _) {
 }
 
 #[casttest]
-async fn send_confirmation_timeout(prj: _) {
-    for sync in [false, true] {
-        let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-        let wallet = handle.dev_wallets().next().unwrap();
-        let mut command = tokio::process::Command::from(prj.cast_bin());
-        command
-            .args([
-                "send",
-                &wallet.address().to_string(),
-                "--private-key",
-                &hex::encode(wallet.to_bytes()),
-                "--rpc-url",
-                &handle.http_endpoint(),
-                "--confirmations",
-                "3",
-                "--timeout",
-                "1",
-            ])
-            .kill_on_drop(true);
-        if sync {
-            command.arg("--sync");
-        }
+async fn send_inclusion_timeout(prj: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test().with_no_mining(true)).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let mut command = tokio::process::Command::from(prj.cast_bin());
+    command
+        .args([
+            "send",
+            &wallet.address().to_string(),
+            "--private-key",
+            &hex::encode(wallet.to_bytes()),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--confirmations",
+            "3",
+            "--timeout",
+            "1",
+        ])
+        .kill_on_drop(true);
 
-        let output = tokio::time::timeout(Duration::from_secs(10), command.output())
-            .await
-            .expect("confirmation timeout was not enforced")
-            .unwrap();
-        OutputAssert::new(output).failure().stdout_eq("").stderr_eq(str![[r#"
+    let output = tokio::time::timeout(Duration::from_secs(10), command.output())
+        .await
+        .expect("inclusion timeout was not enforced")
+        .unwrap();
+    OutputAssert::new(output).failure().stdout_eq("").stderr_eq(str![[r#"
 Error: transaction was not confirmed within the timeout
 
 "#]]);
-        // The transaction was mined, but the chain did not reach the requested depth.
-        assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 1);
-    }
+    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 1);
 }
 
 #[casttest]
@@ -876,7 +871,7 @@ async fn send_waits_for_confirmations(prj: _) {
                 "--confirmations",
                 "3",
                 "--timeout",
-                "15",
+                "1",
                 "--json",
             ])
             .stdout(Stdio::piped())
@@ -897,6 +892,8 @@ async fn send_waits_for_confirmations(prj: _) {
         })
         .await
         .unwrap();
+        // Inclusion timeout must not limit the wait for additional confirmations.
+        assert!(tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_err());
         for height in 1..3 {
             assert_eq!(provider.get_block_number().await.unwrap(), height);
             assert!(tokio::time::timeout(Duration::from_millis(250), child.wait()).await.is_err());
