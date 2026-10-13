@@ -1267,6 +1267,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         // The EIP-8037 create charge checks the address for the transaction nonce, and the nonce
         // check is disabled, so a create uses the caller's current nonce.
         if kind.is_create()
+            && cfg_env.is_amsterdam_eip2780_enabled()
             && let Ok(nonce) = self.get_nonce(caller)
         {
             tx_env.set_nonce(nonce);
