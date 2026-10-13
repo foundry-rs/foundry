@@ -45,10 +45,11 @@ pub enum ForgeSubcommand {
     /// Run and manage Forge fuzzing corpora.
     Fuzz(FuzzArgs),
 
-    /// Generate test properties and keep only those that reproducibly kill mutation survivors
+    /// Generate test properties from the documentation and report failing ones as possible bugs
     ///
     /// Examples:
     /// - forge properties --mutate src/A.sol --brief b.md --generator ./gen.sh --seed 1 --seed 2
+    /// - forge properties --mutation ... (keep only tests that kill mutation survivors)
     #[command(verbatim_doc_comment)]
     Properties(PropertiesArgs),
 

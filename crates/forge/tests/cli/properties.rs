@@ -184,6 +184,7 @@ JSON
 
     cmd.args([
         "properties",
+        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
@@ -312,6 +313,7 @@ contract ArithmeticTest {
 
     cmd.args([
         "properties",
+        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
@@ -416,6 +418,7 @@ contract ArithmeticTest {
 
     cmd.args([
         "properties",
+        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
@@ -520,6 +523,7 @@ contract ArithmeticTest is Test {
 
     cmd.args([
         "properties",
+        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
@@ -633,6 +637,7 @@ contract ArithmeticTest {
 
     cmd.args([
         "properties",
+        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
@@ -717,6 +722,7 @@ contract ArithmeticTest {
 
     cmd.args([
         "properties",
+        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
@@ -847,6 +853,7 @@ contract FeeTest {
 
     cmd.args([
         "properties",
+        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
@@ -868,9 +875,9 @@ contract FeeTest {
     ])
     .assert_failure()
     .stdout_eq(str![[r#"
-possible bug: FeeCapTest::testFuzzCap (seed 24301: fee; counterexample: [..]; seed 12648430: fee; counterexample: [..])
+possible bug (no evidence): FeeCapTest::testFuzzCap (seed 24301: fee; counterexample: [..]; seed 12648430: fee; counterexample: [..])
   the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
-possible bug: FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+possible bug (no evidence): FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
   observed during generator checks, later removed; journal: cache/properties/check-failures.jsonl
 added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
   test/generated/FeeCurrentCap.t.sol (kept after a possible bug was reported; review it together with that report)
@@ -908,6 +915,126 @@ Error: generator failed in round 3 (exit status: 3): generator quota exceeded
             );
         }
     }
+}
+
+#[cfg(unix)]
+#[forgetest_init]
+fn properties_reports_possible_bugs_by_evidence_tier(prj: _, cmd: _) {
+    const GENERATOR: &str = r#"#!/bin/sh
+set -eu
+prompt="$1"
+output="$2"
+grep -q '"protocol"' "$prompt"
+grep -q 'Audit first, test second' "$prompt"
+grep -q '"evidence"' "$prompt"
+if grep -q '"mutation_gaps"' "$prompt"; then exit 1; fi
+if grep -q '"baseline"' "$prompt"; then exit 1; fi
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "cap: finding; charges: finding; rounding: finding",
+  "files": [{"path": "test/generated/FeeAudit.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeAuditTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n    function testChargesZero() public pure {\n        require(Fee.charges(0));\n    }\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}],
+  "evidence": {
+    "FeeAuditTest::testChargesZero": {
+      "claim": "A zero amount is charged.",
+      "quote": "",
+      "source": "the name of charges",
+      "tier": "C",
+      "code_path": "src/Fee.sol:11 returns false for amounts below 100."
+    },
+    "FeeAuditTest::testDocumentedCap": {
+      "claim": "The fee is capped at 100 ether.",
+      "quote": "Charges 1% of `amount`, capped at 100 ether.",
+      "source": "src/Fee.sol:3",
+      "tier": "A",
+      "code_path": "src/Fee.sol:7 caps the fee at 10 ether."
+    }
+  }
+}
+JSON
+# The check records the failures with their evidence in the journal.
+set -- $(sed -n '/"check_command": \[/,/\]/p' "$prompt" | sed -e '1d;$d' -e 's/^ *"//' -e 's/",*$//' -e "s|^CANDIDATE_JSON\$|$output|")
+"$@" > /dev/null 2>&1 || true
+"#;
+
+    prj.add_source(
+        "Fee.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+/// @notice Charges 1% of `amount`, capped at 100 ether.
+library Fee {
+    function fee(uint256 amount) internal pure returns (uint256 f) {
+        f = amount / 100;
+        if (f > 10 ether) f = 10 ether;
+    }
+
+    function charges(uint256 amount) internal pure returns (bool) {
+        return amount / 100 > 0;
+    }
+}
+"#,
+    );
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Find bugs in Fee and prove each one with a test.").unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "properties",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Fee.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+possible bug (tier A): FeeAuditTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+  claim: The fee is capped at 100 ether.
+  quote: "Charges 1% of `amount`, capped at 100 ether." (src/Fee.sol:3)
+  code path: src/Fee.sol:7 caps the fee at 10 ether.
+  the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
+possible bug (tier C): FeeAuditTest::testChargesZero (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+  claim: A zero amount is charged.
+  quote: "" (the name of charges)
+  code path: src/Fee.sol:11 returns false for amounts below 100.
+  the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
+possible bug (no evidence): FeeAuditTest::testRoundsUp (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+  the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
+no candidate passed the checks
+
+"#]]);
+
+    // No mutation run happened, and the journal and the rounds keep the evidence.
+    assert!(!prj.root().join("cache/properties/baseline").exists());
+    let rounds: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(rounds[0]["accepted"], false);
+    assert_eq!(rounds[0]["possible_bugs"][0]["evidence"]["tier"], "A");
+    assert_eq!(rounds[0]["possible_bugs"][2]["test"], "FeeAuditTest::testRoundsUp");
+    let journal = fs::read_to_string(prj.root().join("cache/properties/check-failures.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(journal.len(), 3);
+    assert_eq!(journal[0]["test"], "FeeAuditTest::testDocumentedCap");
+    assert_eq!(journal[0]["evidence"]["source"], "src/Fee.sol:3");
+    assert_eq!(journal[1]["evidence"]["tier"], "C");
+    assert!(journal[2].get("evidence").is_none());
 }
 
 #[cfg(unix)]
@@ -996,6 +1123,26 @@ library Fee {
         ),
     )
     .unwrap();
+    // Evidence that the candidate gives for a failing test is part of the result.
+    fs::write(
+        prj.root().join("evidenced.json"),
+        serde_json::json!({
+            "schema": "foundry/properties-candidate-v1",
+            "rationale": "fee rounds up",
+            "files": [{"path": "test/generated/FeeCheck.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeRoundingTest {\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n"}],
+            "evidence": {
+                "FeeRoundingTest::testRoundsUp": {
+                    "claim": "The fee rounds up.",
+                    "quote": "rounds up",
+                    "source": "README.md:3",
+                    "tier": "B",
+                    "code_path": "contracts/Fee.sol:6 divides and rounds down."
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
     fs::write(
         prj.root().join("seeded.json"),
         candidate(
@@ -1056,7 +1203,11 @@ Error: candidate check failed
     "FeeRoundingTest::testHiddenRoundsUp failed on seed 2: EvmError: Revert"
   ],
   "possible_bugs": [
-    "FeeRoundingTest::testHiddenRoundsUp (seed 1: EvmError: Revert; seed 2: EvmError: Revert)"
+    {
+      "test": "FeeRoundingTest::testHiddenRoundsUp",
+      "path": "test/generated/FeeCheck.t.sol",
+      "reason": "seed 1: EvmError: Revert; seed 2: EvmError: Revert"
+    }
   ]
 }
 
@@ -1072,7 +1223,11 @@ Error: candidate check failed
     "FeeInvariantTest::invariant_totalStaysZero failed on seed 2: assertion failed: 3 != 0; counterexample: [..]"
   ],
   "possible_bugs": [
-    "FeeInvariantTest::invariant_totalStaysZero (seed 1: assertion failed: 1 != 0; counterexample: [..]; seed 2: assertion failed: 3 != 0; counterexample: [..])"
+    {
+      "test": "FeeInvariantTest::invariant_totalStaysZero",
+      "path": "test/generated/FeeCheck.t.sol",
+      "reason": "seed 1: assertion failed: 1 != 0; counterexample: [..]; seed 2: assertion failed: 3 != 0; counterexample: [..]"
+    }
   ]
 }
 
@@ -1088,7 +1243,38 @@ Error: candidate check failed
     "HandlerInvariantTest::invariant_one failed on seed 2: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]"
   ],
   "possible_bugs": [
-    "HandlerInvariantTest::invariant_one (seed 1: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 2: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])"
+    {
+      "test": "HandlerInvariantTest::invariant_one",
+      "path": "test/generated/FeeCheck.t.sol",
+      "reason": "seed 1: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 2: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]"
+    }
+  ]
+}
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["properties", "--check", "evidenced.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{
+  "passed": false,
+  "reasons": [
+    "FeeRoundingTest::testRoundsUp failed on seed 1: EvmError: Revert",
+    "FeeRoundingTest::testRoundsUp failed on seed 2: EvmError: Revert"
+  ],
+  "possible_bugs": [
+    {
+      "test": "FeeRoundingTest::testRoundsUp",
+      "path": "test/generated/FeeCheck.t.sol",
+      "reason": "seed 1: EvmError: Revert; seed 2: EvmError: Revert",
+      "evidence": {
+        "claim": "The fee rounds up.",
+        "quote": "rounds up",
+        "source": "README.md:3",
+        "tier": "B",
+        "code_path": "contracts/Fee.sol:6 divides and rounds down."
+      }
+    }
   ]
 }
 

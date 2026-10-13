@@ -1,4 +1,5 @@
-//! The `forge properties` command: generate test properties and keep only verified ones.
+//! The `forge properties` command: generate test properties from the documentation, report the
+//! ones that fail as possible bugs, and optionally keep only the ones that kill mutation survivors.
 
 use crate::{
     cmd::test::RerunFailure,
@@ -74,15 +75,13 @@ static INHERITANCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:contract|interface)\s+[A-Za-z_$][A-Za-z0-9_$]*\s+is\s+([^{]+)\{").unwrap()
 });
 
-/// Rules for the property generator, one per bullet in `guidance.md`.
-static GUIDANCE: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    include_str!("properties/guidance.md")
-        .lines()
-        .filter_map(|line| line.strip_prefix("- "))
-        .collect()
-});
+/// The protocol steps for the property generator, one per bullet under `## Protocol` in
+/// `guidance.md`.
+static PROTOCOL: LazyLock<Vec<&'static str>> = LazyLock::new(|| guidance_section("## Protocol"));
+/// Rules for the property generator, one per bullet under `## Rules` in `guidance.md`.
+static GUIDANCE: LazyLock<Vec<&'static str>> = LazyLock::new(|| guidance_section("## Rules"));
 
-/// Generate test properties and keep only reproducible mutation-coverage improvements.
+/// Generate test properties from the documentation and report the ones that fail as possible bugs.
 #[derive(Clone, Debug, Parser)]
 pub struct PropertiesArgs {
     /// Root of the Foundry project.
@@ -131,6 +130,14 @@ pub struct PropertiesArgs {
     /// Restrict mutation evaluation to matching test contracts.
     #[arg(long, value_name = "REGEX")]
     match_contract: Option<String>,
+
+    /// Gate candidates with mutation testing: run a baseline, send the surviving mutants to the
+    /// generator, and keep only candidates that reproducibly resolve a survivor.
+    ///
+    /// Without it, the generator audits the targets, proves each hypothesis with a test, and
+    /// Forge reports the tests that fail on every seed as possible bugs.
+    #[arg(long, conflicts_with = "check")]
+    mutation: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -140,6 +147,45 @@ struct Candidate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     generator: Option<GeneratorMetadata>,
     files: Vec<CandidateFile>,
+    /// Why each test that the generator expects to fail is a possible bug, by `Contract::test`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    evidence: BTreeMap<String, Evidence>,
+}
+
+/// The documentation behind a test that the generator expects to fail.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct Evidence {
+    /// The documented behavior that the test asserts.
+    claim: String,
+    /// The documentation sentence that states the claim, verbatim.
+    quote: String,
+    /// Where the quote comes from: `path:line`, or a standard and its clause.
+    source: String,
+    tier: EvidenceTier,
+    /// The code that violates the claim: `path:line` and what it does.
+    code_path: String,
+}
+
+/// How directly the documentation states the claim. Possible bugs are reported in this order.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+enum EvidenceTier {
+    /// The NatSpec of the function under test, or of the same function in an interface or base
+    /// contract it implements, or a MUST or SHOULD clause of a standard the contract claims.
+    A,
+    /// Documentation of a sibling function, the contract, the README, or a specification file.
+    B,
+    /// An error, variable, or function name, a comment, or inferred intent.
+    C,
+}
+
+impl std::fmt::Display for EvidenceTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+        })
+    }
 }
 
 /// Self-reported metadata from the external generator.
@@ -170,11 +216,16 @@ struct GeneratorPrompt<'a> {
     brief: &'a str,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     context: &'a [PromptContext],
+    /// The steps of the hypothesis-first protocol, in order.
+    protocol: &'static [&'static str],
     guidance: &'static [&'static str],
     mutate: &'a [PathBuf],
     seeds: &'a [U256],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
     baseline: &'a [PromptMutation<'a>],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
     current_results: &'a [PromptMutation<'a>],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
     mutation_gaps: &'a [MutationGap],
     project_context: &'a ProjectContext,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -255,7 +306,7 @@ struct ProposalFeedback {
     resolved_survivors: usize,
     newly_resolved_survivors: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    possible_bugs: Vec<String>,
+    possible_bugs: Vec<CheckFailure>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     warnings: Vec<String>,
 }
@@ -267,20 +318,43 @@ struct MutationResultSummary {
 }
 
 /// A candidate test that fails on every seed.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct CheckFailure {
     /// `Contract::test`.
     test: String,
     path: PathBuf,
     reason: String,
+    /// The generator's evidence that the failure is a bug, when it expected the failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    evidence: Option<Evidence>,
     /// Source of the file that holds the test. Only `--check` records it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<String>,
 }
 
+impl CheckFailure {
+    /// Report order: strongest evidence first, failures without evidence last, then by name.
+    fn report_key(&self) -> (bool, Option<EvidenceTier>, &str) {
+        let tier = self.evidence.as_ref().map(|evidence| evidence.tier);
+        (tier.is_none(), tier, &self.test)
+    }
+}
+
 impl std::fmt::Display for CheckFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.test, self.reason)
+        match &self.evidence {
+            Some(evidence) => write!(f, "possible bug (tier {}): ", evidence.tier)?,
+            None => f.write_str("possible bug (no evidence): ")?,
+        }
+        write!(f, "{} ({})", self.test, self.reason)?;
+        if let Some(evidence) = &self.evidence {
+            write!(
+                f,
+                "\n  claim: {}\n  quote: {:?} ({})\n  code path: {}",
+                evidence.claim, evidence.quote, evidence.source, evidence.code_path
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -298,7 +372,7 @@ struct Evaluation {
     /// Candidate tests that fail on every seed against the current implementation. Such a
     /// property is either incorrect or exposes a bug, so it is reported for review.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    possible_bugs: Vec<String>,
+    possible_bugs: Vec<CheckFailure>,
     /// Problems that do not reject the candidate, such as a few revived mutants.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     warnings: Vec<String>,
@@ -403,15 +477,19 @@ impl PropertiesArgs {
         {
             return Err(error).wrap_err("failed to reset the check journal");
         }
-        let baseline = self.run_mutations(
-            &forge,
-            &config,
-            &config.root,
-            &contract_filter_args,
-            None,
-            &cache_root.join("baseline"),
-        )?;
-        let baseline_tests = list_tests(&forge, &config.root, &contract_filter_args)?;
+        let (baseline, baseline_tests) = if self.mutation {
+            let baseline = self.run_mutations(
+                &forge,
+                &config,
+                &config.root,
+                &contract_filter_args,
+                None,
+                &cache_root.join("baseline"),
+            )?;
+            (baseline, list_tests(&forge, &config.root, &contract_filter_args)?)
+        } else {
+            (vec![], vec![])
+        };
         let project_context = project_context(&config, &self.mutate);
         let prompt_baseline = baseline
             .iter()
@@ -458,6 +536,7 @@ impl PropertiesArgs {
                 project: &config.root,
                 brief: &brief,
                 context: &context,
+                protocol: &PROTOCOL,
                 guidance: &GUIDANCE,
                 mutate: &self.mutate,
                 seeds: &self.seed,
@@ -476,7 +555,7 @@ impl PropertiesArgs {
                     check_command: check_command.clone(),
                     example: Candidate {
                         schema: CANDIDATE_SCHEMA.to_string(),
-                        rationale: "Explain the concrete input or sequence that distinguishes the original from the mutant.".to_string(),
+                        rationale: "One line per hypothesis: its id, finding, refuted, or not testable, and why.".to_string(),
                         generator: Some(GeneratorMetadata {
                             agent: "generator name".to_string(),
                             model: "model name".to_string(),
@@ -487,8 +566,18 @@ impl PropertiesArgs {
                                 "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testProperty() external {{}}\n}}\n"
                             ),
                         }],
+                        evidence: BTreeMap::from([(
+                            format!("{example_contract}::testProperty"),
+                            Evidence {
+                                claim: "The documented behavior that the failing test asserts.".to_string(),
+                                quote: "The documentation sentence, verbatim.".to_string(),
+                                source: "src/Contract.sol:12, or the standard and its clause".to_string(),
+                                tier: EvidenceTier::A,
+                                code_path: "src/Contract.sol:40 and what the code does there instead.".to_string(),
+                            },
+                        )]),
                     },
-                    note: "Return one JSON object with exactly this shape. Keep schema unchanged; replace the structural example's rationale, files, and generator metadata with a useful property for this project. Forge runs every test in the files. Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. The generator object is optional.",
+                    note: "Return one JSON object with exactly this shape. Keep schema unchanged; replace the structural example's rationale, files, generator metadata, and evidence with useful properties for this project. Forge runs every test in the files. Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. The generator object is optional. Add one evidence entry, keyed by Contract::test, for every test that fails against the current implementation and that you keep as a finding; Forge reports possible bugs ordered by evidence tier.",
                 },
             };
             fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
@@ -592,40 +681,46 @@ impl PropertiesArgs {
         }
 
         fs::write(cache_root.join("rounds.json"), serde_json::to_vec_pretty(&evaluations)?)?;
-        for evaluation in &evaluations {
-            let path = cache_root.join(&evaluation.candidate_digest);
-            let path = path.strip_prefix(&config.root).unwrap_or(&path);
-            for possible_bug in &evaluation.possible_bugs {
-                sh_println!(
-                    "possible bug: {possible_bug}\n  the property fails on every seed against the current implementation; candidate: {}",
-                    path.display()
-                )?;
-            }
-        }
+        let mut possible_bugs = evaluations
+            .iter()
+            .flat_map(|evaluation| {
+                let path = cache_root.join(&evaluation.candidate_digest);
+                let path = path.strip_prefix(&config.root).unwrap_or(&path).display();
+                let note = format!(
+                    "the property fails on every seed against the current implementation; candidate: {path}"
+                );
+                evaluation.possible_bugs.iter().map(move |failure| (failure, note.clone()))
+            })
+            .collect::<Vec<_>>();
         // A generator can remove a failing test after a check. Report the failures that no
         // evaluation reported and that the final candidate does not keep.
         let journal_path = journal.strip_prefix(&config.root).unwrap_or(&journal);
-        for failure in read_check_journal(&journal)? {
-            let reported = evaluations.iter().flat_map(|evaluation| &evaluation.possible_bugs).any(
-                |possible_bug| {
-                    possible_bug
-                        .strip_prefix(&failure.test)
-                        .is_some_and(|rest| rest.starts_with(" ("))
-                },
+        let removed = read_check_journal(&journal)?
+            .into_iter()
+            .filter(|failure| {
+                let reported =
+                    possible_bugs.iter().any(|(reported, _)| reported.test == failure.test);
+                let name =
+                    failure.test.rsplit_once("::").map_or(failure.test.as_str(), |(_, name)| name);
+                let kept = current_candidate.as_ref().is_some_and(|candidate| {
+                    candidate.files.iter().any(|file| {
+                        file.path == failure.path
+                            && file.content.contains(&format!("function {name}("))
+                    })
+                });
+                !reported && !kept
+            })
+            .collect::<Vec<_>>();
+        possible_bugs.extend(removed.iter().map(|failure| {
+            let note = format!(
+                "observed during generator checks, later removed; journal: {}",
+                journal_path.display()
             );
-            let name =
-                failure.test.rsplit_once("::").map_or(failure.test.as_str(), |(_, name)| name);
-            let kept = current_candidate.as_ref().is_some_and(|candidate| {
-                candidate.files.iter().any(|file| {
-                    file.path == failure.path && file.content.contains(&format!("function {name}("))
-                })
-            });
-            if !reported && !kept {
-                sh_println!(
-                    "possible bug: {failure}\n  observed during generator checks, later removed; journal: {}",
-                    journal_path.display()
-                )?;
-            }
+            (failure, note)
+        }));
+        possible_bugs.sort_by(|(a, _), (b, _)| a.report_key().cmp(&b.report_key()));
+        for (failure, note) in &possible_bugs {
+            sh_println!("{failure}\n  {note}")?;
         }
         if let Some(candidate) = current_candidate {
             // Evaluation rejects paths that already exist or leave the project, so this adds files
@@ -640,11 +735,15 @@ impl PropertiesArgs {
                     .and_then(|mut target| target.write_all(file.content.as_bytes()))
                     .wrap_err_with(|| format!("failed to write {}", file.path.display()))?;
             }
-            sh_println!(
-                "added {} generated test file(s) that reproducibly resolve {} mutation survivor(s):",
-                candidate.files.len(),
-                resolved_survivors.len(),
-            )?;
+            if self.mutation {
+                sh_println!(
+                    "added {} generated test file(s) that reproducibly resolve {} mutation survivor(s):",
+                    candidate.files.len(),
+                    resolved_survivors.len(),
+                )?;
+            } else {
+                sh_println!("added {} generated test file(s):", candidate.files.len())?;
+            }
             for file in &candidate.files {
                 let notes = [
                     (&spec_paths, "spec test: resolves no current mutation survivor"),
@@ -663,8 +762,10 @@ impl PropertiesArgs {
                     sh_println!("  {} ({})", file.path.display(), notes.join("; "))?;
                 }
             }
-        } else {
+        } else if self.mutation {
             sh_println!("no candidate reproducibly resolved a mutation survivor")?;
+        } else {
+            sh_println!("no candidate passed the checks")?;
         }
         generator_error.map_or(Ok(()), Err)
     }
@@ -703,12 +804,11 @@ impl PropertiesArgs {
             return Ok((evaluation, vec![], BTreeSet::new()));
         }
         let candidate_workspace = candidate_workspace(config, candidate, &self.mutate)?;
-        let (mut reasons, failures, tests) =
+        let (mut reasons, possible_bugs, tests) =
             self.check_candidate_tests(forge, candidate_workspace.path(), config, candidate)?;
-        let possible_bugs = failures.iter().map(ToString::to_string).collect();
         let mut warnings = Vec::new();
 
-        let candidate_results = if reasons.is_empty() {
+        let candidate_results = if reasons.is_empty() && self.mutation {
             // Run exactly the baseline tests and the generated tests. Widening filters instead
             // could also select existing tests that the baseline excluded.
             let selection = baseline_tests.iter().chain(&tests).cloned().collect::<Vec<_>>();
@@ -789,7 +889,7 @@ impl PropertiesArgs {
         };
         // Passing tests that resolve no survivor still encode documented behavior, so they are
         // kept as specification tests.
-        if reasons.is_empty() && newly_resolved.is_empty() {
+        if reasons.is_empty() && newly_resolved.is_empty() && self.mutation {
             warnings.push(
                 "candidate did not reproducibly resolve a current mutation survivor; its tests are kept as specification tests".to_string(),
             );
@@ -873,20 +973,23 @@ impl PropertiesArgs {
                 }
             }
         }
-        let possible_bugs = failures
+        let mut possible_bugs = failures
             .iter()
             .filter(|(_, seed_failures)| seed_failures.len() == self.seed.len())
             .map(|((contract, test), seed_failures)| {
                 let path = contract.rsplit_once(':').map_or(contract.as_str(), |(path, _)| path);
                 let test = RerunFailure { contract: contract.clone(), test: test.clone() };
+                let test = test_display_name(&test);
                 CheckFailure {
-                    test: test_display_name(&test),
+                    evidence: candidate.evidence.get(&test).cloned(),
+                    test,
                     path: PathBuf::from(path),
                     reason: seed_failures.join("; "),
                     source: None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        possible_bugs.sort_by(|a, b| a.report_key().cmp(&b.report_key()));
         let tests =
             failures.into_keys().map(|(contract, test)| RerunFailure { contract, test }).collect();
         Ok((reasons, possible_bugs, tests))
@@ -903,7 +1006,7 @@ impl PropertiesArgs {
         let workspace = candidate_workspace(config, &candidate, &[])?;
         let (reasons, mut failures, _) =
             self.check_candidate_tests(forge, workspace.path(), config, &candidate)?;
-        let possible_bugs = failures.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let possible_bugs = serde_json::to_value(&failures)?;
         // Generators often remove a failing test before they return, so the campaign report
         // needs this record to show the possible bug.
         if !failures.is_empty() {
@@ -1325,6 +1428,17 @@ fn project_context(config: &Config, mutate: &[PathBuf]) -> ProjectContext {
     context
 }
 
+/// Returns the bullets of one section of `guidance.md`.
+fn guidance_section(heading: &str) -> Vec<&'static str> {
+    include_str!("properties/guidance.md")
+        .lines()
+        .skip_while(|line| *line != heading)
+        .skip(1)
+        .take_while(|line| !line.starts_with("## "))
+        .filter_map(|line| line.strip_prefix("- "))
+        .collect()
+}
+
 /// Bounds sources to one shared byte budget so a single section cannot dominate the prompt.
 fn prompt_sources<'a>(
     sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
@@ -1596,8 +1710,10 @@ fn accumulate_candidate(
             None
         },
         files: current.files.clone(),
+        evidence: current.evidence.clone(),
     };
     candidate.files.extend(proposal.files.iter().cloned());
+    candidate.evidence.extend(proposal.evidence.clone());
     validate_candidate(&candidate, generated_tests)?;
     Ok(candidate)
 }
@@ -1639,6 +1755,10 @@ fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<(
     if let Some(generator) = &candidate.generator {
         ensure!(!generator.agent.trim().is_empty(), "candidate generator agent is empty");
         ensure!(!generator.model.trim().is_empty(), "candidate generator model is empty");
+    }
+    for (test, evidence) in &candidate.evidence {
+        ensure!(test.contains("::"), "candidate evidence key {test:?} is not Contract::test");
+        ensure!(!evidence.claim.trim().is_empty(), "candidate evidence for {test} has no claim");
     }
     ensure!(!candidate.files.is_empty(), "candidate contains no files");
     ensure!(candidate.files.len() <= MAX_CANDIDATE_FILES, "candidate contains too many files");
