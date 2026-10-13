@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
-use alloy_primitives::{Address, B256, U256, Uint};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -117,7 +117,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
 /// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
 fn sign_delegation<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    private_key: Uint<256, 4>,
+    private_key: U256,
     implementation: Address,
     nonce: Option<u64>,
     cross_chain: bool,
@@ -277,7 +277,7 @@ impl Cheatcode for stopBroadcastCall {
 
 impl Cheatcode for getWalletsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let wallets = ccx.state.wallets().signers().unwrap_or_default();
+        let wallets = ccx.state.core.wallets().signers().unwrap_or_default();
         Ok(wallets.abi_encode())
     }
 }
@@ -372,7 +372,7 @@ fn broadcast<FEN: FoundryEvmNetwork>(
     let mut new_origin = new_origin.copied();
 
     if new_origin.is_none() {
-        let mut wallets = ccx.state.wallets().inner.lock();
+        let mut wallets = ccx.state.core.wallets().inner.lock();
         if let Some(provided_sender) = wallets.provided_sender {
             new_origin = Some(provided_sender);
         } else {
@@ -413,7 +413,7 @@ fn broadcast_key<FEN: FoundryEvmNetwork>(
 
     let result = broadcast(ccx, Some(&new_origin), single_call);
     if result.is_ok() {
-        let wallets = ccx.state.wallets();
+        let wallets = ccx.state.core.wallets();
         wallets.add_local_signer(wallet);
     }
     result

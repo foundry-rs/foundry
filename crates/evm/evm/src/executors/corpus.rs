@@ -1930,17 +1930,14 @@ mod tests {
         inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey},
     };
     use alloy_dyn_abi::DynSolValue;
+    use alloy_evm::EvmEnv;
     use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
-    use foundry_evm_core::{
-        backend::Backend,
-        constants::MAGIC_ASSUME,
-        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
-    };
+    use foundry_evm_core::{backend::Backend, constants::MAGIC_ASSUME, evm::EthEvmNetwork};
     use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
-    use revm::{DatabaseRef, bytecode::Bytecode, database::InMemoryDB};
+    use revm::{DatabaseRef, bytecode::Bytecode, context::TxEnv, database::InMemoryDB};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -2037,8 +2034,8 @@ mod tests {
 
     fn sync_test_executor(corpus_root: PathBuf, target: Address) -> Executor<EthEvmNetwork> {
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            EvmEnv::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             Default::default(),
         );

@@ -1299,6 +1299,11 @@ impl NodeConfig {
         }
         if !self.silent {
             sh_println!("{}", self.as_string(fork))?;
+            if self.networks.is_celo() {
+                foundry_common::sh_warn!(
+                    "CIP-64 uses native fee accounting; feeCurrency is preserved but token fees are not charged"
+                )?;
+            }
         }
         Ok(())
     }

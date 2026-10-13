@@ -369,7 +369,7 @@ impl MaybeFullDatabase for PersistentStateDb {
 }
 
 impl DatabaseRef for StateRootDb {
-    type Error = <MemDb as DatabaseRef>::Error;
+    type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.inner.basic_ref(address)
@@ -389,7 +389,7 @@ impl DatabaseRef for StateRootDb {
 }
 
 impl Database for StateRootDb {
-    type Error = <MemDb as Database>::Error;
+    type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.state_root.get_mut().record_account(address);

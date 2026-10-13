@@ -435,7 +435,7 @@ mod tests {
             let mut db = Backend::<EthEvmNetwork>::spawn(None).unwrap();
             let mut parent = EthEvmFactory::default().create_foundry_evm_with_inspector(
                 &mut db,
-                EvmEnvFor::<EthEvmNetwork>::default(),
+                EvmEnv::default(),
                 NoOpInspector,
             );
             parent.journaled_state.inner.depth = 3;

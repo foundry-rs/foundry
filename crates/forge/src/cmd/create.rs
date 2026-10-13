@@ -471,7 +471,7 @@ impl CreateArgs {
 
         let provider = Arc::new(provider);
         let factory =
-            ContractFactory::<N, _>::new(abi.clone(), bin.clone(), provider.clone(), timeout);
+            DeploymentTxFactory::<N, _>::new(abi.clone(), bin.clone(), provider.clone(), timeout);
 
         let is_args_empty = args.is_empty();
         let mut deployer =
@@ -771,13 +771,6 @@ impl figment::Provider for CreateArgs {
     }
 }
 
-/// `ContractFactory` is a [`DeploymentTxFactory`] object with an
-/// [`Arc`] middleware. This type alias exists to preserve backwards
-/// compatibility with less-abstract Contracts.
-///
-/// For full usage docs, see [`DeploymentTxFactory`].
-pub type ContractFactory<N, P> = DeploymentTxFactory<N, P>;
-
 /// Helper which manages the deployment transaction of a smart contract. It
 /// wraps a deployment transaction, and retrieves the contract address output
 /// by it.
@@ -843,7 +836,7 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
     }
 }
 
-/// To deploy a contract to the Ethereum network, a [`ContractFactory`] can be
+/// To deploy a contract to the Ethereum network, a [`DeploymentTxFactory`] can be
 /// created which manages the Contract bytecode and Application Binary Interface
 /// (ABI), usually generated from the Solidity compiler.
 #[derive(Clone, Debug)]

@@ -216,6 +216,24 @@ contract PrankTest is Test {
         vm.stopPrank();
     }
 
+    function testStartPrankOverrideAfterDelegateCall() public {
+        ProxyTest proxy = new ProxyTest();
+        // Created before the prank, so a CREATE does not mark the prank as used.
+        ProxyTest otherProxy = new ProxyTest();
+        ImplementationTest impl = new ImplementationTest();
+
+        vm.startPrank(address(proxy), true);
+        (bool success,) = address(impl).delegatecall(abi.encodeWithSignature("setNum(uint256)", 1));
+        require(success, "delegate call failed");
+
+        // Overriding requires the delegate-only prank to have been marked as used.
+        vm.startPrank(address(otherProxy), true);
+        (success,) =
+            address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", address(otherProxy)));
+        require(success, "overridden delegate prank was not applied");
+        vm.stopPrank();
+    }
+
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfPrankDelegateCalltoEOA() public {
         uint256 privateKey = uint256(keccak256(abi.encodePacked("alice")));
