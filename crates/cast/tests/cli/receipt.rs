@@ -121,13 +121,27 @@ async fn receipt_waits_for_confirmations(prj: _) {
         if mined {
             assert_eq!(pending.get_receipt().await.unwrap().block_number(), Some(1));
         } else {
-            assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_none());
+            assert!(
+                provider
+                    .get_transaction_receipt(*pending.tx_hash())
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
         }
         let (endpoint, requests) =
             spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getTransactionReceipt")
                 .await;
         let mut child = tokio::process::Command::from(prj.cast_bin())
-            .args(["receipt", &hash, "blockNumber", "--confirmations", "3", "--rpc-url", &endpoint])
+            .args([
+                "receipt",
+                &hash,
+                "blockNumber",
+                "--confirmations",
+                "3",
+                "--rpc-url",
+                &endpoint,
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -144,7 +158,11 @@ async fn receipt_waits_for_confirmations(prj: _) {
         .unwrap();
         for height in u64::from(mined)..3 {
             assert_eq!(provider.get_block_number().await.unwrap(), height);
-            assert!(tokio::time::timeout(Duration::from_millis(250), child.wait()).await.is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(250), child.wait())
+                    .await
+                    .is_err()
+            );
             api.mine_one().await.unwrap();
         }
 
@@ -152,7 +170,10 @@ async fn receipt_waits_for_confirmations(prj: _) {
             .await
             .unwrap()
             .unwrap();
-        OutputAssert::new(output).success().stdout_eq("1\n").stderr_eq("");
+        OutputAssert::new(output)
+            .success()
+            .stdout_eq("1\n")
+            .stderr_eq("");
         assert_eq!(provider.get_block_number().await.unwrap(), 3);
     }
 }
@@ -191,8 +212,13 @@ async fn receipt_confirmation_compatibility(prj: _) {
             command.arg("--async");
         }
 
-        let output =
-            tokio::time::timeout(Duration::from_secs(10), command.output()).await.unwrap().unwrap();
-        OutputAssert::new(output).success().stdout_eq("1\n").stderr_eq("");
+        let output = tokio::time::timeout(Duration::from_secs(10), command.output())
+            .await
+            .unwrap()
+            .unwrap();
+        OutputAssert::new(output)
+            .success()
+            .stdout_eq("1\n")
+            .stderr_eq("");
     }
 }
