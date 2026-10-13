@@ -128,7 +128,7 @@ impl BindArgs {
             eyre::bail!("`--ethers` bindings have been removed. Use `--alloy` (default) instead.");
         }
 
-        let config = if self.skip_build {
+        let mut config = if self.skip_build {
             self.load_config()?
         } else {
             self.load_config_with_dependencies()?
@@ -147,6 +147,9 @@ impl BindArgs {
                 &mut project,
                 ProjectCompiler::new().external_compilers(&config),
             )?;
+            // Compilation can disable caching, for example when denying warnings or notes.
+            // Artifact discovery must not trust a manifest that this run did not update.
+            config.cache = project.cached;
             enum_definitions(output.parser())
         };
 
@@ -203,8 +206,8 @@ impl BindArgs {
         let filter = self.get_filter()?;
 
         // Use the compiler cache to get only current artifacts when caching is enabled.
-        // If --no-cache was passed, the cache manifest on disk may be stale and should not be
-        // trusted; fall through to the filesystem scan instead.
+        // If caching was disabled for this run, the cache manifest on disk may be stale and should
+        // not be trusted; fall through to the filesystem scan instead.
         if config.cache {
             let paths: ProjectPathsConfig<MultiCompilerSettings> = config.project_paths();
             if let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&paths) {

@@ -744,3 +744,47 @@ Error: [..]/module-bindings/mod.rs is not a file
 
 "#]]);
 }
+
+#[forgetest]
+fn bind_deny_includes_new_contracts(prj: _, cmd: _) {
+    prj.add_source(
+        "Existing.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+contract Existing {}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    prj.add_source(
+        "Added.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+contract Added {}
+"#,
+    );
+
+    // Denying diagnostics disables compilation caching, leaving the old manifest on disk.
+    for level in ["warnings", "notes"] {
+        cmd.forge_fuse().args(["bind", "--deny", level, "--overwrite"]).assert_success().stderr_eq(
+            str![[r#"
+Generating bindings for 2 contracts
+Bindings have been generated to [..]/out/bindings
+
+"#]],
+        );
+
+        let bindings = prj.root().join("out/bindings/src");
+        assert!(bindings.join("existing.rs").is_file());
+        assert!(bindings.join("added.rs").is_file());
+
+        cmd.forge_fuse().args(["bind", "--deny", level]).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+OK.
+
+"#]]);
+    }
+}
