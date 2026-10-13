@@ -1,817 +1,23 @@
-//! Tests for the `forge properties` command.
+//! Tests for the `forge properties` command. Generators are shell scripts, so the tests run only
+//! on Unix.
+#![cfg(unix)]
 
-use foundry_test_utils::{assert_data_eq, forgetest_init, str};
-use std::fs;
+use foundry_compilers::artifacts::remappings::Remapping;
+use foundry_test_utils::{TestProject, assert_data_eq, forgetest_init, str};
+use std::{fs, os::unix::fs::PermissionsExt, str::FromStr};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-#[cfg(unix)]
-#[forgetest_init]
-fn properties_retains_reproducible_property(prj: _, cmd: _) {
-    let assertion_lib = prj.root().join("lib/example");
-    fs::create_dir_all(&assertion_lib).unwrap();
-    fs::write(
-        assertion_lib.join("Assertions.sol"),
-        r#"
-pragma solidity ^0.8.20;
-
-library Assertions {
-    function equal(uint256 left, uint256 right) internal pure {
-        assert(left == right);
-    }
-}
-"#,
-    )
-    .unwrap();
-    prj.add_source(
-        "Arithmetic.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-contract Arithmetic {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3;
-    }
-}
-"#,
-    );
-    prj.add_test(
-        "Arithmetic.t.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-import {Arithmetic} from "../src/Arithmetic.sol";
-
-contract ArithmeticTest {
-    Arithmetic internal arithmetic = new Arithmetic();
-
-    function testSmallValue() public view {
-        require(arithmetic.bucket(1) == 1);
-    }
-}
-"#,
-    );
-    let test_path = prj.root().join("test/Arithmetic.t.sol");
-    let mut test_source = fs::read_to_string(&test_path).unwrap();
-    test_source.push_str("/*x");
-    test_source.push_str(&"€".repeat(6_000));
-    test_source.push_str("*/\n");
-    fs::write(test_path, test_source).unwrap();
-    fs::rename(prj.root().join("test"), prj.root().join("tests")).unwrap();
-    prj.update_config(|config| {
-        config.test = "tests".into();
-        config.remappings = vec![
-            "example/=lib/example/"
-                .parse::<foundry_compilers::artifacts::remappings::Remapping>()
-                .unwrap()
-                .into(),
-        ];
-    });
-    fs::create_dir_all(prj.root().join("tests/generated")).unwrap();
-    fs::write(
-        prj.root().join("tests/generated/Existing.t.sol"),
-        "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\n",
-    )
-    .unwrap();
-
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
-    let generator = prj.root().join("generator.sh");
-    fs::write(
-        &generator,
-        r#"#!/bin/sh
+/// Starts a generator script. `check FILE` runs the prompt's check command on a candidate file.
+const PRELUDE: &str = r#"#!/bin/sh
 set -eu
 prompt="$1"
 output="$2"
-grep -q '"mutation_gaps"' "$prompt"
-grep -q '"current_results"' "$prompt"
-grep -q '"original"' "$prompt"
-grep -q '"mutant"' "$prompt"
-grep -q '"survives_all_seeds": true' "$prompt"
-grep -q '"source_context"' "$prompt"
-grep -q 'function bucket' "$prompt"
-grep -q 'mutants may be semantically equivalent' "$prompt"
-grep -q 'example/=lib/example/' "$prompt"
-grep -q '"path": "tests/Arithmetic.t.sol"' "$prompt"
-grep -q 'contract ArithmeticTest' "$prompt"
-grep -q '"truncated": true' "$prompt"
-if grep -q '"round": 1' "$prompt" && grep -q '"last_rejected_sources"' "$prompt"; then
-    exit 1
-fi
-if grep -q '"round": 1' "$prompt" &&
-    grep -q '"path": "tests/generated/Existing.t.sol"' "$prompt"; then
-    exit 1
-fi
-if ! grep -q '"round": 1' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
-if grep -q '"round": 1' "$prompt"; then
-grep -q 'contract GeneratedRound1Test' "$prompt"
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise candidate rejection",
-  "files": [{"path": "tests/generated/Existing.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-overwrite-marker\n"}]
-}
-JSON
-exit 0
-fi
-if grep -q '"round": 2' "$prompt"; then
-grep -q '"last_rejected_sources"' "$prompt"
-grep -q 'rejected-overwrite-marker' "$prompt"
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "duplicate the existing small-value example",
-  "generator": {"agent": "fixture", "model": "deterministic"},
-  "files": [{
-    "path": "tests/generated/ArithmeticNoGain.t.sol",
-    "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticNoGainTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"
-  }]
-}
-JSON
-exit 0
-fi
-if grep -q '"round": 3' "$prompt"; then
-if grep -q '"last_rejected_sources"' "$prompt"; then exit 1; fi
-grep -q 'ArithmeticNoGainTest' "$prompt"
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise the lower comparison boundary",
-  "generator": {"agent": "fixture", "model": "deterministic"},
-  "files": [{
-    "path": "tests/generated/ArithmeticLower.t.sol",
-    "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        Assertions.equal(arithmetic.bucket(9), 1);\n        Assertions.equal(arithmetic.bucket(10), 2);\n    }\n}\n"
-  }]
-}
-JSON
-exit 0
-fi
-grep -q '"current_candidate"' "$prompt"
-grep -q 'ArithmeticLowerTest' "$prompt"
-if grep -q '"round": 4' "$prompt"; then
-if grep -q '"last_rejected_sources"' "$prompt"; then exit 1; fi
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "try to replace an accepted property",
-  "files": [{"path": "tests/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-retained-path-marker\n"}]
-}
-JSON
-exit 0
-fi
-grep -q '"last_rejected_sources"' "$prompt"
-grep -q 'rejected-retained-path-marker' "$prompt"
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise the upper comparison boundary",
-  "generator": {"agent": "fixture", "model": "deterministic"},
-  "files": [{
-    "path": "tests/generated/ArithmeticUpper.t.sol",
-    "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticUpperTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testUpperBoundary() public view {\n        Assertions.equal(arithmetic.bucket(99), 2);\n        Assertions.equal(arithmetic.bucket(100), 3);\n    }\n}\n"
-  }]
-}
-JSON
-"#,
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
-
-    cmd.args([
-        "properties",
-        "--mutation",
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--mutate",
-        "src/Arithmetic.sol",
-        "--brief",
-        brief.to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
-        "--seed",
-        "0x5eed",
-        "--seed",
-        "0xc0ffee",
-        "--match-contract",
-        "^ArithmeticTest$",
-        "--rounds",
-        "5",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-added 3 generated test file(s) that reproducibly resolve 6 mutation survivor(s):
-  tests/generated/ArithmeticNoGain.t.sol (spec test: resolves no current mutation survivor)
-  tests/generated/ArithmeticLower.t.sol
-  tests/generated/ArithmeticUpper.t.sol
-
-"#]]);
-
-    let rounds = fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap();
-    assert!(!rounds.contains("\"mutant\""));
-    let rounds: serde_json::Value = serde_json::from_str(&rounds).unwrap();
-    assert_eq!(rounds.as_array().unwrap().len(), 5);
-    assert_eq!(rounds[0]["accepted"], false);
-    assert!(rounds[0]["reasons"][0].as_str().unwrap().contains("would overwrite"));
-    assert_eq!(rounds[1]["accepted"], true);
-    assert_eq!(rounds[1]["candidate"].as_array().unwrap().len(), 2);
-    assert_data_eq!(
-        serde_json::to_string_pretty(&rounds[1]["warnings"]).unwrap(),
-        str![[r#"
-[
-  "candidate did not reproducibly resolve a current mutation survivor; its tests are kept as specification tests"
-]
-"#]]
-    );
-    assert_eq!(rounds[2]["accepted"], true);
-    assert_eq!(rounds[2]["generator"]["model"], "deterministic");
-    assert!(rounds[2]["resolved_survivors"].as_u64().unwrap() > 0);
-    assert_eq!(rounds[2]["resolved_survivors"], rounds[2]["newly_resolved_survivors"]);
-    assert_eq!(rounds[3]["accepted"], false);
-    assert!(rounds[3]["reasons"][0].as_str().unwrap().contains("retained by an earlier round"));
-    assert_eq!(rounds[4]["accepted"], true);
-    assert!(rounds[4]["resolved_survivors"].as_u64().unwrap() > 0);
-    assert!(rounds[4]["newly_resolved_survivors"].as_u64().unwrap() > 0);
-
-    let digest = rounds[4]["candidate_digest"].as_str().unwrap();
-    let candidate =
-        fs::read_to_string(prj.root().join("cache/properties").join(digest).join("candidate.json"))
-            .unwrap();
-    assert!(candidate.contains("ArithmeticLowerTest"));
-    assert!(candidate.contains("ArithmeticUpperTest"));
-    for name in ["ArithmeticNoGain", "ArithmeticLower", "ArithmeticUpper"] {
-        let source =
-            fs::read_to_string(prj.root().join(format!("tests/generated/{name}.t.sol"))).unwrap();
-        assert!(source.contains(&format!("contract {name}Test")));
-    }
-}
-
-#[cfg(unix)]
-#[forgetest_init]
-fn properties_materializes_node_modules_for_candidate_mutations(prj: _, cmd: _) {
-    const GENERATOR: &str = r#"#!/bin/sh
-set -eu
-cat > "$2" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise the lower comparison boundary",
-  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"example/Assertions.sol\";\nimport {Arithmetic} from \"bucket/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        Assertions.equal(arithmetic.bucket(9), 1); Assertions.equal(arithmetic.bucket(10), 2);\n    }\n}\n"}]
-}
-JSON
-"#;
-
-    prj.add_test(
-        "Arithmetic.t.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-import {Arithmetic} from "bucket/Arithmetic.sol";
-
-contract ArithmeticTest {
-    Arithmetic internal arithmetic = new Arithmetic();
-
-    function testSmallValue() public view {
-        require(arithmetic.bucket(1) == 1);
-    }
-}
-"#,
-    );
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
-    // The mutation target is a dependency: candidate workspaces must copy it, not link it.
-    fs::create_dir_all(prj.root().join("node_modules/bucket")).unwrap();
-    fs::write(
-        prj.root().join("node_modules/bucket/Arithmetic.sol"),
-        "pragma solidity ^0.8.20;\ncontract Arithmetic {\n    function bucket(uint256 value) external pure returns (uint256) {\n        if (value < 10) return 1;\n        if (value < 100) return 2;\n        return 3;\n    }\n}\n",
-    )
-    .unwrap();
-    fs::create_dir_all(prj.root().join("node_modules/example")).unwrap();
-    fs::write(
-        prj.root().join("node_modules/example/Assertions.sol"),
-        "pragma solidity ^0.8.20;\nlibrary Assertions {\n    function equal(uint256 a, uint256 b) internal pure {\n        assert(a == b);\n    }\n}\n",
-    )
-    .unwrap();
-    prj.update_config(|config| {
-        config.remappings = ["bucket/=node_modules/bucket/", "example/=node_modules/example/"]
-            .map(|remapping| {
-                remapping
-                    .parse::<foundry_compilers::artifacts::remappings::Remapping>()
-                    .unwrap()
-                    .into()
-            })
-            .to_vec();
-    });
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, GENERATOR).unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
-
-    cmd.args([
-        "properties",
-        "--mutation",
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--mutate",
-        "node_modules/bucket/Arithmetic.sol",
-        "--brief",
-        brief.to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
-        "--seed",
-        "0x5eed",
-        "--seed",
-        "0xc0ffee",
-        "--match-contract",
-        "^ArithmeticTest$",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
-  test/generated/ArithmeticLower.t.sol
-
-"#]]);
-}
-
-#[cfg(unix)]
-#[forgetest_init]
-fn properties_keeps_library_paths_in_nested_workspaces(prj: _, cmd: _) {
-    const GENERATOR: &str = r#"#!/bin/sh
-set -eu
-grep -q '"inherited_sources"' "$1"
-grep -q 'bucket-spec-marker' "$1"
-cat > "$2" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise the lower comparison boundary",
-  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}]
-}
-JSON
-"#;
-
-    // The source imports the library through a remapping and the test imports it by its project
-    // path. Both must name the same file in candidate mutation runs, or the types differ. The
-    // prompt also includes the interface that the target implements.
-    fs::create_dir_all(prj.root().join("lib/example")).unwrap();
-    fs::write(
-        prj.root().join("lib/example/Kind.sol"),
-        "pragma solidity ^0.8.20;\nenum Kind { Small, Large }\ninterface IBucket {\n    /// @notice bucket-spec-marker\n    function bucket(uint256 value) external pure returns (uint256);\n}\n",
-    )
-    .unwrap();
-    prj.add_source(
-        "Arithmetic.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-import {IBucket, Kind} from "example/Kind.sol";
-
-contract Arithmetic is IBucket {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3;
-    }
-
-    function kind(uint256 value) external pure returns (Kind) {
-        return value < 10 ? Kind.Small : Kind.Large;
-    }
-}
-"#,
-    );
-    prj.add_test(
-        "Arithmetic.t.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-import {Kind} from "lib/example/Kind.sol";
-import {Arithmetic} from "../src/Arithmetic.sol";
-
-contract ArithmeticTest {
-    Arithmetic internal arithmetic = new Arithmetic();
-
-    function testSmallValue() public view {
-        require(arithmetic.bucket(1) == 1);
-        require(arithmetic.kind(1) == Kind.Small);
-    }
-}
-"#,
-    );
-    prj.update_config(|config| {
-        config.remappings = vec![
-            "example/=lib/example/"
-                .parse::<foundry_compilers::artifacts::remappings::Remapping>()
-                .unwrap()
-                .into(),
-        ];
-    });
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, GENERATOR).unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
-
-    cmd.args([
-        "properties",
-        "--mutation",
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--mutate",
-        "src/Arithmetic.sol",
-        "--brief",
-        brief.to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
-        "--seed",
-        "0x5eed",
-        "--seed",
-        "0xc0ffee",
-        "--match-contract",
-        "^ArithmeticTest$",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
-  test/generated/ArithmeticLower.t.sol
-
-"#]]);
-}
-
-#[cfg(unix)]
-#[forgetest_init]
-fn properties_keeps_candidates_despite_unrelated_noise(prj: _, cmd: _) {
-    const GENERATOR: &str = r#"#!/bin/sh
-set -eu
-if grep -q '"round": 1' "$1"; then
-cat > "$2" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise the lower comparison boundary",
-  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}]
-}
-JSON
-exit 0
-fi
-cat > "$2" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "small values are in the first bucket",
-  "files": [{"path": "test/generated/ArithmeticSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticSpecTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"}]
-}
-JSON
-"#;
-
-    prj.add_source(
-        "Arithmetic.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-contract Arithmetic {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3;
-    }
-}
-"#,
-    );
-    // Candidate workspaces write the resolved config without comments, so the large-value check
-    // runs only in the baseline. Its kills then look revived in candidate runs.
-    prj.add_test(
-        "Arithmetic.t.sol",
-        r##"
-pragma solidity ^0.8.20;
-
-import {Test} from "forge-std/Test.sol";
-import {Arithmetic} from "../src/Arithmetic.sol";
-
-contract ArithmeticTest is Test {
-    Arithmetic internal arithmetic = new Arithmetic();
-
-    function testSmallValue() public view {
-        require(arithmetic.bucket(1) == 1);
-    }
-
-    function testLargeValueInProject() public view {
-        if (vm.indexOf(vm.readFile("foundry.toml"), "# baseline-only") != type(uint256).max) {
-            require(arithmetic.bucket(1000) == 3);
-        }
-    }
-}
-"##,
-    );
-    prj.update_config(|config| {
-        config.fs_permissions = foundry_config::fs_permissions::FsPermissions::new([
-            foundry_config::fs_permissions::PathPermission::read("foundry.toml"),
-        ]);
-    });
-    let foundry_toml = prj.root().join("foundry.toml");
-    let toml = fs::read_to_string(&foundry_toml).unwrap();
-    fs::write(&foundry_toml, format!("# baseline-only\n{toml}")).unwrap();
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, GENERATOR).unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
-
-    cmd.args([
-        "properties",
-        "--mutation",
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--mutate",
-        "src/Arithmetic.sol",
-        "--brief",
-        brief.to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
-        "--seed",
-        "0x5eed",
-        "--seed",
-        "0xc0ffee",
-        "--match-contract",
-        "^ArithmeticTest$",
-        "--rounds",
-        "2",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-added 2 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
-  test/generated/ArithmeticLower.t.sol
-  test/generated/ArithmeticSpec.t.sol (spec test: resolves no current mutation survivor)
-
-"#]]);
-
-    let rounds: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
-    )
-    .unwrap();
-    assert_data_eq!(
-        serde_json::to_string_pretty(
-            &rounds.as_array().unwrap().iter().map(|round| &round["warnings"]).collect::<Vec<_>>()
-        )
-        .unwrap(),
-        str![[r#"
-[
-  [
-    "candidate run did not kill [..] mutant(s) that the baseline killed on seed 24301; up to 8 are treated as run noise",
-    "candidate run did not kill [..] mutant(s) that the baseline killed on seed 12648430; up to 8 are treated as run noise"
-  ],
-  [
-    "candidate did not reproducibly resolve a current mutation survivor; its tests are kept as specification tests"
-  ]
-]
-"#]]
-    );
-}
-
-#[cfg(unix)]
-#[forgetest_init]
-fn properties_mutation_selection_includes_generated_tests(prj: _, cmd: _) {
-    const GENERATOR: &str = r#"#!/bin/sh
-set -eu
-cat > "$2" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise the lower comparison boundary",
-  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n    function testUpperBoundary() public pure {}\n}\n"}]
-}
-JSON
-"#;
-
-    prj.add_source(
-        "Arithmetic.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-contract Arithmetic {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3;
-    }
-}
-"#,
-    );
-    prj.add_test(
-        "Arithmetic.t.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-import {Arithmetic} from "../src/Arithmetic.sol";
-
-contract ArithmeticTest {
-    Arithmetic internal arithmetic = new Arithmetic();
-
-    function testSmallValue() public view {
-        require(arithmetic.bucket(1) == 1);
-    }
-
-    function testUpperBoundary() public view {
-        require(arithmetic.bucket(99) == 2);
-        require(arithmetic.bucket(100) == 3);
-    }
-}
-"#,
-    );
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
-    // Configured filters exclude the generated test; candidate mutation runs must still select it.
-    // They must not select `ArithmeticTest::testUpperBoundary`, which shares a generated test name.
-    prj.update_config(|config| {
-        config.test_pattern = Some(regex::Regex::new(r"^testSmall\w*\(").unwrap().into());
-        config.path_pattern = Some("**/Arithmetic.t.sol".parse().unwrap());
-    });
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, GENERATOR).unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
-
-    cmd.args([
-        "properties",
-        "--mutation",
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--mutate",
-        "src/Arithmetic.sol",
-        "--brief",
-        brief.to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
-        "--seed",
-        "0x5eed",
-        "--seed",
-        "0xc0ffee",
-        "--match-contract",
-        "^ArithmeticTest$",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-added 1 generated test file(s) that reproducibly resolve 4 mutation survivor(s):
-  test/generated/ArithmeticLower.t.sol
-
-"#]]);
-}
-
-#[cfg(unix)]
-#[forgetest_init]
-fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
-    const GENERATOR: &str = r#"#!/bin/sh
-set -eu
-cat > "$2" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "exercise the lower comparison boundary",
-  "files": [{"path": "test/generated/link/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}]
-}
-JSON
-"#;
-
-    prj.add_source(
-        "Arithmetic.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-contract Arithmetic {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3;
-    }
-}
-"#,
-    );
-    prj.add_test(
-        "Arithmetic.t.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-import {Arithmetic} from "../src/Arithmetic.sol";
-
-contract ArithmeticTest {
-    Arithmetic internal arithmetic = new Arithmetic();
-
-    function testSmallValue() public view {
-        require(arithmetic.bucket(1) == 1);
-    }
-}
-"#,
-    );
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    fs::create_dir_all(prj.root().join("test/generated")).unwrap();
-    std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated/link")).unwrap();
-    // Internal runs keep their own `--rerun` state; the project's file stays as it is.
-    let failures = prj.root().join("cache/test-failures");
-    fs::create_dir_all(failures.parent().unwrap()).unwrap();
-    fs::write(&failures, r#"{"version":1,"failures":[]}"#).unwrap();
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, GENERATOR).unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
-
-    cmd.args([
-        "properties",
-        "--mutation",
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--mutate",
-        "src/Arithmetic.sol",
-        "--brief",
-        brief.to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
-        "--seed",
-        "0x5eed",
-        "--seed",
-        "0xc0ffee",
-        "--match-contract",
-        "^ArithmeticTest$",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-no candidate reproducibly resolved a mutation survivor
-
-"#]]);
-
-    let rounds: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
-    )
-    .unwrap();
-    assert_data_eq!(
-        rounds[0]["reasons"][0].as_str().unwrap(),
-        str![
-            "generated test path test/generated/link/ArithmeticLower.t.sol escapes project root [..]"
-        ]
-    );
-    assert!(!outside.path().join("ArithmeticLower.t.sol").exists());
-    assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
-}
-
-#[cfg(unix)]
-#[forgetest_init]
-fn properties_reports_possible_bugs(prj: _, cmd: _) {
-    const GENERATOR: &str = r#"#!/bin/sh
-set -eu
-prompt="$1"
-output="$2"
-# Runs the prompt's check command on a candidate file and ignores its result.
 check() {
     set -- $(sed -n '/"check_command": \[/,/\]/p' "$prompt" | sed -e '1d;$d' -e 's/^ *"//' -e 's/",*$//' -e "s|^CANDIDATE_JSON\$|$1|")
     "$@" > /dev/null 2>&1 || true
 }
-if grep -q '"round": 3' "$prompt"; then
-    echo "generator quota exceeded" >&2
-    exit 3
-fi
-if grep -q '"round": 2' "$prompt"; then
-grep -q '"possible_bugs"' "$prompt"
-# The generator checks a property of the documented cap, then removes it.
-cat > removed.json <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "the documented cap is 100 ether",
-  "files": [{"path": "test/generated/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]
-}
-JSON
-check removed.json
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "large fees are capped at the current cap",
-  "files": [{"path": "test/generated/FeeCurrentCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCurrentCapTest {\n    function testCurrentCap() public pure {\n        require(Fee.fee(1e30) == 10 ether);\n        require(Fee.fee(1001 ether) == 10 ether);\n    }\n}\n"}]
-}
-JSON
-exit 0
-fi
-grep -q '"likely_equivalent": "the comparisons agree when the operand is unsigned"' "$prompt"
-grep -q '"check_command"' "$prompt"
-grep -q 'context-marker: rounding notes' "$prompt"
-grep -q 'CANDIDATE_JSON' "$prompt"
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "rationale": "the documented cap is 100 ether",
-  "files": [{"path": "test/generated/FeeCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCapTest {\n    function testFuzzCap(uint256 amount) public pure {\n        amount = amount % 1e30;\n        uint256 expected = amount / 100;\n        if (expected > 100 ether) expected = 100 ether;\n        require(Fee.fee(amount) == expected, \"fee\");\n    }\n}\n"}]
-}
-JSON
-# A checked failure that the candidate keeps is reported once.
-check "$output"
 "#;
 
-    prj.add_source(
-        "Fee.sol",
-        r#"
+const FEE: &str = r#"
 pragma solidity ^0.8.20;
 
 /// @notice Charges 1% of `amount`, capped at 100 ether.
@@ -825,115 +31,73 @@ library Fee {
         return amount / 100 > 0;
     }
 }
-"#,
-    );
-    prj.add_test(
-        "Fee.t.sol",
-        r#"
+"#;
+
+const ARITHMETIC: &str = r#"
 pragma solidity ^0.8.20;
 
-import {Fee} from "../src/Fee.sol";
-
-contract FeeTest {
-    function testSmallFee() public pure {
-        require(Fee.fee(100) == 1);
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
     }
 }
-"#,
-    );
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Check the documented fee cap.").unwrap();
-    let context = prj.root().join("context.md");
-    fs::write(&context, "context-marker: rounding notes").unwrap();
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, GENERATOR).unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
+"#;
 
-    cmd.args([
+/// Writes the brief and the generator script and returns the common arguments.
+fn properties_args(prj: &TestProject, script: &str) -> Vec<String> {
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Find bugs in the targets and prove each one with a test.").unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, format!("{PRELUDE}{script}")).unwrap();
+    fs::set_permissions(&generator, fs::Permissions::from_mode(0o755)).unwrap();
+    [
         "properties",
-        "--mutation",
         "--root",
         prj.root().to_str().unwrap(),
-        "--mutate",
-        "src/Fee.sol",
         "--brief",
         brief.to_str().unwrap(),
-        "--context",
-        context.to_str().unwrap(),
         "--generator",
         generator.to_str().unwrap(),
         "--seed",
         "0x5eed",
         "--seed",
         "0xc0ffee",
-        "--match-contract",
-        "^FeeTest$",
-        "--rounds",
-        "3",
-    ])
-    .assert_failure()
-    .stdout_eq(str![[r#"
-possible bug (no evidence): FeeCapTest::testFuzzCap (seed 24301: fee; counterexample: [..]; seed 12648430: fee; counterexample: [..])
-  the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
-possible bug (no evidence): FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-  observed during generator checks, later removed; journal: cache/properties/check-failures.jsonl
-added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
-  test/generated/FeeCurrentCap.t.sol (kept after a possible bug was reported; review it together with that report)
-
-"#]])
-    .stderr_eq(str![[r#"
-Error: generator failed in round 3 (exit status: 3): generator quota exceeded
-
-"#]]);
-
-    let rounds: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(rounds.as_array().unwrap().len(), 2);
-    assert_eq!(rounds[0]["possible_bugs"].as_array().unwrap().len(), 1);
-    assert_eq!(rounds[1]["after_possible_bug"], true);
-    assert!(!prj.root().join("test/generated/FeeCap.t.sol").exists());
-    // The journal keeps the removed test's source for review.
-    let journal = fs::read_to_string(prj.root().join("cache/properties/check-failures.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(journal.len(), 2);
-    assert_eq!(journal[1]["test"], "FeeRemovedTest::testDocumentedCap");
-    assert_eq!(journal[1]["path"], "test/generated/FeeRemoved.t.sol");
-    assert!(journal[1]["source"].as_str().unwrap().contains("function testDocumentedCap()"));
-    // Each mutation run keeps its log.
-    let digest = rounds[1]["candidate_digest"].as_str().unwrap();
-    for dir in ["baseline", digest] {
-        for seed in ["0x5eed", "0xc0ffee"] {
-            assert!(
-                prj.root().join(format!("cache/properties/{dir}/mutation-{seed}.log")).exists()
-            );
-        }
-    }
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
-#[cfg(unix)]
+/// Returns `cache/properties/rounds.json`.
+fn rounds(prj: &TestProject) -> serde_json::Value {
+    let rounds = fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap();
+    serde_json::from_str(&rounds).unwrap()
+}
+
+// The audit reports the failing tests with their evidence, documented first, and keeps the files
+// whose tests pass. Without targets, the prompt has every source file.
 #[forgetest_init]
-fn properties_reports_possible_bugs_by_evidence_basis(prj: _, cmd: _) {
-    const GENERATOR: &str = r#"#!/bin/sh
-set -eu
-prompt="$1"
-output="$2"
-grep -q '"protocol"' "$prompt"
+fn properties_reports_possible_bugs_by_evidence(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let context = prj.root().join("context.md");
+    fs::write(&context, "context-marker: rounding notes").unwrap();
+    let mut args = properties_args(
+        &prj,
+        r#"
+grep -q '^  "phase": "audit"' "$prompt"
 grep -q 'Audit first, test second' "$prompt"
-grep -q '"evidence"' "$prompt"
-if grep -q '"mutation_gaps"' "$prompt"; then exit 1; fi
-if grep -q '"baseline"' "$prompt"; then exit 1; fi
+grep -q '"path": "src/Fee.sol"' "$prompt"
+grep -q 'context-marker: rounding notes' "$prompt"
+if grep -q '"survivors"' "$prompt"; then exit 1; fi
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
-  "rationale": "cap: finding; charges: finding; rounding: finding",
-  "files": [{"path": "test/generated/FeeAudit.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeAuditTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n    function testChargesZero() public pure {\n        require(Fee.charges(0));\n    }\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}],
+  "rationale": "cap: finding; charges: finding; rounding: finding; small fee: refuted",
+  "files": [
+    {"path": "test/generated/FeeAudit.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeAuditTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n    function testChargesZero() public pure {\n        require(Fee.charges(0));\n    }\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n"},
+    {"path": "test/generated/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}
+  ],
   "evidence": {
     "FeeAuditTest::testChargesZero": {
       "claim": "A zero amount is charged.",
@@ -952,103 +116,295 @@ cat > "$output" <<'JSON'
   }
 }
 JSON
-# The check records the failures with their evidence in the journal.
-set -- $(sed -n '/"check_command": \[/,/\]/p' "$prompt" | sed -e '1d;$d' -e 's/^ *"//' -e 's/",*$//' -e "s|^CANDIDATE_JSON\$|$output|")
-"$@" > /dev/null 2>&1 || true
-"#;
-
-    prj.add_source(
-        "Fee.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-/// @notice Charges 1% of `amount`, capped at 100 ether.
-library Fee {
-    function fee(uint256 amount) internal pure returns (uint256 f) {
-        f = amount / 100;
-        if (f > 10 ether) f = 10 ether;
-    }
-
-    function charges(uint256 amount) internal pure returns (bool) {
-        return amount / 100 > 0;
-    }
-}
+# A checked failure that the generator keeps is reported once.
+check "$output"
 "#,
     );
-    let brief = prj.root().join("brief.md");
-    fs::write(&brief, "Find bugs in Fee and prove each one with a test.").unwrap();
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, GENERATOR).unwrap();
-    let mut permissions = fs::metadata(&generator).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&generator, permissions).unwrap();
-
-    cmd.args([
-        "properties",
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--mutate",
-        "src/Fee.sol",
-        "--brief",
-        brief.to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
-        "--seed",
-        "0x5eed",
-        "--seed",
-        "0xc0ffee",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+    args.extend(["--context".to_string(), context.to_str().unwrap().to_string()]);
+    cmd.args(args).assert_success().stdout_eq(str![[r#"
 possible bug (documented): FeeAuditTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
   claim: The fee is capped at 100 ether.
   quote: "Charges 1% of `amount`, capped at 100 ether." (src/Fee.sol:3)
   code path: src/Fee.sol:7 caps the fee at 10 ether.
-  the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
+  fails on every seed; candidate: cache/properties/0x[..]
 possible bug (inferred): FeeAuditTest::testChargesZero (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
   claim: A zero amount is charged.
   quote: "" (the name of charges)
   code path: src/Fee.sol:11 returns false for amounts below 100.
-  the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
+  fails on every seed; candidate: cache/properties/0x[..]
 possible bug (no evidence): FeeAuditTest::testRoundsUp (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-  the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
-no candidate passed the checks
+  fails on every seed; candidate: cache/properties/0x[..]
+added 1 generated test file(s):
+  test/generated/FeeSpec.t.sol
 
 "#]]);
 
-    // No mutation run happened, and the journal and the rounds keep the evidence.
+    assert!(!prj.root().join("test/generated/FeeAudit.t.sol").exists());
     assert!(!prj.root().join("cache/properties/baseline").exists());
-    let rounds: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(rounds[0]["accepted"], false);
-    assert_eq!(rounds[0]["possible_bugs"][0]["evidence"]["basis"], "documented");
-    assert_eq!(rounds[0]["possible_bugs"][2]["test"], "FeeAuditTest::testRoundsUp");
-    let journal = fs::read_to_string(prj.root().join("cache/properties/check-failures.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(journal.len(), 3);
-    assert_eq!(journal[0]["test"], "FeeAuditTest::testDocumentedCap");
-    assert_eq!(journal[0]["evidence"]["source"], "src/Fee.sol:3");
-    assert_eq!(journal[1]["evidence"]["basis"], "inferred");
-    assert!(journal[2].get("evidence").is_none());
 }
 
-#[cfg(unix)]
+// A failing test that a generator check saw and the generator then removed is still reported.
+#[forgetest_init]
+fn properties_reports_removed_check_failures(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let args = properties_args(
+        &prj,
+        r#"
+if grep -q '^  "round": 2,' "$prompt"; then
+    echo "generator quota exceeded" >&2
+    exit 3
+fi
+cat > removed.json <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "the documented cap is 100 ether",
+  "files": [{"path": "test/generated/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]
+}
+JSON
+check removed.json
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "small fees are 1%",
+  "files": [{"path": "test/generated/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
+}
+JSON
+"#,
+    );
+    cmd.args(args)
+        .args(["--target", "src/Fee.sol", "--rounds", "2"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+possible bug (no evidence): FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+  seen in a generator check, then removed; journal: cache/properties/check-failures.jsonl
+added 1 generated test file(s):
+  test/generated/FeeSpec.t.sol
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: generator failed in round 2 (exit status: 3): generator quota exceeded
+
+"#]]);
+
+    // The journal keeps the removed test's source for review.
+    let journal =
+        fs::read_to_string(prj.root().join("cache/properties/check-failures.jsonl")).unwrap();
+    let journal = serde_json::from_str::<serde_json::Value>(&journal).unwrap();
+    assert!(journal["source"].as_str().unwrap().contains("function testDocumentedCap()"));
+}
+
+// After the audit, `--mutation` keeps a new file only if it kills a survivor on every seed. The
+// mutation runs select the generated tests although configured filters exclude them.
+#[forgetest_init]
+fn properties_mutation_keeps_survivor_killing_tests(prj: _, cmd: _) {
+    prj.add_source("Arithmetic.sol", ARITHMETIC);
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.test_pattern = Some(regex::Regex::new(r"^testSmall\w*\(").unwrap().into());
+    });
+    let file = |name: &str, body: &str| {
+        format!(
+            r#"cat > "$output" <<'JSON'
+{{"schema": "foundry/properties-candidate-v1", "rationale": "{name}", "files": [{{"path": "test/generated/{name}.t.sol", "content": "pragma solidity ^0.8.20;\nimport {{Arithmetic}} from \"../../src/Arithmetic.sol\";\ncontract {name}Test {{\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testProperty() public view {{\n        {body}\n    }}\n}}\n"}}]}}
+JSON
+exit 0
+"#
+        )
+    };
+    let script = format!(
+        r#"
+if grep -q '^  "phase": "audit"' "$prompt"; then
+    if grep -q '"survivors"' "$prompt"; then exit 1; fi
+    if grep -q '^  "round": 1,' "$prompt"; then
+{}    fi
+{}fi
+grep -q '^  "phase": "mutation"' "$prompt"
+grep -q '"survives_all_seeds": true' "$prompt"
+grep -q '"source_context"' "$prompt"
+if grep -q '^  "round": 3,' "$prompt"; then
+{}fi
+grep -q 'ArithmeticNoGainTest' "$prompt"
+{}"#,
+        file("ArithmeticLarge", r"require(arithmetic.bucket(1000) == 3);"),
+        file("ArithmeticMiddle", r"require(arithmetic.bucket(50) == 2);"),
+        file("ArithmeticNoGain", r"require(arithmetic.bucket(1) == 1);"),
+        file(
+            "ArithmeticLower",
+            r"require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);"
+        ),
+    );
+    cmd.args(properties_args(&prj, &script))
+        .args(["--target", "src/Arithmetic.sol", "--rounds", "2", "--mutation"])
+        .args(["--match-contract", "^ArithmeticTest$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+added 3 generated test file(s):
+  test/generated/ArithmeticLarge.t.sol
+  test/generated/ArithmeticMiddle.t.sol
+  test/generated/ArithmeticLower.t.sol
+the mutation phase killed 1 survivor(s); 1 remain
+
+"#]]);
+
+    let rounds = rounds(&prj);
+    assert_data_eq!(
+        serde_json::to_string_pretty(&rounds[2]["reasons"]).unwrap(),
+        str![[r#"
+[
+  "the passing files kill no surviving mutant on every seed"
+]
+"#]]
+    );
+    assert!(rounds[3]["killed_survivors"].as_u64().unwrap() > 0);
+    assert!(!prj.root().join("test/generated/ArithmeticNoGain.t.sol").exists());
+}
+
+// The target is in a linked dependency directory, so mutation runs must copy it into the nested
+// workspace. It imports a library through a remapping and the test imports the library by its
+// project path; both must name the same file there, or the types differ.
+#[forgetest_init]
+fn properties_keeps_library_paths_in_nested_workspaces(prj: _, cmd: _) {
+    fs::create_dir_all(prj.root().join("lib/example")).unwrap();
+    fs::write(
+        prj.root().join("lib/example/Kind.sol"),
+        "pragma solidity ^0.8.20;\nenum Kind { Small, Large }\ninterface IBucket {\n    /// @notice bucket-spec-marker\n    function bucket(uint256 value) external pure returns (uint256);\n}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(prj.root().join("node_modules/bucket")).unwrap();
+    fs::write(
+        prj.root().join("node_modules/bucket/Arithmetic.sol"),
+        r#"
+pragma solidity ^0.8.20;
+
+import {IBucket, Kind} from "example/Kind.sol";
+
+contract Arithmetic is IBucket {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+
+    function kind(uint256 value) external pure returns (Kind) {
+        return value < 10 ? Kind.Small : Kind.Large;
+    }
+}
+"#,
+    )
+    .unwrap();
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Kind} from "lib/example/Kind.sol";
+import {Arithmetic} from "bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+        require(arithmetic.kind(1) == Kind.Small);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.remappings = ["bucket/=node_modules/bucket/", "example/=lib/example/"]
+            .map(|remapping| Remapping::from_str(remapping).unwrap().into())
+            .to_vec();
+    });
+    let args = properties_args(
+        &prj,
+        r#"
+# The prompt has the interface that the target implements.
+grep -q 'bucket-spec-marker' "$prompt"
+name=Lower
+body='require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);'
+if grep -q '^  "phase": "mutation"' "$prompt"; then
+    name=Upper
+    body='require(arithmetic.bucket(99) == 2); require(arithmetic.bucket(100) == 3);'
+fi
+cat > "$output" <<JSON
+{"schema": "foundry/properties-candidate-v1", "rationale": "$name", "files": [{"path": "test/generated/Arithmetic$name.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"bucket/Arithmetic.sol\";\ncontract Arithmetic${name}Test {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testBoundary() public view {\n        $body\n    }\n}\n"}]}
+JSON
+"#,
+    );
+    cmd.args(args)
+        .args(["--target", "node_modules/bucket/Arithmetic.sol", "--mutation"])
+        .args(["--match-contract", "^ArithmeticTest$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+added 2 generated test file(s):
+  test/generated/ArithmeticLower.t.sol
+  test/generated/ArithmeticUpper.t.sol
+the mutation phase killed 2 survivor(s); 3 remain
+
+"#]]);
+}
+
+// A generated file must not leave the project through a symlinked directory.
+#[forgetest_init]
+fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir_all(prj.root().join("test/generated")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated/link")).unwrap();
+    // Internal runs keep their own `--rerun` state; the project's file stays as it is.
+    let failures = prj.root().join("cache/test-failures");
+    fs::create_dir_all(failures.parent().unwrap()).unwrap();
+    fs::write(&failures, r#"{"version":1,"failures":[]}"#).unwrap();
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "small fees are 1%",
+  "files": [{"path": "test/generated/link/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
+}
+JSON
+"#,
+    );
+    cmd.args(args).assert_success().stdout_eq(str![[r#"
+no generated test file was kept
+
+"#]]);
+
+    assert_data_eq!(
+        rounds(&prj)[0]["reasons"][0].as_str().unwrap(),
+        str!["generated test path test/generated/link/FeeSpec.t.sol escapes project root [..]"]
+    );
+    assert!(!outside.path().join("FeeSpec.t.sol").exists());
+    assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
+}
+
+// Checks run in a copy of the project. Inherited config, profiles, `FOUNDRY_CONFIG`, a source
+// directory other than `src`, and negative filters must apply as in the project, and filters must
+// not hide generated tests.
 #[forgetest_init]
 fn properties_check_reports_candidate_result(prj: _, cmd: _) {
-    // Candidate checks run in a copy of the project; inherited config and negative filters must
-    // still apply as in the project, and must not hide generated tests.
     fs::write(
         prj.root().join("base.toml"),
         "[profile.default]\nremappings = [\"fee/=contracts/\"]\n",
     )
     .unwrap();
-    // A source directory other than `src` checks that library remappings, such as forge-std's,
-    // keep resolving in the copy.
     prj.update_config(|config| {
         config.src = "contracts".into();
         config.test = prj.root().join("test");
@@ -1062,98 +418,51 @@ fn properties_check_reports_candidate_result(prj: _, cmd: _) {
             + "\n[profile.ci]\n",
     )
     .unwrap();
-    prj.add_source(
-        "Fee.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-library Fee {
-    function fee(uint256 amount) internal pure returns (uint256) {
-        return amount / 100;
-    }
-}
-"#,
-    );
     fs::create_dir_all(prj.root().join("contracts")).unwrap();
-    fs::rename(prj.root().join("src/Fee.sol"), prj.root().join("contracts/Fee.sol")).unwrap();
-    let candidate = |content: &str| {
-        serde_json::json!({
+    fs::write(
+        prj.root().join("contracts/Fee.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Fee {\n    function fee(uint256 amount) internal pure returns (uint256) {\n        return amount / 100;\n    }\n}\n",
+    )
+    .unwrap();
+    let write_candidate = |name: &str, content: &str| {
+        let candidate = serde_json::json!({
             "schema": "foundry/properties-candidate-v1",
             "rationale": "fee is 1% rounded down",
             "files": [{"path": "test/generated/FeeCheck.t.sol", "content": content}]
-        })
-        .to_string()
+        });
+        fs::write(prj.root().join(name), candidate.to_string()).unwrap();
     };
-    fs::write(
-        prj.root().join("passing.json"),
-        candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"fee/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: ci.fuzz.runs = 10\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
-        ),
-    )
-    .unwrap();
-    fs::write(
-        prj.root().join("broken.json"),
-        candidate(
-            "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    function unused() public {\n        uint256 x;\n    }\n    function testFee() public {\n        missing();\n    }\n}\n",
-        ),
-    )
-    .unwrap();
-
-    // Forge runs every test in the files, including contracts that no manifest lists.
-    fs::write(
-        prj.root().join("extra.json"),
-        candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testHiddenRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
-        ),
-    )
-    .unwrap();
+    write_candidate(
+        "passing.json",
+        "pragma solidity ^0.8.20;\nimport {Fee} from \"fee/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: ci.fuzz.runs = 10\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
+    );
+    write_candidate(
+        "broken.json",
+        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    function testFee() public {\n        missing();\n    }\n}\n",
+    );
+    // Forge runs every test in the files.
+    write_candidate(
+        "extra.json",
+        "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testHiddenRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
+    );
     // A merged invariant campaign reports each predicate on its own.
-    fs::write(
-        prj.root().join("invariants.json"),
-        candidate(
-            "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeHandler {\n    uint256 public total;\n    function add(uint256 amount) public {\n        total += Fee.fee(amount % 1e30);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract FeeInvariantTest is Test {\n    FeeHandler internal handler;\n    function setUp() public {\n        handler = new FeeHandler();\n        targetContract(address(handler));\n    }\n    function invariant_totalFitsSupply() public view {\n        assertLe(handler.total(), 1e30);\n    }\n    function invariant_totalStaysZero() public view {\n        assertEq(handler.total(), 0);\n    }\n}\n",
-        ),
-    )
-    .unwrap();
+    write_candidate(
+        "invariants.json",
+        "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeHandler {\n    uint256 public total;\n    function add(uint256 amount) public {\n        total += Fee.fee(amount % 1e30);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract FeeInvariantTest is Test {\n    FeeHandler internal handler;\n    function setUp() public {\n        handler = new FeeHandler();\n        targetContract(address(handler));\n    }\n    function invariant_totalFitsSupply() public view {\n        assertLe(handler.total(), 1e30);\n    }\n    function invariant_totalStaysZero() public view {\n        assertEq(handler.total(), 0);\n    }\n}\n",
+    );
     // A handler assertion fails the campaign even when every predicate holds.
-    fs::write(
-        prj.root().join("handler.json"),
-        candidate(
-            "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract BrokenHandler {\n    uint256 public pokes;\n    function poke() public {\n        pokes += 1;\n        assert(false);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract HandlerInvariantTest is Test {\n    function setUp() public {\n        targetContract(address(new BrokenHandler()));\n    }\n    function invariant_one() public pure {}\n    function invariant_two() public pure {}\n}\n",
-        ),
-    )
-    .unwrap();
-    // Evidence that the candidate gives for a failing test is part of the result.
-    fs::write(
-        prj.root().join("evidenced.json"),
-        serde_json::json!({
-            "schema": "foundry/properties-candidate-v1",
-            "rationale": "fee rounds up",
-            "files": [{"path": "test/generated/FeeCheck.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeRoundingTest {\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n"}],
-            "evidence": {
-                "FeeRoundingTest::testRoundsUp": {
-                    "claim": "The fee rounds up.",
-                    "quote": "rounds up",
-                    "source": "README.md:3",
-                    "basis": "documented",
-                    "code_path": "contracts/Fee.sol:6 divides and rounds down."
-                }
-            }
-        })
-        .to_string(),
-    )
-    .unwrap();
-    fs::write(
-        prj.root().join("seeded.json"),
-        candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz.seed = \"0x3\"\n    function testFuzzFee(uint256 amount) public pure {\n        require(Fee.fee(amount) <= amount);\n    }\n}\n",
-        ),
-    )
-    .unwrap();
+    write_candidate(
+        "handler.json",
+        "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract BrokenHandler {\n    uint256 public pokes;\n    function poke() public {\n        pokes += 1;\n        assert(false);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract HandlerInvariantTest is Test {\n    function setUp() public {\n        targetContract(address(new BrokenHandler()));\n    }\n    function invariant_one() public pure {}\n    function invariant_two() public pure {}\n}\n",
+    );
+    write_candidate(
+        "seeded.json",
+        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz.seed = \"0x3\"\n    function testFuzzFee(uint256 amount) public pure {}\n}\n",
+    );
+    let check = ["properties", "--check", "CANDIDATE", "--seed", "1", "--seed", "2"];
+    let check = |candidate| check.map(|arg| if arg == "CANDIDATE" { candidate } else { arg });
 
-    cmd.args(["properties", "--check", "passing.json", "--seed", "1", "--seed", "2"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(check("passing.json")).assert_success().stdout_eq(str![[r#"
 {
   "passed": true,
   "reasons": [],
@@ -1162,40 +471,24 @@ library Fee {
 
 "#]]);
     // A config file chosen with `FOUNDRY_CONFIG` is resolved in the project, not in the copy.
-    fs::copy(prj.root().join("foundry.toml"), prj.root().join("custom.toml")).unwrap();
+    fs::copy(&foundry_toml, prj.root().join("custom.toml")).unwrap();
     cmd.forge_fuse().env("FOUNDRY_CONFIG", "custom.toml");
-    cmd.args(["properties", "--check", "passing.json", "--seed", "1", "--seed", "2"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-{
-  "passed": true,
-  "reasons": [],
-  "possible_bugs": []
-}
-
-"#]]);
-    cmd.forge_fuse()
-        .args(["properties", "--check", "broken.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    cmd.args(check("passing.json")).assert_success();
+    cmd.forge_fuse().args(check("broken.json")).assert_failure().stdout_eq(str![[r#"
 {
   "passed": false,
   "reasons": [
-    "candidate tests failed on seed 1: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^",
-    "candidate tests failed on seed 2: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^"
+    "candidate tests failed on seed 1: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^",
+    "candidate tests failed on seed 2: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^"
   ],
   "possible_bugs": []
 }
 
-"#]])
-        .stderr_eq(str![[r#"
+"#]]).stderr_eq(str![[r#"
 Error: candidate check failed
 
 "#]]);
-    cmd.forge_fuse()
-        .args(["properties", "--check", "extra.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    cmd.forge_fuse().args(check("extra.json")).assert_failure().stdout_eq(str![[r#"
 {
   "passed": false,
   "reasons": [
@@ -1212,10 +505,7 @@ Error: candidate check failed
 }
 
 "#]]);
-    cmd.forge_fuse()
-        .args(["properties", "--check", "invariants.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    cmd.forge_fuse().args(check("invariants.json")).assert_failure().stdout_eq(str![[r#"
 {
   "passed": false,
   "reasons": [
@@ -1232,10 +522,7 @@ Error: candidate check failed
 }
 
 "#]]);
-    cmd.forge_fuse()
-        .args(["properties", "--check", "handler.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    cmd.forge_fuse().args(check("handler.json")).assert_failure().stdout_eq(str![[r#"
 {
   "passed": false,
   "reasons": [
@@ -1252,55 +539,8 @@ Error: candidate check failed
 }
 
 "#]]);
-    cmd.forge_fuse()
-        .args(["properties", "--check", "evidenced.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "FeeRoundingTest::testRoundsUp failed on seed 1: EvmError: Revert",
-    "FeeRoundingTest::testRoundsUp failed on seed 2: EvmError: Revert"
-  ],
-  "possible_bugs": [
-    {
-      "test": "FeeRoundingTest::testRoundsUp",
-      "path": "test/generated/FeeCheck.t.sol",
-      "reason": "seed 1: EvmError: Revert; seed 2: EvmError: Revert",
-      "evidence": {
-        "claim": "The fee rounds up.",
-        "quote": "rounds up",
-        "source": "README.md:3",
-        "basis": "documented",
-        "code_path": "contracts/Fee.sol:6 divides and rounds down."
-      }
-    }
-  ]
-}
-
-"#]]);
-    cmd.forge_fuse()
-        .args(["properties", "--check", "seeded.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stderr_eq(str![[r#"
+    cmd.forge_fuse().args(check("seeded.json")).assert_failure().stderr_eq(str![[r#"
 Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
-
-"#]]);
-    // The evidence basis is either documented or inferred.
-    let mut legacy = serde_json::from_str::<serde_json::Value>(
-        &fs::read_to_string(prj.root().join("evidenced.json")).unwrap(),
-    )
-    .unwrap();
-    legacy["evidence"]["FeeRoundingTest::testRoundsUp"]["basis"] = "A".into();
-    fs::write(prj.root().join("legacy.json"), legacy.to_string()).unwrap();
-    cmd.forge_fuse()
-        .args(["properties", "--check", "legacy.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: invalid candidate JSON
-
-Context:
-- unknown variant `A`, expected `documented` or `inferred` at line 1 column [..]
 
 "#]]);
     assert!(!prj.root().join("test/generated/FeeCheck.t.sol").exists());
