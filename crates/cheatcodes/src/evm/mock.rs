@@ -1,4 +1,4 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use revm::{
@@ -47,7 +47,7 @@ impl Ord for MockCallDataContext {
 }
 
 impl Cheatcode for clearMockedCallsCall {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         state.mocked_calls = Default::default();
         Ok(Default::default())
@@ -195,7 +195,7 @@ impl Cheatcode for mockCallRevert_3Call {
 }
 
 impl Cheatcode for mockFunctionCall {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { callee, target, data } = self;
         state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);
 
@@ -222,7 +222,7 @@ fn mock_calls<FEN: FoundryEvmNetwork>(
     rdata_vec: &[Bytes],
     ret_type: InstructionResult,
 ) {
-    state.mocked_calls.entry(*callee).or_default().insert(
+    state.core.mocked_calls.entry(*callee).or_default().insert(
         MockCallDataContext { calldata: cdata.clone(), value: value.copied() },
         rdata_vec
             .iter()
