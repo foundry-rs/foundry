@@ -232,9 +232,11 @@ impl BindArgs {
                     .filter(move |(name, _path)| filter.is_match(name))
                     .collect::<Vec<_>>();
 
-                if !cached_artifacts.is_empty() {
-                    return Ok(cached_artifacts.into_iter());
-                }
+                // When cache is available, always trust it even if the filtered result is empty.
+                // An empty result means the user's filter matched no current contracts, not that
+                // the cache is invalid. Falling back to a filesystem scan would incorrectly
+                // include orphaned artifacts left behind after source files were deleted.
+                return Ok(cached_artifacts.into_iter());
             }
         }
 

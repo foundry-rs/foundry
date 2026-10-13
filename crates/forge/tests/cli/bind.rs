@@ -370,6 +370,52 @@ contract Added {
 }
 
 #[forgetest]
+fn bind_select_deleted_contract_returns_empty(prj: _, cmd: _) {
+    prj.add_source(
+        "Gone.sol",
+        r#"
+contract Gone {
+    function old() external pure returns (uint256) { return 1; }
+}
+"#,
+    );
+    prj.add_source(
+        "Live.sol",
+        r#"
+contract Live {
+    function current() external pure returns (uint256) { return 2; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    // Delete Gone.sol and rebuild. Cache correctly excludes Gone.
+    fs::remove_file(prj.paths().sources.join("Gone.sol")).unwrap();
+    cmd.forge_fuse().arg("build").assert_success();
+
+    // Selecting the deleted contract should fail with "No contract artifacts found",
+    // not fall back to filesystem scan and generate orphaned bindings.
+    cmd.forge_fuse().args(["bind", "--select", "^Gone$"]).assert_failure().stderr_eq(str![[r#"
+Error: No contract artifacts found
+
+"#]]);
+
+    let gone_binding = prj.root().join("out/bindings/src/gone.rs");
+    assert!(!gone_binding.exists(), "orphaned binding should not be generated");
+
+    // Same behavior with --skip-build.
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^Gone$"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No contract artifacts found
+
+"#]]);
+
+    assert!(!gone_binding.exists(), "orphaned binding should not be generated");
+}
+
+#[forgetest]
 fn bind_ambiguous_enum_definitions_fall_back_to_udvt(prj: _, cmd: _) {
     prj.add_source(
         "A.sol",
