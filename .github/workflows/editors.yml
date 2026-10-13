@@ -39,6 +39,9 @@ jobs:
   vscode:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Keep the Forge build and CLI test artifacts within the runner's disk budget.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     permissions:
       id-token: write
       contents: read
@@ -63,7 +66,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
-          prefix-key: v2-editor-forge
+          prefix-key: v3-editor-forge
       - run: npm ci
         working-directory: editors/vscode
       - run: npm run check && npm test && npm run bundle:check
