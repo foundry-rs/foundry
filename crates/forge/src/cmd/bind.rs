@@ -232,10 +232,46 @@ impl BindArgs {
                     .filter(move |(name, _path)| filter.is_match(name))
                     .collect::<Vec<_>>();
 
-                // When cache is available, always trust it even if the filtered result is empty.
-                // An empty result means the user's filter matched no current contracts, not that
-                // the cache is invalid. Falling back to a filesystem scan would incorrectly
-                // include orphaned artifacts left behind after source files were deleted.
+                // When cache is available, trust it for Solidity artifacts even if the filtered
+                // result is empty. An empty result means the user's filter matched no current
+                // Solidity contracts, not that the cache is invalid. Falling back to a
+                // filesystem scan would incorrectly include orphaned Solidity artifacts left
+                // behind after source files were deleted.
+                //
+                // However, external compiler artifacts (e.g., Fe, Vyper) are stored in
+                // out/.external/ and are not tracked in the Solidity CompilerCache. We must
+                // scan that directory separately and merge the results to support external
+                // compilers without reintroducing the orphaned artifact problem.
+                let external_dir = artifacts.join(".external");
+                if external_dir.exists() {
+                    let filter = self.get_filter()?;
+                    let external_artifacts = json_files(&external_dir)
+                        .filter_map(|path| {
+                            if path.to_str()?.contains("build-info") {
+                                return None;
+                            }
+
+                            let stem = path.file_stem()?.to_str()?;
+                            if stem.ends_with(".metadata") {
+                                return None;
+                            }
+
+                            let name = stem.split('.').next().unwrap();
+                            let name =
+                                name.replace(char::is_whitespace, "").replace(['-', '$'], "_");
+
+                            Some((name, path))
+                        })
+                        .filter(move |(name, _path)| filter.is_match(name))
+                        .collect::<Vec<_>>();
+
+                    return Ok(cached_artifacts
+                        .into_iter()
+                        .chain(external_artifacts)
+                        .collect::<Vec<_>>()
+                        .into_iter());
+                }
+
                 return Ok(cached_artifacts.into_iter());
             }
         }
