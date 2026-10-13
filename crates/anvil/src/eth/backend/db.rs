@@ -314,12 +314,10 @@ impl<T: DatabaseRef> DatabaseRef for EmptyAsAbsentDb<T> {
 
 /// This bundles all required revm traits
 pub trait Db:
-    DatabaseRef<Error = DatabaseError>
-    + Database<Error = DatabaseError>
+    Database<Error = DatabaseError>
     + DatabaseCommit
     + MaybeFullDatabase
     + MaybeForkedDatabase
-    + fmt::Debug
     + Send
     + Sync
 {
