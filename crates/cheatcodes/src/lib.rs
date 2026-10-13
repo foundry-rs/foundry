@@ -117,7 +117,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
 }
 
 /// The cheatcode context.
-pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
+pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes<FEN>,
     /// The EVM context.
