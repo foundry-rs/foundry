@@ -37,17 +37,15 @@ fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value 
                         if let Some(obj) = param.as_object() {
                             let mut redacted_obj = obj.clone();
                             // Redact forking.jsonRpcUrl
-                            if let Some(forking) = redacted_obj.get_mut("forking") {
-                                if let Some(forking_obj) = forking.as_object_mut() {
-                                    if let Some(url) =
-                                        forking_obj.get("jsonRpcUrl").and_then(|v| v.as_str())
-                                    {
-                                        forking_obj.insert(
-                                            "jsonRpcUrl".to_string(),
-                                            serde_json::Value::String(redact_url_credentials(url)),
-                                        );
-                                    }
-                                }
+                            if let Some(forking) = redacted_obj.get_mut("forking")
+                                && let Some(forking_obj) = forking.as_object_mut()
+                                && let Some(url) =
+                                    forking_obj.get("jsonRpcUrl").and_then(|v| v.as_str())
+                            {
+                                forking_obj.insert(
+                                    "jsonRpcUrl".to_string(),
+                                    serde_json::Value::String(redact_url_credentials(url)),
+                                );
                             }
                             // Also handle legacy top-level jsonRpcUrl
                             if let Some(url) =
@@ -82,15 +80,15 @@ fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value 
         | "eth_sendRawTransactionConditional"
         | "eth_signRawTransaction" => {
             if let Some(array) = params.as_array() {
-                if array.first().is_some() {
+                if array.is_empty() {
+                    params.clone()
+                } else {
                     // Keep the first param as "[SIGNED_TX]" for visibility that a tx was sent
                     let mut redacted = vec![serde_json::Value::String("[SIGNED_TX]".to_string())];
                     // Keep other params (e.g., timeout, conditional) visible as they're not
                     // sensitive
                     redacted.extend(array.iter().skip(1).cloned());
                     serde_json::Value::Array(redacted)
-                } else {
-                    params.clone()
                 }
             } else {
                 params.clone()
