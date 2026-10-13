@@ -30,41 +30,12 @@ fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value 
     match method {
         // Redact fork URLs that may contain API keys
         "anvil_reset" | "hardhat_reset" => {
+            // Params are accepted either as an array (`[{...}]`) or as a single object (`{...}`),
+            // so both shapes must be redacted before logging.
             if let Some(array) = params.as_array() {
-                let redacted: Vec<_> = array
-                    .iter()
-                    .map(|param| {
-                        if let Some(obj) = param.as_object() {
-                            let mut redacted_obj = obj.clone();
-                            // Redact forking.jsonRpcUrl
-                            if let Some(forking) = redacted_obj.get_mut("forking")
-                                && let Some(forking_obj) = forking.as_object_mut()
-                                && let Some(url) =
-                                    forking_obj.get("jsonRpcUrl").and_then(|v| v.as_str())
-                            {
-                                forking_obj.insert(
-                                    "jsonRpcUrl".to_string(),
-                                    serde_json::Value::String(redact_url_credentials(url)),
-                                );
-                            }
-                            // Also handle legacy top-level jsonRpcUrl
-                            if let Some(url) =
-                                redacted_obj.get("jsonRpcUrl").and_then(|v| v.as_str())
-                            {
-                                redacted_obj.insert(
-                                    "jsonRpcUrl".to_string(),
-                                    serde_json::Value::String(redact_url_credentials(url)),
-                                );
-                            }
-                            serde_json::Value::Object(redacted_obj)
-                        } else {
-                            param.clone()
-                        }
-                    })
-                    .collect();
-                serde_json::Value::Array(redacted)
+                serde_json::Value::Array(array.iter().map(redact_fork_params).collect::<Vec<_>>())
             } else {
-                params.clone()
+                redact_fork_params(params)
             }
         }
         "anvil_setRpcUrl" => {
@@ -96,6 +67,33 @@ fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value 
         }
         _ => params.clone(),
     }
+}
+
+/// Redacts the fork URL from a single `anvil_reset` parameter object.
+///
+/// Handles both the nested `forking.jsonRpcUrl` field and the legacy top-level
+/// `jsonRpcUrl` field. Non-object params are returned unchanged.
+fn redact_fork_params(param: &serde_json::Value) -> serde_json::Value {
+    let Some(obj) = param.as_object() else { return param.clone() };
+    let mut redacted_obj = obj.clone();
+    // Redact forking.jsonRpcUrl
+    if let Some(forking) = redacted_obj.get_mut("forking")
+        && let Some(forking_obj) = forking.as_object_mut()
+        && let Some(url) = forking_obj.get("jsonRpcUrl").and_then(|v| v.as_str())
+    {
+        forking_obj.insert(
+            "jsonRpcUrl".to_string(),
+            serde_json::Value::String(redact_url_credentials(url)),
+        );
+    }
+    // Also handle legacy top-level jsonRpcUrl
+    if let Some(url) = redacted_obj.get("jsonRpcUrl").and_then(|v| v.as_str()) {
+        redacted_obj.insert(
+            "jsonRpcUrl".to_string(),
+            serde_json::Value::String(redact_url_credentials(url)),
+        );
+    }
+    serde_json::Value::Object(redacted_obj)
 }
 
 /// Redacts credentials from URLs by replacing API keys/secrets in the path or query.
@@ -269,4 +267,39 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
         router = router.layer(DefaultBodyLimit::disable());
     }
     router
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn redacts_reset_array_params() {
+        let params =
+            json!([{"forking": {"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"}}]);
+        assert_eq!(
+            redact_params("anvil_reset", &params),
+            json!([{"forking": {"jsonRpcUrl": "https://example.invalid/rpc/[REDACTED]"}}])
+        );
+    }
+
+    #[test]
+    fn redacts_reset_object_params() {
+        let params =
+            json!({"forking": {"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"}});
+        assert_eq!(
+            redact_params("anvil_reset", &params),
+            json!({"forking": {"jsonRpcUrl": "https://example.invalid/rpc/[REDACTED]"}})
+        );
+    }
+
+    #[test]
+    fn redacts_reset_legacy_object_params() {
+        let params = json!({"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"});
+        assert_eq!(
+            redact_params("hardhat_reset", &params),
+            json!({"jsonRpcUrl": "https://example.invalid/rpc/[REDACTED]"})
+        );
+    }
 }
