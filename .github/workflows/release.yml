@@ -207,7 +207,7 @@ jobs:
       - name: Build changelog
         id: build_changelog
         if: ${{ steps.existing_release.outputs.skip_assets != 'true' }}
-        uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c # v6.3.0
+        uses: mikepenz/release-changelog-builder-action@aa013739bbc8e7067dbbecd4525ff11aeb51a84b # v6.4.0
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
@@ -382,7 +382,7 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: rui314/setup-mold@da13e0b42e392e3a45d1215033a2270b849d7d36 # v1
 
       # Include locked workspace dependencies not reached by the --bins build.
       - name: Fetch locked dependencies
@@ -533,7 +533,7 @@ jobs:
           cat "$FOUNDRY_CHECKSUM"
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       - name: Generate SBOM (SPDX)
         env:

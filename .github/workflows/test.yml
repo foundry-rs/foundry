@@ -79,7 +79,7 @@ jobs:
         with:
           toolchain: stable
           target: ${{ matrix.target }}
-      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: rui314/setup-mold@da13e0b42e392e3a45d1215033a2270b849d7d36 # v1
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
@@ -157,7 +157,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: nextest
       - name: Setup Git config
