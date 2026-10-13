@@ -150,7 +150,9 @@ impl SendTxArgs {
                 .await?;
 
         if network.is_tempo() {
-            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
+            return self
+                .run_generic::<TempoNetwork>(signer, tempo_access_key)
+                .await;
         }
 
         #[cfg(feature = "base")]
@@ -187,7 +189,8 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        self.run_generic_inner::<N>(pre_resolved_signer, access_key, None).await
+        self.run_generic_inner::<N>(pre_resolved_signer, access_key, None)
+            .await
     }
 
     async fn run_generic_inner<N: Network>(
@@ -591,7 +594,10 @@ where
         let (tx_hash, receipt) = CastTxSender::new(&provider).send_sync(tx).await?;
         (tx_hash, Some(receipt))
     } else {
-        (*CastTxSender::new(&provider).send(tx).await?.tx_hash(), None)
+        (
+            *CastTxSender::new(&provider).send(tx).await?.tx_hash(),
+            None,
+        )
     };
     opts.print_send_result(provider, tx_hash, receipt).await
 }
@@ -610,7 +616,10 @@ where
         let (tx_hash, receipt) = CastTxSender::new(provider).send_raw_sync(raw_tx).await?;
         Ok((tx_hash, Some(receipt)))
     } else {
-        Ok((*provider.send_raw_transaction(raw_tx).await?.tx_hash(), None))
+        Ok((
+            *provider.send_raw_transaction(raw_tx).await?.tx_hash(),
+            None,
+        ))
     }
 }
 
@@ -647,8 +656,9 @@ where
 {
     tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
     let connector = tempo::sponsor_relay_connector(provider, sponsor_url)?;
-    let sponsor_provider =
-        AlloyProviderBuilder::<_, _, N>::default().connect_with(&connector).await?;
+    let sponsor_provider = AlloyProviderBuilder::<_, _, N>::default()
+        .connect_with(&connector)
+        .await?;
     cast_send_with_tempo_wallet(&sponsor_provider, tx, wallet, opts).await
 }
 
@@ -747,8 +757,10 @@ mod tests {
             "feePayer": Address::ZERO,
         }));
         let methods = Arc::new(Mutex::new(Vec::new()));
-        let transport =
-            RecordingTransport { inner: MockTransport::new(asserter), methods: methods.clone() };
+        let transport = RecordingTransport {
+            inner: MockTransport::new(asserter),
+            methods: methods.clone(),
+        };
         let provider = AlloyProviderBuilder::new_with_network::<TempoNetwork>()
             .connect_client(RpcClient::new(transport, true));
         let root = Address::repeat_byte(0x33);
@@ -779,9 +791,14 @@ mod tests {
             resolve_fee_token: false,
             query_fee_token: false,
         };
-        let actual_hash = cast_send_with_tempo_wallet(&provider, tx, &wallet, &opts).await.unwrap();
+        let actual_hash = cast_send_with_tempo_wallet(&provider, tx, &wallet, &opts)
+            .await
+            .unwrap();
 
         assert_eq!(actual_hash, tx_hash);
-        assert_eq!(methods.lock().unwrap().as_slice(), ["eth_sendRawTransactionSync"]);
+        assert_eq!(
+            methods.lock().unwrap().as_slice(),
+            ["eth_sendRawTransactionSync"]
+        );
     }
 }
