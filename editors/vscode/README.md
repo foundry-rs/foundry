@@ -8,8 +8,8 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then install `paradigm.forge` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge).
+[Foundry](https://getfoundry.sh), then install `paradigm.forge-lsp` from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge-lsp).
 
 To try the extension without installing it, run this in your Solidity project's
 terminal:
@@ -71,7 +71,7 @@ ignored, with a migration warning when explicitly configured. Remove it and set
 `solarLsp.forgePath` to a **Forge** executable if necessary. Existing Solar paths
 are never reinterpreted as Forge paths. The language ID `solidity`, `solarLsp.*`
 setting keys and `solar.*` commands remain unchanged. The extension ID is
-`paradigm.forge`; `forge lsp` does not require a Marketplace installation.
+`paradigm.forge-lsp`; `forge lsp` does not require a Marketplace installation.
 
 ## Formatting
 
@@ -173,8 +173,9 @@ npm run package
 code --install-extension bundle/forge.vsix --force
 ```
 
-Packaging runs the compiler and stages the runtime dependencies, grammars and
-language configuration selected by `.vscodeignore`. It copies the MIT and
+Packaging checks that `dist/extension.js.gz` matches the sources, then stages
+that bundled client, the grammars and the language configuration selected by
+`.vscodeignore`, without `node_modules`. It copies the MIT and
 Apache-2.0 license texts directly from the repository root, so packaging also
 works with `core.symlinks=false`. The temporary staging directory is removed
 after packaging; the checkout's license links are unchanged. Use `npm run package`
