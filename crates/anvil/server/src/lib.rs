@@ -21,30 +21,13 @@ use serde::de::DeserializeOwned;
 use std::fmt;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-/// Redacts sensitive information from RPC request parameters for logging.
+/// Redacts sensitive information from RPC request parameters for TRACE logging.
 ///
 /// This function redacts:
 /// - Fork URLs in `anvil_reset` and `anvil_setRpcUrl` methods
 /// - Signed transaction data in `eth_sendRawTransaction*` methods
 fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value {
     match method {
-        // Redact fork URLs that may contain API keys
-        "anvil_reset" | "hardhat_reset" => {
-            // Params are accepted either as an array (`[{...}]`) or as a single object (`{...}`),
-            // so both shapes must be redacted before logging.
-            if let Some(array) = params.as_array() {
-                serde_json::Value::Array(array.iter().map(redact_fork_params).collect::<Vec<_>>())
-            } else {
-                redact_fork_params(params)
-            }
-        }
-        "anvil_setRpcUrl" => {
-            if let Some(url) = params.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
-                serde_json::json!([redact_url_credentials(url)])
-            } else {
-                params.clone()
-            }
-        }
         // Redact signed transaction data, but keep transaction hashes visible
         "eth_sendRawTransaction"
         | "eth_sendRawTransactionSync"
@@ -65,88 +48,60 @@ fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value 
                 params.clone()
             }
         }
+        _ => redact_fork_credentials(method, params),
+    }
+}
+
+/// Redacts fork credentials while preserving the rest of a failed request dump.
+fn redact_fork_credentials(method: &str, params: &serde_json::Value) -> serde_json::Value {
+    match method {
+        "anvil_reset" | "hardhat_reset" => redact_fork_params(params),
+        "anvil_setRpcUrl" => {
+            let mut redacted = params.clone();
+            let url = match &mut redacted {
+                serde_json::Value::Array(array) => array.first_mut(),
+                value => Some(value),
+            };
+            if let Some(serde_json::Value::String(url)) = url {
+                *url = redact_url_credentials(url);
+            }
+            redacted
+        }
         _ => params.clone(),
     }
 }
 
-/// Redacts the fork URL from a single `anvil_reset` parameter object.
-///
-/// Handles both the nested `forking.jsonRpcUrl` field and the legacy top-level
-/// `jsonRpcUrl` field. Non-object params are returned unchanged.
+/// Redacts fork URLs in array, object, and wrapped `params` forms of a reset request.
 fn redact_fork_params(param: &serde_json::Value) -> serde_json::Value {
-    let Some(obj) = param.as_object() else { return param.clone() };
-    let mut redacted_obj = obj.clone();
-    // Redact forking.jsonRpcUrl
-    if let Some(forking) = redacted_obj.get_mut("forking")
-        && let Some(forking_obj) = forking.as_object_mut()
-        && let Some(url) = forking_obj.get("jsonRpcUrl").and_then(|v| v.as_str())
-    {
-        forking_obj.insert(
-            "jsonRpcUrl".to_string(),
-            serde_json::Value::String(redact_url_credentials(url)),
-        );
+    match param {
+        serde_json::Value::Array(array) => array.iter().map(redact_fork_params).collect(),
+        serde_json::Value::Object(object) => object
+            .iter()
+            .map(|(key, value)| {
+                let value = if key == "jsonRpcUrl"
+                    && let Some(url) = value.as_str()
+                {
+                    serde_json::Value::String(redact_url_credentials(url))
+                } else {
+                    redact_fork_params(value)
+                };
+                (key.clone(), value)
+            })
+            .collect(),
+        _ => param.clone(),
     }
-    // Also handle legacy top-level jsonRpcUrl
-    if let Some(url) = redacted_obj.get("jsonRpcUrl").and_then(|v| v.as_str()) {
-        redacted_obj.insert(
-            "jsonRpcUrl".to_string(),
-            serde_json::Value::String(redact_url_credentials(url)),
-        );
-    }
-    serde_json::Value::Object(redacted_obj)
 }
 
-/// Redacts credentials from URLs by replacing API keys/secrets in the path or query.
+/// Keeps only the URL's scheme, host, and port, matching Foundry's provider URL redaction.
 fn redact_url_credentials(url: &str) -> String {
-    // Parse URL and redact sensitive parts
-    if let Ok(mut parsed) = url::Url::parse(url) {
-        // Redact path segments that look like API keys (alphanumeric strings >= 16 chars)
-        let path = parsed.path();
-        let segments: Vec<&str> = path.split('/').collect();
-        let redacted_segments: Vec<String> = segments
-            .iter()
-            .map(|seg| {
-                // If segment is >= 16 chars and mostly alphanumeric, likely an API key
-                if seg.len() >= 16 {
-                    let alphanum_count = seg.chars().filter(|c| c.is_alphanumeric()).count();
-                    if alphanum_count >= seg.len() * 3 / 4 {
-                        return "[REDACTED]".to_string();
-                    }
-                }
-                seg.to_string()
-            })
-            .collect();
-        parsed.set_path(&redacted_segments.join("/"));
-
-        // Redact query parameters that might contain API keys
-        if parsed.query().is_some() {
-            let pairs: Vec<(String, String)> = parsed
-                .query_pairs()
-                .map(|(k, v)| {
-                    let redacted_val = if v.len() >= 16 {
-                        let alphanum_count = v.chars().filter(|c| c.is_alphanumeric()).count();
-                        if alphanum_count >= v.len() * 3 / 4 {
-                            "[REDACTED]".to_string()
-                        } else {
-                            v.to_string()
-                        }
-                    } else {
-                        v.to_string()
-                    };
-                    (k.to_string(), redacted_val)
-                })
-                .collect();
-            parsed.query_pairs_mut().clear();
-            for (k, v) in pairs {
-                parsed.query_pairs_mut().append_pair(&k, &v);
-            }
-        }
-
-        parsed.to_string()
-    } else {
-        // If parsing fails, just return a generic redacted message
-        "[REDACTED_URL]".to_string()
-    }
+    let Ok(mut parsed) = url::Url::parse(url) else { return "[REDACTED_URL]".to_string() };
+    // Credentials can occur in userinfo, paths, queries, or fragments regardless of length.
+    let _ = parsed.set_username("");
+    let _ = parsed.set_password(None);
+    parsed.set_path("");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed.to_string()
 }
 
 mod config;
@@ -198,7 +153,12 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
                 Ok(req) => {
                     let result = self.on_request(req).await;
                     if let ResponseResult::Error(error) = &result {
-                        self.on_request_error(&method, &id, error);
+                        self.on_request_error(
+                            &method,
+                            &id,
+                            &redact_fork_credentials(&method, &params),
+                            error,
+                        );
                     }
                     RpcResponse::new(id, result)
                 }
@@ -221,8 +181,16 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     }
 
     /// Invoked when a deserialized request returns an error from [`Self::on_request`].
+    /// Parameters retain their original shape with fork URL credentials redacted.
     /// Deserialization errors are excluded because their messages can contain request parameters.
-    fn on_request_error(&self, _method: &str, _id: &Id, _error: &RpcError) {}
+    fn on_request_error(
+        &self,
+        _method: &str,
+        _id: &Id,
+        _params: &serde_json::Value,
+        _error: &RpcError,
+    ) {
+    }
 }
 
 /// Configures an [`axum::Router`] that handles JSON-RPC calls via both HTTP and WS.
@@ -280,7 +248,7 @@ mod tests {
             json!([{"forking": {"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"}}]);
         assert_eq!(
             redact_params("anvil_reset", &params),
-            json!([{"forking": {"jsonRpcUrl": "https://example.invalid/rpc/[REDACTED]"}}])
+            json!([{"forking": {"jsonRpcUrl": "https://example.invalid/"}}])
         );
     }
 
@@ -290,7 +258,7 @@ mod tests {
             json!({"forking": {"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"}});
         assert_eq!(
             redact_params("anvil_reset", &params),
-            json!({"forking": {"jsonRpcUrl": "https://example.invalid/rpc/[REDACTED]"}})
+            json!({"forking": {"jsonRpcUrl": "https://example.invalid/"}})
         );
     }
 
@@ -299,7 +267,61 @@ mod tests {
         let params = json!({"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"});
         assert_eq!(
             redact_params("hardhat_reset", &params),
-            json!({"jsonRpcUrl": "https://example.invalid/rpc/[REDACTED]"})
+            json!({"jsonRpcUrl": "https://example.invalid/"})
+        );
+    }
+
+    #[test]
+    fn redacts_wrapped_reset_credentials_without_losing_context() {
+        let params = json!({"params": {"forking": {
+            "jsonRpcUrl": "https://user:pass@example.invalid:8545/key?token=x#secret",
+            "blockNumber": 42
+        }}});
+        let expected = json!({"params": {"forking": {
+            "jsonRpcUrl": "https://example.invalid:8545/",
+            "blockNumber": 42
+        }}});
+        for method in ["anvil_reset", "hardhat_reset"] {
+            assert_eq!(redact_fork_credentials(method, &params), expected);
+            assert_eq!(redact_params(method, &params), expected);
+        }
+    }
+
+    #[test]
+    fn redacts_rpc_url_credentials_without_length_heuristics() {
+        for url in [
+            "https://user:pass@example.invalid:8545/",
+            "https://example.invalid:8545/key?token=x#secret",
+            "https://example.invalid:8545/abcdefghijklmnop?api_key=abcdefghijklmnop",
+        ] {
+            assert_eq!(redact_url_credentials(url), "https://example.invalid:8545/");
+        }
+        assert_eq!(redact_url_credentials("invalid secret URL"), "[REDACTED_URL]");
+        for params in
+            [json!(["https://user:pass@example.invalid/secret"]), json!("invalid secret URL")]
+        {
+            let expected = if params.is_array() {
+                json!(["https://example.invalid/"])
+            } else {
+                json!("[REDACTED_URL]")
+            };
+            assert_eq!(redact_fork_credentials("anvil_setRpcUrl", &params), expected);
+            assert_eq!(redact_params("anvil_setRpcUrl", &params), expected);
+        }
+    }
+
+    #[test]
+    fn preserves_noncredential_failure_params() {
+        let params = json!([{
+            "to": "0x1111111111111111111111111111111111111111",
+            "data": "0x12345678"
+        }, "0x100000"]);
+        assert_eq!(redact_fork_credentials("eth_call", &params), params);
+        let raw_params = json!(["0x12345678", 5000]);
+        assert_eq!(redact_fork_credentials("eth_sendRawTransactionSync", &raw_params), raw_params);
+        assert_eq!(
+            redact_params("eth_sendRawTransactionSync", &raw_params),
+            json!(["[SIGNED_TX]", 5000])
         );
     }
 }

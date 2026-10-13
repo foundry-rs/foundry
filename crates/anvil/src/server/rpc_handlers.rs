@@ -34,8 +34,14 @@ impl RpcHandler for HttpEthRpcHandler {
         self.api.execute(request)
     }
 
-    fn on_request_error(&self, method: &str, id: &Id, error: &RpcError) {
-        log_request_error(method, id, error);
+    fn on_request_error(
+        &self,
+        method: &str,
+        id: &Id,
+        params: &serde_json::Value,
+        error: &RpcError,
+    ) {
+        log_request_error(method, id, params, error);
     }
 }
 
@@ -163,11 +169,17 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
         }
     }
 
-    fn on_request_error(&self, method: &str, id: &Id, error: &RpcError) {
-        log_request_error(method, id, error);
+    fn on_request_error(
+        &self,
+        method: &str,
+        id: &Id,
+        params: &serde_json::Value,
+        error: &RpcError,
+    ) {
+        log_request_error(method, id, params, error);
     }
 }
 
-fn log_request_error(method: &str, id: &Id, error: &RpcError) {
-    node_info!(method, ?id, error = %error, "RPC request failed");
+fn log_request_error(method: &str, id: &Id, params: &serde_json::Value, error: &RpcError) {
+    node_info!(method, ?id, %params, error = %error, "RPC request failed");
 }

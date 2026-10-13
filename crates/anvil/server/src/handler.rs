@@ -132,8 +132,10 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct ErrorHandler {
-        errors: Arc<Mutex<Vec<(String, Id, RpcError)>>>,
+        errors: Arc<Mutex<Vec<RecordedError>>>,
     }
+
+    type RecordedError = (String, Id, serde_json::Value, RpcError);
 
     impl RpcHandler for TestHandler {
         type Request = serde_json::Value;
@@ -161,8 +163,19 @@ mod tests {
             ResponseResult::Error(RpcError::internal_error())
         }
 
-        fn on_request_error(&self, method: &str, id: &Id, error: &RpcError) {
-            self.errors.lock().unwrap().push((method.to_owned(), id.clone(), error.clone()));
+        fn on_request_error(
+            &self,
+            method: &str,
+            id: &Id,
+            params: &serde_json::Value,
+            error: &RpcError,
+        ) {
+            self.errors.lock().unwrap().push((
+                method.to_owned(),
+                id.clone(),
+                params.clone(),
+                error.clone(),
+            ));
         }
     }
 
@@ -286,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn request_error_hook_preserves_method_alias_and_id() {
+    fn request_error_hook_preserves_method_alias_id_and_params() {
         let handler = ErrorHandler::default();
         let id = Id::String("request-7".to_owned());
         let call = RpcMethodCall {
@@ -300,7 +313,12 @@ mod tests {
         assert_eq!(response, RpcResponse::new(id.clone(), RpcError::internal_error()));
         assert_eq!(
             *handler.errors.lock().unwrap(),
-            vec![("known_alias".to_owned(), id, RpcError::internal_error())]
+            vec![(
+                "known_alias".to_owned(),
+                id,
+                serde_json::json!(["allowed"]),
+                RpcError::internal_error()
+            )]
         );
     }
 
@@ -335,7 +353,12 @@ mod tests {
         assert_eq!(response, None);
         assert_eq!(
             *handler.errors.lock().unwrap(),
-            vec![("known".to_owned(), Id::Null, RpcError::internal_error())]
+            vec![(
+                "known".to_owned(),
+                Id::Null,
+                serde_json::json!(["allowed"]),
+                RpcError::internal_error()
+            )]
         );
     }
 }
