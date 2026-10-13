@@ -1,4 +1,4 @@
-# Solar VS Code extension, maintained in Foundry
+# Foundry Solidity
 
 Solidity language support for [VS Code](https://code.visualstudio.com/), powered
 by Foundry's `forge lsp`. The server reuses `solar_lsp`; formatting delegates to
@@ -203,7 +203,7 @@ register a trusted publisher for this workflow and the `release` environment in
 
 ## Protocol tracing and CodeLens
 
-The `Solar LSP` output channel name is retained. Set its log level to `Trace`,
+Set the `Foundry Solidity` output channel log level to `Trace`,
 then select `solarLsp.trace.server` `messages` or `verbose` for server execution
 tracing. Language-client wire tracing includes request and response payloads.
 
