@@ -66,7 +66,7 @@ pub async fn handle_request<Handler: RpcHandler>(
 async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Option<RpcResponse> {
     match call {
         RpcCall::MethodCall(call) => {
-            trace!(target: "rpc", id = ?call.id , method = ?call.method,  "handling call");
+            // Detailed logging with params is done in on_call
             Some(handler.on_call(call).await)
         }
         RpcCall::Notification(notification) => {

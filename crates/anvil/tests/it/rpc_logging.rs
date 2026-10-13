@@ -135,18 +135,18 @@ async fn assert_rpc_logs_omit_payloads(transport: &str, trace: bool) {
 
     let expected = if trace {
         str![[r#"
-TRACE rpc: handling call id=Number(0) method="anvil_setRpcUrl"
+TRACE rpc: received method call id=Number(0) method="anvil_setRpcUrl" params=Array [String("https://example.invalid/rpc/[REDACTED]")]
 TRACE rpc::api: executing eth request
  INFO node::user: anvil_setRpcUrl
-TRACE rpc: handling call id=Number(1) method="eth_sendRawTransaction"
+TRACE rpc: received method call id=Number(1) method="eth_sendRawTransaction" params=Array [String("[SIGNED_TX]")]
 TRACE rpc::api: executing eth request
  INFO node::user: eth_sendRawTransaction
-TRACE rpc: handling call id=Number(2) method="eth_sendRawTransaction"
+TRACE rpc: received method call id=Number(2) method="eth_sendRawTransaction" params=Array [String("[SIGNED_TX]")]
 TRACE rpc::api: executing eth request
  INFO node::user: eth_sendRawTransaction
  INFO node::user: RPC request failed method="eth_sendRawTransaction" id=Number(2) error=Transaction rejected: transaction already imported
-TRACE rpc: handling call id=Number(3) method="anvil_setAutomine"
-ERROR rpc: failed to deserialize method method="anvil_setAutomine"
+TRACE rpc: received method call id=Number(3) method="anvil_setAutomine" params=Array [String("https://example.invalid/rpc/synthetic-api-key")]
+ERROR rpc: failed to deserialize method method="anvil_setAutomine" err=[..]
 
 "#]]
     } else {
