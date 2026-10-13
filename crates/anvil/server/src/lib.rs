@@ -58,11 +58,7 @@ fn redact_fork_credentials(method: &str, params: &serde_json::Value) -> serde_js
         "anvil_reset" | "hardhat_reset" => redact_fork_params(params),
         "anvil_setRpcUrl" => {
             let mut redacted = params.clone();
-            let url = match &mut redacted {
-                serde_json::Value::Array(array) => array.first_mut(),
-                value => Some(value),
-            };
-            if let Some(serde_json::Value::String(url)) = url {
+            if let Some(serde_json::Value::String(url)) = redacted.get_mut(0) {
                 *url = redact_url_credentials(url);
             }
             redacted
@@ -297,14 +293,13 @@ mod tests {
             assert_eq!(redact_url_credentials(url), "https://example.invalid:8545/");
         }
         assert_eq!(redact_url_credentials("invalid secret URL"), "[REDACTED_URL]");
-        for params in
-            [json!(["https://user:pass@example.invalid/secret"]), json!("invalid secret URL")]
-        {
-            let expected = if params.is_array() {
-                json!(["https://example.invalid/"])
-            } else {
-                json!("[REDACTED_URL]")
-            };
+        for (params, expected) in [
+            (
+                json!(["https://user:pass@example.invalid/secret"]),
+                json!(["https://example.invalid/"]),
+            ),
+            (json!(["invalid secret URL"]), json!(["[REDACTED_URL]"])),
+        ] {
             assert_eq!(redact_fork_credentials("anvil_setRpcUrl", &params), expected);
             assert_eq!(redact_params("anvil_setRpcUrl", &params), expected);
         }
