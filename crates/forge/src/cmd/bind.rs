@@ -202,39 +202,43 @@ impl BindArgs {
     ) -> Result<impl Iterator<Item = (String, PathBuf)>> {
         let filter = self.get_filter()?;
 
-        // Try to use the compiler cache to get only current artifacts.
-        let paths: ProjectPathsConfig<MultiCompilerSettings> = config.project_paths();
-        if let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&paths) {
-            let cached_artifacts = cache
-                .entries()
-                .flat_map(|entry| entry.artifacts.values())
-                .flat_map(|versions| versions.values())
-                .flat_map(|profiles| profiles.values())
-                .filter_map(move |artifact| {
-                    let path = artifacts.join(&artifact.path);
-                    if !path.exists() {
-                        return None;
-                    }
+        // Use the compiler cache to get only current artifacts when caching is enabled.
+        // If --no-cache was passed, the cache manifest on disk may be stale and should not be
+        // trusted; fall through to the filesystem scan instead.
+        if config.cache {
+            let paths: ProjectPathsConfig<MultiCompilerSettings> = config.project_paths();
+            if let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&paths) {
+                let cached_artifacts = cache
+                    .entries()
+                    .flat_map(|entry| entry.artifacts.values())
+                    .flat_map(|versions| versions.values())
+                    .flat_map(|profiles| profiles.values())
+                    .filter_map(move |artifact| {
+                        let path = artifacts.join(&artifact.path);
+                        if !path.exists() {
+                            return None;
+                        }
 
-                    let stem = path.file_stem()?.to_str()?;
-                    if stem.ends_with(".metadata") {
-                        return None;
-                    }
+                        let stem = path.file_stem()?.to_str()?;
+                        if stem.ends_with(".metadata") {
+                            return None;
+                        }
 
-                    let name = stem.split('.').next().unwrap();
-                    let name = name.replace(char::is_whitespace, "").replace(['-', '$'], "_");
+                        let name = stem.split('.').next().unwrap();
+                        let name = name.replace(char::is_whitespace, "").replace(['-', '$'], "_");
 
-                    Some((name, path))
-                })
-                .filter(move |(name, _path)| filter.is_match(name))
-                .collect::<Vec<_>>();
+                        Some((name, path))
+                    })
+                    .filter(move |(name, _path)| filter.is_match(name))
+                    .collect::<Vec<_>>();
 
-            if !cached_artifacts.is_empty() {
-                return Ok(cached_artifacts.into_iter());
+                if !cached_artifacts.is_empty() {
+                    return Ok(cached_artifacts.into_iter());
+                }
             }
         }
 
-        // Fall back to filesystem scan if cache is unavailable or empty.
+        // Fall back to filesystem scan if cache is disabled, unavailable, or empty.
         let filter = self.get_filter()?;
         Ok(json_files(artifacts)
             .filter_map(|path| {

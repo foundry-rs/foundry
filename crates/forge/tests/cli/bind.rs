@@ -337,6 +337,39 @@ contract EnumUser {
 }
 
 #[forgetest]
+fn bind_no_cache_includes_new_contracts(prj: _, cmd: _) {
+    prj.add_source(
+        "Existing.sol",
+        r#"
+contract Existing {
+    function foo() external pure returns (uint256) { return 42; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    prj.add_source(
+        "Added.sol",
+        r#"
+contract Added {
+    function bar() external pure returns (uint256) { return 100; }
+}
+"#,
+    );
+
+    // Compile with --no-cache. Both contracts compile, but cache is not updated.
+    // bind should still see both contracts via filesystem scan, not stale cache.
+    cmd.forge_fuse().args(["bind", "--no-cache", "--overwrite"]).assert_success();
+
+    let existing_binding =
+        fs::read_to_string(prj.root().join("out/bindings/src/existing.rs")).unwrap();
+    assert!(existing_binding.contains("pub fn foo"), "{existing_binding}");
+
+    let added_binding = fs::read_to_string(prj.root().join("out/bindings/src/added.rs")).unwrap();
+    assert!(added_binding.contains("pub fn bar"), "{added_binding}");
+}
+
+#[forgetest]
 fn bind_ambiguous_enum_definitions_fall_back_to_udvt(prj: _, cmd: _) {
     prj.add_source(
         "A.sol",
