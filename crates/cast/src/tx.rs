@@ -64,7 +64,9 @@ pub struct SendTxOpts {
 /// Applies the `--poll-interval` (in seconds) to a provider's receipt polling when one was given.
 pub(crate) fn apply_poll_interval<N: Network>(provider: &impl Provider<N>, interval: Option<u64>) {
     if let Some(interval) = interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval));
+        provider
+            .client()
+            .set_poll_interval(Duration::from_secs(interval));
     }
 }
 
@@ -165,7 +167,9 @@ impl SenderKind<'_> {
         let from = opts.from.take();
         if let Some(from) = from
             && opts.tempo_access_key.is_none()
-            && !authorizations.iter().any(|auth| matches!(auth, CliAuthorizationList::Address(_)))
+            && !authorizations
+                .iter()
+                .any(|auth| matches!(auth, CliAuthorizationList::Address(_)))
         {
             return Ok(from.into());
         }
@@ -315,7 +319,10 @@ where
 {
     /// Creates a new Cast instance responsible for sending transactions.
     pub const fn new(provider: P) -> Self {
-        Self { provider, _phantom: PhantomData }
+        Self {
+            provider,
+            _phantom: PhantomData,
+        }
     }
 
     /// Sends a transaction and waits for receipt synchronously
@@ -349,8 +356,9 @@ where
         if cast_async {
             sh_println!("{tx_hash:#x}")?;
         } else {
-            let receipt =
-                self.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+            let receipt = self
+                .receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false)
+                .await?;
             sh_println!("{receipt}")?;
         }
         Ok(())
@@ -368,20 +376,33 @@ where
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-            Some(receipt)
-                if cast_async || confs <= 1 || {
-                    // An old receipt needs no new block notification if it is already deep enough.
-                    let latest = self.provider.get_block_number().await?;
-                    receipt
-                        .block_number()
-                        .and_then(|block| latest.checked_sub(block))
-                        .is_some_and(|depth| depth >= confs - 1)
-                } =>
-            {
+            Some(receipt) if cast_async || confs <= 1 => {
+                // Async mode or no confirmations required, return immediately.
                 receipt
             }
+            Some(receipt) => {
+                // Receipt exists; check if it already has enough confirmations.
+                let latest = self.provider.get_block_number().await?;
+                let current_depth = receipt
+                    .block_number()
+                    .and_then(|block| latest.checked_sub(block))
+                    .map(|d| d + 1);
+
+                if current_depth.is_some_and(|d| d >= confs) {
+                    // Already has the required confirmation depth, return immediately.
+                    receipt
+                } else {
+                    // Transaction is mined but needs more confirmations.
+                    // Do not apply timeout here; only inclusion should be bounded.
+                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+                        .with_required_confirmations(confs)
+                        .get_receipt()
+                        .await?
+                }
+            }
             None if cast_async => eyre::bail!("tx not found: {tx_hash:?}"),
-            _ => {
+            None => {
+                // Transaction not yet mined; apply timeout to the inclusion wait.
                 PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
                     .with_required_confirmations(confs)
                     .with_timeout(timeout.map(Duration::from_secs))
@@ -398,7 +419,10 @@ where
         receipt: N::ReceiptResponse,
         field: Option<String>,
     ) -> Result<(B256, String)> {
-        let mut receipt = TransactionReceiptWithRevertReason::<N> { receipt, revert_reason: None };
+        let mut receipt = TransactionReceiptWithRevertReason::<N> {
+            receipt,
+            revert_reason: None,
+        };
         let tx_hash = receipt.receipt.transaction_hash();
         let _ = receipt.update_revert_reason(&self.provider).await;
         let formatted = if let Some(field) = field {
@@ -458,7 +482,10 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
 
     /// Returns the Etherscan API key and URL resolved for this builder's chain.
     pub(crate) fn etherscan_api(&self) -> (Option<&str>, Option<&str>) {
-        (self.inner.etherscan_api_key.as_deref(), self.inner.etherscan_api_url.as_deref())
+        (
+            self.inner.etherscan_api_key.as_deref(),
+            self.inner.etherscan_api_url.as_deref(),
+        )
     }
 
     /// Returns the transaction request being built.
@@ -499,7 +526,10 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
     }
 
     fn with_state<S2>(self, state: S2) -> CastTxBuilder<N, P, S2> {
-        CastTxBuilder { inner: self.inner, state }
+        CastTxBuilder {
+            inner: self.inner,
+            state,
+        }
     }
 }
 
@@ -513,7 +543,10 @@ where
         let mut tx = N::TransactionRequest::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
+        let etherscan_config = config
+            .get_etherscan_config_with_chain(Some(chain))
+            .ok()
+            .flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
         let etherscan_api_url = etherscan_config.map(|c| c.api_url);
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
@@ -601,7 +634,11 @@ where
             );
         }
 
-        Ok(self.with_state(InputState { kind: to.into(), input, func }))
+        Ok(self.with_state(InputState {
+            kind: to.into(),
+            input,
+            func,
+        }))
     }
 }
 
@@ -628,14 +665,18 @@ where
         wallet: &TempoAccountsWallet,
     ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccountsWallet)> {
         let mut prepared = wallet.clone();
-        let (tx, func) =
-            self.inner.build(self.state, &wallet.account().into(), Some(&mut prepared)).await?;
+        let (tx, func) = self
+            .inner
+            .build(self.state, &wallet.account().into(), Some(&mut prepared))
+            .await?;
         Ok((tx, func, prepared))
     }
 
     /// Populates the blob sidecar for the transaction if any blob data was provided.
     pub fn with_blob_data(mut self, blob_data: Option<Vec<u8>>) -> Result<Self> {
-        let Some(blob_data) = blob_data else { return Ok(self) };
+        let Some(blob_data) = blob_data else {
+            return Ok(self);
+        };
 
         let mut coder = SidecarBuilder::<SimpleCoder>::default();
         coder.ingest(&blob_data);
@@ -677,7 +718,8 @@ where
         self.tx.set_kind(kind);
         // We set both fields to the same value because some nodes only accept the legacy
         // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
-        self.tx.set_input_kind(state.input, TransactionInputKind::Both);
+        self.tx
+            .set_input_kind(state.input, TransactionInputKind::Both);
         if !from.is_zero() {
             self.tx.set_from(from);
         }
@@ -742,7 +784,10 @@ where
             self.resolve_auth(sender, tx_nonce).await?;
         }
         if let Some(wallet) = tempo_wallet {
-            *wallet = self.tx.prepare_with_tempo_wallet(&self.provider, wallet).await?;
+            *wallet = self
+                .tx
+                .prepare_with_tempo_wallet(&self.provider, wallet)
+                .await?;
         }
         if fill && !resolve_in_parallel {
             Self::fill_fees(
@@ -758,7 +803,12 @@ where
         // Fetch the access list from the provider if `--access-list` was passed without a value.
         let access_list = match self.access_list.take() {
             None => None,
-            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
+            Some(None) => Some(
+                self.provider
+                    .create_access_list(&self.tx)
+                    .await?
+                    .access_list,
+            ),
             Some(Some(access_list)) => Some(access_list),
         };
         if let Some(access_list) = access_list {
@@ -805,8 +855,9 @@ where
                         nonce: tx_nonce + 1,
                         address,
                     };
-                    let signer =
-                        sender.as_signer().expect("address-based authorization requires a signer");
+                    let signer = sender
+                        .as_signer()
+                        .expect("address-based authorization requires a signer");
                     let signature = signer.sign_hash(&auth.signature_hash()).await?;
                     auth.into_signed(signature)
                 }
@@ -912,9 +963,12 @@ where
 
 /// Tries to decode a custom error name and inputs from revert data.
 pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
-    let Some(selector) = data.get(..4) else { return Ok(None) };
-    let Some(known_error) =
-        SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
+    let Some(selector) = data.get(..4) else {
+        return Ok(None);
+    };
+    let Some(known_error) = SignaturesIdentifier::new(false)?
+        .identify_error(selector.try_into().unwrap())
+        .await
     else {
         return Ok(None);
     };
@@ -922,7 +976,11 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
     if !known_error.inputs.is_empty()
         && let Ok(error) = known_error.decode_error(data)
     {
-        write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
+        write!(
+            decoded_error,
+            "({})",
+            format_tokens(&error.body).format(", ")
+        )?;
     }
     Ok(Some(decoded_error))
 }
@@ -995,7 +1053,10 @@ mod tests {
         provider: P,
         args: &[&str],
     ) -> CastTxBuilder<Ethereum, P, InputState> {
-        let config = Config { chain: Some(Chain::mainnet()), ..Default::default() };
+        let config = Config {
+            chain: Some(Chain::mainnet()),
+            ..Default::default()
+        };
         let opts = TransactionOpts::parse_from([&["test"], args].concat());
         CastTxBuilder::new(provider, opts, &config)
             .await
@@ -1026,10 +1087,13 @@ mod tests {
         let builder = builder(&provider, &["--legacy", "--gas-price", "1"])
             .await
             .with_gas_estimate_multiplier(Some(150));
-        let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
-            .await
-            .expect("nonce and gas requests were not in flight together")
-            .unwrap();
+        let (tx, _) = timeout(
+            Duration::from_secs(1),
+            builder.build(Address::repeat_byte(0x22)),
+        )
+        .await
+        .expect("nonce and gas requests were not in flight together")
+        .unwrap();
 
         assert_eq!(tx.nonce, Some(100));
         assert_eq!(tx.gas_price, Some(1));
@@ -1047,7 +1111,10 @@ mod tests {
         let provider =
             ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
         let chain = Chain::from_id(4217);
-        let config = Config { chain: Some(chain), ..Default::default() };
+        let config = Config {
+            chain: Some(chain),
+            ..Default::default()
+        };
         let opts = TransactionOpts::parse_from([
             "test",
             "--gas-limit",
@@ -1076,7 +1143,9 @@ mod tests {
         assert_eq!(tx.fee_token, None);
 
         // Fee resolution happens after building and can change the submission type to Tempo AA.
-        resolve_and_set_fee_token(Some(&provider), &mut tx, None).await.unwrap();
+        resolve_and_set_fee_token(Some(&provider), &mut tx, None)
+            .await
+            .unwrap();
         tx.prep_for_submission();
         assert_eq!(tx.inner.transaction_type, Some(0x76));
         assert_eq!(tx.fee_token, Some(token));
@@ -1088,7 +1157,12 @@ mod tests {
         // guards against restoring the unused `eth_getTransactionCount` request.
         let provider =
             ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(Asserter::new());
-        builder(&provider, &[]).await.raw().build(Address::repeat_byte(0x22)).await.unwrap();
+        builder(&provider, &[])
+            .await
+            .raw()
+            .build(Address::repeat_byte(0x22))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1101,12 +1175,18 @@ mod tests {
         assert!(!no_auth.has_auth());
         assert!(!no_auth.will_disclose_auth_during_build());
 
-        let rpc_call = builder(&provider, &["--auth", &auth, "--gas-limit", "21000"]).await.raw();
+        let rpc_call = builder(&provider, &["--auth", &auth, "--gas-limit", "21000"])
+            .await
+            .raw();
         assert!(rpc_call.has_auth());
         assert!(!rpc_call.will_disclose_auth_during_build());
 
         let generated_access_list = builder(&provider, &["--auth", &auth, "--access-list"]).await;
-        assert!(generated_access_list.raw().will_disclose_auth_during_build());
+        assert!(
+            generated_access_list
+                .raw()
+                .will_disclose_auth_during_build()
+        );
 
         let explicit_access_list =
             builder(&provider, &["--auth", &auth, "--access-list", "[]"]).await;
@@ -1124,11 +1204,19 @@ mod tests {
             tx: TxParams,
         }
 
-        let cli =
-            Cli::try_parse_from(["test", "--gas-price", "10gwei", "--priority-gas-price", "2gwei"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "test",
+            "--gas-price",
+            "10gwei",
+            "--priority-gas-price",
+            "2gwei",
+        ])
+        .unwrap();
         assert_eq!(cli.tx.gas_price, Some(U256::from(10_000_000_000u64)));
-        assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2_000_000_000u64)));
+        assert_eq!(
+            cli.tx.priority_gas_price,
+            Some(U256::from(2_000_000_000u64))
+        );
 
         let cli = Cli::try_parse_from(["test", "--gas-price", "100", "--priority-gas-price", "2"])
             .unwrap();
@@ -1161,7 +1249,13 @@ mod tests {
         let sender = CastTxSender::new(provider);
         let result = timeout(
             Duration::from_secs(1),
-            sender.receipt(B256::ZERO.to_string(), Some("blockNumber".into()), 3, None, false),
+            sender.receipt(
+                B256::ZERO.to_string(),
+                Some("blockNumber".into()),
+                3,
+                None,
+                false,
+            ),
         )
         .await
         .unwrap()
