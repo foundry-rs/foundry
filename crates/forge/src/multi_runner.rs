@@ -448,9 +448,9 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         );
         let inspector = executor.inspector_mut();
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
-            let mut config = cheatcodes.config.clone_with(&self.config, self.evm_opts.clone());
+            let mut config = cheatcodes.core.config.clone_with(&self.config, self.evm_opts.clone());
             config.isolate = self.isolation;
-            cheatcodes.config = Arc::new(config);
+            cheatcodes.core.config = Arc::new(config);
         }
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);

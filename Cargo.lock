@@ -5157,16 +5157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evm-disassembler"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ace07bd9e99c61333fa7b95b264f0f814bdfc4ec6714f67ffd8e703b25edb2be"
-dependencies = [
- "eyre",
- "hex",
-]
-
-[[package]]
 name = "evm2"
 version = "0.1.0"
 source = "git+https://github.com/mablr/evm2?rev=4bb7fed03529403417de444f9ece20e15acc6ec7#4bb7fed03529403417de444f9ece20e15acc6ec7"
@@ -5493,7 +5483,6 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "dunce",
- "evm-disassembler",
  "evm2",
  "eyre",
  "flate2",

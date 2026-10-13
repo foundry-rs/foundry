@@ -95,6 +95,11 @@ mod script;
 pub use script::{BroadcastableTransaction, BroadcastableTransactions, Wallets, WalletsInner};
 
 #[cfg(feature = "revm")]
+mod state;
+#[cfg(feature = "revm")]
+pub use state::CheatcodesCore;
+
+#[cfg(feature = "revm")]
 mod string;
 
 #[cfg(feature = "revm")]
@@ -117,11 +122,10 @@ mod utils;
 pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode to the given state.
     ///
-    /// Implement this function if you don't need access to the EVM data.
+    /// Implement this function if you need cheatcode state but no access to the EVM context.
     #[cfg(feature = "revm")]
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let _ = state;
-        unimplemented!("{}", Self::CHEATCODE.func.id)
+    fn apply_context(&self, _state: &mut CheatcodesCore) -> Result {
+        self.apply_context_free()
     }
 
     /// Applies this cheatcode to the given context.
@@ -130,7 +134,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     #[inline(always)]
     #[cfg(feature = "revm")]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        self.apply(ccx.state)
+        self.apply_context(&mut ccx.state.core)
     }
 
     /// Applies this cheatcode to the given context and executor.
@@ -145,6 +149,14 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ) -> Result {
         let _ = executor;
         self.apply_stateful(ccx)
+    }
+
+    /// Applies this cheatcode without accessing cheatcode state or the EVM context.
+    ///
+    /// This may still read or modify external host state, such as environment variables.
+    #[cfg(feature = "revm")]
+    fn apply_context_free(&self) -> Result {
+        unimplemented!("{}", Self::CHEATCODE.func.id)
     }
 
     /// Applies this cheatcode to a live native Ethereum execution session.

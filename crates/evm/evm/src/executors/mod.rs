@@ -2391,7 +2391,8 @@ mod tests {
                 Bytecode::new_raw(Bytes::from_static(&[0x5f, 0x5f, 0x5f, 0xf0, 0x50, 0x00])),
             )
             .unwrap();
-        executor.inspector_mut().cheatcodes.as_mut().unwrap().intercept_next_create_call = true;
+        executor.inspector_mut().cheatcodes.as_mut().unwrap().core.intercept_next_create_call =
+            true;
 
         let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
 

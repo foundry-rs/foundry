@@ -191,6 +191,8 @@ pub(crate) fn initialize_tempo_evm<
         || {
             if is_forked {
                 // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
+                // Skip addresses that fail to load. Later accesses fetch them again and
+                // return the database error instead of a panic.
                 let mut sctx = StorageCtx;
                 let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
                 for addr in TEMPO_PRECOMPILE_ADDRESSES
@@ -198,8 +200,7 @@ pub(crate) fn initialize_tempo_evm<
                     .copied()
                     .chain(TEMPO_TIP20_TOKENS.iter().copied())
                 {
-                    sctx.set_code(addr, sentinel.clone())
-                        .expect("failed to warm tempo precompile address");
+                    let _ = sctx.set_code(addr, sentinel.clone());
                 }
             } else {
                 // In non-fork mode, run full genesis initialization.

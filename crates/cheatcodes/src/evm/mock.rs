@@ -6,7 +6,7 @@ use std::{
 };
 
 #[cfg(feature = "revm")]
-use crate::{Cheatcodes, CheatsCtxt, Result};
+use crate::{CheatcodesCore, CheatsCtxt, Result};
 #[cfg(feature = "revm")]
 use foundry_evm_core::evm::FoundryEvmNetwork;
 #[cfg(feature = "revm")]
@@ -52,7 +52,7 @@ impl Ord for MockCallDataContext {
 
 impl Cheatcode for clearMockedCallsCall {
     #[cfg(feature = "revm")]
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         state.mocked_calls.clear();
         Ok(Default::default())
     }
@@ -76,7 +76,7 @@ macro_rules! impl_mock_call {
                 if $inject {
                     make_acc_non_empty($callee, ccx)?;
                 }
-                mock_calls(&mut ccx.state.mocked_calls, $callee, $input, $value, $outputs, $reverts);
+                mock_calls(&mut ccx.state.core.mocked_calls, $callee, $input, $value, $outputs, $reverts);
                 Ok(Default::default())
             }
 
@@ -185,7 +185,7 @@ impl_mock_call!(
 
 impl Cheatcode for mockFunctionCall {
     #[cfg(feature = "revm")]
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { callee, target, data } = self;
         state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);
 

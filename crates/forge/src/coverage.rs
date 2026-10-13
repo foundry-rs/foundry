@@ -6,8 +6,8 @@ use comfy_table::{
     Attribute, Cell, Color, Row, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
-use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
+use foundry_evm::core::bytecode::InstIter;
 use semver::Version;
 use serde::{Serialize, ser::SerializeSeq};
 use std::{
@@ -527,22 +527,20 @@ impl CoverageReporter for BytecodeReporter {
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
         for (contract_id, hits) in &report.bytecode_hits {
-            let ops = disassemble_bytes(hits.bytecode().to_vec())?;
             let mut formatted = String::new();
 
             let source_elements =
                 report.source_maps.get(contract_id).map(|sm| &sm.1).unwrap_or(&no_source_elements);
 
-            for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
-                let hits = hits
-                    .get(code.offset)
-                    .map(|h| format!("[{h:03}]"))
-                    .unwrap_or("     ".to_owned());
+            let ops = InstIter::new(hits.bytecode()).with_pc();
+            for ((pc, inst), source_element) in std::iter::zip(ops, source_elements) {
+                let hits =
+                    hits.get(pc as u32).map(|h| format!("[{h:03}]")).unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
                 let source_path = source_id
                     .and_then(|i| report.get_source_path(&contract_id.build_id, i as usize));
 
-                let code = format!("{code:?}");
+                let code = format!("{pc:08x}: {inst}");
                 let start = source_element.offset() as usize;
                 let end = (source_element.offset() + source_element.length()) as usize;
 

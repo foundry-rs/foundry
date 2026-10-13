@@ -51,7 +51,7 @@ pub(crate) async fn apply_fee_payment<N, P>(
 ) -> Result<()>
 where
     N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
     if tx.gas_price().is_some() {
@@ -79,7 +79,7 @@ pub(crate) async fn maybe_attach_sponsor<N, P>(
 ) -> Result<()>
 where
     N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
     if let Some(sponsor) = sponsor {
@@ -98,7 +98,7 @@ pub(crate) async fn resolve_and_print_fee_token<N, P>(
 ) -> Result<()>
 where
     N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
     let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
@@ -116,7 +116,7 @@ pub(crate) async fn sponsor_hash<N, P>(
 ) -> Result<B256>
 where
     N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
     if fee_payer.is_some() {

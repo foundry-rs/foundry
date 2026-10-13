@@ -11,7 +11,7 @@ use alloy_primitives::{
 use itertools::Itertools;
 
 #[cfg(feature = "revm")]
-use crate::{Cheatcodes, CheatsCtxt, Error, expected_emit::observe_log};
+use crate::{Cheatcodes, CheatcodesCore, CheatsCtxt, Error, expected_emit::observe_log};
 #[cfg(feature = "revm")]
 use alloy_primitives::{Log, LogData as RawLog, keccak256};
 #[cfg(feature = "revm")]
@@ -182,7 +182,7 @@ macro_rules! impl_expect_call {
     ($call:ident { $callee:ident, $data:ident $(, $field:ident)* }, $value:expr, $gas:expr, $min_gas:expr, $scheme:expr, $count:expr, $kind:ident) => {
         impl Cheatcode for $call {
             #[cfg(feature = "revm")]
-            fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+            fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
                 let Self { $callee, $data $(, $field)* } = self;
                 expect_call(&mut state.expected_calls, $callee, $data, $value, $gas, $min_gas, $scheme, $count, ExpectedCallType::$kind)
             }
@@ -347,17 +347,17 @@ impl_expect_emit!(expectEmitAnonymous_3Call { emitter }, [true; 5], Some(emitter
 
 impl Cheatcode for expectCreateCall {
     #[cfg(feature = "revm")]
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { bytecode, deployer } = self;
-        expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create)
+        expect_create(ccx.state, bytecode.clone(), *deployer, CreateScheme::Create)
     }
 }
 
 impl Cheatcode for expectCreate2Call {
     #[cfg(feature = "revm")]
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { bytecode, deployer } = self;
-        expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create2)
+        expect_create(ccx.state, bytecode.clone(), *deployer, CreateScheme::Create2)
     }
 }
 
@@ -371,7 +371,7 @@ impl Cheatcode for expectTip20LogoURIUpdatedCall {
 
 impl Cheatcode for expectKeychainVerifiedCall {
     #[cfg(feature = "revm")]
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { account, digest, signature } = self;
         expect_keychain_verified(state, *account, *digest, signature.clone(), false)
     }
@@ -379,7 +379,7 @@ impl Cheatcode for expectKeychainVerifiedCall {
 
 impl Cheatcode for expectKeychainAdminVerifiedCall {
     #[cfg(feature = "revm")]
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { account, digest, signature } = self;
         expect_keychain_verified(state, *account, *digest, signature.clone(), true)
     }
@@ -394,8 +394,8 @@ impl Cheatcode for expectLogoURIUpdatedCall {
 }
 
 #[cfg(feature = "revm")]
-fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn expect_keychain_verified(
+    state: &mut CheatcodesCore,
     account: Address,
     digest: alloy_primitives::B256,
     signature: Bytes,

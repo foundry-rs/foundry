@@ -226,7 +226,7 @@ fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
     executor: &mut dyn CheatcodesExecutor<FEN>,
     msg: Cow<'_, str>,
 ) -> Result {
-    if ccx.state.config.assertions_revert {
+    if ccx.state.core.config.assertions_revert {
         Err(msg.into_owned().into())
     } else {
         executor.console_log(&msg);

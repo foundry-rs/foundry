@@ -279,11 +279,11 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
                 stack.set_analysis(analysis.clone());
-                cheatcodes.set_analysis(CheatcodeAnalysis::new(analysis));
+                cheatcodes.core.set_analysis(CheatcodeAnalysis::new(analysis));
             }
             // Set wallets if they are provided
             if let Some(wallets) = wallets {
-                cheatcodes.set_wallets(wallets);
+                cheatcodes.core.set_wallets(wallets);
             }
             stack.set_cheatcodes(cheatcodes);
         }
@@ -923,7 +923,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         InspectorData {
             logs: log_collector.and_then(|logs| logs.into_captured_logs()).unwrap_or_default(),
             labels: {
-                let mut labels = cheatcodes.as_ref().map(|c| c.labels.clone()).unwrap_or_default();
+                let mut labels =
+                    cheatcodes.as_ref().map(|c| c.core.labels.clone()).unwrap_or_default();
                 if let Some(tempo_labels) = tempo_labels {
                     labels.extend(tempo_labels.labels);
                 }
@@ -1308,7 +1309,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let mut cheatcodes = self
             .cheatcodes
             .as_deref_mut()
-            .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone())));
+            .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.core.config.clone())));
         let mut inner = std::mem::take(self.inner);
 
         // Save pending CREATE2 redirects so frame_end in the nested EVM doesn't consume them.
@@ -2463,7 +2464,7 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
     call: &mut CallInputs,
 ) {
-    if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
+    if let Some(mocks) = cheatcodes.core.mocked_functions.get(&call.bytecode_address) {
         let input_bytes = call.input.bytes(ecx);
         // Check if any mock function set for call data or if catch-all mock function set
         // for selector.
