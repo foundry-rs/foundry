@@ -41,8 +41,8 @@ pub struct TempoOpts {
     /// Opt into TIP-1009 expiring-nonce mode with a validity window.
     ///
     /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
-    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
-    /// seconds.
+    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX and valid_before = now + seconds. The
+    /// nonce defaults to 0; see `--tempo.expiring-nonce` for how an explicit nonce is used.
     ///
     /// Maximum value is 300 seconds; networks that have not activated the T11 hardfork reject
     /// windows above 30 seconds. The transaction must be mined before the deadline or it becomes
@@ -152,8 +152,14 @@ pub struct TempoOpts {
 
     /// Enable expiring nonce mode for Tempo transactions.
     ///
-    /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
-    /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
+    /// Sets nonce_key to U256::MAX, enabling time-bounded transaction validity via
+    /// `--tempo.valid-before` and `--tempo.valid-after`.
+    ///
+    /// The nonce is not sequential in this mode and defaults to 0. From the T12 hardfork
+    /// (TIP-1106) an explicitly supplied nonce is kept as an opaque discriminator, so otherwise
+    /// identical transactions with different nonces are distinct. Earlier hardforks reject any
+    /// nonce other than 0. `forge script` takes no nonce and from T12 uses each transaction's
+    /// ordinal across the complete script plan, including completed transactions on resume.
     #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
@@ -246,14 +252,17 @@ impl TempoOpts {
     /// Applies Tempo-specific options to a transaction request.
     ///
     /// All setters are no-ops for non-Tempo networks, so this is safe to call unconditionally.
+    ///
+    /// In expiring nonce mode `nonce` is the TIP-1106 discriminator rather than a sequential
+    /// nonce: an explicit value is kept as supplied and `None` selects 0.
     pub fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, nonce: Option<u64>)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX.
+        // Handle expiring nonce mode: sets nonce_key=U256::MAX and never reads nonce state.
         // --tempo.expires is a convenience alias that also sets valid_before = now + duration.
         if self.expiring_nonce || self.expires.is_some() {
-            tx.set_nonce(0);
+            tx.set_nonce(nonce.unwrap_or_default());
             tx.set_nonce_key(U256::MAX);
         } else {
             if let Some(nonce) = nonce {

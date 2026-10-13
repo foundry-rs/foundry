@@ -3,7 +3,7 @@
 pub mod auth;
 
 use crate::FoundryTransactionBuilder;
-use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Signature, TxKind, address};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -17,6 +17,7 @@ use tempo_alloy::contracts::precompiles::{
 };
 use tempo_primitives::TempoAddressExt;
 
+mod hardfork;
 mod keystore;
 mod lane;
 mod session;
@@ -27,6 +28,9 @@ mod tip20;
 
 pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
+pub use hardfork::{
+    active_tempo_hardfork, ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+};
 pub use keystore::*;
 pub use lane::{PaymentLane, PaymentLaneClassification, PaymentLaneReason, classify_payment_lane};
 pub use session::*;
@@ -87,7 +91,7 @@ impl TempoSponsor {
     ) -> Result<Option<Address>>
     where
         N: Network,
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         resolve_and_set_fee_token(provider, tx, Some(self.sponsor)).await
     }
@@ -266,7 +270,7 @@ pub async fn resolve_and_set_fee_token<N>(
 ) -> Result<Option<Address>>
 where
     N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
     if let Some(fee_token) = tx.fee_token() {
         return Ok(Some(fee_token));
@@ -316,7 +320,6 @@ async fn stored_user_fee_token<N>(
 ) -> Result<Option<Address>>
 where
     N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
 {
     let call = IFeeManager::userTokensCall { user: fee_payer };
     let tx = N::TransactionRequest::default()
@@ -423,7 +426,6 @@ pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> 
 async fn resolve_fee_token_symbol<N, P>(provider: &P, fee_token: Address) -> Option<String>
 where
     N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
     P: Provider<N>,
 {
     if let Some(symbol) = known_fee_token_symbol(fee_token) {
@@ -448,7 +450,6 @@ pub async fn maybe_print_fee_token<N, P>(
 ) -> Result<()>
 where
     N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
     P: Provider<N>,
 {
     if let Some(fee_token) = fee_token {

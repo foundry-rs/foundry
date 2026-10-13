@@ -46,14 +46,14 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
-      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -71,14 +71,14 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
-      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -100,7 +100,7 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -132,7 +132,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
 
   shellcheck:
     runs-on: depot-ubuntu-latest
@@ -171,7 +171,7 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -179,7 +179,7 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --workspace --all-targets --all-features --locked
@@ -209,14 +209,14 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
-      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -229,7 +229,7 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    uses: tempoxyz/gh-actions/.github/workflows/rust-deny.yml@d5402286a7abdfb7232173b3228d56473feb8a66
+    uses: tempoxyz/gh-actions/.github/workflows/rust-deny.yml@2ab28a31ae569be9f780c7675b684471060afa40
     permissions:
       contents: read
       id-token: write
@@ -267,7 +267,7 @@ jobs:
 
   workflow-validation:
     name: Workflow Validation
-    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@d5402286a7abdfb7232173b3228d56473feb8a66
+    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@2ab28a31ae569be9f780c7675b684471060afa40
     permissions:
       actions: read
       contents: read

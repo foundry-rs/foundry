@@ -562,7 +562,7 @@ impl SendOptions {
         tx: &mut N::TransactionRequest,
     ) -> Result<()>
     where
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let provider = self.query_fee_token.then_some(provider);
         if self.resolve_fee_token {
@@ -581,7 +581,7 @@ pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     opts: &SendOptions,
 ) -> Result<B256>
 where
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     opts.resolve_and_print_fee_token(&provider, &mut tx).await?;
@@ -622,7 +622,7 @@ pub(crate) async fn cast_send_with_tempo_wallet<N: Network, P: Provider<N>>(
     opts: &SendOptions,
 ) -> Result<B256>
 where
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     opts.resolve_and_print_fee_token(provider, &mut tx).await?;
@@ -642,7 +642,7 @@ pub(crate) async fn cast_send_with_tempo_wallet_via_sponsor<N: Network, P: Provi
     opts: &SendOptions,
 ) -> Result<B256>
 where
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);

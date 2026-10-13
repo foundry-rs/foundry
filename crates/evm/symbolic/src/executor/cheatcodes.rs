@@ -1666,7 +1666,7 @@ impl SymbolicExecutor {
                     .inspector()
                     .cheatcodes
                     .as_ref()
-                    .is_some_and(|cheats| cheats.config.isolate);
+                    .is_some_and(|cheats| cheats.core.config.isolate);
                 let isolate = SymExpr::constant(&mut self.cx, U256::from(isolate));
                 Ok(CheatcodeOutcome::Continue(vec![isolate]))
             }

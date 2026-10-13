@@ -134,9 +134,9 @@ use foundry_evm::{
         TracingInspectorConfig,
     },
     utils::{
-        apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
-        get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id,
-        get_blob_params_by_hardfork,
+        StateChangeset, apply_chain_specific_tx_replay_env_changes_for_chain,
+        block_env_from_header, get_blob_base_fee_update_fraction,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_hardfork,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
@@ -1039,8 +1039,6 @@ fn ensure_mined_trace_block(block: BlockNumber) -> Result<(), BlockchainError> {
     Ok(())
 }
 
-pub type State = foundry_evm::utils::StateChangeset;
-
 #[derive(Clone, Debug, Default)]
 struct SimulationPrecompileOverrides {
     moves: Vec<(Address, Address)>,
@@ -1599,13 +1597,14 @@ impl<N: Network> Backend<N> {
         &self,
         db: &dyn revm::DatabaseRef<Error = DatabaseError>,
         parent_timestamp: u64,
+        pin_timestamp: bool,
     ) -> Result<PendingBlockTimestamp, DatabaseError> {
         #[cfg(feature = "base")]
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
             return base::prepare_block_timestamp(db, &self.time, parent_timestamp);
         }
         let _ = (db, parent_timestamp);
-        Ok(self.time.prepare_next_timestamp())
+        Ok(self.time.prepare_next_timestamp(pin_timestamp))
     }
 
     /// Builds the required deposits from the same parent state used to prepare the clock.
@@ -2038,7 +2037,7 @@ impl<N: Network> Backend<N> {
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         let pending =
-            self.prepare_block_timestamp(db, evm_env.block_env.timestamp.saturating_to())?;
+            self.prepare_block_timestamp(db, evm_env.block_env.timestamp.saturating_to(), false)?;
         evm_env.block_env.timestamp = U256::from(pending.timestamp);
         Ok(evm_env)
     }
@@ -3674,11 +3673,14 @@ impl<N: Network> Backend<N> {
                 inner: mut request,
                 ..
             }) => {
-                // Tempo charges the account-creation cost for nonce 0, so an omitted nonce must
-                // not default to it.
-                if self.is_tempo() && request.nonce.is_none() {
-                    request.nonce =
-                        Some(tempo_nonce(state, request.from.unwrap_or_default(), U256::ZERO)?);
+                // Account-creation gas depends on the nonce: EIP-8037 checks the address a
+                // creation would deploy to, and Tempo charges for nonce 0. So an omitted nonce
+                // must not default to 0. revm rejects a transaction nonce of `u64::MAX` even
+                // without the nonce check, so such a sender keeps the default outside Tempo,
+                // where falling back to 0 would incorrectly charge account-creation gas.
+                if request.nonce.is_none() {
+                    let nonce = tempo_nonce(state, request.from.unwrap_or_default(), U256::ZERO)?;
+                    request.nonce = (self.is_tempo() || nonce != u64::MAX).then_some(nonce);
                 }
                 self.prepare_base_call_env_with_base(
                     WithOtherFields::new(request),
@@ -3775,7 +3777,7 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         self.call_with_state_and_context(state, request, fee_details, block_env, None)
     }
 
@@ -3786,7 +3788,7 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         mut monad_context: Option<MonadReplayContext>,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         let mut inspector = self.build_inspector();
         let PreparedCall { evm_env, tx_env, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
@@ -3815,7 +3817,7 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         options: GasEstimateCallOptions,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context } = options;
         self.call_with_state_typed_inner(
             state,
@@ -3839,7 +3841,7 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         access_list: AccessList,
         monad_context: Option<MonadReplayContext>,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         self.call_with_state_typed_inner(
             state,
             request,
@@ -3858,7 +3860,7 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         overrides: TypedCallOverrides,
         mut monad_context: Option<MonadReplayContext>,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         // Estimation probes do not return or print traces, but still collect console logs.
         let mut inspector = AnvilInspector::default();
         if self.print_logs {
@@ -5600,7 +5602,7 @@ impl<N: Network> Backend<N> {
         &self,
         tx: Arc<PoolTransaction<FoundryTxEnvelope>>,
     ) -> Result<
-        (InstructionResult, Option<Output>, u64, State, Vec<revm::primitives::Log>),
+        (InstructionResult, Option<Output>, u64, StateChangeset, Vec<revm::primitives::Log>),
         BlockchainError,
     > {
         let db = self.db.read().await;
@@ -5829,8 +5831,9 @@ where
     pub(crate) async fn mine_block_locked(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
-        self.do_mine_block_locked(pool_transactions).await
+        self.do_mine_block_locked(pool_transactions, pin_timestamp).await
     }
 
     /// Replays a transaction-hash fork prefix before the live pool and miner are created.
@@ -6228,13 +6231,14 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
-        self.do_mine_block_locked(pool_transactions).await
+        self.do_mine_block_locked(pool_transactions, false).await
     }
 
     /// Mines a block while the caller holds the mining lock.
     async fn do_mine_block_locked(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        pin_timestamp: bool,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
@@ -6295,8 +6299,11 @@ where
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                let pending_timestamp = self
-                    .prepare_block_timestamp(&**db, evm_env.block_env.timestamp.saturating_to())?;
+                let pending_timestamp = self.prepare_block_timestamp(
+                    &**db,
+                    evm_env.block_env.timestamp.saturating_to(),
+                    pin_timestamp,
+                )?;
                 let block_timestamp = pending_timestamp.timestamp;
                 evm_env.block_env.timestamp = U256::from(block_timestamp);
 
@@ -6564,7 +6571,7 @@ where
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block_locked(to_be_mined).await?;
+            let outcome = self.do_mine_block_locked(to_be_mined, false).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -6755,7 +6762,7 @@ where
         fee_details: FeeDetails,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         overrides: EvmOverrides,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         self.with_database_at_and_context(block_request, |state, mut block, monad_context| {
             let block_number = block.number;
             let (exit, out, gas, state) = {

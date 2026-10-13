@@ -32,7 +32,11 @@ use solar::{
         ty::Gcx,
     },
 };
-use std::{cell::OnceCell, fmt};
+use std::{
+    cell::OnceCell,
+    fmt,
+    path::{Path, PathBuf},
+};
 use walkdir::WalkDir;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -44,6 +48,8 @@ static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
     output: ProjectCompileOutput,
+    /// The full path of the generated REPL source in the compilation.
+    source_path: PathBuf,
 }
 
 impl fmt::Debug for GeneratedOutput {
@@ -58,11 +64,12 @@ impl GeneratedOutput {
         &self,
         f: impl for<'a, 'b, 'gcx> FnOnce(GeneratedOutputRef<'a, 'b, 'gcx>) -> R + Send,
     ) -> R {
+        let source_path = &self.source_path;
         self.output
             .parser()
             .solc()
             .compiler()
-            .enter(|c| f(GeneratedOutputRef { output: &self.output, compiler: c }))
+            .enter(|c| f(GeneratedOutputRef { output: &self.output, compiler: c, source_path }))
     }
 }
 
@@ -70,6 +77,8 @@ impl GeneratedOutput {
 pub struct GeneratedOutputRef<'a, 'b, 'gcx> {
     output: &'a ProjectCompileOutput,
     pub(crate) compiler: &'b CompilerRef<'gcx>,
+    /// The full path of the generated REPL source in the compilation.
+    source_path: &'a Path,
 }
 
 impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
@@ -78,12 +87,16 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     }
 
     pub fn repl_contract(&self) -> Option<&ConfigurableContractArtifact> {
-        self.output.find_first("REPL")
+        self.output.find(self.source_path, "REPL")
     }
 
     /// Looks up the REPL contract in the HIR.
     pub fn repl_contract_hir(&self) -> Option<&'gcx Contract<'gcx>> {
-        self.gcx().hir.contracts().find(|c| c.name.as_str() == "REPL")
+        self.gcx().hir.contracts().find(|c| {
+            c.name.as_str() == "REPL"
+                && self.gcx().sources.get(c.source).and_then(|s| s.file.name.as_real())
+                    == Some(self.source_path)
+        })
     }
 
     /// Returns the body block of the REPL `run()` function.
@@ -684,16 +697,16 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             return Ok(output);
         }
         let output = self.compile()?;
-        let output = GeneratedOutput { output };
         Ok(self.output.get_or_init(|| output))
     }
 
     /// Compiles the source.
     #[cold]
-    fn compile(&self) -> Result<ProjectCompileOutput> {
+    fn compile(&self) -> Result<GeneratedOutput> {
         let sources = self.get_sources();
 
         let mut project = self.config.foundry_config.ephemeral_project()?;
+        let source_path = project.root().join(&self.file_name);
         self.config.foundry_config.disable_optimizations(&mut project, self.config.ir_minimum);
         let mut output = ProjectCompiler::with_sources(&project, sources)?.compile()?;
 
@@ -709,7 +722,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             let _ = c.analysis();
         });
 
-        Ok(output)
+        Ok(GeneratedOutput { output, source_path })
     }
 
     fn get_sources(&self) -> Sources {
