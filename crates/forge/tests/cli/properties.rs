@@ -919,7 +919,7 @@ Error: generator failed in round 3 (exit status: 3): generator quota exceeded
 
 #[cfg(unix)]
 #[forgetest_init]
-fn properties_reports_possible_bugs_by_evidence_tier(prj: _, cmd: _) {
+fn properties_reports_possible_bugs_by_evidence_basis(prj: _, cmd: _) {
     const GENERATOR: &str = r#"#!/bin/sh
 set -eu
 prompt="$1"
@@ -939,14 +939,14 @@ cat > "$output" <<'JSON'
       "claim": "A zero amount is charged.",
       "quote": "",
       "source": "the name of charges",
-      "tier": "C",
+      "basis": "inferred",
       "code_path": "src/Fee.sol:11 returns false for amounts below 100."
     },
     "FeeAuditTest::testDocumentedCap": {
       "claim": "The fee is capped at 100 ether.",
       "quote": "Charges 1% of `amount`, capped at 100 ether.",
       "source": "src/Fee.sol:3",
-      "tier": "A",
+      "basis": "documented",
       "code_path": "src/Fee.sol:7 caps the fee at 10 ether."
     }
   }
@@ -1000,12 +1000,12 @@ library Fee {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-possible bug (tier A): FeeAuditTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+possible bug (documented): FeeAuditTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
   claim: The fee is capped at 100 ether.
   quote: "Charges 1% of `amount`, capped at 100 ether." (src/Fee.sol:3)
   code path: src/Fee.sol:7 caps the fee at 10 ether.
   the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
-possible bug (tier C): FeeAuditTest::testChargesZero (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+possible bug (inferred): FeeAuditTest::testChargesZero (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
   claim: A zero amount is charged.
   quote: "" (the name of charges)
   code path: src/Fee.sol:11 returns false for amounts below 100.
@@ -1023,7 +1023,7 @@ no candidate passed the checks
     )
     .unwrap();
     assert_eq!(rounds[0]["accepted"], false);
-    assert_eq!(rounds[0]["possible_bugs"][0]["evidence"]["tier"], "A");
+    assert_eq!(rounds[0]["possible_bugs"][0]["evidence"]["basis"], "documented");
     assert_eq!(rounds[0]["possible_bugs"][2]["test"], "FeeAuditTest::testRoundsUp");
     let journal = fs::read_to_string(prj.root().join("cache/properties/check-failures.jsonl"))
         .unwrap()
@@ -1033,7 +1033,7 @@ no candidate passed the checks
     assert_eq!(journal.len(), 3);
     assert_eq!(journal[0]["test"], "FeeAuditTest::testDocumentedCap");
     assert_eq!(journal[0]["evidence"]["source"], "src/Fee.sol:3");
-    assert_eq!(journal[1]["evidence"]["tier"], "C");
+    assert_eq!(journal[1]["evidence"]["basis"], "inferred");
     assert!(journal[2].get("evidence").is_none());
 }
 
@@ -1135,7 +1135,7 @@ library Fee {
                     "claim": "The fee rounds up.",
                     "quote": "rounds up",
                     "source": "README.md:3",
-                    "tier": "B",
+                    "basis": "documented",
                     "code_path": "contracts/Fee.sol:6 divides and rounds down."
                 }
             }
@@ -1271,7 +1271,7 @@ Error: candidate check failed
         "claim": "The fee rounds up.",
         "quote": "rounds up",
         "source": "README.md:3",
-        "tier": "B",
+        "basis": "documented",
         "code_path": "contracts/Fee.sol:6 divides and rounds down."
       }
     }
@@ -1284,6 +1284,23 @@ Error: candidate check failed
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
+
+"#]]);
+    // The evidence basis is either documented or inferred.
+    let mut legacy = serde_json::from_str::<serde_json::Value>(
+        &fs::read_to_string(prj.root().join("evidenced.json")).unwrap(),
+    )
+    .unwrap();
+    legacy["evidence"]["FeeRoundingTest::testRoundsUp"]["basis"] = "A".into();
+    fs::write(prj.root().join("legacy.json"), legacy.to_string()).unwrap();
+    cmd.forge_fuse()
+        .args(["properties", "--check", "legacy.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: invalid candidate JSON
+
+Context:
+- unknown variant `A`, expected `documented` or `inferred` at line 1 column [..]
 
 "#]]);
     assert!(!prj.root().join("test/generated/FeeCheck.t.sol").exists());

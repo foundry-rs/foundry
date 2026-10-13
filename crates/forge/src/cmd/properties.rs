@@ -161,29 +161,28 @@ struct Evidence {
     quote: String,
     /// Where the quote comes from: `path:line`, or a standard and its clause.
     source: String,
-    tier: EvidenceTier,
+    basis: EvidenceBasis,
     /// The code that violates the claim: `path:line` and what it does.
     code_path: String,
 }
 
-/// How directly the documentation states the claim. Possible bugs are reported in this order.
+/// What supports the claim. Possible bugs are reported in this order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-enum EvidenceTier {
-    /// The NatSpec of the function under test, or of the same function in an interface or base
-    /// contract it implements, or a MUST or SHOULD clause of a standard the contract claims.
-    A,
-    /// Documentation of a sibling function, the contract, the README, or a specification file.
-    B,
-    /// An error, variable, or function name, a comment, or inferred intent.
-    C,
+#[serde(rename_all = "lowercase")]
+enum EvidenceBasis {
+    /// Documentation states the claim: NatSpec or interface docs, a standard's requirement,
+    /// sibling or contract docs, the README, or a specification.
+    Documented,
+    /// Only names, comments, behavior elsewhere in the implementation, or guessed intent support
+    /// the claim.
+    Inferred,
 }
 
-impl std::fmt::Display for EvidenceTier {
+impl std::fmt::Display for EvidenceBasis {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::A => "A",
-            Self::B => "B",
-            Self::C => "C",
+            Self::Documented => "documented",
+            Self::Inferred => "inferred",
         })
     }
 }
@@ -333,17 +332,18 @@ struct CheckFailure {
 }
 
 impl CheckFailure {
-    /// Report order: strongest evidence first, failures without evidence last, then by name.
-    fn report_key(&self) -> (bool, Option<EvidenceTier>, &str) {
-        let tier = self.evidence.as_ref().map(|evidence| evidence.tier);
-        (tier.is_none(), tier, &self.test)
+    /// Report order: documented evidence first, then inferred, failures without evidence last, then
+    /// by name.
+    fn report_key(&self) -> (bool, Option<EvidenceBasis>, &str) {
+        let basis = self.evidence.as_ref().map(|evidence| evidence.basis);
+        (basis.is_none(), basis, &self.test)
     }
 }
 
 impl std::fmt::Display for CheckFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.evidence {
-            Some(evidence) => write!(f, "possible bug (tier {}): ", evidence.tier)?,
+            Some(evidence) => write!(f, "possible bug ({}): ", evidence.basis)?,
             None => f.write_str("possible bug (no evidence): ")?,
         }
         write!(f, "{} ({})", self.test, self.reason)?;
@@ -572,12 +572,12 @@ impl PropertiesArgs {
                                 claim: "The documented behavior that the failing test asserts.".to_string(),
                                 quote: "The documentation sentence, verbatim.".to_string(),
                                 source: "src/Contract.sol:12, or the standard and its clause".to_string(),
-                                tier: EvidenceTier::A,
+                                basis: EvidenceBasis::Documented,
                                 code_path: "src/Contract.sol:40 and what the code does there instead.".to_string(),
                             },
                         )]),
                     },
-                    note: "Return one JSON object with exactly this shape. Keep schema unchanged; replace the structural example's rationale, files, generator metadata, and evidence with useful properties for this project. Forge runs every test in the files. Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. The generator object is optional. Add one evidence entry, keyed by Contract::test, for every test that fails against the current implementation and that you keep as a finding; Forge reports possible bugs ordered by evidence tier.",
+                    note: "Return one JSON object with exactly this shape. Keep schema unchanged; replace the structural example's rationale, files, generator metadata, and evidence with useful properties for this project. Forge runs every test in the files. Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. The generator object is optional. Add one evidence entry, keyed by Contract::test, for every test that fails against the current implementation and that you keep as a finding; Forge reports possible bugs with documented evidence first.",
                 },
             };
             fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
