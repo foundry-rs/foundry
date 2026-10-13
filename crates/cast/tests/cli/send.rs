@@ -86,12 +86,7 @@ async fn send_eip7702(cmd: _) {
     .stderr_eq(str![""]);
 
     cmd.cast_fuse()
-        .args([
-            "code",
-            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-            "--rpc-url",
-            &endpoint,
-        ])
+        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
@@ -131,12 +126,7 @@ to                   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
     .stderr_eq(str![""]);
 
     cmd.cast_fuse()
-        .args([
-            "code",
-            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-            "--rpc-url",
-            &endpoint,
-        ])
+        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
@@ -267,9 +257,7 @@ async fn send_eip7702_multiple_auth(cmd: _) {
 
     // Create a pre-signed authorization using a different signer (account index 1)
     let signer: PrivateKeySigner =
-        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-            .parse()
-            .unwrap();
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
     // Anvil default chain_id is 31337
     let auth = Authorization {
         chain_id: U256::from(31337),
@@ -318,33 +306,18 @@ async fn send_eip7702_multiple_auth(cmd: _) {
     let auth_list = tx_envelope["data"]["authorizationList"].as_array().unwrap();
 
     // Verify we have 2 authorizations
-    assert_eq!(
-        auth_list.len(),
-        2,
-        "Expected 2 authorizations in the transaction"
-    );
+    assert_eq!(auth_list.len(), 2, "Expected 2 authorizations in the transaction");
 
     let field_output = cmd
         .cast_fuse()
-        .args([
-            "tx",
-            tx_hash,
-            "authorizationList",
-            "--rpc-url",
-            &endpoint,
-            "--json",
-        ])
+        .args(["tx", tx_hash, "authorizationList", "--rpc-url", &endpoint, "--json"])
         .assert_success()
         .get_output()
         .stdout_lossy();
 
     let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
     let field_auth_list = field_envelope["data"].as_array().unwrap();
-    assert_eq!(
-        field_auth_list.len(),
-        2,
-        "Expected authorizationList field data to be an array"
-    );
+    assert_eq!(field_auth_list.len(), 2, "Expected authorizationList field data to be an array");
 }
 
 // Test that multiple address-based authorizations are rejected
@@ -440,12 +413,7 @@ async fn send_async_burst_is_mined_across_full_blocks(prj: _) {
     let provider = ProviderBuilder::new().connect_http(endpoint.parse().unwrap());
     tokio::time::timeout(Duration::from_secs(10), async {
         for wallet in &wallets {
-            while provider
-                .get_transaction_count(wallet.address())
-                .await
-                .unwrap()
-                < 3
-            {
+            while provider.get_transaction_count(wallet.address()).await.unwrap() < 3 {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
@@ -506,9 +474,7 @@ contract SimpleStorageScript is Script {
 
     // Cache project selectors.
     cmd.forge_fuse().set_current_dir(prj.root());
-    cmd.forge_fuse()
-        .args(["selectors", "cache"])
-        .assert_success();
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     // Assert cast send can decode custom error on estimate gas execution failure.
     cmd.cast_fuse()
@@ -560,9 +526,7 @@ contract ConstructorContract {
     cmd.forge_fuse().args(["build"]).assert_success();
 
     // Get the compiled bytecode
-    let bytecode_path = prj
-        .root()
-        .join("out/ConstructorContract.sol/ConstructorContract.json");
+    let bytecode_path = prj.root().join("out/ConstructorContract.sol/ConstructorContract.json");
     let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
     let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
     let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
@@ -612,14 +576,7 @@ contract ConstructorContract {
     );
 
     cmd.cast_fuse()
-        .args([
-            "--json",
-            "call",
-            address,
-            "getValue()(uint256)",
-            "--rpc-url",
-            &endpoint,
-        ])
+        .args(["--json", "call", address, "getValue()(uint256)", "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
 [
@@ -650,9 +607,7 @@ contract SimpleContract {
     cmd.forge_fuse().args(["build"]).assert_success();
 
     // Get bytecode
-    let bytecode_path = prj
-        .root()
-        .join("out/SimpleContract.sol/SimpleContract.json");
+    let bytecode_path = prj.root().join("out/SimpleContract.sol/SimpleContract.json");
     let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
     let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
     let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
@@ -711,9 +666,7 @@ contract ComplexContract {
     cmd.forge_fuse().args(["build"]).assert_success();
 
     // Get bytecode
-    let bytecode_path = prj
-        .root()
-        .join("out/ComplexContract.sol/ComplexContract.json");
+    let bytecode_path = prj.root().join("out/ComplexContract.sol/ComplexContract.json");
     let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
     let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
     let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
@@ -860,13 +813,7 @@ async fn publish_raw_transaction(cmd: _) {
         .to_string();
     let hash = keccak256(hex::decode(&raw).unwrap());
     cmd.cast_fuse()
-        .args([
-            "publish",
-            &raw,
-            "--async",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
+        .args(["publish", &raw, "--async", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(format!("{hash}\n"));
 }
@@ -895,10 +842,7 @@ async fn send_inclusion_timeout(prj: _) {
         .await
         .expect("inclusion timeout was not enforced")
         .unwrap();
-    OutputAssert::new(output)
-        .failure()
-        .stdout_eq("")
-        .stderr_eq(str![[r#"
+    OutputAssert::new(output).failure().stdout_eq("").stderr_eq(str![[r#"
 Error: transaction was not confirmed within the timeout
 
 "#]]);
@@ -949,18 +893,10 @@ async fn send_waits_for_confirmations(prj: _) {
         .await
         .unwrap();
         // Inclusion timeout must not limit the wait for additional confirmations.
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), child.wait())
-                .await
-                .is_err()
-        );
+        assert!(tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_err());
         for height in 1..3 {
             assert_eq!(provider.get_block_number().await.unwrap(), height);
-            assert!(
-                tokio::time::timeout(Duration::from_millis(250), child.wait())
-                    .await
-                    .is_err()
-            );
+            assert!(tokio::time::timeout(Duration::from_millis(250), child.wait()).await.is_err());
             api.mine_one().await.unwrap();
         }
 
@@ -968,11 +904,7 @@ async fn send_waits_for_confirmations(prj: _) {
             .await
             .unwrap()
             .unwrap();
-        let receipts = provider
-            .get_block_receipts(1.into())
-            .await
-            .unwrap()
-            .unwrap();
+        let receipts = provider.get_block_receipts(1.into()).await.unwrap().unwrap();
         assert_eq!(receipts.len(), 1);
         let receipt = provider
             .get_transaction_receipt(receipts[0].transaction_hash())
@@ -981,18 +913,8 @@ async fn send_waits_for_confirmations(prj: _) {
             .unwrap();
         let output = OutputAssert::new(output).success().stderr_eq("");
         assert_data_eq!(
-            output
-                .get_output()
-                .stdout
-                .clone()
-                .into_data()
-                .is(DataFormat::Json)
-                .unordered(),
-            serde_json::to_string(&receipt)
-                .unwrap()
-                .into_data()
-                .is(DataFormat::Json)
-                .unordered(),
+            output.get_output().stdout.clone().into_data().is(DataFormat::Json).unordered(),
+            serde_json::to_string(&receipt).unwrap().into_data().is(DataFormat::Json).unordered(),
         );
         assert_eq!(provider.get_block_number().await.unwrap(), 3);
     }
@@ -1018,10 +940,8 @@ async fn send_async_ignores_confirmations(prj: _) {
             "--async",
         ])
         .kill_on_drop(true);
-    let output = tokio::time::timeout(Duration::from_secs(10), command.output())
-        .await
-        .unwrap()
-        .unwrap();
+    let output =
+        tokio::time::timeout(Duration::from_secs(10), command.output()).await.unwrap().unwrap();
     OutputAssert::new(output)
         .success()
         .stdout_eq(str![[r#"
