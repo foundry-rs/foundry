@@ -1,6 +1,6 @@
 {
   "name": "forge-lsp",
-  "displayName": "Solar LSP",
+  "displayName": "Foundry Solidity",
   "description": "Solidity language support powered by the Foundry toolchain: diagnostics, hover, references and CodeLens from forge lsp, formatting with forge fmt, and linting with forge lint",
   "version": "0.1.0",
   "publisher": "paradigm",
@@ -72,7 +72,7 @@
     ],
     "configuration": {
       "type": "object",
-      "title": "Solar LSP Configuration",
+      "title": "Foundry Solidity",
       "properties": {
         "solarLsp.enable": {
           "type": "boolean",
