@@ -138,6 +138,12 @@ async fn assert_rpc_logs_preserve_failed_requests(transport: &str, trace: bool) 
             .await
             .unwrap_err();
         assert_eq!(err.as_error_resp().unwrap().code, -32602);
+        let err = provider
+            .raw_request::<_, ()>("unsupported_method".into(), json!([]))
+            .await
+            .unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32601);
+        assert_eq!(err.as_error_resp().unwrap().message, "Method not found");
         raw
     })
     .await
@@ -156,11 +162,13 @@ TRACE rpc::api: executing eth request
  INFO node::user: eth_sendRawTransaction
  INFO node::user: RPC request failed method="eth_sendRawTransaction" id=Number(2) params=["[RAW_TX]"] error=Transaction rejected: transaction already imported
 TRACE rpc: received method call id=Number(3) method="anvil_setAutomine" params=Array [String("https://example.invalid/rpc/synthetic-api-key")]
-ERROR rpc: failed to deserialize method method="anvil_setAutomine" err=[..]
+ERROR rpc: failed to deserialize method id=Number(3) method="anvil_setAutomine" err=[..]
 TRACE rpc: received method call id=Number(4) method="eth_call" params=Array [Object {"to": String("0x1111111111111111111111111111111111111111"), "data": String("0x12345678")}, String("0x100000")]
 TRACE rpc::api: executing eth request
  INFO node::user: eth_call
  INFO node::user: RPC request failed method="eth_call" id=Number(4) params=[{"to":"0x1111111111111111111111111111111111111111","data":"0x12345678"},"0x100000"] error=Invalid params: BlockOutOfRangeError: block height is 0 but requested was 1048576
+TRACE rpc: received method call id=Number(5) method="unsupported_method" params=Array []
+ERROR rpc: failed to deserialize method due to unknown variant id=Number(5) method="unsupported_method"
 
 "#]]
     } else {

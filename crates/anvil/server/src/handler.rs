@@ -137,6 +137,11 @@ mod tests {
 
     type RecordedError = (String, Id, serde_json::Value, RpcError);
 
+    #[derive(Clone, Default)]
+    struct CredentialHandler {
+        observed: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
+
     impl RpcHandler for TestHandler {
         type Request = serde_json::Value;
 
@@ -176,6 +181,25 @@ mod tests {
                 params.clone(),
                 error.clone(),
             ));
+        }
+    }
+
+    impl RpcHandler for CredentialHandler {
+        type Request = serde_json::Value;
+
+        async fn on_request(&self, request: Self::Request) -> ResponseResult {
+            self.observed.lock().unwrap().push(request);
+            ResponseResult::Error(RpcError::internal_error())
+        }
+
+        fn on_request_error(
+            &self,
+            _method: &str,
+            _id: &Id,
+            params: &serde_json::Value,
+            _error: &RpcError,
+        ) {
+            self.observed.lock().unwrap().push(params.clone());
         }
     }
 
@@ -359,6 +383,39 @@ mod tests {
                 serde_json::json!(["allowed"]),
                 RpcError::internal_error()
             )]
+        );
+    }
+
+    #[test]
+    fn request_error_hook_redacts_credentials_after_execution() {
+        let handler = CredentialHandler::default();
+        let params = serde_json::json!({"params": {"forking": {
+            "jsonRpcUrl": "https://user:pass@example.invalid/key?token=x#secret",
+            "blockNumber": 42
+        }}});
+        let call = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "hardhat_reset",
+            "params": params,
+            "id": "reset"
+        }))
+        .unwrap();
+
+        let response = run_ready(handler.on_call(call));
+
+        assert_eq!(
+            response,
+            RpcResponse::new(Id::String("reset".to_owned()), RpcError::internal_error())
+        );
+        assert_eq!(
+            *handler.observed.lock().unwrap(),
+            vec![
+                serde_json::json!({"method": "hardhat_reset", "params": params}),
+                serde_json::json!({"params": {"forking": {
+                    "jsonRpcUrl": "https://example.invalid/",
+                    "blockNumber": 42
+                }}})
+            ]
         );
     }
 }

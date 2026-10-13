@@ -48,43 +48,43 @@ fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value 
                 params.clone()
             }
         }
-        _ => redact_fork_credentials(method, params),
+        _ => {
+            let mut redacted = params.clone();
+            redact_fork_credentials(method, &mut redacted);
+            redacted
+        }
     }
 }
 
 /// Redacts fork credentials while preserving the rest of a failed request dump.
-fn redact_fork_credentials(method: &str, params: &serde_json::Value) -> serde_json::Value {
+fn redact_fork_credentials(method: &str, params: &mut serde_json::Value) {
     match method {
         "anvil_reset" | "hardhat_reset" => redact_fork_params(params),
         "anvil_setRpcUrl" => {
-            let mut redacted = params.clone();
-            if let Some(serde_json::Value::String(url)) = redacted.get_mut(0) {
+            if let Some(serde_json::Value::String(url)) = params.get_mut(0) {
                 *url = redact_url_credentials(url);
             }
-            redacted
         }
-        _ => params.clone(),
+        _ => {}
     }
 }
 
 /// Redacts fork URLs in array, object, and wrapped `params` forms of a reset request.
-fn redact_fork_params(param: &serde_json::Value) -> serde_json::Value {
+fn redact_fork_params(param: &mut serde_json::Value) {
     match param {
-        serde_json::Value::Array(array) => array.iter().map(redact_fork_params).collect(),
-        serde_json::Value::Object(object) => object
-            .iter()
-            .map(|(key, value)| {
-                let value = if key == "jsonRpcUrl"
-                    && let Some(url) = value.as_str()
+        serde_json::Value::Array(array) => array.iter_mut().for_each(redact_fork_params),
+        serde_json::Value::Object(object) => {
+            for (key, value) in object {
+                if key == "jsonRpcUrl"
+                    && let serde_json::Value::String(url) = value
                 {
-                    serde_json::Value::String(redact_url_credentials(url))
+                    *url = redact_url_credentials(url);
                 } else {
-                    redact_fork_params(value)
-                };
-                (key.clone(), value)
-            })
-            .collect(),
-        _ => param.clone(),
+                    redact_fork_params(value);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -135,7 +135,7 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
         async move {
             let RpcMethodCall { method, params, id, .. } = call;
 
-            let params: serde_json::Value = params.into();
+            let mut params: serde_json::Value = params.into();
 
             // Log with redacted sensitive parameters
             trace!(target: "rpc", id = ?id, method = ?method, params = ?redact_params(&method, &params), "received method call");
@@ -149,12 +149,8 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
                 Ok(req) => {
                     let result = self.on_request(req).await;
                     if let ResponseResult::Error(error) = &result {
-                        self.on_request_error(
-                            &method,
-                            &id,
-                            &redact_fork_credentials(&method, &params),
-                            error,
-                        );
+                        redact_fork_credentials(&method, &mut params);
+                        self.on_request_error(&method, &id, &params, error);
                     }
                     RpcResponse::new(id, result)
                 }
@@ -165,10 +161,10 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
                     )
                     .is_err_and(|err| err.to_string().contains("unknown variant"));
                     if method_not_found {
-                        error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
+                        error!(target: "rpc", ?id, ?method, "failed to deserialize method due to unknown variant");
                         RpcResponse::new(id, RpcError::method_not_found())
                     } else {
-                        error!(target: "rpc", ?method, ?err, "failed to deserialize method");
+                        error!(target: "rpc", ?id, ?method, ?err, "failed to deserialize method");
                         RpcResponse::new(id, RpcError::invalid_params(err))
                     }
                 }
@@ -278,8 +274,10 @@ mod tests {
             "blockNumber": 42
         }}});
         for method in ["anvil_reset", "hardhat_reset"] {
-            assert_eq!(redact_fork_credentials(method, &params), expected);
             assert_eq!(redact_params(method, &params), expected);
+            let mut redacted = params.clone();
+            redact_fork_credentials(method, &mut redacted);
+            assert_eq!(redacted, expected);
         }
     }
 
@@ -293,15 +291,16 @@ mod tests {
             assert_eq!(redact_url_credentials(url), "https://example.invalid:8545/");
         }
         assert_eq!(redact_url_credentials("invalid secret URL"), "[REDACTED_URL]");
-        for (params, expected) in [
+        for (mut params, expected) in [
             (
                 json!(["https://user:pass@example.invalid/secret"]),
                 json!(["https://example.invalid/"]),
             ),
             (json!(["invalid secret URL"]), json!(["[REDACTED_URL]"])),
         ] {
-            assert_eq!(redact_fork_credentials("anvil_setRpcUrl", &params), expected);
             assert_eq!(redact_params("anvil_setRpcUrl", &params), expected);
+            redact_fork_credentials("anvil_setRpcUrl", &mut params);
+            assert_eq!(params, expected);
         }
     }
 
@@ -311,9 +310,13 @@ mod tests {
             "to": "0x1111111111111111111111111111111111111111",
             "data": "0x12345678"
         }, "0x100000"]);
-        assert_eq!(redact_fork_credentials("eth_call", &params), params);
+        let mut redacted = params.clone();
+        redact_fork_credentials("eth_call", &mut redacted);
+        assert_eq!(redacted, params);
         let raw_params = json!(["0x12345678", 5000]);
-        assert_eq!(redact_fork_credentials("eth_sendRawTransactionSync", &raw_params), raw_params);
+        let mut redacted = raw_params.clone();
+        redact_fork_credentials("eth_sendRawTransactionSync", &mut redacted);
+        assert_eq!(redacted, raw_params);
         assert_eq!(
             redact_params("eth_sendRawTransactionSync", &raw_params),
             json!(["[SIGNED_TX]", 5000])
