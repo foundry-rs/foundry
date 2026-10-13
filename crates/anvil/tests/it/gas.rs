@@ -850,3 +850,40 @@ async fn test_estimate_gas_transfers_across_hardforks() {
         }
     }
 }
+
+// <https://github.com/foundry-rs/foundry/issues/17540>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_create_without_nonce_amsterdam() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    // An empty creation pays 24000 regular gas plus 183600 EIP-8037 account-creation state gas.
+    let expected = 207_600;
+
+    // After the first creation, the address for nonce 0 is no longer empty, but later creations
+    // still create a new account at the address for the sender's current nonce.
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().with_from(from).with_deploy_code(Bytes::new());
+        assert_eq!(
+            provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap(),
+            expected
+        );
+
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx.with_gas_limit(expected)))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used, expected);
+    }
+
+    // A call without a nonce still runs for a sender whose nonce cannot be incremented.
+    let maxed = handle.dev_accounts().nth(1).unwrap();
+    api.anvil_set_nonce(maxed, U256::from(u64::MAX)).await.unwrap();
+    let call = TransactionRequest::default().with_from(maxed).with_to(from);
+    provider.call(WithOtherFields::new(call)).await.unwrap();
+}

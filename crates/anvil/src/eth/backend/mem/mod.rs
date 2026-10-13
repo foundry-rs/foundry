@@ -134,9 +134,9 @@ use foundry_evm::{
         TracingInspectorConfig,
     },
     utils::{
-        apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
-        get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id,
-        get_blob_params_by_hardfork,
+        StateChangeset, apply_chain_specific_tx_replay_env_changes_for_chain,
+        block_env_from_header, get_blob_base_fee_update_fraction,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_hardfork,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
@@ -1038,8 +1038,6 @@ fn ensure_mined_trace_block(block: BlockNumber) -> Result<(), BlockchainError> {
     }
     Ok(())
 }
-
-pub type State = foundry_evm::utils::StateChangeset;
 
 #[derive(Clone, Debug, Default)]
 struct SimulationPrecompileOverrides {
@@ -3675,11 +3673,14 @@ impl<N: Network> Backend<N> {
                 inner: mut request,
                 ..
             }) => {
-                // Tempo charges the account-creation cost for nonce 0, so an omitted nonce must
-                // not default to it.
-                if self.is_tempo() && request.nonce.is_none() {
-                    request.nonce =
-                        Some(tempo_nonce(state, request.from.unwrap_or_default(), U256::ZERO)?);
+                // Account-creation gas depends on the nonce: EIP-8037 checks the address a
+                // creation would deploy to, and Tempo charges for nonce 0. So an omitted nonce
+                // must not default to 0. revm rejects a transaction nonce of `u64::MAX` even
+                // without the nonce check, so such a sender keeps the default outside Tempo,
+                // where falling back to 0 would incorrectly charge account-creation gas.
+                if request.nonce.is_none() {
+                    let nonce = tempo_nonce(state, request.from.unwrap_or_default(), U256::ZERO)?;
+                    request.nonce = (self.is_tempo() || nonce != u64::MAX).then_some(nonce);
                 }
                 self.prepare_base_call_env_with_base(
                     WithOtherFields::new(request),
@@ -3776,7 +3777,7 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         self.call_with_state_and_context(state, request, fee_details, block_env, None)
     }
 
@@ -3787,7 +3788,7 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         mut monad_context: Option<MonadReplayContext>,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         let mut inspector = self.build_inspector();
         let PreparedCall { evm_env, tx_env, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
@@ -3816,7 +3817,7 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         options: GasEstimateCallOptions,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context } = options;
         self.call_with_state_typed_inner(
             state,
@@ -3840,7 +3841,7 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         access_list: AccessList,
         monad_context: Option<MonadReplayContext>,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         self.call_with_state_typed_inner(
             state,
             request,
@@ -3859,7 +3860,7 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         overrides: TypedCallOverrides,
         mut monad_context: Option<MonadReplayContext>,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         // Estimation probes do not return or print traces, but still collect console logs.
         let mut inspector = AnvilInspector::default();
         if self.print_logs {
@@ -5601,7 +5602,7 @@ impl<N: Network> Backend<N> {
         &self,
         tx: Arc<PoolTransaction<FoundryTxEnvelope>>,
     ) -> Result<
-        (InstructionResult, Option<Output>, u64, State, Vec<revm::primitives::Log>),
+        (InstructionResult, Option<Output>, u64, StateChangeset, Vec<revm::primitives::Log>),
         BlockchainError,
     > {
         let db = self.db.read().await;
@@ -6761,7 +6762,7 @@ where
         fee_details: FeeDetails,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         overrides: EvmOverrides,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
         self.with_database_at_and_context(block_request, |state, mut block, monad_context| {
             let block_number = block.number;
             let (exit, out, gas, state) = {

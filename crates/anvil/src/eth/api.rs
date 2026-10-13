@@ -1,6 +1,6 @@
 use super::{
     backend::mem::{
-        BlockRequest, DatabaseRef, GasEstimateCallOptions, MonadReplayContext, State,
+        BlockRequest, DatabaseRef, GasEstimateCallOptions, MonadReplayContext,
         sanitize_simulation_blocks,
     },
     preserve_simulation_request_fields,
@@ -96,7 +96,7 @@ use foundry_common::{
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
-use foundry_evm::decode::RevertDecoder;
+use foundry_evm::{decode::RevertDecoder, utils::StateChangeset};
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
     FoundryTxReceipt, FoundryTypedTx,
@@ -5679,10 +5679,14 @@ enum GasEstimationCallResult {
 /// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
 ///
 /// Expected to stay up to date with: <https://github.com/bluealloy/revm/blob/main/crates/interpreter/src/instruction_result.rs>
-impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
+impl TryFrom<Result<(InstructionResult, Option<Output>, u128, StateChangeset)>>
+    for GasEstimationCallResult
+{
     type Error = BlockchainError;
 
-    fn try_from(res: Result<(InstructionResult, Option<Output>, u128, State)>) -> Result<Self> {
+    fn try_from(
+        res: Result<(InstructionResult, Option<Output>, u128, StateChangeset)>,
+    ) -> Result<Self> {
         match res {
             // Exceptional case: init used too much gas, treated as out of gas error
             Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) => {

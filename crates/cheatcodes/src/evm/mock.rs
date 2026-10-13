@@ -47,7 +47,7 @@ impl Ord for MockCallDataContext {
 }
 
 impl Cheatcode for clearMockedCallsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.mocked_calls = Default::default();
         Ok(Default::default())
@@ -195,7 +195,7 @@ impl Cheatcode for mockCallRevert_3Call {
 }
 
 impl Cheatcode for mockFunctionCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, target, data } = self;
         state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);
 
