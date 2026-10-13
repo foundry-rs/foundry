@@ -1264,6 +1264,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env.set_gas_priority_fee(None);
         tx_env.set_gas_limit(self.gas_limit);
         tx_env.set_chain_id(Some(self.evm_env.cfg_env.chain_id));
+        // The EIP-8037 create charge checks the address for the transaction nonce, and the nonce
+        // check is disabled, so a create uses the caller's current nonce.
+        if kind.is_create()
+            && cfg_env.is_amsterdam_eip2780_enabled()
+            && let Ok(nonce) = self.get_nonce(caller)
+        {
+            tx_env.set_nonce(nonce);
+        }
 
         (EvmEnv { cfg_env, block_env }, tx_env)
     }
@@ -2535,6 +2543,27 @@ mod tests {
                     .new_account_state_gas(),
             "reverted mocked CALL retained its conditional state-gas charge"
         );
+    }
+
+    #[test]
+    fn amsterdam_deploy_charges_create_state_gas_at_caller_nonce() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .spec_id(SpecId::AMSTERDAM)
+            .gas_limit(1_000_000)
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
+        // As in `EvmOpts`.
+        executor.evm_env_mut().cfg_env.disable_nonce_check = true;
+        let sender = Address::repeat_byte(0x33);
+        executor.set_account_nonce(sender, 5).unwrap();
+        // A non-empty address for nonce 0 must not hide the charge for the address for nonce 5.
+        executor.set_balance(sender.create(0), U256::ONE).unwrap();
+
+        let result = executor.deploy(sender, Bytes::new(), U256::ZERO, None).unwrap();
+
+        assert_eq!(result.address, sender.create(5));
+        // An empty creation pays 24000 regular gas plus 183600 EIP-8037 account-creation gas.
+        assert_eq!(result.raw.gas_used, 207_600);
     }
 
     #[test]
