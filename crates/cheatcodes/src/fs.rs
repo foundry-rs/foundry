@@ -1622,20 +1622,15 @@ mod tests {
         ))
     }
 
-    #[test]
-    fn test_latest_broadcast_reads_tempo_sequences() {
-        let root = unique_temp_dir("tempo-broadcast");
-        let broadcast_path = root.join("broadcast");
-        let sequence_dir = broadcast_path.join("Counter.s.sol").join("31337");
-        stdfs::create_dir_all(&sequence_dir).unwrap();
-
-        let tx_hash = "0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f";
-        let block_hash = "0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66";
+    fn tempo_broadcast_fixture(
+        tx_hash: &str,
+        block_hash: &str,
+        contract_address: &str,
+        block_number: u64,
+        timestamp: u64,
+    ) -> serde_json::Value {
         let from = "0xa70ab0448e66cd77995bfbba5c5b64b41a85f3fd";
-        let contract_address = "0x20c0000000000000000000000000000000000000";
-        let zero_bloom = format!("{:#x}", Bloom::ZERO);
-
-        let sequence = serde_json::json!({
+        serde_json::json!({
             "transactions": [{
                 "hash": tx_hash,
                 "transactionType": "CREATE",
@@ -1668,11 +1663,11 @@ mod tests {
                 "status": "0x1",
                 "cumulativeGasUsed": "0x5208",
                 "logs": [],
-                "logsBloom": zero_bloom,
+                "logsBloom": format!("{:#x}", Bloom::ZERO),
                 "transactionHash": tx_hash,
                 "transactionIndex": "0x0",
                 "blockHash": block_hash,
-                "blockNumber": "0x7",
+                "blockNumber": format!("{block_number:#x}"),
                 "gasUsed": "0x5208",
                 "effectiveGasPrice": "0x1",
                 "from": from,
@@ -1683,10 +1678,23 @@ mod tests {
             "libraries": [],
             "pending": [],
             "returns": {},
-            "timestamp": 1,
+            "timestamp": timestamp,
             "chain": 31337,
             "commit": serde_json::Value::Null
-        });
+        })
+    }
+
+    #[test]
+    fn test_latest_broadcast_reads_tempo_sequences() {
+        let root = unique_temp_dir("tempo-broadcast");
+        let broadcast_path = root.join("broadcast");
+        let sequence_dir = broadcast_path.join("Counter.s.sol").join("31337");
+        stdfs::create_dir_all(&sequence_dir).unwrap();
+
+        let tx_hash = "0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f";
+        let block_hash = "0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66";
+        let contract_address = "0x20c0000000000000000000000000000000000000";
+        let sequence = tempo_broadcast_fixture(tx_hash, block_hash, contract_address, 7, 1);
 
         fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
 
@@ -1706,6 +1714,47 @@ mod tests {
         assert!(matches!(latest.txType, BroadcastTxType::Create));
         assert_eq!(latest.contractAddress, address!("20c0000000000000000000000000000000000000"));
         assert!(latest.success);
+
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn test_latest_broadcast_prefers_later_equal_timestamp_sequence() {
+        let root = unique_temp_dir("equal-timestamp-broadcast");
+        let broadcast_path = root.join("broadcast");
+        let sequence_dir = broadcast_path.join("multi").join("Counter.s.sol-1");
+        stdfs::create_dir_all(&sequence_dir).unwrap();
+
+        let older = tempo_broadcast_fixture(
+            "0x14548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f",
+            "0x160f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66",
+            "0x20c0000000000000000000000000000000000001",
+            100,
+            1,
+        );
+        let newer = tempo_broadcast_fixture(
+            "0x24548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f",
+            "0x260f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66",
+            "0x20c0000000000000000000000000000000000002",
+            101,
+            1,
+        );
+        fs::write_json_file(
+            &sequence_dir.join("deploy.json"),
+            &serde_json::json!({ "deployments": [older, newer] }),
+        )
+        .unwrap();
+
+        let latest = latest_broadcast::<TempoNetwork>(
+            &"Counter".to_owned(),
+            31337,
+            &broadcast_path,
+            vec![CallKind::Create],
+        )
+        .unwrap();
+
+        assert_eq!(latest.blockNumber, 101);
+        assert_eq!(latest.contractAddress, address!("20c0000000000000000000000000000000000002"));
 
         stdfs::remove_dir_all(root).unwrap();
     }
