@@ -130,21 +130,6 @@ def main():
                 )
                 expanded.append(vars(obj))
 
-    if is_pr:
-        expanded.append(
-            vars(
-                Expanded(
-                    name="watch (aarch64-apple-darwin)",
-                    runner_label=t_macos.runner_label,
-                    target=t_macos.target,
-                    svm_target_platform=t_macos.svm_target_platform,
-                    filter="package(=forge) & test(/^watch::/)",
-                    partition_arg="",
-                    partition=1,
-                )
-            )
-        )
-
     print_json({"include": expanded})
 
 
