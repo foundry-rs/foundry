@@ -473,13 +473,12 @@ fn sign_with_wallet(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
-    if state.wallets().is_empty() {
-        bail!("no wallets available");
-    }
-
     let mut wallets = state.wallets().inner.lock();
     let maybe_provided_sender = wallets.provided_sender;
     let signers = wallets.multi_wallet.signers()?;
+    if signers.is_empty() {
+        bail!("no wallets available");
+    }
 
     let signer = if let Some(signer) = signer {
         signer
