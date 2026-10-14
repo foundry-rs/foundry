@@ -71,7 +71,7 @@ impl SymbolicExecutor {
             }
             opcode::SLOAD => {
                 if let Ok(slot) = state.stack.peek(0).cloned()
-                    && state.gas.access_slot(state.storage_address, slot)
+                    && state.gas.warm.slots.insert((state.storage_address, slot))
                 {
                     state.gas.charge(params.cold_storage_additional_cost());
                 }
@@ -83,7 +83,7 @@ impl SymbolicExecutor {
                     return;
                 };
                 state.gas.charge(params.sstore_static_gas());
-                if state.gas.access_slot(state.storage_address, key.clone()) {
+                if state.gas.warm.slots.insert((state.storage_address, key.clone())) {
                     state.gas.charge(params.cold_storage_cost());
                 }
                 self.charge_sstore(executor, state, key, value, params);
@@ -123,7 +123,7 @@ impl SymbolicExecutor {
         }
         let address = state.storage_address;
         let concrete_key = state.constrained_word(cx, &key);
-        let values = state.gas.transaction_writes().and_then(|writes| {
+        let values = state.gas.transaction_writes.and_then(|writes| {
             let present = state.world.sload(cx, executor, address, key.clone(), concrete_key);
             let original =
                 state.world.sload_before(cx, executor, address, key, concrete_key, writes);
@@ -270,7 +270,7 @@ impl SymbolicExecutor {
         }
         match op {
             // Isolation marks every account and slot cold before a top-level STATICCALL.
-            opcode::STATICCALL => state.gas.cool_all(),
+            opcode::STATICCALL => state.gas.warm = WarmSet::default(),
             opcode::CALL => {
                 if target.is_none() {
                     state.gas.unmodeled("symbolic gas for an isolated call to a symbolic target");
@@ -290,7 +290,7 @@ impl SymbolicExecutor {
                     };
                 // Record the call even if its gas is unmodeled: the callee's warm accounts and
                 // slots belong to its own transaction and must not leak into the caller.
-                let storage_writes = state.world.storage_writes();
+                let storage_writes = state.world.storage.len();
                 state.gas.begin_isolated_call(state.call_depth, target, input, storage_writes);
             }
             _ => {}
@@ -318,11 +318,11 @@ impl SymbolicExecutor {
         bound: SymbolicLoopBound,
     ) -> Result<(), SymbolicError> {
         // A later iteration can undo a refund, so no refund of the transaction is certain.
-        state.gas.drop_refunds();
+        state.gas.refunds.clear();
         state
             .gas
             .charge(bound.iteration.saturating_mul(bound.iterations).saturating_add(bound.exit));
-        state.gas.summarized_loop(bound);
+        state.gas.loops.push(bound);
         // The worst-case witness should fill every bounded array.
         for (slot, max) in self.storage_max_lengths.clone() {
             let key = SymExpr::constant(&mut self.cx, slot);
@@ -330,7 +330,7 @@ impl SymbolicExecutor {
                 state.world.sload(&mut self.cx, input.executor, input.target, key, Some(slot))?;
             let full = SymBoolExpr::eq_word_const(&mut self.cx, &length, U256::from(max));
             if self.constraints_with_condition(state, full.clone()).is_ok_and(|(_, sat)| sat) {
-                state.gas.hint(full);
+                state.gas.witness_hints.push(full);
             }
         }
         self.measure_transaction(input.executor, state, input.function)
@@ -355,7 +355,7 @@ impl SymbolicExecutor {
         state: &PathState,
         bounds: &mut Vec<SymbolicGasBound>,
     ) -> Result<(), SymbolicError> {
-        for ((group, name), gas) in state.gas.measured() {
+        for ((group, name), gas) in &state.gas.measured {
             let bound =
                 bounds.iter().position(|bound| &bound.group == group && &bound.name == name);
             // Most paths cannot raise the bound: one query rules them out before the search.
@@ -385,7 +385,7 @@ impl SymbolicExecutor {
                 sender,
                 storage,
                 immutables,
-                loops: state.gas.loops().to_vec(),
+                loops: state.gas.loops.clone(),
             };
             match bound {
                 Some(bound) => bounds[bound] = new,
@@ -450,7 +450,7 @@ impl SymbolicExecutor {
             .symbolic_immutables
             .iter()
             .map(|&offset| {
-                let word = SymExpr::var(&mut self.cx, &immutable_symbol(offset));
+                let word = SymExpr::var(&mut self.cx, &format!("immutable_{offset}"));
                 Ok((offset, word.eval_model_if_complete(&model)?.unwrap_or_default()))
             })
             .collect::<Result<Vec<_>, SymbolicError>>()?;
@@ -584,7 +584,7 @@ impl SymbolicExecutor {
         let all_nonzero =
             self.constraints_with_condition(state, all.clone()).is_ok_and(|(_, sat)| sat);
         if all_nonzero {
-            state.gas.hint(all);
+            state.gas.witness_hints.push(all);
         }
         input
             .iter()
@@ -597,7 +597,7 @@ impl SymbolicExecutor {
                     match self.constraints_with_condition(state, condition.clone()) {
                         Ok((_, false)) => 0,
                         Ok((_, true)) => {
-                            state.gas.hint(condition);
+                            state.gas.witness_hints.push(condition);
                             u8::MAX
                         }
                         Err(_) => u8::MAX,
@@ -614,12 +614,12 @@ impl SymbolicExecutor {
                 Some(address) => {
                     // An earlier access through an address expression that now resolves to
                     // `address` already warmed the account.
-                    let words = state.gas.account_words().cloned().collect::<Vec<_>>();
+                    let words = state.gas.warm.account_words.iter().cloned().collect::<Vec<_>>();
                     let accessed =
                         words.iter().any(|word| self.resolve_account(state, word) == Some(address));
-                    state.gas.access_account(address) && !accessed
+                    state.gas.warm.accounts.insert(address) && !accessed
                 }
-                None => state.gas.access_account_word(word),
+                None => state.gas.warm.account_words.insert(word),
             },
             Err(_) => true,
         };

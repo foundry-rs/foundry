@@ -951,7 +951,7 @@ impl SymCode {
     pub(crate) fn with_symbolic_words(&self, cx: &mut SymCx, offsets: &[usize]) -> Self {
         let mut bytes = (0..self.len()).map(|idx| self.bytes.byte(cx, idx)).collect::<Vec<_>>();
         for &offset in offsets {
-            let word = SymExpr::var(cx, &immutable_symbol(offset));
+            let word = SymExpr::var(cx, &format!("immutable_{offset}"));
             let word = SymBytes::word(cx, word);
             for (idx, byte) in bytes.iter_mut().skip(offset).take(32).enumerate() {
                 *byte = word.byte(cx, idx);
@@ -1183,9 +1183,4 @@ impl SymReturnData {
         }
         Ok(SymCode::from_bytes(cx, self.bytes.clone()))
     }
-}
-
-/// Name of the symbolic word for the immutable at `offset` in the code.
-pub(crate) fn immutable_symbol(offset: usize) -> String {
-    format!("immutable_{offset}")
 }

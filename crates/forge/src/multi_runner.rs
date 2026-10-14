@@ -853,7 +853,7 @@ impl MultiContractRunnerBuilder {
             output
                 .artifact_ids()
                 .map(|(id, artifact)| {
-                    let limits = artifact_gas_limits(&id, artifact);
+                    let limits = artifact_gas_limits(&id, artifact, output);
                     (artifact_id(id).identifier(), limits)
                 })
                 .filter(|(_, limits)| !limits.is_empty())

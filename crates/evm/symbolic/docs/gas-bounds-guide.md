@@ -4,6 +4,10 @@ Guidance for developers and coding agents who add `@custom:max-gas`,
 `@custom:max-length`, or `vm.stopSnapshotGas` checks. The goal is a check that
 proves a bound or finds a counterexample inside `symbolic.timeout`.
 
+For a complete fixed-budget example, see the
+[Chainlink VRF callback demo](examples/chainlink-vrf/README.md). It proves that
+three words fit a 100,000-gas callback and replays an out-of-gas input for four.
+
 ## How the cost grows
 
 The run time of a check is about `paths × solver queries per path`. Each branch
@@ -69,6 +73,11 @@ With the default `symbolic.timeout` of 30 seconds, only the first two finish.
 | `all symbolic paths reverted`                    | A precondition fails on every path. In test mode, check that `setUp` gives the caller the role, balance, or registration the function requires. A `bytes` signature without `@custom:max-length` defaults to 2 bytes and never verifies. |
 | `symbolic precompile`                            | A caller-chosen address can be a precompile. The function has no bound for any address; bound it for the addresses you deploy, in test mode. |
 | `gas ... not modeled`                            | The function uses `CREATE`, `SELFDESTRUCT`, or a cost the model does not cover. No bound is possible yet. |
+
+Payable functions are incomplete until gas checks model transaction value.
+Fallback and receive functions are also unsupported. A build check cannot
+prove a storage-length invariant if either entrypoint is present. Malformed
+annotations fail the check.
 
 ## When a check stops early
 

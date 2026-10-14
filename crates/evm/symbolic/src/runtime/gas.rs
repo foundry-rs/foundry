@@ -23,42 +23,42 @@ pub(crate) const TRANSACTION_SENDER: &str = "transaction_sender";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GasMeter {
     /// Concrete part of the gas this path spent since it started.
-    spent: u64,
+    pub(crate) spent: u64,
     /// Symbolic part of the gas this path spent, added to `spent`.
-    terms: Vec<SymExpr>,
+    pub(crate) terms: Vec<SymExpr>,
     /// Position before the opcode that executes now.
     before_op: GasMark,
     /// Position and `(group, name)` of the active gas snapshot.
-    snapshot: Option<(GasMark, SnapshotName)>,
+    pub(crate) snapshot: Option<(GasMark, SnapshotName)>,
     /// Snapshots this path measured, with their gas.
-    measured: Vec<(SnapshotName, SymExpr)>,
+    pub(crate) measured: Vec<(SnapshotName, SymExpr)>,
     /// First reason the bound stopped being sound on this path.
     unmodeled: Option<&'static str>,
     /// `(call depth, pc)` of an opcode charged before the path forked inside it.
     charged: Option<(usize, usize)>,
     /// Accounts and slots this path accessed. Everything else is treated as cold.
-    warm: WarmSet,
+    pub(crate) warm: WarmSet,
     /// Top-level call that runs as its own transaction, settled at the caller's next opcode.
     isolated: Option<Box<IsolatedCall>>,
     /// Storage writes on this path when the current transaction started, which give the
     /// original values `SSTORE` is priced against. `None` if they are unknown.
-    transaction_writes: Option<usize>,
+    pub(crate) transaction_writes: Option<usize>,
     /// Refunds of the isolated call's transaction. They can be negative, as two's complement.
-    refunds: Vec<SymExpr>,
+    pub(crate) refunds: Vec<SymExpr>,
     /// Conditions under which the path reaches its calldata pricing, for the witness.
-    witness_hints: Vec<SymBoolExpr>,
+    pub(crate) witness_hints: Vec<SymBoolExpr>,
     /// Loops this path summarized instead of running every iteration.
-    loops: Vec<SymbolicLoopBound>,
+    pub(crate) loops: Vec<SymbolicLoopBound>,
 }
 
 /// Accounts and storage slots a transaction accessed, for EIP-2929 pricing.
 #[derive(Clone, Debug, Default)]
-struct WarmSet {
-    accounts: HashSet<Address>,
+pub(crate) struct WarmSet {
+    pub(crate) accounts: HashSet<Address>,
     /// Accounts with an unresolved address, keyed by the exact address expression.
-    account_words: HashSet<SymExpr>,
+    pub(crate) account_words: HashSet<SymExpr>,
     /// Slots keyed by the exact slot expression.
-    slots: HashSet<(Address, SymExpr)>,
+    pub(crate) slots: HashSet<(Address, SymExpr)>,
 }
 
 /// A top-level call that test isolation runs as a separate transaction.
@@ -116,57 +116,12 @@ impl GasMeter {
         self.unmodeled.get_or_insert(reason);
     }
 
-    /// Marks `address` warm and returns whether it was cold.
-    pub(crate) fn access_account(&mut self, address: Address) -> bool {
-        self.warm.accounts.insert(address)
-    }
-
-    /// Unresolved account addresses this path accessed.
-    pub(crate) fn account_words(&self) -> impl Iterator<Item = &SymExpr> {
-        self.warm.account_words.iter()
-    }
-
-    /// Marks the account at an unresolved address warm and returns whether it was cold.
-    ///
-    /// Two addresses count as the same account only if their expressions are identical.
-    pub(crate) fn access_account_word(&mut self, address: SymExpr) -> bool {
-        self.warm.account_words.insert(address)
-    }
-
-    /// Marks the slot warm and returns whether it was cold.
-    ///
-    /// Two symbolic slots count as the same slot only if their expressions are identical, so a
-    /// slot the solver could alias with a warm one is still charged as cold.
-    pub(crate) fn access_slot(&mut self, address: Address, slot: SymExpr) -> bool {
-        self.warm.slots.insert((address, slot))
-    }
-
-    /// Forgets all warm accounts and slots, for state changes that can make them cold again.
-    pub(crate) fn cool_all(&mut self) {
-        self.warm = WarmSet::default();
-    }
-
-    /// Records a condition the worst-case witness should satisfy if it can.
-    pub(crate) fn hint(&mut self, condition: SymBoolExpr) {
-        self.witness_hints.push(condition);
-    }
-
-    /// Conditions the worst-case witness should satisfy if it can.
-    pub(crate) fn witness_hints(&self) -> &[SymBoolExpr] {
-        &self.witness_hints
-    }
-
     /// Records a refund if an isolated call is running. Only isolated calls pay receipt gas,
     /// which subtracts refunds.
     pub(crate) fn refund(&mut self, refund: SymExpr) {
         if self.isolated.is_some() {
             self.refunds.push(refund);
         }
-    }
-
-    /// Returns the current position, to measure the gas spent after it with [`Self::since`].
-    pub(crate) const fn mark(&self) -> GasMark {
-        (self.spent, self.terms.len())
     }
 
     /// Returns the gas spent after `mark`, or the reason it has no sound bound.
@@ -179,32 +134,6 @@ impl GasMeter {
         Ok(self.terms[terms..]
             .iter()
             .fold(spent, |total, term| SymExpr::binop(cx, SymBinOp::Add, total, term.clone())))
-    }
-
-    /// Drops every refund of the current transaction. The receipt is then an upper bound.
-    pub(crate) fn drop_refunds(&mut self) {
-        self.refunds.clear();
-    }
-
-    /// Records a loop the path summarized.
-    pub(crate) fn summarized_loop(&mut self, bound: SymbolicLoopBound) {
-        self.loops.push(bound);
-    }
-
-    /// Loops the path summarized.
-    pub(crate) fn loops(&self) -> &[SymbolicLoopBound] {
-        &self.loops
-    }
-
-    /// Storage writes on this path when the current transaction started, if known.
-    pub(crate) const fn transaction_writes(&self) -> Option<usize> {
-        self.transaction_writes
-    }
-
-    /// Forgets where the current transaction started, for state restores that can remove its
-    /// earlier writes. `SSTORE` is then priced at its maximum.
-    pub(crate) const fn forget_transaction_writes(&mut self) {
-        self.transaction_writes = None;
     }
 
     /// Starts a top-level call to `target` that runs as its own transaction with `input`.
@@ -327,15 +256,6 @@ impl GasMeter {
             .fold(spent, |total, term| SymExpr::binop(cx, SymBinOp::Add, total, term.clone()));
         self.measured.push((name, gas.clone()));
         Ok(gas)
-    }
-
-    /// Snapshots this path measured, with their gas.
-    pub(crate) fn measured(&self) -> &[(SnapshotName, SymExpr)] {
-        &self.measured
-    }
-
-    pub(crate) const fn is_snapshot_active(&self) -> bool {
-        self.snapshot.is_some()
     }
 
     /// Whether the gas spent now is measured, by a snapshot or as the root transaction.

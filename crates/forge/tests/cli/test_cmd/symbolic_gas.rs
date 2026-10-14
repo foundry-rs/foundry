@@ -304,6 +304,34 @@ contract Airdrop {
 "#,
     );
 
+    prj.add_source(
+        "Gate.sol",
+        r#"
+contract Gate {
+    address signer;
+    mapping(bytes32 => bool) used;
+
+    /// @custom:max-gas 100_000
+    /// @custom:max-length signature 65
+    function consume(bytes32 digest, bytes calldata signature) external {
+        require(!used[digest] && signature.length == 65);
+        // A known invalid recovery ID makes the replay independent of the opaque signer model.
+        require(uint8(signature[64]) == 1);
+        bytes32 r = bytes32(signature[0:32]);
+        bytes32 s = bytes32(signature[32:64]);
+        require(ecrecover(digest, uint8(signature[64]), r, s) == signer);
+        used[digest] = true;
+    }
+
+    /// @custom:max-gas 100_000
+    function consumeFromContract(bytes32 digest) external {
+        require(signer.code.length > 0);
+        used[digest] = true;
+    }
+}
+"#,
+    );
+
     cmd.args(["build", "--gas-limits", "--skip", "test", "--skip", "script"])
         .assert_failure()
         .stdout_eq(str![[r#"
@@ -312,13 +340,15 @@ contract Airdrop {
 [INCOMPLETE] Airdrop.noLength(address[]): dynamic parameter `recipients` needs a @custom:max-length
   hint: add `@custom:max-length <parameter> <N>`
 [INCOMPLETE] Airdrop.tooLong(address[]): @custom:max-length 500 for `recipients` is above 16; larger parameter lengths are not supported yet
+[PASS] Gate.consume(bytes32,bytes): gas 52870 <= @custom:max-gas 100000 (worst case replays at 52870)
+[PASS] Gate.consumeFromContract(bytes32): gas 48959 <= @custom:max-gas 100000 (worst case did not replay)
 
 See https://github.com/foundry-rs/foundry/blob/master/crates/evm/symbolic/docs/gas-bounds-guide.md for how to write gas checks that finish.
 
 "#]])
         .stderr_eq(str![[r#"
 ...
-Error: 2 of 3 gas annotation checks are not proven
+Error: 2 of 5 gas annotation checks are not proven
 ...
 "#]]);
 }
@@ -397,48 +427,6 @@ Error: 3 of 7 gas annotation checks are not proven
 "#]]);
 }
 
-// A signature parameter declares its length, and accounts other than the contract have unknown
-// code: a branch on the signer's code is reachable.
-#[forgetest_init]
-fn build_checks_gas_limits_with_signatures(prj: _, cmd: _) {
-    skip_unless_z3!("build_checks_gas_limits_with_signatures");
-
-    prj.add_source(
-        "Gate.sol",
-        r#"
-contract Gate {
-    address signer;
-    mapping(bytes32 => bool) used;
-
-    /// @custom:max-gas 100_000
-    /// @custom:max-length signature 65
-    function consume(bytes32 digest, bytes calldata signature) external {
-        require(!used[digest] && signature.length == 65);
-        bytes32 r = bytes32(signature[0:32]);
-        bytes32 s = bytes32(signature[32:64]);
-        require(ecrecover(digest, uint8(signature[64]), r, s) == signer);
-        used[digest] = true;
-    }
-
-    /// @custom:max-gas 100_000
-    function consumeFromContract(bytes32 digest) external {
-        require(signer.code.length > 0);
-        used[digest] = true;
-    }
-}
-"#,
-    );
-
-    cmd.args(["build", "--gas-limits", "--skip", "test", "--skip", "script"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-[PASS] Gate.consume(bytes32,bytes): gas 52783 <= @custom:max-gas 100000 (worst case replays at 52783)
-[PASS] Gate.consumeFromContract(bytes32): gas 48959 <= @custom:max-gas 100000 (worst case did not replay)
-
-"#]]);
-}
-
 // A check that stops early still fails on an input that replays above the limit, and otherwise
 // reports the worst gas it found with a hint.
 #[forgetest_init]
@@ -487,6 +475,74 @@ See https://github.com/foundry-rs/foundry/blob/master/crates/evm/symbolic/docs/g
         .stderr_eq(str![[r#"
 ...
 Error: 2 of 2 gas annotation checks are not proven
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_gas_rejects_unsupported_annotations(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_gas_rejects_unsupported_annotations");
+    prj.add_source(
+        "InvalidGas.sol",
+        r#"
+contract InvalidGas {
+    uint256 stored;
+    /// @custom:max-gas typo
+    function badGas() external { stored = 42; }
+    /// @custom:max-gas 30000
+    /// @custom:max-length data nope
+    function badLength(bytes calldata data) external { stored = data.length; }
+    /// @custom:max-gas 30000
+    /// @custom:max-length data
+    function badEntry(bytes calldata data) external { stored = data.length; }
+    /// @custom:max-gas 30000
+    function deposit() external payable { if (msg.value != 0) stored = 42; }
+    /// @custom:max-gas 30000
+    fallback() external { stored = 42; }
+    /// @custom:max-gas 30000
+    receive() external payable { stored = 42; }
+}
+contract StorageFallback {
+    /// @custom:max-length 0
+    uint256[] values;
+    fallback() external { values.push(42); }
+}
+"#,
+    );
+    prj.add_test(
+        "InvalidGas.t.sol",
+        r#"
+import "../src/InvalidGas.sol";
+contract InvalidGasTest {
+    InvalidGas target;
+    function setUp() public { target = new InvalidGas(); }
+    function testReady() public view { require(address(target) != address(0)); }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["build", "--gas-limits", "--skip", "test", "--skip", "script", "--json"])
+        .assert_json_stdout_with_status(false, str![[r#"
+[
+  {"contract":"InvalidGas","signature":"fallback()","status":"incomplete","reason":"gas and storage-length checks for fallback functions are not supported"},
+  {"contract":"InvalidGas","signature":"receive()","status":"incomplete","reason":"gas and storage-length checks for receive functions are not supported"},
+  {"contract":"InvalidGas","signature":"badEntry(bytes)","status":"incomplete","reason":"invalid @custom:max-length `data`"},
+  {"contract":"InvalidGas","signature":"badGas()","status":"incomplete","reason":"invalid @custom:max-gas `typo`"},
+  {"contract":"InvalidGas","signature":"badLength(bytes)","status":"incomplete","reason":"invalid @custom:max-length `data nope`"},
+  {"contract":"InvalidGas","signature":"deposit()","limit":30000,"status":"incomplete","reason":"gas bounds for payable functions require symbolic transaction value"},
+  {"contract":"StorageFallback","signature":"fallback()","status":"incomplete","reason":"gas and storage-length checks for fallback functions are not supported"}
+]
+"#]]);
+    assert_symbolic(cmd.forge_fuse().args(["test", "--symbolic", "--match-contract", "InvalidGasTest"]))
+        .failure().stdout_eq(str![[r#"
+...
+Ran 7 tests for test/InvalidGas.t.sol:InvalidGasTest
+[FAIL: incomplete symbolic execution (Stuck): invalid @custom:max-length `data`] maxGas:InvalidGas.badEntry(bytes) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): invalid @custom:max-gas `typo`] maxGas:InvalidGas.badGas() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): invalid @custom:max-length `data nope`] maxGas:InvalidGas.badLength(bytes) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): gas bounds for payable functions require symbolic transaction value] maxGas:InvalidGas.deposit() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): gas bounds for fallback functions are not supported] maxGas:InvalidGas.fallback() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): gas bounds for receive functions are not supported] maxGas:InvalidGas.receive() ([METRICS])
+[PASS] testReady() ([GAS])
 ...
 "#]]);
 }

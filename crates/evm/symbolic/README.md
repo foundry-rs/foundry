@@ -510,15 +510,12 @@ with no bound: `CREATE`, `SELFDESTRUCT`, precompile calls, other cheatcode
 calls, exceptional halts in a callee, or memory accesses with a symbolic size.
 Forks from Berlin through Osaka are supported.
 
-Symbolic calldata makes gas searches harder for the solver. If z3 times out,
-set `symbolic.solver = "bitwuzla"` or `"yices"`.
-
 `forge build --gas-limits` checks the same tags without tests. Each contract
 runs without its constructor, from any sender and any storage state, with
 unknown immutables. Calls to other contracts have no bound, so a function that
 makes them is incomplete. A dynamic parameter needs
-`@custom:max-length <parameter> N`, with `N` at most 16; each length is a
-separate run.
+`@custom:max-length <parameter> N`; the [guide](docs/gas-bounds-guide.md)
+describes supported lengths and ways to reduce search time.
 
 A `@custom:max-length N` tag on a dynamic storage array is an invariant: every
 transaction starts with the array at most `N` long. The build check proves it
@@ -535,19 +532,12 @@ function settle() external {
 }
 ```
 
-The executor runs the first iteration exactly. Then it replaces every value the
-loop changes with an unknown value, and proves that one iteration from that
-state leads back to it. The bound is the first iteration, plus the most gas of
-one later iteration times the most iterations, plus the most gas after the
-loop. A counter that grows by a constant step and is bounded on every
-iteration gives the iterations. See
-[`docs/gas-bounds-guide.md`](docs/gas-bounds-guide.md) for how to write gas
-checks that finish within the time budget. Later iterations are priced as if every
-account and slot they touch is cold, every `SSTORE` has no known original value,
-and the transaction has no refunds, so the bound is above every input. A loop
-with at most 8 more iterations runs exactly instead. The bound is incomplete
-for nested or consecutive loops, loops that allocate memory, and loops without
-a bounded counter.
+The executor runs the first iteration exactly, then bounds one iteration from
+an unknown loop state. The total includes the first iteration, the remaining
+iteration count times its bound, and the exit cost. Later iterations use cold
+accesses, unknown original storage values, and no refunds. This is an upper
+bound; its witness need not reach it. Small loops run exactly. See the
+[guide](docs/gas-bounds-guide.md) for supported loop shapes.
 
 ## Stateful Symbolic Invariants
 

@@ -93,7 +93,7 @@ impl SymbolicExecutor {
                 Err(err) => return Err(err),
             };
             let mut grew = false;
-            let writes = start.world.storage_writes();
+            let writes = start.world.storage.len();
             for iteration in &paths.iterations {
                 if iteration.stack.items().len() != start.stack.items().len() {
                     return Ok(Err("the loop changes the stack height"));
@@ -101,9 +101,7 @@ impl SymbolicExecutor {
                 if iteration.memory.concrete_size() != Some(size) {
                     return Ok(Err("the loop expands memory"));
                 }
-                if iteration.world.transient_storage_writes()
-                    != start.world.transient_storage_writes()
-                {
+                if iteration.world.transient_storage.len() != start.world.transient_storage.len() {
                     return Ok(Err("the loop writes transient storage"));
                 }
                 for (index, (before, after)) in
@@ -124,7 +122,9 @@ impl SymbolicExecutor {
                         grew = true;
                     }
                 }
-                for address in iteration.world.storage_written_since(writes) {
+                for address in
+                    iteration.world.storage.iter().skip(writes).map(|write| write.address)
+                {
                     grew |= changed.storage.insert(address);
                 }
             }
@@ -181,8 +181,8 @@ impl SymbolicExecutor {
                 ));
             }
         }
-        start.gas.forget_transaction_writes();
-        start.gas.drop_refunds();
+        start.gas.transaction_writes = None;
+        start.gas.refunds.clear();
         Ok(start)
     }
 
@@ -292,11 +292,18 @@ impl SymbolicExecutor {
                 ends,
             ));
         }
-        let writes = start.world.storage_writes();
+        let writes = start.world.storage.len();
         let slots = paths
             .iterations
             .iter()
-            .flat_map(|end| end.world.storage_keys_written_since(writes, target))
+            .flat_map(|end| {
+                end.world
+                    .storage
+                    .iter()
+                    .skip(writes)
+                    .filter(|write| write.address == target)
+                    .filter_map(|write| write.key.as_const())
+            })
             .collect::<BTreeSet<_>>();
         for slot in slots {
             let load = |cx: &mut SymCx, state: &PathState| {
@@ -333,7 +340,7 @@ impl SymbolicExecutor {
             }
             return Ok(Err("no counter grows by a constant step"));
         };
-        let mark = start.gas.mark();
+        let mark = (start.gas.spent, start.gas.terms.len());
         let mut iteration = 0;
         for end in &paths.iterations {
             let gas = end.gas.since(&mut self.cx, mark)?;

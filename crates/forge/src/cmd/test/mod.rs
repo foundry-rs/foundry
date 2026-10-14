@@ -1656,6 +1656,8 @@ impl TestArgs {
         }
         self.apply_test_config_overrides(&mut config);
 
+        // Fallback and receive annotations are available only in the AST.
+        config.ast |= config.symbolic.enabled;
         // Set up the project.
         let project = config.project()?;
         let project_root = project.paths.root.clone();

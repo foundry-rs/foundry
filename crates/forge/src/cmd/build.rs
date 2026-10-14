@@ -89,7 +89,7 @@ pub struct BuildArgs {
     /// arguments, from any storage state that keeps the `@custom:max-length` of storage arrays.
     /// Every function that can write storage must keep those lengths. Calls to other contracts
     /// have no gas bound yet.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["names", "sizes"])]
     #[serde(skip)]
     pub gas_limits: bool,
 
@@ -114,6 +114,7 @@ impl BuildArgs {
 
         self.check_soldeer_lock_consistency(&config).await;
 
+        config.ast |= self.gas_limits;
         let mut project = config.project()?;
         if self.gas_limits {
             // `@custom:max-length` on storage arrays needs their slots.
@@ -153,7 +154,9 @@ impl BuildArgs {
         // Cache project selectors.
         cache_local_signatures(&output)?;
 
-        if format_json && (!self.names && !self.sizes || output.has_compiler_errors()) {
+        if format_json
+            && (!self.gas_limits && !self.names && !self.sizes || output.has_compiler_errors())
+        {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
         if format_json && output.has_compiler_errors() {

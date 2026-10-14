@@ -203,7 +203,7 @@ pub struct SymbolicGasBound {
 }
 
 /// Gas bound of a loop, summarized instead of running every iteration.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SymbolicLoopBound {
     /// Program counter of the loop head.
     pub pc: usize,

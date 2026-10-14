@@ -2436,7 +2436,7 @@ fn meter_cheatcode(state: &mut PathState, selector: [u8; 4]) {
         | stopSnapshotGas_1Call::SELECTOR
         | stopSnapshotGas_2Call::SELECTOR => {}
         // The concrete cost of a cheatcode call is not modeled.
-        _ if state.gas.is_snapshot_active() => {
+        _ if state.gas.snapshot.is_some() => {
             state.gas.unmodeled("symbolic gas across cheatcode calls not modeled");
         }
         _ => {}
@@ -2451,10 +2451,10 @@ fn meter_cheatcode(state: &mut PathState, selector: [u8; 4]) {
         | selectForkCall::SELECTOR
         | rollFork_0Call::SELECTOR
         | rollFork_2Call::SELECTOR => {
-            state.gas.cool_all();
-            state.gas.forget_transaction_writes();
+            state.gas.warm = WarmSet::default();
+            state.gas.transaction_writes = None;
         }
-        coolCall::SELECTOR | coolSlotCall::SELECTOR => state.gas.cool_all(),
+        coolCall::SELECTOR | coolSlotCall::SELECTOR => state.gas.warm = WarmSet::default(),
         _ => {}
     }
 }

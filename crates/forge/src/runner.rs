@@ -4,7 +4,7 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
-    gas_limits::{GAS_BOUNDS_GUIDE, GasLimit, incomplete_hint},
+    gas_limits::{GAS_BOUNDS_GUIDE, GasCheck, GasLimit, incomplete_hint},
     multi_runner::{
         FuzzMinimizeConfig, FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment,
         TestContract, TestFunctionMatcher, TestRunnerConfig,
@@ -1180,9 +1180,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         for (&address, (identifier, abi)) in contracts {
             let Some(limits) = self.mcr.gas_limits.get(identifier) else { continue };
             let contract = get_contract_name(identifier);
-            for function in abi.functions() {
-                let signature = function.signature();
-                let Some(limit) = limits.get(&signature) else { continue };
+            for (signature, limit) in limits {
+                // Unsupported ABI entrypoints carry an error and never reach execution.
+                let function = abi.functions().find(|function| function.signature() == *signature);
                 let name = format!("maxGas:{contract}.{signature}");
                 if !filter.matches_test(&name) {
                     continue;
@@ -2525,42 +2525,51 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn run_gas_limit(
         mut self,
         target: Address,
-        function: &Function,
-        limit: &GasLimit,
+        function: Option<&Function>,
+        limit: &Result<GasLimit, String>,
     ) -> TestResult {
         let mut executor = self.clone_executor();
         executor.inspector_mut().enable_isolation(false);
-        let symbolic_config = match limit.symbolic_config(&self.config.symbolic, function) {
-            Ok(config) => config,
-            Err(reason) => {
-                let result = SymbolicResult::incomplete(
-                    &self.config.symbolic,
-                    SymbolicStopReason::Stuck,
-                    reason.clone(),
-                    SymbolicStats::default(),
-                    SymbolicReplayMetadata::not_required(),
-                    SymbolicCallTrace::none(),
-                    None,
-                );
-                let reason = format!("incomplete symbolic execution (Stuck): {reason}");
-                self.result.symbolic_result(TestStatus::Failure, Some(reason), None, result);
-                return self.result;
-            }
-        };
-        let limit = limit.max_gas;
-        let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
-        let result = symbolic.run(SymbolicRunInput {
-            executor: &executor,
-            target,
-            sender: self.address,
-            function,
-            value: U256::ZERO,
-            ffi_enabled: self.config.ffi,
-            collect_success_input: false,
-            corpus_seeds: Vec::new(),
-            branch_target: None,
-            transaction_gas: Some(TransactionGas::default()),
-        });
+        let (limit, symbolic_config, function) =
+            match limit.as_ref().map_err(Clone::clone).and_then(|limit| {
+                let function =
+                    function.ok_or_else(|| "gas bounds need a function ABI".to_string())?;
+                limit
+                    .symbolic_config(&self.config.symbolic, function)
+                    .map(|config| (limit.max_gas, config, function))
+            }) {
+                Ok(result) => result,
+                Err(reason) => {
+                    let result = SymbolicResult::incomplete(
+                        &self.config.symbolic,
+                        SymbolicStopReason::Stuck,
+                        reason.clone(),
+                        SymbolicStats::default(),
+                        SymbolicReplayMetadata::not_required(),
+                        SymbolicCallTrace::none(),
+                        None,
+                    );
+                    let reason = format!("incomplete symbolic execution (Stuck): {reason}");
+                    self.result.symbolic_result(TestStatus::Failure, Some(reason), None, result);
+                    return self.result;
+                }
+            };
+        let GasCheck { result, worst, .. } = GasCheck::run(
+            &symbolic_config,
+            SymbolicRunInput {
+                executor: &executor,
+                target,
+                sender: self.address,
+                function,
+                value: U256::ZERO,
+                ffi_enabled: self.config.ffi,
+                collect_success_input: false,
+                corpus_seeds: Vec::new(),
+                branch_target: None,
+                transaction_gas: Some(TransactionGas::default()),
+            },
+            &[],
+        );
 
         let incomplete = |reason: String, stats| {
             let symbolic_result = SymbolicResult::incomplete(
@@ -2578,12 +2587,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             );
             (TestStatus::Failure, Some(reason), None, symbolic_result)
         };
-        let (bound, stats, stopped) = match result {
-            SymbolicRunResult::Safe { stats, mut gas, .. } => (gas.pop(), stats, None),
+        let (stats, stopped) = match result {
+            SymbolicRunResult::Safe { stats, .. } => (stats, None),
             // The paths the run finished before it stopped can still fail the check.
-            SymbolicRunResult::Incomplete { kind, reason, stats } => {
-                (symbolic.finished_paths().0.last().cloned(), stats, Some((kind, reason)))
-            }
+            SymbolicRunResult::Incomplete { kind, reason, stats } => (stats, Some((kind, reason))),
             SymbolicRunResult::Counterexample { stats, .. } => {
                 let (status, reason, counterexample, result) =
                     incomplete("the function can halt with an error".to_string(), stats);
@@ -2606,7 +2613,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let reason = format!("incomplete symbolic execution ({kind:?}): {reason}{found}{hint}");
             (TestStatus::Failure, Some(reason), None, result)
         };
-        let Some(SymbolicGasBound { name, max, witness, sender, storage, .. }) = bound else {
+        let Some((SymbolicGasBound { name, max, witness, .. }, sender, replayed)) = worst else {
             let (status, reason, counterexample, result) = match stopped {
                 Some((kind, reason)) => stopped_result(kind, &reason, stats, ""),
                 None => {
@@ -2616,17 +2623,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.symbolic_result(status, reason, counterexample, result);
             return self.result;
         };
-        let sender = sender.unwrap_or(self.address);
-        let replayed = self
-            .clone_executor_with_symbolic_storage(&storage)
-            .ok()
-            .and_then(|mut executor| {
-                executor.inspector_mut().enable_isolation(false);
-                executor.call_raw(sender, target, witness.calldata.clone(), U256::ZERO).ok()
-            })
-            // A reverted replay did not take the witness path.
-            .filter(|raw| !raw.reverted)
-            .map(|raw| raw.gas_used);
         let snapshot = SymbolicGasSnapshot {
             group: None,
             name,

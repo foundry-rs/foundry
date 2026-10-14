@@ -1635,8 +1635,8 @@ impl SymbolicPrank {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StorageWrite {
-    address: Address,
-    key: SymExpr,
+    pub(crate) address: Address,
+    pub(crate) key: SymExpr,
     value: SymExpr,
 }
 
@@ -1664,8 +1664,8 @@ impl StorageWrite {
 /// World data shared copy-on-write by branched paths and snapshots.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymbolicWorldState {
-    storage: Vec<StorageWrite>,
-    transient_storage: Vec<StorageWrite>,
+    pub(crate) storage: Vec<StorageWrite>,
+    pub(crate) transient_storage: Vec<StorageWrite>,
     created_accounts: HashSet<Address>,
     current_transaction_created_accounts: HashSet<Address>,
     balances: HashMap<Address, SymExpr>,
@@ -1747,32 +1747,6 @@ impl SymbolicWorld {
         let read_key = concrete_key.map(|key| SymExpr::constant(cx, key)).unwrap_or(key);
         let writes = &self.storage[..writes.min(self.storage.len())];
         Ok(StorageWrite::select_from(cx, writes, address, read_key, base))
-    }
-
-    /// Number of storage writes on this path.
-    pub(crate) fn storage_writes(&self) -> usize {
-        self.storage.len()
-    }
-
-    /// Accounts this path wrote storage of after its first `writes` storage writes.
-    pub(crate) fn storage_written_since(&self, writes: usize) -> HashSet<Address> {
-        self.storage.iter().skip(writes).map(|write| write.address).collect()
-    }
-
-    /// Constant keys this path wrote in the storage of `address` after its first `writes`
-    /// storage writes.
-    pub(crate) fn storage_keys_written_since(&self, writes: usize, address: Address) -> Vec<U256> {
-        self.storage
-            .iter()
-            .skip(writes)
-            .filter(|write| write.address == address)
-            .filter_map(|write| write.key.as_const())
-            .collect()
-    }
-
-    /// Number of transient storage writes on this path.
-    pub(crate) fn transient_storage_writes(&self) -> usize {
-        self.transient_storage.len()
     }
 
     /// Replaces the storage of `address` with unknown values, named after `epoch`.

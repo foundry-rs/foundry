@@ -452,7 +452,7 @@ impl SymbolicExecutor {
                 root.origin_word = sender.clone();
                 let calldata = root.frame.calldata.materialize(&mut self.cx);
                 root.gas.begin_isolated_call(TRANSACTION_DEPTH, Some(input.target), calldata, 0);
-                root.gas.access_account_word(sender);
+                root.gas.warm.account_words.insert(sender);
                 if self.unknown_callees_of.is_some() {
                     // Any storage state comes with any balance.
                     let balance = SymExpr::var(&mut self.cx, "target_balance");
@@ -617,7 +617,7 @@ impl SymbolicExecutor {
                         {
                             let input = match candidate {
                                 Some(input) => input,
-                                None => self.materialize_root_input(input.function, &state)?,
+                                None => self.materialize_root_model(input.function, &state)?.0,
                             };
                             success_input = Some((state.depth, input));
                         }
@@ -703,18 +703,9 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        let input = self.materialize_root_input(function, state)?;
+        let input = self.materialize_root_model(function, state)?.0;
         candidates.push(input.clone());
         Ok(Some(input))
-    }
-
-    /// Materializes the root call input for `state` from a solver model.
-    pub(super) fn materialize_root_input(
-        &mut self,
-        function: &Function,
-        state: &PathState,
-    ) -> Result<SymbolicConcreteInput, SymbolicError> {
-        self.materialize_root_model(function, state).map(|(input, _)| input)
     }
 
     /// Materializes the root call input for `state`, preferring a model that also satisfies the
@@ -724,9 +715,9 @@ impl SymbolicExecutor {
         function: &Function,
         state: &PathState,
     ) -> Result<(SymbolicConcreteInput, SymbolicModel), SymbolicError> {
-        if !state.gas.witness_hints().is_empty() {
+        if !state.gas.witness_hints.is_empty() {
             let mut hinted = state.clone();
-            hinted.constraints.extend(state.gas.witness_hints().iter().cloned());
+            hinted.constraints.extend(state.gas.witness_hints.iter().cloned());
             if let Ok(materialized) = self.materialize_root_model(function, &hinted) {
                 return Ok(materialized);
             }

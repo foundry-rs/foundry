@@ -1,14 +1,4 @@
-//! `@custom:max-gas` limits on contract functions.
-//!
-//! The NatSpec tag `@custom:max-gas N` on a function is the most gas one transaction calling it
-//! may use. `forge test --symbolic` checks tagged functions of contracts deployed in `setUp`.
-//! `forge build --gas-limits` checks them without tests: each contract is placed in an empty EVM
-//! without running its constructor, and every tagged function is checked as one transaction from
-//! any sender, with any arguments, from any storage state.
-//!
-//! The NatSpec tag `@custom:max-length N` on a dynamic storage array is the most elements the
-//! array may have. Every transaction starts with each annotated array within its length, and
-//! `forge build --gas-limits` checks that every function that can write storage keeps it there.
+//! NatSpec gas and storage-length checks for `forge build` and `forge test --symbolic`.
 
 use alloy_dyn_abi::{DynSolType, Specifier};
 use alloy_json_abi::{Function, StateMutability};
@@ -16,23 +6,27 @@ use alloy_primitives::{Address, Bytes, U256, keccak256};
 use eyre::Result;
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
-    artifacts::{ConfigurableContractArtifact, sourcemap::Jump},
+    artifacts::{ConfigurableContractArtifact, ast::NodeType, sourcemap::Jump},
 };
 use foundry_config::{Config, SymbolicConfig, SymbolicStorageLayout};
 use foundry_evm::{
     backend::Backend,
-    core::{evm::EthEvmNetwork, ic::IcPcMap},
-    executors::{Executor, ExecutorBuilder, RawCallResult},
+    core::{
+        evm::{EthEvmNetwork, FoundryEvmNetwork},
+        ic::IcPcMap,
+    },
+    executors::ExecutorBuilder,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
-    revm::bytecode::Bytecode,
+    revm::{bytecode::Bytecode, database::DatabaseRef},
 };
 use foundry_evm_symbolic::{
-    FunctionJump, SymbolicConcreteInput, SymbolicExecutor, SymbolicGasBound,
-    SymbolicLengthViolation, SymbolicRunInput, SymbolicRunResult, SymbolicStorageAssignment,
-    TransactionGas,
+    FunctionJump, SymbolicConcreteInput, SymbolicExecutor, SymbolicGasBound, SymbolicRunInput,
+    SymbolicRunResult, SymbolicStorageAssignment, TransactionGas,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
+
+pub use foundry_evm_symbolic::SymbolicLoopBound as LoopGas;
 
 /// NatSpec tag with the most gas one transaction that calls a function may use.
 const MAX_GAS_TAG: &str = "custom:max-gas";
@@ -52,7 +46,7 @@ const MAX_EXHAUSTIVE_LENGTH: u32 = 16;
 const MAX_EXHAUSTIVE_BYTES_LENGTH: u32 = 128;
 
 /// `@custom:max-gas` limits by artifact identifier and function signature.
-pub type GasLimits = BTreeMap<String, BTreeMap<String, GasLimit>>;
+pub type GasLimits = BTreeMap<String, BTreeMap<String, Result<GasLimit, String>>>;
 
 /// The gas annotations of one function.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,12 +63,17 @@ impl GasLimit {
     /// Each dynamic parameter is tried at every length up to its declared maximum. Returns the
     /// reason the inputs cannot be covered, so the check can fail closed: a dynamic parameter
     /// without a declared length, one nested in another type, or a length above
-    /// [`MAX_EXHAUSTIVE_LENGTH`] or [`MAX_EXHAUSTIVE_BYTES_LENGTH`].
+    /// `MAX_EXHAUSTIVE_LENGTH` or `MAX_EXHAUSTIVE_BYTES_LENGTH`.
     pub fn symbolic_config(
         &self,
         base: &SymbolicConfig,
         function: &Function,
     ) -> Result<SymbolicConfig, String> {
+        if function.state_mutability == StateMutability::Payable {
+            return Err(
+                "gas bounds for payable functions require symbolic transaction value".to_string()
+            );
+        }
         let mut config = base.clone();
         for name in self.max_lengths.keys() {
             if !function.inputs.iter().any(|input| &input.name == name) {
@@ -210,6 +209,156 @@ pub struct FoundGas {
 /// Guide to writing gas checks that finish.
 pub const GAS_BOUNDS_GUIDE: &str = "https://github.com/foundry-rs/foundry/blob/master/crates/evm/symbolic/docs/gas-bounds-guide.md";
 
+/// A gas search and the concrete replay of its worst completed path.
+pub(crate) struct GasCheck {
+    pub result: SymbolicRunResult,
+    pub worst: Option<(SymbolicGasBound, Address, Option<u64>)>,
+    length_violation: Option<Result<GasLimitOutcome, String>>,
+}
+
+impl GasCheck {
+    pub(crate) fn run<FEN: FoundryEvmNetwork>(
+        config: &SymbolicConfig,
+        input: SymbolicRunInput<'_, FEN>,
+        lengths: &[StorageMaxLength],
+    ) -> Self {
+        let (executor, target, sender) = (input.executor, input.target, input.sender);
+        let replay = |witness: &SymbolicConcreteInput,
+                      sender,
+                      storage: &[SymbolicStorageAssignment],
+                      immutables: &[(usize, U256)]| {
+            let mut executor = executor.clone();
+            executor.inspector_mut().enable_isolation(false);
+            if !immutables.is_empty() {
+                let account = executor.backend().basic_ref(target).ok()??;
+                let code = match account.code {
+                    Some(code) => code,
+                    None => executor.backend().code_by_hash_ref(account.code_hash).ok()?,
+                };
+                let mut code = code.original_bytes().to_vec();
+                for &(offset, value) in immutables {
+                    code.get_mut(offset..offset + 32)?.copy_from_slice(&value.to_be_bytes::<32>());
+                }
+                executor.set_code(target, Bytecode::new_raw(code.into())).ok()?;
+            }
+            for assignment in storage {
+                executor
+                    .set_storage_slot(assignment.address, assignment.slot, assignment.value)
+                    .ok()?;
+                if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+                    cheats.cache_arbitrary_storage_value(
+                        assignment.address,
+                        assignment.slot,
+                        assignment.value,
+                    );
+                }
+            }
+            executor.call_raw(sender, target, witness.calldata.clone(), U256::ZERO).ok()
+        };
+        let mut symbolic = SymbolicExecutor::new(config.clone());
+        let mut result = symbolic.run(input);
+        let (_, violations) = symbolic.finished_paths();
+        let length_violation = violations.first().map(|violation| {
+            let Some(annotation) = lengths.iter().find(|length| length.slot == violation.slot) else {
+                return Err("length violation for an unknown slot".to_string());
+            };
+            let StorageMaxLength { variable, slot, max } = annotation.clone();
+            let sender = violation.sender.unwrap_or(sender);
+            let length = replay(&violation.witness, sender, &violation.storage, &violation.immutables)
+                .filter(|raw| !raw.reverted)
+                .map(|raw| {
+                    raw.state_changeset.get(&target)
+                        .and_then(|account| account.storage.get(&slot))
+                        .map(|value| value.present_value)
+                        .unwrap_or_else(|| violation.storage.iter()
+                            .find(|assignment| assignment.address == target && assignment.slot == slot)
+                            .map(|assignment| assignment.value).unwrap_or_default())
+                });
+            match length {
+                Some(length) if length > U256::from(max) => Ok(GasLimitOutcome::LengthExceeds {
+                    variable, max, length, sender, calldata: violation.witness.calldata.clone(),
+                }),
+                _ => Err(format!(
+                    "a path exceeds @{MAX_LENGTH_TAG} {max} of `{variable}`, but its input does not replay"
+                )),
+            }
+        });
+        let bound = match &mut result {
+            SymbolicRunResult::Safe { gas, .. } => gas.pop(),
+            _ => symbolic.finished_paths().0.last().cloned(),
+        };
+        let worst = bound.map(|bound| {
+            let sender = bound.sender.unwrap_or(sender);
+            let replayed = replay(&bound.witness, sender, &bound.storage, &bound.immutables)
+                .and_then(|raw| (!raw.reverted).then_some(raw.gas_used));
+            (bound, sender, replayed)
+        });
+        Self { result, worst, length_violation }
+    }
+
+    fn outcome(self, limit: Option<u64>) -> GasLimitOutcome {
+        let Self { result, worst, length_violation } = self;
+        let stopped = match result {
+            SymbolicRunResult::Safe { .. } => None,
+            SymbolicRunResult::Incomplete { reason, .. } => Some(reason),
+            SymbolicRunResult::Counterexample { .. } => {
+                Some("the function can halt with an error".to_string())
+            }
+        };
+        // A violation that replays is real even if the search stopped.
+        if let Some(violation) = length_violation {
+            match violation {
+                Ok(outcome) => return outcome,
+                Err(reason) if stopped.is_none() => return GasLimitOutcome::incomplete(reason),
+                Err(_) => {}
+            }
+        }
+        if let Some(reason) = stopped {
+            // An input that replays above the limit fails the check, even if the search stopped.
+            if let (Some(limit), Some((bound, sender, Some(replayed)))) = (limit, &worst)
+                && *replayed > limit
+                && *replayed <= bound.max
+            {
+                return GasLimitOutcome::Exceeds {
+                    max: bound.max,
+                    replayed: Some(*replayed),
+                    sender: *sender,
+                    calldata: bound.witness.calldata.clone(),
+                    loops: bound.loops.clone(),
+                    stopped: Some(reason),
+                };
+            }
+            let found = worst.map(|(bound, _, replayed)| FoundGas { max: bound.max, replayed });
+            let hint = incomplete_hint(&reason);
+            return GasLimitOutcome::Incomplete { reason, found, hint };
+        }
+        let Some(limit) = limit else { return GasLimitOutcome::KeepsLengths };
+        let Some((bound, sender, replayed)) = worst else {
+            return GasLimitOutcome::incomplete(
+                "no successful path measured transaction gas".to_string(),
+            );
+        };
+        let max = bound.max;
+        if replayed.is_some_and(|replayed| replayed > max) {
+            // A replay above the bound means the gas model is wrong: fail closed.
+            GasLimitOutcome::incomplete(format!(
+                "symbolic gas bound {max} is below its concrete replay"
+            ))
+        } else if max <= limit {
+            GasLimitOutcome::Within { max, replayed, loops: bound.loops }
+        } else {
+            GasLimitOutcome::Exceeds {
+                max,
+                replayed,
+                sender,
+                calldata: bound.witness.calldata,
+                loops: bound.loops,
+                stopped: None,
+            }
+        }
+    }
+}
+
 /// Returns what to change so that a gas check that stopped for `reason` can finish.
 pub fn incomplete_hint(reason: &str) -> Option<&'static str> {
     const HINTS: &[(&str, &str)] = &[
@@ -243,51 +392,86 @@ pub fn incomplete_hint(reason: &str) -> Option<&'static str> {
     HINTS.iter().find(|(pattern, _)| reason.contains(pattern)).map(|(_, hint)| *hint)
 }
 
-/// Gas bound of a loop the check summarized: the first iteration runs as usual, then at most
-/// `iterations` more iterations of at most `iteration` gas each, then at most `exit` gas.
-#[derive(Clone, Debug, Serialize)]
-pub struct LoopGas {
-    /// Program counter of the loop head.
-    pub pc: usize,
-    pub iteration: u64,
-    pub iterations: u64,
-    pub exit: u64,
-}
-
 /// Returns the gas annotations in an artifact's devdoc, by function signature.
 pub fn artifact_gas_limits(
     id: &ArtifactId,
     artifact: &ConfigurableContractArtifact,
-) -> BTreeMap<String, GasLimit> {
-    let mut limits = BTreeMap::new();
+    output: &ProjectCompileOutput,
+) -> BTreeMap<String, Result<GasLimit, String>> {
     let devdoc = devdoc(artifact);
-    let Some(methods) = devdoc["methods"].as_object() else { return limits };
-    for (signature, doc) in methods {
-        let Some(max_gas) = doc[MAX_GAS_TAG].as_str() else { continue };
-        let Some(max_gas) = parse_number(max_gas) else {
-            warn!(contract = %id.identifier(), %signature, %max_gas, "invalid @{MAX_GAS_TAG}");
-            continue;
-        };
-        let mut max_lengths = BTreeMap::new();
-        for entry in doc[MAX_LENGTH_TAG].as_str().unwrap_or_default().split(',') {
-            let mut words = entry.split_whitespace();
-            let (Some(name), Some(length), None) = (words.next(), words.next(), words.next())
-            else {
-                if !entry.trim().is_empty() {
-                    warn!(contract = %id.identifier(), %signature, %entry, "invalid @{MAX_LENGTH_TAG}");
+    let mut limits = devdoc["methods"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(signature, doc)| {
+            let max_gas = doc[MAX_GAS_TAG].as_str()?;
+            let parse = || {
+                let max_gas = max_gas
+                    .trim()
+                    .replace('_', "")
+                    .parse()
+                    .map_err(|_| format!("invalid @{MAX_GAS_TAG} `{max_gas}`"))?;
+                let mut max_lengths = BTreeMap::new();
+                if let Some(entries) = doc[MAX_LENGTH_TAG].as_str() {
+                    for entry in entries.split(',') {
+                        let mut words = entry.split_whitespace();
+                        let (Some(name), Some(length), None) =
+                            (words.next(), words.next(), words.next())
+                        else {
+                            return Err(format!("invalid @{MAX_LENGTH_TAG} `{entry}`"));
+                        };
+                        let length = length
+                            .replace('_', "")
+                            .parse()
+                            .map_err(|_| format!("invalid @{MAX_LENGTH_TAG} `{entry}`"))?;
+                        max_lengths.insert(name.to_string(), length);
+                    }
                 }
-                continue;
+                Ok(GasLimit { max_gas, max_lengths })
             };
-            match parse_number(length).and_then(|length| u32::try_from(length).ok()) {
-                Some(length) => {
-                    max_lengths.insert(name.to_string(), length);
-                }
-                None => {
-                    warn!(contract = %id.identifier(), %signature, %entry, "invalid @{MAX_LENGTH_TAG}")
-                }
+            Some((signature.clone(), parse()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    // Solc omits fallback and receive documentation from devdoc.
+    if let Some(abi) = &artifact.abi {
+        let contract = artifact.ast.as_ref().and_then(|ast| {
+            ast.nodes.iter().find(|node| {
+                node.node_type == NodeType::ContractDefinition
+                    && node.other.get("name").and_then(|name| name.as_str())
+                        == Some(id.name.as_str())
+            })
+        });
+        let bases =
+            contract.and_then(|node| node.attribute::<Vec<usize>>("linearizedBaseContracts"));
+        for (kind, present) in
+            [("fallback", abi.fallback.is_some()), ("receive", abi.receive.is_some())]
+        {
+            if !present {
+                continue;
+            }
+            let tagged = bases.as_ref().is_some_and(|bases| {
+                output
+                    .artifact_ids()
+                    .filter_map(|(_, artifact)| artifact.ast.as_ref())
+                    .flat_map(|ast| &ast.nodes)
+                    .filter(|node| node.id.is_some_and(|id| bases.contains(&id)))
+                    .flat_map(|node| &node.nodes)
+                    .any(|function| {
+                        function.other.get("kind").and_then(|kind| kind.as_str()) == Some(kind)
+                            && function.other.get("documentation").is_some_and(|doc| {
+                                doc.as_str()
+                                    .or_else(|| doc["text"].as_str())
+                                    .is_some_and(|text| text.contains("@custom:max-gas"))
+                            })
+                    })
+            });
+            if tagged || bases.is_none() {
+                limits.insert(
+                    format!("{kind}()"),
+                    Err(format!("gas bounds for {kind} functions are not supported")),
+                );
             }
         }
-        limits.insert(signature.clone(), GasLimit { max_gas, max_lengths });
     }
     limits
 }
@@ -304,7 +488,7 @@ pub fn artifact_storage_max_lengths(
     let mut lengths = Vec::new();
     for (variable, doc) in variables {
         let Some(max) = doc[MAX_LENGTH_TAG].as_str() else { continue };
-        let Some(max) = parse_number(max) else {
+        let Ok(max) = max.trim().replace('_', "").parse() else {
             return Err(format!("invalid @{MAX_LENGTH_TAG} `{max}` on `{variable}`"));
         };
         let Some(layout) = &artifact.storage_layout else {
@@ -351,20 +535,6 @@ fn function_jumps(
         .collect()
 }
 
-/// Returns the summarized loops of a gas bound.
-fn loop_gas(bound: &SymbolicGasBound) -> Vec<LoopGas> {
-    bound
-        .loops
-        .iter()
-        .map(|bound| LoopGas {
-            pc: bound.pc,
-            iteration: bound.iteration,
-            iterations: bound.iterations,
-            exit: bound.exit,
-        })
-        .collect()
-}
-
 /// Returns the devdoc in an artifact's metadata, or null.
 fn devdoc(artifact: &ConfigurableContractArtifact) -> serde_json::Value {
     artifact
@@ -373,11 +543,6 @@ fn devdoc(artifact: &ConfigurableContractArtifact) -> serde_json::Value {
         .and_then(|metadata| serde_json::from_str::<serde_json::Value>(metadata).ok())
         .map(|mut metadata| metadata["output"]["devdoc"].take())
         .unwrap_or_default()
-}
-
-/// Parses a decimal number that may use `_` separators, like `2_000_000`.
-fn parse_number(value: &str) -> Option<u64> {
-    value.trim().replace('_', "").parse().ok()
 }
 
 /// Checks every `@custom:max-gas` limit in `output` without tests.
@@ -407,10 +572,25 @@ pub async fn check_gas_limits(
 
     let mut checks = Vec::new();
     for (id, artifact) in output.artifact_ids() {
-        let limits = artifact_gas_limits(&id, artifact);
+        let limits = artifact_gas_limits(&id, artifact, output);
         let lengths = artifact_storage_max_lengths(artifact);
         let Some(abi) = artifact.abi.as_ref() else { continue };
         let checks_lengths = !matches!(&lengths, Ok(lengths) if lengths.is_empty());
+        for (kind, present) in
+            [("fallback", abi.fallback.is_some()), ("receive", abi.receive.is_some())]
+        {
+            let signature = format!("{kind}()");
+            if present && (checks_lengths || limits.contains_key(&signature)) {
+                checks.push(GasLimitCheck {
+                    contract: id.name.clone(),
+                    signature,
+                    limit: None,
+                    outcome: GasLimitOutcome::incomplete(format!(
+                        "gas and storage-length checks for {kind} functions are not supported"
+                    )),
+                });
+            }
+        }
         let functions = abi
             .functions()
             .filter_map(|function| {
@@ -427,11 +607,11 @@ pub async fn check_gas_limits(
         if functions.is_empty() {
             continue;
         }
-        let mut check = |signature: String, limit: Option<&GasLimit>, outcome| {
+        let mut check = |signature: String, limit: Option<&Result<GasLimit, String>>, outcome| {
             checks.push(GasLimitCheck {
                 contract: id.name.clone(),
                 signature,
-                limit: limit.map(|limit| limit.max_gas),
+                limit: limit.and_then(|limit| limit.as_ref().ok()).map(|limit| limit.max_gas),
                 outcome,
             });
         };
@@ -458,197 +638,39 @@ pub async fn check_gas_limits(
             .flat_map(|code| code.immutable_references.values().flatten())
             .map(|offsets| offsets.start as usize)
             .collect();
-        let function_jumps = function_jumps(artifact, &code);
-        let contract =
-            PlacedContract { executor, address, code: &code, immutables, lengths, function_jumps };
+        let transaction_gas = TransactionGas {
+            immutables,
+            unknown_callees: true,
+            max_lengths: lengths.iter().map(|length| (length.slot, length.max)).collect(),
+            function_jumps: function_jumps(artifact, &code),
+        };
         for (function, signature, limit) in functions {
-            let config =
-                limit.cloned().unwrap_or_default().symbolic_config(&symbolic_config, function);
+            let config = limit
+                .cloned()
+                .unwrap_or_else(|| Ok(GasLimit::default()))
+                .and_then(|limit| limit.symbolic_config(&symbolic_config, function));
             let outcome = match config {
-                Ok(config) => {
-                    contract.check(&config, evm_opts.sender, function, limit.map(|l| l.max_gas))
-                }
+                Ok(config) => GasCheck::run(
+                    &config,
+                    SymbolicRunInput {
+                        executor: &executor,
+                        target: address,
+                        sender: evm_opts.sender,
+                        function,
+                        value: U256::ZERO,
+                        ffi_enabled: false,
+                        collect_success_input: false,
+                        corpus_seeds: Vec::new(),
+                        branch_target: None,
+                        transaction_gas: Some(transaction_gas.clone()),
+                    },
+                    &lengths,
+                )
+                .outcome(limit.and_then(|limit| limit.as_ref().ok()).map(|limit| limit.max_gas)),
                 Err(reason) => GasLimitOutcome::incomplete(reason),
             };
             check(signature, limit, outcome);
         }
     }
     Ok(checks)
-}
-
-/// A contract placed in an empty EVM without running its constructor.
-struct PlacedContract<'a> {
-    executor: Executor<EthEvmNetwork>,
-    address: Address,
-    /// Runtime code, with zero placeholders for immutables.
-    code: &'a [u8],
-    /// Byte offsets of the immutables in `code`.
-    immutables: Vec<usize>,
-    /// Annotated storage arrays.
-    lengths: Vec<StorageMaxLength>,
-    /// Jumps into and out of internal functions, by program counter.
-    function_jumps: BTreeMap<usize, FunctionJump>,
-}
-
-impl PlacedContract<'_> {
-    /// Bounds the gas of one transaction calling `function` and compares it with `limit`, and
-    /// checks that the transaction keeps every annotated storage array within its length.
-    fn check(
-        &self,
-        symbolic_config: &SymbolicConfig,
-        sender: Address,
-        function: &Function,
-        limit: Option<u64>,
-    ) -> GasLimitOutcome {
-        let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
-        let result = symbolic.run(SymbolicRunInput {
-            executor: &self.executor,
-            target: self.address,
-            sender,
-            function,
-            value: U256::ZERO,
-            ffi_enabled: false,
-            collect_success_input: false,
-            corpus_seeds: Vec::new(),
-            branch_target: None,
-            transaction_gas: Some(TransactionGas {
-                immutables: self.immutables.clone(),
-                unknown_callees: true,
-                max_lengths: self.lengths.iter().map(|length| (length.slot, length.max)).collect(),
-                function_jumps: self.function_jumps.clone(),
-            }),
-        });
-        let stopped = match result {
-            SymbolicRunResult::Safe { .. } => None,
-            SymbolicRunResult::Incomplete { reason, .. } => Some(reason),
-            SymbolicRunResult::Counterexample { .. } => {
-                Some("the function can halt with an error".to_string())
-            }
-        };
-        let (gas, violations) = symbolic.finished_paths();
-        // A violation that replays is real even if the search stopped.
-        if let Some(violation) = violations.first() {
-            match self.confirm_length_violation(violation, sender) {
-                Ok(outcome) => return outcome,
-                Err(reason) if stopped.is_none() => return GasLimitOutcome::incomplete(reason),
-                Err(_) => {}
-            }
-        }
-        let worst = gas.last().map(|bound| {
-            let sender = bound.sender.unwrap_or(sender);
-            let replayed = self
-                .replay(&bound.witness, sender, &bound.storage, &bound.immutables)
-                .and_then(|raw| (!raw.reverted).then_some(raw.gas_used));
-            (bound, sender, replayed)
-        });
-        if let Some(reason) = stopped {
-            // An input that replays above the limit fails the check, even if the search stopped.
-            if let (Some(limit), Some((bound, sender, Some(replayed)))) = (limit, &worst)
-                && *replayed > limit
-                && *replayed <= bound.max
-            {
-                return GasLimitOutcome::Exceeds {
-                    max: bound.max,
-                    replayed: Some(*replayed),
-                    sender: *sender,
-                    calldata: bound.witness.calldata.clone(),
-                    loops: loop_gas(bound),
-                    stopped: Some(reason),
-                };
-            }
-            let found = worst.map(|(bound, _, replayed)| FoundGas { max: bound.max, replayed });
-            let hint = incomplete_hint(&reason);
-            return GasLimitOutcome::Incomplete { reason, found, hint };
-        }
-        let Some(limit) = limit else { return GasLimitOutcome::KeepsLengths };
-        let Some((bound, sender, replayed)) = worst else {
-            return GasLimitOutcome::incomplete(
-                "no successful path measured transaction gas".to_string(),
-            );
-        };
-        let max = bound.max;
-        if replayed.is_some_and(|replayed| replayed > max) {
-            // A replay above the bound means the gas model is wrong: fail closed.
-            GasLimitOutcome::incomplete(format!(
-                "symbolic gas bound {max} is below its concrete replay"
-            ))
-        } else if max <= limit {
-            GasLimitOutcome::Within { max, replayed, loops: loop_gas(bound) }
-        } else {
-            GasLimitOutcome::Exceeds {
-                max,
-                replayed,
-                sender,
-                calldata: bound.witness.calldata.clone(),
-                loops: loop_gas(bound),
-                stopped: None,
-            }
-        }
-    }
-
-    /// Replays the input of a length violation and returns the failure if the replay leaves the
-    /// array longer than its maximum, or the reason it does not.
-    fn confirm_length_violation(
-        &self,
-        violation: &SymbolicLengthViolation,
-        sender: Address,
-    ) -> Result<GasLimitOutcome, String> {
-        let Some(annotation) = self.lengths.iter().find(|length| length.slot == violation.slot)
-        else {
-            return Err("length violation for an unknown slot".to_string());
-        };
-        let sender = violation.sender.unwrap_or(sender);
-        let StorageMaxLength { variable, slot, max } = annotation.clone();
-        let length = self
-            .replay(&violation.witness, sender, &violation.storage, &violation.immutables)
-            .filter(|raw| !raw.reverted)
-            .map(|raw| {
-                let changed = raw
-                    .state_changeset
-                    .get(&self.address)
-                    .and_then(|account| account.storage.get(&slot))
-                    .map(|value| value.present_value);
-                changed.unwrap_or_else(|| {
-                    let assigned = violation.storage.iter().find(|assignment| {
-                        assignment.address == self.address && assignment.slot == slot
-                    });
-                    assigned.map(|assignment| assignment.value).unwrap_or_default()
-                })
-            });
-        // A witness that does not replay above the length means the model is wrong: fail closed.
-        match length {
-            Some(length) if length > U256::from(max) => {
-                let calldata = violation.witness.calldata.clone();
-                Ok(GasLimitOutcome::LengthExceeds { variable, max, length, sender, calldata })
-            }
-            _ => Err(format!(
-                "a path exceeds @{MAX_LENGTH_TAG} {max} of `{variable}`, but its input does not \
-                 replay"
-            )),
-        }
-    }
-
-    /// Replays a witness input with the immutables and storage its path assumes, and returns
-    /// the call result.
-    fn replay(
-        &self,
-        witness: &SymbolicConcreteInput,
-        sender: Address,
-        storage: &[SymbolicStorageAssignment],
-        immutables: &[(usize, U256)],
-    ) -> Option<RawCallResult<EthEvmNetwork>> {
-        let mut code = self.code.to_vec();
-        for &(offset, value) in immutables {
-            code.get_mut(offset..offset + 32)?.copy_from_slice(&value.to_be_bytes::<32>());
-        }
-        let mut executor = self.executor.clone();
-        executor.set_code(self.address, Bytecode::new_raw(code.into())).ok()?;
-        for assignment in storage {
-            executor
-                .set_storage_slot(assignment.address, assignment.slot, assignment.value)
-                .ok()?;
-        }
-        let calldata = witness.calldata.clone();
-        executor.call_raw(sender, self.address, calldata, U256::ZERO).ok()
-    }
 }

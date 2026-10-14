@@ -1457,8 +1457,11 @@ impl SymExpr {
     }
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
-        self.visit_once(&mut HashSet::default(), &mut |expr| {
-            vars.extend(expr.kind().get_eval_var());
+        let _ = self.visit(&mut |expr| {
+            if let Some(var) = expr.kind().get_eval_var() {
+                vars.insert(var);
+            }
+            ControlFlow::<()>::Continue(())
         });
     }
 
@@ -1959,44 +1962,6 @@ impl SymExpr {
             }
         }
         ControlFlow::Continue(())
-    }
-
-    /// Visits this expression and its children in the order of [`Self::visit`], skipping nodes
-    /// already in `visited`, so each distinct node is visited once.
-    pub(crate) fn visit_once(&self, visited: &mut HashSet<Self>, visitor: &mut impl FnMut(&Self)) {
-        if !visited.insert(self.clone()) {
-            return;
-        }
-        visitor(self);
-        match self.kind() {
-            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {}
-            SymExprKind::Keccak { len, bytes, .. } => {
-                len.visit_once(visited, visitor);
-                for byte in bytes.iter() {
-                    byte.visit_once(visited, visitor);
-                }
-            }
-            SymExprKind::Hash { bytes, .. } => {
-                for byte in bytes.iter() {
-                    byte.visit_once(visited, visitor);
-                }
-            }
-            SymExprKind::Not(value) => value.visit_once(visited, visitor),
-            SymExprKind::BinOp(_, left, right) => {
-                left.visit_once(visited, visitor);
-                right.visit_once(visited, visitor);
-            }
-            SymExprKind::TernOp(_, left, right, modulus) => {
-                left.visit_once(visited, visitor);
-                right.visit_once(visited, visitor);
-                modulus.visit_once(visited, visitor);
-            }
-            SymExprKind::Ite(cond, left, right) => {
-                cond.visit_exprs_once(visited, visitor);
-                left.visit_once(visited, visitor);
-                right.visit_once(visited, visitor);
-            }
-        }
     }
 
     /// Returns whether any node satisfies `visitor`, visiting each distinct node once.
