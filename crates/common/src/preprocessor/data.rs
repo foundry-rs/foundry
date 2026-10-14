@@ -64,7 +64,7 @@ impl ContractData {
             .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
-                let contract_id = contract_identifier(path, contract.name.as_str());
+                let contract_id = keccak256(format!("{}:{}", path.to_slash_lossy(), contract.name));
                 let mut abi_encode_args = vec![];
                 let mut struct_fields = vec![];
                 let mut arg_index = 0;
@@ -91,7 +91,7 @@ impl ContractData {
                     struct_fields: struct_fields.join("; "),
                     helper_contract: unique_identifier(
                         reserved_identifiers,
-                        format!("DeployHelper{contract_id}"),
+                        format!("DeployHelper{contract_id:x}"),
                     ),
                     args_struct: unique_identifier(
                         reserved_identifiers,
@@ -99,9 +99,9 @@ impl ContractData {
                     ),
                     encode_function: unique_identifier(
                         reserved_identifiers,
-                        format!("encodeArgs{contract_id}"),
+                        format!("encodeArgs{contract_id:x}"),
                     ),
-                    helper_path: deploy_helper_path(&contract_id, source_units),
+                    helper_path: deploy_helper_path(&format!("{contract_id:x}"), source_units),
                 }
             });
 
@@ -190,24 +190,20 @@ function {encode_function}({helper_contract}.{args_struct} memory args) pure ret
     }
 }
 
-/// Identifies a contract independently of the other sources in a compiler job.
-pub(super) fn contract_identifier(path: &Path, name: &str) -> String {
-    format!("{:x}", keccak256(format!("{}:{name}", path.to_slash_lossy())))
-}
-
 /// Reserves names only in the source's import closure, which is stable across compiler jobs.
 pub(super) fn reserved_identifiers(gcx: Gcx<'_>, source: SourceId) -> String {
     let mut visited = HashSet::new();
     let mut pending = vec![source];
-    let mut sources = Vec::new();
+    let mut identifiers = String::new();
     while let Some(id) = pending.pop() {
         if visited.insert(id) {
             let source = gcx.hir.source(id);
-            sources.push(source.file.src.as_str());
+            identifiers.push_str(source.file.src.as_str());
+            identifiers.push('\n');
             pending.extend(source.imports.iter().map(|(_, id)| *id));
         }
     }
-    sources.join("\n")
+    identifiers
 }
 
 fn unique_identifier(source: &str, mut identifier: String) -> String {

@@ -1,11 +1,9 @@
 use super::{
-    data::{
-        ContractData, PreprocessorData, contract_identifier, deploy_helper_path,
-        reserved_identifiers,
-    },
+    data::{ContractData, PreprocessorData, deploy_helper_path, reserved_identifiers},
     span_to_range,
 };
 use crate::fs::{canonicalize_path, normalize_path};
+use alloy_primitives::keccak256;
 use foundry_compilers::{
     ProjectPathsConfig, Updates,
     artifacts::{SolcLanguage, remappings::Remapping},
@@ -623,8 +621,8 @@ fn can_rewrite(
         return true;
     }
 
-    let helper_path =
-        deploy_helper_path(&contract_identifier(generated_path, contract_name), source_units);
+    let identifier = keccak256(format!("{}:{contract_name}", generated_path.to_slash_lossy()));
+    let helper_path = deploy_helper_path(&format!("{identifier:x}"), source_units);
     !remappings.iter().any(|remapping| {
         // The test imports the generated helper, which in turn imports the dependency.
         remapping_applies(remapping, &helper_path, source_path, root_dir)
@@ -878,15 +876,16 @@ pub(crate) fn remove_bytecode_dependencies(
         };
 
         let reserved_identifiers = reserved_identifiers(gcx, contract.source);
-        let identifier = contract_identifier(
-            path.strip_prefix(root_dir).unwrap_or(path),
-            contract.name.as_str(),
-        );
+        let identifier = keccak256(format!(
+            "{}:{}",
+            path.strip_prefix(root_dir).unwrap_or(path).to_slash_lossy(),
+            contract.name,
+        ));
         let updates = updates.entry(path.clone()).or_default();
         let mut used_helpers = BTreeSet::new();
 
         let vm_interface_name =
-            unique_identifier(&reserved_identifiers, format!("VmContractHelper{identifier}"));
+            unique_identifier(&reserved_identifiers, format!("VmContractHelper{identifier:x}"));
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
         for dep in deps {

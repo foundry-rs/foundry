@@ -306,9 +306,9 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::keccak256;
     use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
     use semver::Version;
-    use std::path::Path;
 
     fn input() -> (tempfile::TempDir, ProjectPathsConfig<SolcLanguage>, SolcVersionedInput) {
         let root = tempfile::tempdir().unwrap();
@@ -369,8 +369,8 @@ mod tests {
         ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
         let mut wider = input.clone();
         // These declarations would also affect collision avoidance if it inspected unrelated files.
-        let dep_id = data::contract_identifier(Path::new("src/Dep.sol"), "Dep");
-        let test_id = data::contract_identifier(Path::new("test/Deploy.sol"), "Deploy");
+        let dep_id = format!("{:x}", keccak256("src/Dep.sol:Dep"));
+        let test_id = format!("{:x}", keccak256("test/Deploy.sol:Deploy"));
         wider.input.sources.insert(PathBuf::from("test/AAA.sol"), Source::new(format!(
             "contract Extra {{}} interface VmContractHelper{test_id} {{}} contract DeployHelper{dep_id} {{}} function encodeArgs{dep_id}() pure {{}}"
         )));
