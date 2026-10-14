@@ -88,8 +88,7 @@ solar-lsp.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "signal", "process"] }
 toml_edit.workspace = true
-# Watchexec 8.4.4 hangs on macOS when shutting down the interactive stdin watcher.
-watchexec = "=8.4.2"
+watchexec = "8.0"
 watchexec-events = "6.0"
 watchexec-signals = "5.0"
 which.workspace = true
