@@ -14183,9 +14183,9 @@ dependencies = [
 
 [[package]]
 name = "watchexec"
-version = "8.4.4"
+version = "8.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "750bc5b1adcbe9036be32ce89e362030b97b3ef8665dcc636c68701d92900500"
+checksum = "d941737150f9a9a3c73c399ecab8570517977c512fb2068388293e9f17fb2807"
 dependencies = [
  "async-priority-channel",
  "atomic-take",
@@ -14226,12 +14226,11 @@ dependencies = [
 
 [[package]]
 name = "watchexec-supervisor"
-version = "6.0.0"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1da1c4eb0277893e2ab8c888db407d979e31c9ce94c9d3664c49789691a3441"
+checksum = "3ea7d764ea524ffd92213dcf8e4bca8fe603ebd3ef9e0caf07c3cae0461a5122"
 dependencies = [
  "futures",
- "nix 0.31.3",
  "process-wrap",
  "tokio",
  "tracing",
