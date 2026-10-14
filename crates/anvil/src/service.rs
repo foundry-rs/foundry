@@ -196,6 +196,13 @@ where
                 let mining = tokio::task::spawn_blocking(move || {
                     handle.block_on(async move {
                         let mining_guard = backend.lock_mining_owned().await;
+                        // Mining was paused after this candidate was selected, so skip it. Ready
+                        // transactions are mined by auto mining on resume, or by the next tick.
+                        if miner.is_paused() {
+                            drop(mining_guard);
+                            miner.retry_ready_transactions();
+                            return (Ok(None), backend, generation);
+                        }
                         let transactions =
                             pool.ready_transactions().take(selected).collect::<Vec<_>>();
                         if selected > 0 && transactions.is_empty() {

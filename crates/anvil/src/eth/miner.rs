@@ -14,7 +14,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
@@ -30,6 +30,8 @@ pub struct Miner<T> {
     mode: Arc<RwLock<MiningMode>>,
     /// Identifies the current mode so stale candidate failures cannot modify its replacement.
     generation: Arc<AtomicU64>,
+    /// Whether automatic block production is paused, see [`Miner::set_paused`].
+    paused: Arc<AtomicBool>,
     /// used for task wake up when the mining mode was forcefully changed
     ///
     /// This will register the task so we can manually wake it up if the mining mode was changed
@@ -43,6 +45,7 @@ impl<T> Clone for Miner<T> {
         Self {
             mode: self.mode.clone(),
             generation: self.generation.clone(),
+            paused: self.paused.clone(),
             inner: self.inner.clone(),
             transaction: PhantomData,
         }
@@ -61,6 +64,7 @@ impl<T> Miner<T> {
         Self {
             mode: Arc::new(RwLock::new(mode)),
             generation: Default::default(),
+            paused: Default::default(),
             inner: Default::default(),
             transaction: PhantomData,
         }
@@ -142,6 +146,10 @@ impl<T> Miner<T> {
     ) -> Poll<MiningWork<T>> {
         self.inner.register(cx);
         let mut mode = self.mode.write();
+        if self.is_paused() {
+            mode.poll_paused(cx);
+            return Poll::Pending;
+        }
         let generation = self.generation.load(Ordering::Relaxed);
         mode.poll(pool, cx).map(|transactions| MiningWork { transactions, generation })
     }
@@ -154,6 +162,23 @@ impl<T> Miner<T> {
             miner.has_pending_txs = Some(true);
             self.inner.wake();
         }
+    }
+
+    /// Pauses or resumes automatic block production.
+    ///
+    /// While paused, the block time interval keeps ticking but blocks that come due are skipped,
+    /// so the next block is mined on the first tick after mining resumes. Ready transactions in
+    /// auto mining mode are mined once mining resumes. The pause persists across mining mode
+    /// changes. Manual mining, e.g. via `evm_mine`, is not affected.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
+        trace!(target: "miner", paused, "updated mining pause");
+        self.inner.wake();
+    }
+
+    /// Returns `true` if automatic block production is paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
     }
 }
 
@@ -277,6 +302,17 @@ impl MiningMode {
             }
         }
     }
+
+    /// Keeps the mode's timers and notifications moving while mining is paused, without selecting
+    /// any transactions.
+    fn poll_paused(&mut self, cx: &mut Context<'_>) {
+        if let Self::Auto(miner) | Self::Mixed(miner, _) = self {
+            miner.poll_paused(cx);
+        }
+        if let Self::FixedBlockTime(miner) | Self::Mixed(_, miner) = self {
+            miner.poll_paused(cx);
+        }
+    }
 }
 
 /// A miner that's supposed to create a new block every `interval`, mining all transactions that are
@@ -310,6 +346,11 @@ impl FixedBlockTimeMiner {
             return Poll::Ready(pool.ready_transactions().collect());
         }
         Poll::Pending
+    }
+
+    /// Keeps the interval ticking while paused, skipping any block that comes due.
+    fn poll_paused(&mut self, cx: &mut Context<'_>) {
+        while self.interval.poll_tick(cx).is_ready() {}
     }
 }
 
@@ -377,6 +418,13 @@ impl ReadyTransactionMiner {
         }
 
         Poll::Ready(transactions)
+    }
+
+    /// Drains ready notifications while paused, so they are mined once mining resumes.
+    fn poll_paused(&mut self, cx: &mut Context<'_>) {
+        while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
+            self.has_pending_txs = Some(true);
+        }
     }
 }
 
@@ -462,5 +510,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn paused_interval_skips_due_block() {
+        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_millis(20)));
+        let pool = Arc::new(Pool::default());
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        miner.set_paused(true);
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(miner.poll(&pool, &mut cx).is_pending());
+
+        // Resuming does not mine the skipped block, the next tick does.
+        miner.set_paused(false);
+        assert!(miner.poll(&pool, &mut cx).is_pending());
+        tokio::time::timeout(Duration::from_secs(1), poll_fn(|cx| miner.poll(&pool, cx)))
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn paused_autominer_keeps_ready_notifications() {
+        let (mut tx, rx) = mpsc::channel(1);
+        let mut miner = Miner::<()>::new(MiningMode::instant(1, rx));
+        let pool = Arc::new(Pool::default());
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        miner.set_paused(true);
+        // A channel of size 1 with one sender buffers two notifications.
+        let fill = |tx: &mut mpsc::Sender<TxHash>| {
+            tx.try_send(TxHash::ZERO).unwrap();
+            tx.try_send(TxHash::ZERO).unwrap();
+        };
+        fill(&mut tx);
+
+        assert!(miner.poll(&pool, &mut cx).is_pending());
+        // Polling while paused drained the notifications.
+        fill(&mut tx);
+        let mode = miner.mode.read();
+        let MiningMode::Auto(auto) = &*mode else { panic!("expected auto mining") };
+        assert_eq!(auto.has_pending_txs, Some(true));
     }
 }
