@@ -788,3 +788,81 @@ OK.
 "#]]);
     }
 }
+
+#[forgetest]
+fn bind_preserves_duplicate_artifact_order(prj: _, cmd: _) {
+    prj.add_source(
+        "Ownable.sol",
+        "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_lib(
+        "dep/src/Ownable.sol",
+        "contract Ownable { function theirs() external pure returns (uint256) { return 2; } }",
+    );
+    prj.add_source(
+        "User.sol",
+        r#"
+import {Ownable as DepOwnable} from "../lib/dep/src/Ownable.sol";
+contract User is DepOwnable {}
+"#,
+    );
+
+    // Preserve the bindings selected by the original sorted filesystem discovery.
+    cmd.forge_fuse().args(["bind", "--no-cache", "--select", "^Ownable$"]).assert_success();
+    let binding = prj.root().join("out/bindings/src/ownable.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+
+    // Cache entries visit the dependency first, but artifact paths visit the project first.
+    for skip_build in [false, true] {
+        let mut args = vec!["bind", "--select", "^Ownable$"];
+        if skip_build {
+            args.push("--skip-build");
+        }
+        cmd.forge_fuse().args(&args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+
+        args.push("--overwrite");
+        cmd.forge_fuse().args(&args).assert_success();
+        assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
+    }
+}
+
+#[forgetest]
+fn bind_preserves_external_artifact_order(prj: _, cmd: _) {
+    prj.add_source(
+        "Ownable.sol",
+        "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
+    );
+    cmd.arg("build").assert_success();
+
+    let external = prj.paths().artifacts.join(".external/fixture/app/Ownable.json");
+    fs::create_dir_all(external.parent().unwrap()).unwrap();
+    fs::write(
+        external,
+        r#"{"abi":[{"type":"function","name":"theirs","inputs":[],"outputs":[],"stateMutability":"nonpayable"}]}"#,
+    )
+    .unwrap();
+
+    // External artifacts precede Solidity artifacts in the sorted filesystem discovery.
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--no-cache", "--select", "^Ownable$"])
+        .assert_success();
+    let binding = prj.root().join("out/bindings/src/ownable.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+
+    // Keep the synthetic external artifact without invoking an external compiler adapter.
+    let args = ["bind", "--skip-build", "--select", "^Ownable$"];
+    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+
+    cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
+    assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
+}

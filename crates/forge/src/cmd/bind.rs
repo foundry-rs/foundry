@@ -211,7 +211,7 @@ impl BindArgs {
         if config.cache {
             let paths: ProjectPathsConfig<MultiCompilerSettings> = config.project_paths();
             if let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&paths) {
-                let cached_artifacts = cache
+                let mut cached_artifacts = cache
                     .entries()
                     .flat_map(|entry| entry.artifacts.values())
                     .flat_map(|versions| versions.values())
@@ -265,16 +265,14 @@ impl BindArgs {
 
                             Some((name, path))
                         })
-                        .filter(move |(name, _path)| filter.is_match(name))
-                        .collect::<Vec<_>>();
+                        .filter(move |(name, _path)| filter.is_match(name));
 
-                    return Ok(cached_artifacts
-                        .into_iter()
-                        .chain(external_artifacts)
-                        .collect::<Vec<_>>()
-                        .into_iter());
+                    cached_artifacts.extend(external_artifacts);
                 }
 
+                // Preserve filesystem discovery order, since bindings keep the first artifact
+                // for each contract name.
+                cached_artifacts.sort_by(|a, b| a.1.cmp(&b.1));
                 return Ok(cached_artifacts.into_iter());
             }
         }
