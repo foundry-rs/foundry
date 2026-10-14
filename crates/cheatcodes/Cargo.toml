@@ -51,7 +51,7 @@ alloy-rlp = { workspace = true, optional = true }
 alloy-chains = { workspace = true, optional = true }
 alloy-ens = { workspace = true, optional = true }
 
-base64 = { workspace = true, optional = true }
+base64.workspace = true
 dialoguer = { workspace = true, optional = true }
 eyre.workspace = true
 itertools.workspace = true
@@ -100,7 +100,6 @@ revm = [
     "dep:alloy-rlp",
     "dep:alloy-chains",
     "dep:alloy-ens",
-    "dep:base64",
     "dep:dialoguer",
     "dep:jsonpath_lib",
     "dep:p256",
