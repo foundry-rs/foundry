@@ -1366,7 +1366,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 &input,
                 call.transfer_value(),
                 call.gas_limit,
-                call.scheme,
+                call.scheme.into(),
             );
         }
 

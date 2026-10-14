@@ -32,7 +32,8 @@ use super::revert_handlers::RevertParameters;
 pub type ExpectedCallTracker = HashMap<Address, ExpectedCallsForTarget>;
 
 /// Tracks calldata, scheme and count expectations for one target.
-pub type ExpectedCallsForTarget = HashMap<(Bytes, Option<CallScheme>), (ExpectedCallData, u64)>;
+pub type ExpectedCallsForTarget =
+    HashMap<(Bytes, Option<ExpectedCallScheme>), (ExpectedCallData, u64)>;
 
 #[derive(Clone, Debug)]
 pub struct ExpectedCallData {
@@ -58,6 +59,30 @@ pub enum ExpectedCallType {
     NonCount,
     /// The exact number of calls expected.
     Count,
+}
+
+/// Call kinds used by Foundry expectations independently of the execution engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExpectedCallScheme {
+    /// CALL.
+    Call,
+    /// CALLCODE.
+    CallCode,
+    /// DELEGATECALL.
+    DelegateCall,
+    /// STATICCALL.
+    StaticCall,
+}
+
+impl From<CallScheme> for ExpectedCallScheme {
+    fn from(scheme: CallScheme) -> Self {
+        match scheme {
+            CallScheme::Call => Self::Call,
+            CallScheme::CallCode => Self::CallCode,
+            CallScheme::DelegateCall => Self::DelegateCall,
+            CallScheme::StaticCall => Self::StaticCall,
+        }
+    }
 }
 
 /// The type of expected revert.
@@ -231,7 +256,7 @@ impl Cheatcode for expectDelegateCallCall {
             None,
             None,
             None,
-            Some(CallScheme::DelegateCall),
+            Some(ExpectedCallScheme::DelegateCall),
             1,
             ExpectedCallType::NonCount,
         )
@@ -745,7 +770,7 @@ fn expect_call(
     value: Option<&U256>,
     mut gas: Option<u64>,
     mut min_gas: Option<u64>,
-    scheme: Option<CallScheme>,
+    scheme: Option<ExpectedCallScheme>,
     count: u64,
     call_type: ExpectedCallType,
 ) -> Result {
@@ -810,7 +835,7 @@ pub(crate) fn observe_call(
     input: &[u8],
     value: Option<U256>,
     gas_limit: u64,
-    scheme: CallScheme,
+    scheme: ExpectedCallScheme,
 ) {
     // Match every partial/full calldata.
     for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target {
@@ -881,13 +906,13 @@ pub(crate) fn first_unmet_call(tracker: &ExpectedCallTracker, succeeded: bool) -
     ))
 }
 
-const fn call_scheme_rank(scheme: Option<CallScheme>) -> u8 {
+const fn call_scheme_rank(scheme: Option<ExpectedCallScheme>) -> u8 {
     match scheme {
         None => 0,
-        Some(CallScheme::Call) => 1,
-        Some(CallScheme::CallCode) => 2,
-        Some(CallScheme::DelegateCall) => 3,
-        Some(CallScheme::StaticCall) => 4,
+        Some(ExpectedCallScheme::Call) => 1,
+        Some(ExpectedCallScheme::CallCode) => 2,
+        Some(ExpectedCallScheme::DelegateCall) => 3,
+        Some(ExpectedCallScheme::StaticCall) => 4,
     }
 }
 
@@ -1044,7 +1069,7 @@ mod tests {
 
     fn tracker(
         calldata: Bytes,
-        scheme: Option<CallScheme>,
+        scheme: Option<ExpectedCallScheme>,
         data: ExpectedCallData,
     ) -> ExpectedCallTracker {
         let mut tracker = ExpectedCallTracker::default();
@@ -1052,12 +1077,22 @@ mod tests {
         tracker
     }
 
-    fn seen(tracker: &ExpectedCallTracker, calldata: &Bytes, scheme: Option<CallScheme>) -> u64 {
+    fn seen(
+        tracker: &ExpectedCallTracker,
+        calldata: &Bytes,
+        scheme: Option<ExpectedCallScheme>,
+    ) -> u64 {
         tracker[&TARGET][&(calldata.clone(), scheme)].1
     }
 
     fn observe(tracker: &mut ExpectedCallTracker, input: &[u8], value: Option<U256>, gas: u64) {
-        observe_call(tracker.get_mut(&TARGET).unwrap(), input, value, gas, CallScheme::Call);
+        observe_call(
+            tracker.get_mut(&TARGET).unwrap(),
+            input,
+            value,
+            gas,
+            ExpectedCallScheme::Call,
+        );
     }
 
     #[test]
@@ -1150,15 +1185,21 @@ mod tests {
         let calldata = bytes!("771602f7");
         let mut t = tracker(
             calldata.clone(),
-            Some(CallScheme::DelegateCall),
+            Some(ExpectedCallScheme::DelegateCall),
             expected(None, None, None, 1, ExpectedCallType::NonCount),
         );
 
-        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::Call);
-        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 0);
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, ExpectedCallScheme::Call);
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::DelegateCall)), 0);
 
-        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::DelegateCall);
-        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 1);
+        observe_call(
+            t.get_mut(&TARGET).unwrap(),
+            &calldata,
+            None,
+            0,
+            ExpectedCallScheme::DelegateCall,
+        );
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::DelegateCall)), 1);
     }
 
     #[test]
@@ -1190,10 +1231,10 @@ mod tests {
         let high = address!("0000000000000000000000000000000000000002");
         let ordered = [
             (low, bytes!("01"), None, ""),
-            (low, bytes!("01"), Some(CallScheme::Call), ", call type Call"),
-            (low, bytes!("01"), Some(CallScheme::CallCode), ", call type CallCode"),
-            (low, bytes!("01"), Some(CallScheme::DelegateCall), ", call type DelegateCall"),
-            (low, bytes!("01"), Some(CallScheme::StaticCall), ", call type StaticCall"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::Call), ", call type Call"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::CallCode), ", call type CallCode"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::DelegateCall), ", call type DelegateCall"),
+            (low, bytes!("01"), Some(ExpectedCallScheme::StaticCall), ", call type StaticCall"),
             (low, bytes!("02"), None, ""),
             (high, bytes!("00"), None, ""),
             (high, bytes!("01"), None, ""),
@@ -1234,7 +1275,7 @@ mod tests {
         let calldata = bytes!("771602f7");
         let mut t = tracker(
             calldata.clone(),
-            Some(CallScheme::DelegateCall),
+            Some(ExpectedCallScheme::DelegateCall),
             expected(Some(U256::from(1)), Some(2), Some(3), 2, ExpectedCallType::Count),
         );
         t.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 1;
