@@ -311,11 +311,6 @@ Add `--resume` to your command to try and continue broadcasting the transactions
             }
 
             eyre::bail!(error_msg);
-        } else if discarded_transactions {
-            // If we have discarded transactions but no errors, still inform the user
-            sh_warn!(
-                "Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions."
-            )?;
         }
 
         Ok(())
