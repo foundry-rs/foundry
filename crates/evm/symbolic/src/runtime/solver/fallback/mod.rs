@@ -692,6 +692,7 @@ fn charge_support_constraint(
         return false;
     }
     *remaining_support_visits -= 1;
+    // Charge the distinct word nodes inspected by the DAG visitors, not repeated occurrences.
     !constraint
         .visit_exprs(&mut |_| {
             if *remaining_support_visits == 0 {
@@ -893,16 +894,18 @@ fn fallback_partial_model_satisfies_known_constraints(
 }
 
 fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
-    expr.visit_exprs_once(&mut HashSet::default(), &mut |expr| {
+    let _ = expr.visit_exprs::<()>(&mut |expr| {
         vars.extend(expr.kind().get_eval_var());
+        ControlFlow::Continue(())
     });
 }
 
 fn collect_bool_hard_arith_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
-    expr.visit_exprs_once(&mut HashSet::default(), &mut |expr| {
+    let _ = expr.visit_exprs::<()>(&mut |expr| {
         if is_hard_arith_node(expr) {
             expr.collect_eval_vars(vars);
         }
+        ControlFlow::Continue(())
     });
 }
 
@@ -1037,10 +1040,11 @@ fn push_fallback_candidate(candidates: &mut HashSet<U256>, candidate: U256, hint
 }
 
 fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet<U256>) {
-    expr.visit_exprs_once(&mut HashSet::default(), &mut |expr| {
+    let _ = expr.visit_exprs::<()>(&mut |expr| {
         if let SymExprKind::Const(value) = expr.kind() {
             constants.insert(*value);
         }
+        ControlFlow::Continue(())
     });
 }
 
