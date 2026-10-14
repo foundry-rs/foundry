@@ -1,10 +1,10 @@
 use super::span_to_range;
-use alloy_primitives::keccak256;
+use alloy_primitives::{B256, keccak256};
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
 use solar::sema::{
     Gcx,
-    hir::{Contract, ContractId, SourceId},
+    hir::{ContractId, SourceId},
     interface::source_map::FileName,
 };
 use std::{
@@ -49,12 +49,13 @@ pub(crate) struct ContractData {
 impl ContractData {
     fn new(
         gcx: Gcx<'_>,
-        contract: &Contract<'_>,
+        contract_id: ContractId,
         path: &Path,
         source: &solar::sema::hir::Source<'_>,
         reserved_identifiers: &str,
         source_units: &[PathBuf],
     ) -> Self {
+        let contract = gcx.hir.contract(contract_id);
         let artifact =
             solidity_string_content(&format!("{}:{}", path.to_slash_lossy(), contract.name));
 
@@ -64,7 +65,7 @@ impl ContractData {
             .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
-                let contract_id = keccak256(format!("{}:{}", path.to_slash_lossy(), contract.name));
+                let contract_id = Self::stable_id(path, contract.name.as_str());
                 let mut abi_encode_args = vec![];
                 let mut struct_fields = vec![];
                 let mut arg_index = 0;
@@ -111,6 +112,11 @@ impl ContractData {
             constructor_data,
             artifact,
         }
+    }
+
+    /// Identifies a contract across compiler jobs using its compiler source-unit path and name.
+    pub(super) fn stable_id(path: &Path, name: &str) -> B256 {
+        keccak256(format!("{}:{name}", path.to_slash_lossy()))
     }
 
     /// If contract has a non-empty constructor, generates a helper source file for it containing a
@@ -247,7 +253,7 @@ pub(crate) fn collect_preprocessor_data(
         let path = path.strip_prefix(root_dir).unwrap_or(path);
         let contract_data = ContractData::new(
             gcx,
-            contract,
+            *contract_id,
             path,
             source,
             &reserved_identifiers(gcx, contract.source),
