@@ -1,19 +1,25 @@
 //! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
-    Cheatcode, CheatcodesCore, Result,
+    Cheatcode, Result,
     Vm::*,
-    json::{
-        check_json_key_exists, parse_json, parse_json_coerce, parse_json_coerce_default,
-        parse_json_keys, resolve_type, split_value_key,
-    },
+    json::{check_json_key_exists, parse_json_coerce, parse_json_coerce_default, parse_json_keys},
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
-use foundry_common::{fmt::StructDefinitions, fs};
-use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
+
+#[cfg(feature = "revm")]
+use crate::{
+    CheatcodesCore,
+    json::{parse_json, resolve_type, split_value_key},
+};
+#[cfg(feature = "revm")]
+use foundry_common::{fmt::StructDefinitions, fs};
+#[cfg(feature = "revm")]
+use foundry_config::fs_permissions::FsAccessKind;
+#[cfg(feature = "revm")]
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 impl Cheatcode for keyExistsTomlCall {
@@ -23,6 +29,7 @@ impl Cheatcode for keyExistsTomlCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseToml_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml } = self;
@@ -34,6 +41,7 @@ impl Cheatcode for parseToml_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseToml_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key } = self;
@@ -106,6 +114,7 @@ impl_parse_toml!(
     DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))
 );
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseTomlType_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, typeDescription } = self;
@@ -121,6 +130,7 @@ impl Cheatcode for parseTomlType_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseTomlType_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key, typeDescription } = self;
@@ -136,6 +146,7 @@ impl Cheatcode for parseTomlType_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseTomlTypeArrayCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key, typeDescription } = self;
@@ -154,6 +165,7 @@ impl Cheatcode for parseTomlKeysCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for writeToml_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, path } = self;
@@ -165,6 +177,7 @@ impl Cheatcode for writeToml_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for writeToml_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json: value, path, valueKey } = self;
@@ -189,6 +202,7 @@ fn parse_toml_str(toml: &str) -> Result<TomlValue> {
 }
 
 /// Parse a TOML string and return the value at the given path.
+#[cfg(feature = "revm")]
 fn parse_toml(toml: &str, key: &str, struct_defs: Option<&StructDefinitions>) -> Result {
     parse_json(&toml_to_json_string(toml)?, key, struct_defs)
 }
@@ -222,6 +236,7 @@ fn toml_to_json_string(toml: &str) -> Result<String> {
 }
 
 /// Format a JSON value to a TOML pretty string.
+#[cfg(feature = "revm")]
 fn format_json_to_toml(json: JsonValue) -> Result<String> {
     let toml = json_to_toml_value(json);
     toml::to_string_pretty(&toml).map_err(|e| fmt_err!("failed to serialize TOML: {e}"))
@@ -249,6 +264,7 @@ pub(super) fn toml_to_json_value(toml: TomlValue) -> JsonValue {
 }
 
 /// Convert a JSON value to a TOML value.
+#[cfg(feature = "revm")]
 fn json_to_toml_value(json: JsonValue) -> TomlValue {
     match json {
         JsonValue::String(s) => TomlValue::String(s),
@@ -269,6 +285,7 @@ fn json_to_toml_value(json: JsonValue) -> TomlValue {
 }
 
 /// Parses a TOML string into a document that keeps its formatting and comments.
+#[cfg(feature = "revm")]
 fn parse_toml_document(toml: &str) -> Result<DocumentMut> {
     toml.parse().map_err(|e| fmt_err!("failed parsing TOML: {e}"))
 }
@@ -278,6 +295,7 @@ fn parse_toml_document(toml: &str) -> Result<DocumentMut> {
 ///
 /// Only the item at `key` is rewritten, so comments and formatting elsewhere in the document are
 /// kept.
+#[cfg(feature = "revm")]
 fn upsert_toml_value(document: &mut DocumentMut, value: &str, key: &str) -> Result<()> {
     let parts = split_value_key(key)?;
 
@@ -360,6 +378,7 @@ fn upsert_toml_value(document: &mut DocumentMut, value: &str, key: &str) -> Resu
 ///
 /// Inline tables can only hold values. There, the new value takes over the whitespace or comment
 /// that followed the previous last value, so the inline table keeps its layout.
+#[cfg(feature = "revm")]
 fn insert_toml_item(parent: &mut dyn TableLike, is_inline: bool, key: &str, mut item: Item) {
     if is_inline {
         let trailing =
@@ -380,6 +399,7 @@ fn insert_toml_item(parent: &mut dyn TableLike, is_inline: bool, key: &str, mut 
 }
 
 /// Converts a JSON value to a TOML item, formatted the same way as [`format_json_to_toml`].
+#[cfg(feature = "revm")]
 fn json_to_toml_item(value: JsonValue) -> Result<Item> {
     const KEY: &str = "value";
 
@@ -393,6 +413,7 @@ fn json_to_toml_item(value: JsonValue) -> Result<Item> {
 }
 
 /// Recursively clears the document position and header whitespace of all tables in `item`.
+#[cfg(feature = "revm")]
 fn reset_table_layout(item: &mut Item) {
     for table in tables_mut(item) {
         table.set_position(None);
@@ -404,6 +425,7 @@ fn reset_table_layout(item: &mut Item) {
 }
 
 /// Returns the tables of `item` that are written with a header.
+#[cfg(feature = "revm")]
 fn tables(item: &Item) -> Vec<&Table> {
     match item {
         Item::Table(table) => vec![table],
@@ -413,6 +435,7 @@ fn tables(item: &Item) -> Vec<&Table> {
 }
 
 /// Returns the tables of `item` that are written with a header.
+#[cfg(feature = "revm")]
 fn tables_mut(item: &mut Item) -> Vec<&mut Table> {
     match item {
         Item::Table(table) => vec![table],
@@ -421,7 +444,7 @@ fn tables_mut(item: &mut Item) -> Vec<&mut Table> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
 
