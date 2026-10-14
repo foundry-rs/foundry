@@ -3,6 +3,7 @@ use super::{
     span_to_range,
 };
 use crate::fs::{canonicalize_path, normalize_path};
+use alloy_primitives::keccak256;
 use foundry_compilers::{
     ProjectPathsConfig, Updates,
     artifacts::{SolcLanguage, remappings::Remapping},
@@ -620,7 +621,7 @@ fn can_rewrite(
         return true;
     }
 
-    let identifier = ContractData::stable_id(generated_path, contract_name);
+    let identifier = keccak256(format!("{}:{contract_name}", generated_path.to_slash_lossy()));
     let helper_path = deploy_helper_path(&format!("{identifier:x}"), source_units);
     !remappings.iter().any(|remapping| {
         // The test imports the generated helper, which in turn imports the dependency.
@@ -875,10 +876,11 @@ pub(crate) fn remove_bytecode_dependencies(
         };
 
         let reserved_identifiers = reserved_identifiers(gcx, contract.source);
-        let identifier = ContractData::stable_id(
-            path.strip_prefix(root_dir).unwrap_or(path),
-            contract.name.as_str(),
-        );
+        let identifier = keccak256(format!(
+            "{}:{}",
+            path.strip_prefix(root_dir).unwrap_or(path).to_slash_lossy(),
+            contract.name,
+        ));
         let updates = updates.entry(path.clone()).or_default();
         let mut used_helpers = BTreeSet::new();
 

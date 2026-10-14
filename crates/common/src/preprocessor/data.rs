@@ -1,5 +1,5 @@
 use super::span_to_range;
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::keccak256;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
 use solar::sema::{
@@ -65,7 +65,7 @@ impl ContractData {
             .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
-                let contract_id = Self::stable_id(path, contract.name.as_str());
+                let contract_id = keccak256(format!("{}:{}", path.to_slash_lossy(), contract.name));
                 let mut abi_encode_args = vec![];
                 let mut struct_fields = vec![];
                 let mut arg_index = 0;
@@ -112,11 +112,6 @@ impl ContractData {
             constructor_data,
             artifact,
         }
-    }
-
-    /// Identifies a contract across compiler jobs using its compiler source-unit path and name.
-    pub(super) fn stable_id(path: &Path, name: &str) -> B256 {
-        keccak256(format!("{}:{name}", path.to_slash_lossy()))
     }
 
     /// If contract has a non-empty constructor, generates a helper source file for it containing a
