@@ -6351,16 +6351,24 @@ Error: Batch transaction 0x[..] failed (reverted)
         "--etherscan-api-key",
         "test",
     ]);
-    cmd.assert_success().stderr_eq(format!(
-        "\
+    cmd.assert_success()
+        .stdout_eq(str![[r#"
+...
+No transactions to broadcast in batch mode.
+
+ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS.
+...
+"#]])
+        .stderr_eq(format!(
+            "\
 Warning: transaction {hash} on chain {} reverted; resume will not resubmit it
 Warning: verifier credential check inconclusive, proceeding anyway
 ##
 Start verification for (0) contracts
 All (0) contracts were verified!
 ",
-        sequence["chain"]
-    ));
+            sequence["chain"]
+        ));
     assert_eq!(submissions.lock().unwrap().len(), 2);
     let provider = handle.http_provider();
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);

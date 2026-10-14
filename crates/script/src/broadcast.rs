@@ -1209,6 +1209,9 @@ impl BundledState<TempoEvmNetwork> {
 
         if batch_start == total_transactions {
             sh_println!("No transactions to broadcast in batch mode.")?;
+            if !shell::is_json() && sequence.receipts.iter().any(|receipt| !receipt.status()) {
+                sh_println!("\nONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS.")?;
+            }
             return Ok(BroadcastedState {
                 args: self.args,
                 script_config: self.script_config,
@@ -1300,6 +1303,11 @@ impl BundledState<TempoEvmNetwork> {
         });
         if completed_prefix == total_transactions {
             sh_println!("No transactions to broadcast in batch mode.")?;
+            if !shell::is_json()
+                && self.sequence.sequences()[0].receipts.iter().any(|receipt| !receipt.status())
+            {
+                sh_println!("\nONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS.")?;
+            }
             return Ok(BroadcastedState {
                 args: self.args,
                 script_config: self.script_config,
