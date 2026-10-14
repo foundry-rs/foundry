@@ -1679,7 +1679,6 @@ pub(crate) struct SymbolicWorldState {
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
-    /// Arbitrary storage symbols read at symbolic keys, with the account and key of each read.
     replay_symbolic_storage_keys: HashMap<Symbol, Vec<(Address, SymExpr)>>,
     /// Accounts whose storage a loop summary replaced with unknown values, with the summary's
     /// epoch.
@@ -1826,8 +1825,7 @@ impl SymbolicWorld {
                 }
             }
         }
-        // Symbolic keys are replayed at their model value. Distinct key expressions can take the
-        // same value; the first read wins, and a replay that differs is reported by the caller.
+        // Replay validates aliases between symbolic keys that take the same concrete value.
         for (symbol, reads) in &self.replay_symbolic_storage_keys {
             let Some(value) = model.get(symbol).copied() else { continue };
             for (address, key) in reads {

@@ -43,6 +43,8 @@ use std::{
 use tempo_alloy::TempoNetwork;
 
 #[cfg(unix)]
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
 #[forgetest]
@@ -3629,6 +3631,71 @@ Script ran successfully.
 "#]]);
 }
 
+#[cfg(unix)]
+#[forgetest_init]
+fn get_script_wallets_interactive_keystore_errors(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "WalletScript",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract WalletScript is Script {
+    function run(uint256 count) public view {
+        address[] memory wallets = vm.getWallets();
+        require(wallets.length == count, "unexpected wallet count");
+        if (count != 0) {
+            require(wallets[0] == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2, "unexpected wallet");
+        }
+    }
+}"#,
+    );
+    cmd.args(["script", "--sig", "run(uint256)"])
+        .arg(&script)
+        .arg("0")
+        .assert_success()
+        .stderr_eq(str![""]);
+
+    let keystore = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2",
+    );
+    for (password, exit_code) in [("wrong-password", 1), ("keystorepassword", 0)] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_forge"));
+        command
+            .current_dir(prj.root())
+            .env_remove("CI")
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .args(["script", "--sig", "run(uint256)"])
+            .arg(&script)
+            .arg("1")
+            .arg("--keystore")
+            .arg(&keystore);
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+        session.exp_string("Enter keystore password:").unwrap();
+        session.send_line(password).unwrap();
+        if exit_code != 0 {
+            session
+                .exp_string("vm.getWallets: Failed to decrypt keystore: incorrect password")
+                .unwrap();
+        } else {
+            session.exp_string("Script ran successfully.").unwrap();
+        }
+        let output = session.exp_eof().unwrap();
+        assert!(
+            matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, code) if code == exit_code),
+            "unexpected script exit: {output}"
+        );
+    }
+}
+
 #[forgetest_init]
 fn can_remember_keys(prj: _, cmd: _) {
     let script = prj
@@ -4060,6 +4127,78 @@ contract UnusedLibraries is Script {
     assert_eq!(names, ["Lib1", "ContractUsingLib1"]);
     assert_eq!(sequence.libraries.len(), 1);
     assert!(sequence.libraries[0].contains(":Lib1:"));
+}
+
+#[forgetest]
+#[cfg(unix)]
+fn wallet_signing_reports_unlock_errors(prj: _, cmd: _) {
+    prj.add_source(
+        "WalletSigning.sol",
+        r#"
+interface Vm {
+    function sign(bytes32 digest) external returns (uint8, bytes32, bytes32);
+    function sign(address signer, bytes32 digest) external returns (uint8, bytes32, bytes32);
+    function signCompact(bytes32 digest) external returns (bytes32, bytes32);
+    function signCompact(address signer, bytes32 digest) external returns (bytes32, bytes32);
+}
+contract WalletSigning {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    function run(uint256 overload) public {
+        bytes32 digest = keccak256("digest");
+        address signer = address(bytes20(hex"ec554aeafe75601aaab43bd4621a22284db566c2"));
+        bytes32 r;
+        if (overload == 0) (, r,) = vm.sign(digest);
+        else if (overload == 1) (, r,) = vm.sign(signer, digest);
+        else if (overload == 2) (r,) = vm.signCompact(digest);
+        else (r,) = vm.signCompact(signer, digest);
+        require(r != bytes32(0));
+    }
+}
+"#,
+    );
+    let keystore = prj.root().join("test-keystore");
+    fs::write(&keystore, include_str!("../../../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2")).unwrap();
+    cmd.args(["build"]).assert_success();
+    for overload in 0..4 {
+        for correct_password in [false, true] {
+            let mut command = prj.forge_bin();
+            command
+                .env("TERM", "dumb")
+                .args(["script", "WalletSigning", "--sig", "run(uint256)"])
+                .arg(overload.to_string())
+                .arg("--keystore")
+                .arg(&keystore);
+            let mut session = spawn_with_options(
+                command,
+                Options {
+                    timeout_ms: Some(30_000),
+                    strip_ansi_escape_codes: true,
+                    encoding: Encoding::UTF8,
+                },
+            )
+            .unwrap();
+            session.exp_string("Enter keystore password:").unwrap();
+            session
+                .send_line(if correct_password {
+                    "keystorepassword"
+                } else {
+                    "incorrect-test-password"
+                })
+                .unwrap();
+            session
+                .exp_string(if correct_password {
+                    "Script ran successfully."
+                } else {
+                    "Failed to decrypt keystore: incorrect password"
+                })
+                .unwrap();
+            let output = session.exp_eof().unwrap();
+            assert!(
+                matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, code) if code == i32::from(!correct_password)),
+                "{output}"
+            );
+        }
+    }
 }
 
 #[forgetest_init]

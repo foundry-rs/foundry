@@ -21,9 +21,8 @@ use std::{
 };
 use tokio::time::{Interval, MissedTickBehavior, Sleep};
 
-/// Window for grouping concurrently-submitted transactions into one instant-mined block.
-/// Scoped to batch/in-process concurrency; not a guarantee for independent external clients.
-pub(crate) const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
+/// Default delay before instant mining. Zero avoids delaying receipt availability.
+pub(crate) const INSTANT_COALESCE_WINDOW: Duration = Duration::ZERO;
 
 pub struct Miner<T> {
     /// The mode this miner currently operates in
@@ -437,14 +436,18 @@ mod tests {
     #[tokio::test]
     async fn coalescing_window_controls_fresh_notifications() {
         for mixed in [false, true] {
-            for window in [Duration::ZERO, Duration::from_secs(60)] {
+            for window in [None, Some(Duration::ZERO), Some(Duration::from_secs(60))] {
                 let (mut tx, rx) = mpsc::channel(1);
                 let mode = if mixed {
                     MiningMode::mixed(1, rx, Duration::from_secs(120))
                 } else {
                     MiningMode::instant(1, rx)
                 };
-                let mut mode = mode.with_coalescing_window(window);
+                let mut mode = if let Some(window) = window {
+                    mode.with_coalescing_window(window)
+                } else {
+                    mode
+                };
                 let pool = Arc::new(Pool::<()>::default());
                 tx.try_send(TxHash::ZERO).unwrap();
                 let mut cx = Context::from_waker(futures::task::noop_waker_ref());
@@ -453,7 +456,7 @@ mod tests {
                     MiningMode::Auto(auto) | MiningMode::Mixed(auto, _) => auto,
                     _ => unreachable!(),
                 };
-                if window.is_zero() {
+                if window.is_none_or(|window| window.is_zero()) {
                     assert!(auto.coalesce.is_none());
                     assert_eq!(auto.has_pending_txs, Some(false));
                 } else {

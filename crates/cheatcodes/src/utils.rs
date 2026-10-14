@@ -295,9 +295,9 @@ impl Cheatcode for shuffleCall {
 }
 
 impl Cheatcode for setSeedCall {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { seed } = self;
-        ccx.state.core.set_seed(*seed);
+        state.set_seed(*seed);
         Ok(Default::default())
     }
 }

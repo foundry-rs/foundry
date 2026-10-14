@@ -172,3 +172,42 @@ impl BroadcastReader {
         targets
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::Address;
+    use foundry_common::TransactionMaybeSigned;
+
+    fn deployment(address: Address) -> ScriptSequence<Ethereum> {
+        let mut tx = TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Unsigned(
+            Default::default(),
+        ));
+        tx.call_kind = CallKind::Create;
+        tx.contract_name = Some("Counter".to_string());
+        tx.contract_address = Some(address);
+        ScriptSequence { transactions: [tx].into(), timestamp: 1, chain: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn read_latest_prefers_later_multichain_sequence_on_equal_timestamp() {
+        let root = std::env::temp_dir().join(format!("broadcast-reader-{}", std::process::id()));
+        let dir = root.join("multi").join("Counter.s.sol-1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (older, newer) = (Address::with_last_byte(1), Address::with_last_byte(2));
+        fs::write_json_file(
+            &dir.join("deploy.json"),
+            &serde_json::json!({ "deployments": [deployment(older), deployment(newer)] }),
+        )
+        .unwrap();
+
+        let latest = BroadcastReader::new("Counter".to_string(), 1, &root)
+            .unwrap()
+            .read_latest::<Ethereum>()
+            .unwrap();
+        assert_eq!(latest.transactions[0].contract_address, Some(newer));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

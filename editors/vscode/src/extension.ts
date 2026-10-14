@@ -219,7 +219,7 @@ async function startLanguageServer() {
   // Create the language client and start it.
   const nextClient = new LanguageClient(
     "solarLsp",
-    "Solar LSP",
+    "Foundry Solidity",
     serverOptions,
     clientOptions,
   );

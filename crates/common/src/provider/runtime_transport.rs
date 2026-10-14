@@ -292,7 +292,12 @@ impl RuntimeTransport {
     /// known MPP service.
     /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
+        let auth = self
+            .jwt
+            .as_ref()
+            .map(|jwt| build_auth(jwt.clone()))
+            .transpose()
+            .map_err(|e| RuntimeTransportError::InvalidJwt(e.to_string()))?;
 
         let service = if is_known_mpp_endpoint(&self.url) {
             let mut ws = lazy_mpp_ws_connect(&self.url);
@@ -592,5 +597,23 @@ mod tests {
         }
 
         server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_invalid_jwt() {
+        for scheme in ["http", "https", "ws", "wss"] {
+            for jwt in ["not-hex", "00"] {
+                let url = Url::parse(&format!("{scheme}://127.0.0.1:0")).unwrap();
+                let transport =
+                    RuntimeTransportBuilder::new(url).with_jwt(Some(jwt.to_string())).build();
+
+                let error = transport.connect().await.unwrap_err();
+
+                assert!(
+                    matches!(error, RuntimeTransportError::InvalidJwt(_)),
+                    "expected InvalidJwt for {scheme} with {jwt:?}, got {error:?}"
+                );
+            }
+        }
     }
 }
