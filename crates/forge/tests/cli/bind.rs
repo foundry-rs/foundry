@@ -1,6 +1,6 @@
-use foundry_compilers::utils::read_json_file;
+use foundry_compilers::{artifacts::ConfigurableContractArtifact, utils::read_json_file};
 use foundry_config::SolcReq;
-use foundry_test_utils::{TestProject, cargo_profile_dir};
+use foundry_test_utils::{TestProject, cargo_profile_dir, snapbox::IntoData};
 use std::{fs, path::Path, process::Command};
 
 // Keep each generated crate isolated while reusing its dependencies across binding tests.
@@ -865,4 +865,68 @@ OK.
 
     cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
     assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
+}
+
+#[forgetest]
+fn bind_preserves_cached_compiler_artifact_order(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo.sol",
+        r#"
+pragma solidity ^0.8.0;
+contract Foo { function value() external pure returns (uint256) { return 42; } }
+"#,
+    );
+    prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
+    let binding = prj.root().join("out/bindings/src/foo.rs");
+
+    for versions in [["0.8.21", "0.8.20"], ["0.8.20", "0.8.21"]] {
+        prj.clear();
+        cmd.forge_fuse().args(["build", "--use", versions[0]]).assert_success();
+        let artifact = read_json_file::<ConfigurableContractArtifact>(
+            &prj.artifacts().join("Foo.sol/Foo.json"),
+        )
+        .unwrap();
+        let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
+        assert!(!bytecode.is_empty());
+
+        // With one compiler artifact, capture the complete binding including deployment bytecode.
+        cmd.forge_fuse()
+            .args(["bind", "--skip-build", "--no-cache", "--use", versions[0], "--select", "^Foo$"])
+            .assert_success();
+        let expected = fs::read_to_string(&binding).unwrap();
+        let embedded_bytecode = expected
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("///0x"))
+            .expect("binding should include creation bytecode");
+        assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(&bytecode));
+
+        cmd.forge_fuse().args(["build", "--use", versions[1]]).assert_success();
+        let other_artifact = read_json_file::<ConfigurableContractArtifact>(
+            &prj.artifacts().join("src/Foo.sol/Foo.json"),
+        )
+        .unwrap();
+        assert_ne!(bytecode, other_artifact.bytecode.unwrap().into_bytes().unwrap());
+
+        // Preserve filesystem selection in either build order; --skip-build historically does
+        // not choose a compiler artifact based on --use. Only the discovery order changes here.
+        for version in versions {
+            let args = ["bind", "--skip-build", "--use", version, "--select", "^Foo$"];
+            cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+
+            for no_cache in [false, true] {
+                cmd.forge_fuse().args(args).arg("--overwrite");
+                if no_cache {
+                    cmd.arg("--no-cache");
+                }
+                cmd.assert_success();
+                // Compare bytecode-bearing Rust source without normalizing backslash escapes.
+                assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+            }
+        }
+    }
 }
