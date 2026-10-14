@@ -277,7 +277,7 @@ impl Cheatcode for stopBroadcastCall {
 
 impl Cheatcode for getWalletsCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
-        let wallets = state.wallets().signers().unwrap_or_default();
+        let wallets = state.wallets().signers()?;
         Ok(wallets.abi_encode())
     }
 }
