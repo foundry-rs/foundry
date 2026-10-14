@@ -58,8 +58,8 @@ itertools.workspace = true
 jsonpath_lib.workspace = true
 k256 = { workspace = true, features = ["expose-field"] }
 memchr.workspace = true
-p256 = { version = "0.13", optional = true }
-ed25519-consensus = { version = "2.1", optional = true }
+p256 = "0.13"
+ed25519-consensus = "2.1"
 ecdsa = "0.16"
 rand = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
@@ -101,8 +101,6 @@ revm = [
     "dep:alloy-chains",
     "dep:alloy-ens",
     "dep:dialoguer",
-    "dep:p256",
-    "dep:ed25519-consensus",
     "dep:rand",
     "dep:revm",
     "dep:toml_edit",

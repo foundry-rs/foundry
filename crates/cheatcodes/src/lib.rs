@@ -47,7 +47,6 @@ mod base64;
 
 mod config;
 
-#[cfg(feature = "revm")]
 mod crypto;
 
 mod version;
