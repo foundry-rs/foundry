@@ -40,7 +40,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        9
     }
 
     fn preprocess(
@@ -148,7 +148,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             sources.extend(create_deploy_helpers(&data));
 
             // Generate and apply preprocessor source updates.
-            apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data));
+            apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data, &paths.root));
 
             Ok(())
         });
@@ -184,7 +184,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        9
     }
 
     fn preprocess(
@@ -308,6 +308,7 @@ mod tests {
     use super::*;
     use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
     use semver::Version;
+    use std::path::Path;
 
     fn input() -> (tempfile::TempDir, ProjectPathsConfig<SolcLanguage>, SolcVersionedInput) {
         let root = tempfile::tempdir().unwrap();
@@ -357,6 +358,35 @@ mod tests {
             "immutable creation code was not rewritten"
         );
         assert!(mocks.contains(&paths.root.join("test/Mock.sol")));
+    }
+
+    #[test]
+    fn helper_sources_are_stable_across_compiler_jobs() {
+        let (_root, paths, mut input) = input();
+        input.input.sources = [
+            ("src/Dep.sol", "contract Dep { constructor(uint256 value) {} }".to_string()),
+            ("test/Deploy.sol", "import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep(7); } }".to_string()),
+        ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
+        let mut wider = input.clone();
+        // These declarations would also affect collision avoidance if it inspected unrelated files.
+        let dep_id = data::contract_identifier(Path::new("src/Dep.sol"), "Dep");
+        let test_id = data::contract_identifier(Path::new("test/Deploy.sol"), "Deploy");
+        wider.input.sources.insert(PathBuf::from("test/AAA.sol"), Source::new(format!(
+            "contract Extra {{}} interface VmContractHelper{test_id} {{}} contract DeployHelper{dep_id} {{}} function encodeArgs{dep_id}() pure {{}}"
+        )));
+        for input in [&mut input, &mut wider] {
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+        }
+        for (path, source) in &input.input.sources {
+            assert_eq!(source.content, wider.input.sources[path].content, "{path:?}");
+        }
     }
 
     #[test]

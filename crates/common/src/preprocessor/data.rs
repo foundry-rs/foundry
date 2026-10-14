@@ -1,9 +1,10 @@
 use super::span_to_range;
+use alloy_primitives::keccak256;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
 use solar::sema::{
     Gcx,
-    hir::{Contract, ContractId},
+    hir::{Contract, ContractId, SourceId},
     interface::source_map::FileName,
 };
 use std::{
@@ -48,7 +49,6 @@ pub(crate) struct ContractData {
 impl ContractData {
     fn new(
         gcx: Gcx<'_>,
-        contract_id: ContractId,
         contract: &Contract<'_>,
         path: &Path,
         source: &solar::sema::hir::Source<'_>,
@@ -64,7 +64,7 @@ impl ContractData {
             .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
-                let contract_id = contract_id.index();
+                let contract_id = contract_identifier(path, contract.name.as_str());
                 let mut abi_encode_args = vec![];
                 let mut struct_fields = vec![];
                 let mut arg_index = 0;
@@ -101,7 +101,7 @@ impl ContractData {
                         reserved_identifiers,
                         format!("encodeArgs{contract_id}"),
                     ),
-                    helper_path: deploy_helper_path(contract_id, source_units),
+                    helper_path: deploy_helper_path(&contract_id, source_units),
                 }
             });
 
@@ -190,6 +190,26 @@ function {encode_function}({helper_contract}.{args_struct} memory args) pure ret
     }
 }
 
+/// Identifies a contract independently of the other sources in a compiler job.
+pub(super) fn contract_identifier(path: &Path, name: &str) -> String {
+    format!("{:x}", keccak256(format!("{}:{name}", path.to_slash_lossy())))
+}
+
+/// Reserves names only in the source's import closure, which is stable across compiler jobs.
+pub(super) fn reserved_identifiers(gcx: Gcx<'_>, source: SourceId) -> String {
+    let mut visited = HashSet::new();
+    let mut pending = vec![source];
+    let mut sources = Vec::new();
+    while let Some(id) = pending.pop() {
+        if visited.insert(id) {
+            let source = gcx.hir.source(id);
+            sources.push(source.file.src.as_str());
+            pending.extend(source.imports.iter().map(|(_, id)| *id));
+        }
+    }
+    sources.join("\n")
+}
+
 fn unique_identifier(source: &str, mut identifier: String) -> String {
     while source.contains(&identifier) {
         identifier.push('_');
@@ -219,12 +239,6 @@ pub(crate) fn collect_preprocessor_data(
     source_units: &[PathBuf],
 ) -> PreprocessorData {
     let mut data = PreprocessorData::default();
-    let reserved_identifiers = gcx
-        .hir
-        .source_ids()
-        .map(|source_id| gcx.hir.source(source_id).file.src.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
     for contract_id in referenced_contracts {
         let contract = gcx.hir.contract(*contract_id);
         let source = gcx.hir.source(contract.source);
@@ -237,11 +251,10 @@ pub(crate) fn collect_preprocessor_data(
         let path = path.strip_prefix(root_dir).unwrap_or(path);
         let contract_data = ContractData::new(
             gcx,
-            *contract_id,
             contract,
             path,
             source,
-            &reserved_identifiers,
+            &reserved_identifiers(gcx, contract.source),
             source_units,
         );
         data.insert(*contract_id, contract_data);
@@ -267,7 +280,7 @@ pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -
 const DEPLOY_HELPERS_DIR: &str = "foundry-pp";
 
 /// Returns a generated helper path that cannot overwrite an existing source unit.
-pub(crate) fn deploy_helper_path(contract_id: usize, source_units: &[PathBuf]) -> PathBuf {
+pub(crate) fn deploy_helper_path(contract_id: &str, source_units: &[PathBuf]) -> PathBuf {
     let mut stem = format!("DeployHelper{contract_id}");
     loop {
         let path = PathBuf::from(format!("{DEPLOY_HELPERS_DIR}/{stem}.sol"));
@@ -301,7 +314,7 @@ mod tests {
         ];
 
         assert_eq!(
-            deploy_helper_path(7, &source_units),
+            deploy_helper_path("7", &source_units),
             PathBuf::from("foundry-pp/DeployHelper7__.sol")
         );
     }
