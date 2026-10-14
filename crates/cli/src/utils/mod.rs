@@ -1081,7 +1081,7 @@ ignore them in the `.gitignore` file."
 
     /// Returns remote branch names as a newline-separated string.
     pub fn remote_branches(self) -> Result<String> {
-        self.cmd().args(["branch", "-r"]).get_stdout_lossy()
+        self.cmd().args(["branch", "-r", "--no-color", "--no-column"]).get_stdout_lossy()
     }
 
     /// Fetches a branch from origin and checks out a local tracking branch at the given path.
