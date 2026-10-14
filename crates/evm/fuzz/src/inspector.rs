@@ -1,4 +1,4 @@
-use crate::{BasicTxDetails, invariant::RandomCallGenerator};
+use crate::invariant::RandomCallGenerator;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
 use evm2::{
     Inspector as Evm2Inspector,
@@ -165,7 +165,11 @@ impl Evm2Inspector<FoundryEvmTypes> for Fuzzer {
         message: &mut Message<FoundryEvmTypes>,
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() {
+        if let Some(generator) = &mut self.call_generator
+            && generator.override_depth > 0
+        {
+            generator.override_depth += 1;
+        } else if self.call_generator.is_some() {
             let context = interp.host().ext();
             if context.origin_override.or(context.transaction_origin) != Some(message.caller) {
                 self.override_message(interp, message);
@@ -334,8 +338,9 @@ impl Fuzzer {
     /// This simulates malicious contracts that immediately reenter when called.
     #[cfg(feature = "revm")]
     fn override_call<CTX: ContextTr>(&mut self, ecx: &mut CTX, call: &mut CallInputs) {
-        let Some(tx) =
-            self.next_override(call.transfer_from(), call.transfer_to(), call.scheme.is_call())
+        let Some(tx) = self
+            .override_generator(call.transfer_from(), call.transfer_to(), call.scheme.is_call())
+            .and_then(|generator| generator.next(call.transfer_from(), call.transfer_to()))
         else {
             return;
         };
@@ -379,11 +384,14 @@ impl Fuzzer {
         interp: &mut Evm2Interpreter<'_, '_, FoundryEvmTypes>,
         message: &mut Message<FoundryEvmTypes>,
     ) {
-        let Some(tx) = self.next_override(
-            message.caller,
-            message.destination,
-            matches!(message.kind, MessageKind::Call),
-        ) else {
+        let Some(tx) = self
+            .override_generator(
+                message.caller,
+                message.destination,
+                matches!(message.kind, MessageKind::Call),
+            )
+            .and_then(|generator| generator.try_next(message.caller, message.destination))
+        else {
             return;
         };
 
@@ -424,14 +432,13 @@ impl Fuzzer {
         }
     }
 
-    /// Returns the reentrant callback that replaces a call from `caller` to `target`, if the call
-    /// is eligible and the generator picks one.
-    fn next_override(
+    /// Returns the callback generator when the call is eligible for an override.
+    fn override_generator(
         &mut self,
         caller: Address,
         target: Address,
         is_call: bool,
-    ) -> Option<BasicTxDetails> {
+    ) -> Option<&mut RandomCallGenerator> {
         let target_is_cheatcode = self.is_cheatcode_address(target);
         let call_generator = self.call_generator.as_mut()?;
 
@@ -459,8 +466,7 @@ impl Fuzzer {
             }
         }
 
-        // There's only a ~27% chance that an override happens (90% * 30% from strategy).
-        call_generator.next(caller, target)
+        Some(call_generator)
     }
 }
 

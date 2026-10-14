@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct InvariantPersistedFailure {
     /// Recorded counterexample.
     pub(crate) call_sequence: Vec<BaseCounterExample>,
+    /// Reentrant override decisions, grouped by top-level call, including skipped overrides.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) call_overrides: Vec<Vec<Option<foundry_evm_fuzz::BasicTxDetails>>>,
     /// Invariant settings when the counterexample was generated.
     /// Used to determine if the counterexample is still valid.
     pub(crate) settings: InvariantSettings,

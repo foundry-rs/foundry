@@ -5,15 +5,18 @@ use crate::invariant_failure::{
     InvariantFailureIdentity, InvariantFailureSite as FailureSite, InvariantPersistedFailure,
 };
 use alloy_json_abi::{Function, JsonAbi};
+use alloy_primitives::map::AddressMap;
 use evm2::evm::{AccountChangeRef, StateChangeSink, StorageChange};
 use foundry_config::{InvariantDepthMode, InvariantWorkers};
 use foundry_evm_fuzz::{
-    BaseCounterExample, BasicTxDetails, CounterExample,
+    BaseCounterExample, BasicTxDetails, CounterExample, Fuzzer,
     invariant::{
-        FuzzRunIdentifiedContracts, InvariantMetrics, InvariantSettings, TargetedContract,
+        FuzzRunIdentifiedContracts, InvariantMetrics, InvariantSettings, RandomCallGenerator,
+        TargetedContract,
     },
-    strategies::{EvmFuzzState, FuzzState, TxGenerator},
+    strategies::{EvmFuzzState, FuzzState, TxGenerator, override_call_strat},
 };
+use parking_lot::RwLock;
 use rand::Rng;
 use replay::Failure;
 use std::{collections::HashMap, convert::Infallible};
@@ -38,10 +41,6 @@ impl EthereumRunner {
     ) -> Result<Vec<TestResult>> {
         let options = &config.invariant;
         ensure!(
-            !options.call_override,
-            "native EVM2 invariant call overrides are not migrated yet"
-        );
-        ensure!(
             options.corpus.corpus_dir.is_none(),
             "native EVM2 invariant coverage corpus is not migrated yet"
         );
@@ -60,38 +59,6 @@ impl EthereumRunner {
         let failure_dir = options.failure_persist_dir.as_ref().map(|dir| {
             dir.join("failures").join(contract.split(':').next_back().unwrap_or(contract))
         });
-        let mut persisted = Vec::new();
-        let mut failures = Vec::new();
-        for function in functions {
-            let failure_file =
-                failure_dir.as_ref().map(|dir| dir.join("invariants").join(&function.name));
-            let saved = failure_file
-                .as_ref()
-                .and_then(|path| replay::persisted_failure(path, &settings))
-                .or_else(|| {
-                    failure_dir.as_ref().and_then(|dir| {
-                        replay::persisted_failure(&dir.join(&function.name), &settings)
-                    })
-                });
-            let replayed = if let Some(calls) = saved.as_ref().and_then(replay::failure_calls) {
-                self.replay_invariant(
-                    executor, cheats, address, function, config, abi, &targets, &calls,
-                )?
-                .filter(|failure| {
-                    saved.as_ref().is_some_and(|saved| {
-                        saved.assertion_failure == failure.assertion
-                            && saved.execution_failure.as_ref().is_none_or(|identity| {
-                                identity.site == failure.site
-                                    && identity.reason == failure.result.reason
-                            })
-                    })
-                })
-            } else {
-                None
-            };
-            persisted.push(replayed.is_some());
-            failures.push(replayed);
-        }
         let fixtures = self.fuzz_fixtures(executor, cheats, address, abi)?;
         let mut seed = EvmFuzzState::empty(
             &self.artifacts.library_addresses,
@@ -121,6 +88,80 @@ impl EthereumRunner {
             options.runs,
             options.max_assume_rejects,
         );
+        let mut campaign_cheats = cheats.clone();
+        let mapping_slots = targets
+            .contracts
+            .iter()
+            .any(|(_, contract)| contract.storage_layout.is_some())
+            .then(AddressMap::default);
+        let mut fuzzer = Fuzzer::new(options.dictionary.max_fuzz_dictionary_values, mapping_slots);
+        if options.call_override {
+            let target = Arc::new(RwLock::new(Address::ZERO));
+            let override_targets = targets
+                .contracts
+                .iter()
+                .filter_map(|(address, contract)| {
+                    let functions = contract.abi_fuzzed_functions().cloned().collect::<Vec<_>>();
+                    (!functions.is_empty()).then_some((*address, functions))
+                })
+                .collect();
+            fuzzer.call_generator = Some(RandomCallGenerator::new(
+                address,
+                targets.contracts.keys().copied().collect(),
+                random.clone(),
+                override_call_strat(
+                    dictionary.snapshot(),
+                    override_targets,
+                    target.clone(),
+                    fixtures.clone(),
+                    options.dictionary.dictionary_weight,
+                    options.corpus.payable_value_weight,
+                ),
+                target,
+            ));
+        }
+        campaign_cheats.fuzzer = Some(fuzzer);
+        let cheats = &campaign_cheats;
+        let mut persisted = Vec::new();
+        let mut failures = Vec::new();
+        for function in functions {
+            let failure_file =
+                failure_dir.as_ref().map(|dir| dir.join("invariants").join(&function.name));
+            let saved = failure_file
+                .as_ref()
+                .and_then(|path| replay::persisted_failure(path, &settings))
+                .or_else(|| {
+                    failure_dir.as_ref().and_then(|dir| {
+                        replay::persisted_failure(&dir.join(&function.name), &settings)
+                    })
+                });
+            let replayed = if let Some(calls) = saved.as_ref().and_then(replay::failure_calls) {
+                self.replay_invariant(
+                    executor,
+                    cheats,
+                    address,
+                    function,
+                    config,
+                    abi,
+                    &targets,
+                    &calls,
+                    &saved.as_ref().expect("persisted calls").call_overrides,
+                )?
+                .filter(|failure| {
+                    saved.as_ref().is_some_and(|saved| {
+                        saved.assertion_failure == failure.assertion
+                            && saved.execution_failure.as_ref().is_none_or(|identity| {
+                                identity.site == failure.site
+                                    && identity.reason == failure.result.reason
+                            })
+                    })
+                })
+            } else {
+                None
+            };
+            persisted.push(replayed.is_some());
+            failures.push(replayed);
+        }
         let mut completed = 0usize;
         let mut calls = 0usize;
         let mut reverts = 0usize;
@@ -166,12 +207,25 @@ impl EthereumRunner {
                     }
                 };
                 let mut sequence = Vec::new();
+                let mut call_overrides = Vec::new();
                 let mut rejects = 0u32;
                 let mut accepted = 0u32;
                 while accepted < depth {
+                    if let Some(generator) =
+                        inspector.fuzzer.as_mut().and_then(|fuzzer| fuzzer.call_generator.as_mut())
+                    {
+                        generator.last_sequence.write().clear();
+                        *generator.handler_addresses.write() =
+                            contracts.targets().keys().copied().collect();
+                    }
                     let mut tx = generator.next_tx(&mut random)?;
-                    let (result, mut observed) =
-                        self.invariant_call(&mut state, &inspector, &mut tx, Some(&dictionary))?;
+                    let mut candidate = state.clone();
+                    let (result, mut observed) = self.invariant_call(
+                        &mut candidate,
+                        &inspector,
+                        &mut tx,
+                        Some((&dictionary, &contracts)),
+                    )?;
                     if let Some(coverage) = &mut observed.line_coverage {
                         HitMaps::merge_opt(
                             &mut campaign_coverage,
@@ -181,7 +235,7 @@ impl EthereumRunner {
                     let rejected =
                         result.output.as_ref() == foundry_evm::core::constants::MAGIC_ASSUME;
                     let failed_assertion =
-                        self.invariant_handler_assertion(&state, &result, &observed)?;
+                        self.invariant_handler_assertion(&candidate, &result, &observed)?;
                     calls += 1;
                     if let Some(key) = contracts.targets().fuzzed_metric_key(&tx) {
                         metrics.entry(key).or_default().record_call(!result.status, rejected);
@@ -198,6 +252,17 @@ impl EthereumRunner {
                             break 'campaign;
                         }
                         continue;
+                    }
+                    state = candidate;
+                    if let Some(fuzzer) = &mut observed.fuzzer {
+                        dictionary.collect_fuzzer_values(fuzzer);
+                        call_overrides.push(
+                            fuzzer.call_generator.as_ref().map_or_else(Vec::new, |generator| {
+                                generator.last_sequence.read().clone()
+                            }),
+                        );
+                    } else {
+                        call_overrides.push(Vec::new());
                     }
                     dictionary.collect_call_output(
                         &contracts,
@@ -230,6 +295,7 @@ impl EthereumRunner {
                                     site,
                                     result: test.clone(),
                                     calls: sequence.clone(),
+                                    call_overrides: call_overrides.clone(),
                                     assertion: failed_assertion,
                                 });
                             }
@@ -257,6 +323,7 @@ impl EthereumRunner {
                                         site: FailureSite::Predicate(function.selector()),
                                         result: test.clone(),
                                         calls: sequence.clone(),
+                                        call_overrides: call_overrides.clone(),
                                         assertion: false,
                                     });
                                 }
@@ -284,6 +351,7 @@ impl EthereumRunner {
                                     site: FailureSite::AfterInvariant,
                                     result: result.clone(),
                                     calls: sequence.clone(),
+                                    call_overrides: call_overrides.clone(),
                                     assertion: false,
                                 });
                             }
@@ -335,6 +403,11 @@ impl EthereumRunner {
                 if let Some(path) = &failure_file {
                     let record = InvariantPersistedFailure {
                         call_sequence: sequence,
+                        call_overrides: if options.call_override {
+                            failure.call_overrides
+                        } else {
+                            Vec::new()
+                        },
                         settings: settings.clone(),
                         assertion_failure: failure.assertion,
                         execution_failure: Some(InvariantFailureIdentity {
@@ -373,7 +446,7 @@ impl EthereumRunner {
         executor: &mut Executor<Database>,
         cheats: &Cheatcodes,
         tx: &mut BasicTxDetails,
-        dictionary: Option<&FuzzState>,
+        dictionary: Option<(&FuzzState, &FuzzRunIdentifiedContracts)>,
     ) -> Result<(TxResult<FoundryEvmTypes>, Cheatcodes)> {
         let mut block = *executor.block();
         block.timestamp += tx.warp.unwrap_or_default();
@@ -392,12 +465,25 @@ impl EthereumRunner {
             unreachable!("native synthetic request")
         };
         inner.value = value;
-        let (result, inspector) = if let Some(dictionary) = dictionary {
-            executor.inspect_transact_with_sink(
-                &request,
-                cheats.clone(),
-                &mut DictionaryChanges(dictionary),
-            )
+        let (result, inspector) = if let Some((dictionary, contracts)) = dictionary {
+            let mut sink = DictionaryChanges { dictionary, storage: Vec::new() };
+            let executed = executor.inspect_transact_with_sink(&request, cheats.clone(), &mut sink);
+            if executed.0.is_ok() {
+                let targets = contracts.targets();
+                let mappings =
+                    executed.1.fuzzer.as_ref().and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
+                for (address, slot, value) in sink.storage {
+                    if let Some(contract) = targets.get(&address) {
+                        dictionary.collect_typed_storage(
+                            slot,
+                            value,
+                            contract,
+                            mappings.and_then(|slots| slots.get(&address)),
+                        );
+                    }
+                }
+            }
+            executed
         } else {
             executor.inspect_transact(&request, cheats.clone())
         };
@@ -420,7 +506,9 @@ impl EthereumRunner {
             TxKind::Call(address),
             function.selector().to_vec().into(),
         )?;
-        let (result, observed) = case.inspect_transact(&tx, cheats.clone());
+        let mut predicate_cheats = cheats.clone();
+        predicate_cheats.fuzzer = None;
+        let (result, observed) = case.inspect_transact(&tx, predicate_cheats);
         let result = result?;
         let assertion_failed = case.storage(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)? != U256::ZERO;
         let legacy_failed = result.status
@@ -437,13 +525,16 @@ impl EthereumRunner {
 }
 
 /// Samples borrowed finalized changes while the executor owns and commits the transaction.
-struct DictionaryChanges<'a>(&'a FuzzState);
+struct DictionaryChanges<'a> {
+    dictionary: &'a FuzzState,
+    storage: Vec<(Address, U256, U256)>,
+}
 
 impl StateChangeSink for DictionaryChanges<'_> {
     type Error = Infallible;
 
     fn bytecode(&mut self, hash: B256, code: &Bytecode) -> Result<(), Self::Error> {
-        self.0.collect_bytecode(hash, code.original_byte_slice());
+        self.dictionary.collect_bytecode(hash, code.original_byte_slice());
         Ok(())
     }
 
@@ -456,7 +547,7 @@ impl StateChangeSink for DictionaryChanges<'_> {
         address: Address,
         info: Option<&AccountInfo>,
     ) -> Result<(), Self::Error> {
-        self.0.collect_account(
+        self.dictionary.collect_account(
             address,
             info.and_then(|info| {
                 info.code.as_ref().map(|code| (info.code_hash, code.original_byte_slice()))
@@ -475,7 +566,8 @@ impl StateChangeSink for DictionaryChanges<'_> {
         key: U256,
         value: U256,
     ) -> Result<(), Self::Error> {
-        self.0.collect_storage(address, key, value);
+        self.dictionary.collect_storage(address, key, value);
+        self.storage.push((address, key, value));
         Ok(())
     }
 }

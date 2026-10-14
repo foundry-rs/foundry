@@ -33,6 +33,8 @@ pub struct RandomCallGenerator {
     /// If set to `true`, consumes the next call from `last_sequence`, otherwise queries it from
     /// the strategy.
     pub replay: bool,
+    /// A replay requested more decisions than its recorded call contained.
+    pub replay_exhausted: bool,
     /// Saves the sequence of generated calls that can be replayed later on.
     pub last_sequence: Arc<RwLock<Vec<Option<BasicTxDetails>>>>,
 }
@@ -53,6 +55,7 @@ impl RandomCallGenerator {
             target_reference,
             last_sequence: Arc::default(),
             replay: false,
+            replay_exhausted: false,
             override_depth: 0,
         }
     }
@@ -78,10 +81,25 @@ impl RandomCallGenerator {
         original_caller: Address,
         original_target: Address,
     ) -> Option<BasicTxDetails> {
+        let next = self.try_next(original_caller, original_target);
+        assert!(!self.replay_exhausted, "missing external call override during replay");
+        next
+    }
+
+    /// Gets the next callback, recording an exhausted replay without panicking.
+    pub fn try_next(
+        &mut self,
+        original_caller: Address,
+        original_target: Address,
+    ) -> Option<BasicTxDetails> {
         if self.replay {
-            self.last_sequence.write().pop().expect(
-                "to have same size as the number of (unsafe) external calls of the sequence.",
-            )
+            match self.last_sequence.write().pop() {
+                Some(call) => call,
+                None => {
+                    self.replay_exhausted = true;
+                    None
+                }
+            }
         } else {
             // TODO: Do we want it to be 80% chance only too ?
             let sender = original_target;

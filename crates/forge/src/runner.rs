@@ -5285,6 +5285,10 @@ fn persisted_call_sequence(
     current_settings: &InvariantSettings,
 ) -> Option<InvariantPersistedFailure> {
     let persisted = foundry_common::fs::read_json_file::<InvariantPersistedFailure>(path).ok()?;
+    // Native callback decisions must be replayed by their owning runner.
+    if !persisted.call_overrides.is_empty() {
+        return None;
+    }
     if let Some(diff) = persisted.settings.diff(current_settings) {
         let _ = sh_warn!(
             "Failure from {path:?} file was ignored because invariant test settings have changed: {diff}"
@@ -5601,6 +5605,7 @@ fn record_invariant_failure(
         failure_file,
         &InvariantPersistedFailure {
             call_sequence: call_sequence.to_owned(),
+            call_overrides: Vec::new(),
             settings: settings.clone(),
             assertion_failure,
             execution_failure: None,

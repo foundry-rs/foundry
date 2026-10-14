@@ -36,6 +36,7 @@ use foundry_evm_core::{
     state_snapshot::StateSnapshots,
 };
 use foundry_evm_coverage::EthereumCoverageCollector;
+use foundry_evm_fuzz::Fuzzer;
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::Arc,
@@ -120,6 +121,8 @@ pub struct Cheatcodes {
     pub tracing: Option<TracingInspector>,
     /// Bytecode observations collected only for source coverage consumers.
     pub line_coverage: Option<EthereumCoverageCollector>,
+    /// Campaign feedback transferred into isolated child execution with the cheatcode state.
+    pub fuzzer: Option<Fuzzer>,
     /// Ephemeral script address whose ADDRESS/CALLER use is guarded during script execution.
     pub script_address: Option<Address>,
     script_failure: Option<(u16, Bytes)>,
@@ -169,6 +172,7 @@ impl Cheatcodes {
             transactions: Default::default(),
             tracing: Default::default(),
             line_coverage: Default::default(),
+            fuzzer: None,
             script_address: Default::default(),
             script_failure: Default::default(),
         }
@@ -1901,6 +1905,11 @@ impl Inspector<FoundryEvmTypes> for Cheatcodes {
         }
     }
     fn step(&mut self, interp: &mut Interpreter<'_, '_, FoundryEvmTypes>) {
+        if !self.storage_hooks.active
+            && let Some(fuzzer) = &mut self.fuzzer
+        {
+            fuzzer.step(interp);
+        }
         if let Some(coverage) = &mut self.line_coverage {
             coverage.step(interp);
         }
@@ -1941,6 +1950,11 @@ impl Inspector<FoundryEvmTypes> for Cheatcodes {
         }
     }
     fn step_end(&mut self, interp: &mut Interpreter<'_, '_, FoundryEvmTypes>) {
+        if !self.storage_hooks.active
+            && let Some(fuzzer) = &mut self.fuzzer
+        {
+            fuzzer.step_end(interp);
+        }
         Self::step_end(self, interp);
         self.invoke_storage_hook(interp);
         if let Some(tracing) = &mut self.tracing {
@@ -1953,6 +1967,12 @@ impl Inspector<FoundryEvmTypes> for Cheatcodes {
         message: &mut Message<FoundryEvmTypes>,
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         let isolated_root = message.depth == 0 && self.isolated_root.is_some();
+        if !isolated_root
+            && !self.storage_hooks.active
+            && let Some(fuzzer) = &mut self.fuzzer
+        {
+            fuzzer.call(interp, message);
+        }
         let index = if !isolated_root && let Some(tracing) = &mut self.tracing {
             tracing.call(interp, message);
             let index = tracing.traces().nodes().len() - 1;
@@ -1977,6 +1997,12 @@ impl Inspector<FoundryEvmTypes> for Cheatcodes {
         result: &mut MessageResult<FoundryEvmTypes>,
     ) {
         let isolated_root = self.isolation_depth == Some(message.depth);
+        if !isolated_root
+            && !self.storage_hooks.active
+            && let Some(fuzzer) = &mut self.fuzzer
+        {
+            fuzzer.call_end(interp, message, result);
+        }
         Self::call_end(self, interp, message, result);
         if message.depth == 0 && !result.stop.is_fatal() {
             let host = interp.host();

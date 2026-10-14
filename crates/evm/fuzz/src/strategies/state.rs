@@ -1,5 +1,5 @@
 use crate::{
-    BasicTxDetails,
+    BasicTxDetails, Fuzzer,
     invariant::{FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent},
     strategies::literals::LiteralsDictionary,
 };
@@ -9,17 +9,19 @@ use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
     map::{AddressIndexSet, B256IndexSet, HashMap, HashSet, IndexSet},
 };
-use foundry_common::{ignore_metadata_hash, slot_identifier::SlotInfo};
+use foundry_common::{
+    ignore_metadata_hash,
+    mapping_slots::MappingSlots,
+    slot_identifier::{SlotIdentifier, SlotInfo},
+};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, eip2935::is_history_storage_address};
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
 #[cfg(feature = "revm")]
-use crate::{Fuzzer, invariant::TargetedContracts};
+use crate::invariant::TargetedContracts;
 #[cfg(feature = "revm")]
 use alloy_primitives::map::AddressMap;
-#[cfg(feature = "revm")]
-use foundry_common::{mapping_slots::MappingSlots, slot_identifier::SlotIdentifier};
 #[cfg(feature = "revm")]
 use foundry_evm_core::utils::StateChangeset;
 #[cfg(feature = "revm")]
@@ -191,7 +193,6 @@ impl FuzzState {
         }
     }
 
-    #[cfg(feature = "revm")]
     pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
         if fuzzer.collected_values.is_empty() {
             return;
@@ -284,6 +285,33 @@ impl FuzzState {
         }
     }
 
+    /// Samples a finalized slot using the target's storage layout and observed mapping keys.
+    pub fn collect_typed_storage(
+        &self,
+        slot: U256,
+        value: U256,
+        contract: &TargetedContract,
+        mappings: Option<&MappingSlots>,
+    ) {
+        if let FuzzStateInner::Invariant(inner) = &self.inner
+            && let Some(layout) = &contract.storage_layout
+        {
+            let mut dictionary = inner.borrow_mut();
+            if !dictionary.config.include_storage {
+                return;
+            }
+            let key = Arc::as_ptr(layout) as usize;
+            dictionary
+                .slot_identifiers
+                .entry(key)
+                .or_insert_with(|| SlotIdentifier::new(Arc::clone(layout)));
+            let info = dictionary
+                .identify_storage_slot(key, slot.into(), mappings)
+                .filter(|info| info.decode(value.into()).is_some());
+            dictionary.insert_storage_value(&slot, &value, info);
+        }
+    }
+
     /// Collects typed trace-cmp operands from sancov-instrumented code.
     /// Values are inserted into both persistent state values (survive reverts) and typed
     /// sample buckets (for ABI-aware mutation).
@@ -354,7 +382,6 @@ impl From<EvmFuzzState> for FuzzState {
 /// Maximum number of persistent values from sancov trace-cmp.
 const MAX_PERSISTENT_VALUES: usize = 2048;
 /// Maximum cached storage slot layout lookups per fuzz dictionary.
-#[cfg(feature = "revm")]
 const MAX_SLOT_INFO_CACHE_ENTRIES: usize = 4096;
 
 #[derive(Clone)]
@@ -389,10 +416,8 @@ pub struct FuzzDictionary {
     /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
     persistent_values: B256IndexSet,
     /// Parsed storage layout identifiers keyed by the layout allocation.
-    #[cfg(feature = "revm")]
     slot_identifiers: HashMap<usize, SlotIdentifier>,
     /// Cached non-mapping storage slot identification keyed by layout allocation and slot.
-    #[cfg(feature = "revm")]
     slot_info_cache: HashMap<(usize, B256), Option<SlotInfo>>,
 
     misses: usize,
@@ -431,9 +456,7 @@ impl FuzzDictionary {
             sample_values: Default::default(),
             literal_values: Default::default(),
             persistent_values: Default::default(),
-            #[cfg(feature = "revm")]
             slot_identifiers: Default::default(),
-            #[cfg(feature = "revm")]
             slot_info_cache: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
@@ -597,7 +620,6 @@ impl FuzzDictionary {
         }
     }
 
-    #[cfg(feature = "revm")]
     fn identify_storage_slot(
         &mut self,
         key: usize,

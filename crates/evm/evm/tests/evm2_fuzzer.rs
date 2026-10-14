@@ -1,9 +1,4 @@
-//! Parity between the REVM and evm2 hooks of the fuzzer inspector.
-//!
-//! Each case runs the same handler on a bare inspected REVM EVM and on evm2 with only the
-//! [`Fuzzer`] attached, then compares the call output and the fuzzer's observations.
-
-#![cfg(feature = "revm")]
+//! Native fuzzer feedback and reentrant override execution.
 
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_primitives::{
@@ -22,12 +17,6 @@ use foundry_evm_fuzz::{
 };
 use parking_lot::RwLock;
 use proptest::{strategy::Just, test_runner::TestRunner};
-use revm::{
-    Context, InspectEvm, MainBuilder, MainContext,
-    context::TxEnv,
-    database::{CacheDB, EmptyDB},
-    state::Bytecode,
-};
 use std::sync::Arc;
 
 const SENDER: Address = Address::repeat_byte(0xaa);
@@ -77,30 +66,6 @@ fn fuzzer(reenter: bool) -> Fuzzer {
         fuzzer.call_generator = Some(generator);
     }
     fuzzer
-}
-
-fn run_revm(fuzzer: Fuzzer) -> (Bytes, Fuzzer) {
-    let mut db = CacheDB::new(EmptyDB::default());
-    let code = Bytecode::new_raw(handler_code());
-    db.insert_account_info(
-        HANDLER,
-        revm::state::AccountInfo {
-            balance: U256::from(100),
-            code_hash: code.hash_slow(),
-            code: Some(code),
-            ..Default::default()
-        },
-    );
-    let mut evm = Context::mainnet().with_db(db).build_mainnet_with_inspector(fuzzer);
-    let tx = TxEnv::builder()
-        .caller(SENDER)
-        .kind(TxKind::Call(HANDLER))
-        .gas_limit(1_000_000)
-        .build()
-        .unwrap();
-    let result = evm.inspect_one_tx(tx).unwrap();
-    assert!(result.is_success(), "{result:?}");
-    (result.output().unwrap().clone(), evm.inspector)
 }
 
 fn run_evm2(fuzzer: Fuzzer) -> (Bytes, Fuzzer) {
@@ -164,17 +129,22 @@ fn observations((output, mut fuzzer): (Bytes, Fuzzer)) -> Observations {
 }
 
 #[test]
-fn evm2_fuzzer_observations_match_revm() {
+fn evm2_fuzzer_observes_calls_and_replays_overrides() {
     for reenter in [false, true] {
-        let revm = observations(run_revm(fuzzer(reenter)));
-        let evm2 = observations(run_evm2(fuzzer(reenter)));
-
-        // The value transfer reaches the recipient either way; only the reentrant callback
-        // writes slot 0.
-        assert_eq!(revm.output, (U256::from(reenter), U256::from(5)), "reenter: {reenter}");
-        assert!(!revm.collected_values.is_empty());
-        assert_eq!(revm.mapping_keys.len(), 1);
-        assert_eq!(revm.observed_calls.len(), 1);
-        assert_eq!(evm2, revm, "reenter: {reenter}");
+        let observed = observations(run_evm2(fuzzer(reenter)));
+        assert_eq!(observed.output, (U256::from(reenter), U256::from(5)));
+        assert!(!observed.collected_values.is_empty());
+        assert_eq!(observed.mapping_keys.len(), 1);
+        assert_eq!(observed.observed_calls.len(), 1);
+        assert_eq!(observed.override_depth, reenter.then_some(0));
+        assert_eq!(observed.replays_left, reenter.then_some(0));
     }
+}
+
+#[test]
+fn evm2_fuzzer_reports_exhausted_replay_without_panicking() {
+    let fuzzer = fuzzer(true);
+    fuzzer.call_generator.as_ref().unwrap().last_sequence.write().clear();
+    let (_, fuzzer) = run_evm2(fuzzer);
+    assert!(fuzzer.call_generator.unwrap().replay_exhausted);
 }

@@ -73,6 +73,9 @@ alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
 
 [dev-dependencies]
+foundry-evm-fuzz.workspace = true
+parking_lot.workspace = true
+proptest.workspace = true
 foundry-cheatcodes.workspace = true
 alloy-sol-types.workspace = true
 tempo-revm.workspace = true

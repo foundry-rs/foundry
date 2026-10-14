@@ -16,10 +16,18 @@ use foundry_evm::{constants::CHEATCODE_ADDRESS, ethereum::Executor};
 use foundry_test_utils::str;
 use std::sync::Arc;
 
+alloy_sol_types::sol! {
+    interface NativeReentrantCallback {
+        function callback() external;
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct NativeInvariantFailureRecord {
     call_sequence: Vec<foundry_evm::fuzz::BaseCounterExample>,
     assertion_failure: bool,
+    #[serde(default)]
+    call_overrides: Vec<Vec<Option<foundry_evm_fuzz::BasicTxDetails>>>,
 }
 
 #[forgetest_init]
@@ -4372,4 +4380,127 @@ fn ethereum_native_context_free_crypto(prj: _, cmd: _) {
 Ran 4 test suites [ELAPSED]: 16 tests passed, 0 failed, 0 skipped (16 total tests)
 ...
 "#]]);
+}
+
+#[forgetest_init]
+fn ethereum_native_invariant_reentrant_replay(prj: _, cmd: _) {
+    prj.add_test(
+        "NativeFuzzerReplay.t.sol",
+        include_str!("../../../../../testdata/fixtures/NativeFuzzerReplay.sol"),
+    );
+    let root = prj.root().join("native-callback-failures");
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.isolate = isolate;
+            config.fuzz.seed = Some(U256::ONE);
+            config.invariant.runs = 32;
+            config.invariant.depth = 16;
+            config.invariant.call_override = false;
+            config.invariant.failure_persist_dir = Some(root.clone());
+        });
+        cmd.forge_fuse().args(["test", "--mc", "NativeReentrantInvariantTest"]).assert_success();
+        prj.update_config(|config| config.invariant.call_override = true);
+        cmd.forge_fuse()
+            .args(["test", "--mc", "NativeReentrantInvariantTest"])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: reentrant callback]
+	[Sequence] (original: [..], shrunk: 1)
+...
+"#]]);
+        let path =
+            root.join("failures/NativeReentrantInvariantTest/invariants/invariant_noReentrancy");
+        let failure =
+            foundry_common::fs::read_json_file::<NativeInvariantFailureRecord>(&path).unwrap();
+        assert_eq!(failure.call_sequence.len(), 1);
+        assert_eq!(failure.call_overrides.len(), 1);
+        // Nested calls in the callback must not create more override decisions.
+        assert_eq!(failure.call_overrides[0].len(), 1);
+        let callback = failure.call_overrides[0][0].as_ref().unwrap();
+        assert_eq!(
+            callback.call_details.calldata.as_ref(),
+            NativeReentrantCallback::callbackCall::SELECTOR
+        );
+        // No new runs, and a different seed: only the saved callback can reproduce this failure.
+        prj.update_config(|config| {
+            config.invariant.runs = 0;
+            config.fuzz.seed = Some(U256::from(99));
+        });
+        cmd.forge_fuse()
+            .args(["test", "--mc", "NativeReentrantInvariantTest"])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: reentrant callback]
+	[Sequence] (original: 1, shrunk: 1)
+...
+ invariant_noReentrancy() (runs: 0, calls: 0, reverts: 0, failed corpus replays: 1)
+...
+"#]]);
+        let mut malformed = foundry_common::fs::read_json_file::<serde_json::Value>(&path).unwrap();
+        malformed["call_overrides"][0] = serde_json::json!([]);
+        foundry_common::fs::write_json_file(&path, &malformed).unwrap();
+        cmd.forge_fuse()
+            .args(["test", "--mc", "NativeReentrantInvariantTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+[PASS] invariant_noReentrancy() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[forgetest_init]
+fn ethereum_native_invariant_rejected_call_restores_environment(prj: _, cmd: _) {
+    prj.add_test(
+        "NativeRejectedCall.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract RejectedCallHandler is Test {
+    uint256 immutable timestamp = block.timestamp;
+    uint256 public accepted;
+    function step(bool reject) public {
+        require(block.timestamp == timestamp, "rejected call leaked environment");
+        if (reject) {
+            vm.warp(timestamp + 100);
+            vm.assume(false);
+        }
+        accepted++;
+    }
+}
+contract RejectedCallInvariantTest is Test {
+    RejectedCallHandler handler;
+    function setUp() public {
+        handler = new RejectedCallHandler();
+        targetContract(address(handler));
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = RejectedCallHandler.step.selector;
+        targetSelector(FuzzSelector(address(handler), selectors));
+    }
+    function invariant_valid() public view { require(handler.accepted() <= 16); }
+    function afterInvariant() public view { require(handler.accepted() == 16); }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::ONE);
+        config.invariant.runs = 4;
+        config.invariant.depth = 16;
+        config.invariant.fail_on_revert = true;
+        config.invariant.call_override = true;
+    });
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse()
+            .args(["test", "--mc", "RejectedCallInvariantTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+[PASS] invariant_valid() (runs: 4, calls: [..], reverts: 0)
+...
+"#]]);
+    }
 }
