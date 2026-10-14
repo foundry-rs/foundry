@@ -4280,3 +4280,64 @@ contract NativeCoverageInvariantTest {
         }
     }
 }
+
+#[forgetest_init]
+fn ethereum_native_context_free_crypto(prj: _, cmd: _) {
+    for (path, source) in [
+        (
+            "CryptoContextFree.t.sol",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testdata/default/cheats/CryptoContextFree.t.sol"
+            )),
+        ),
+        (
+            "Ed25519.t.sol",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testdata/default/cheats/Ed25519.t.sol"
+            )),
+        ),
+        (
+            "SignP256.t.sol",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testdata/default/cheats/SignP256.t.sol"
+            )),
+        ),
+        (
+            "Derive.t.sol",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testdata/default/cheats/Derive.t.sol"
+            )),
+        ),
+    ] {
+        prj.add_test(path, source);
+    }
+    for (path, source) in [
+        (
+            "utils/Test.sol",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/Test.sol")),
+        ),
+        (
+            "utils/DSTest.sol",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/DSTest.sol")),
+        ),
+        (
+            "utils/Vm.sol",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/Vm.sol")),
+        ),
+        (
+            "utils/console.sol",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/utils/console.sol")),
+        ),
+    ] {
+        prj.add_source(path, source);
+    }
+    cmd.args(["test", "--remappings", "utils/=src/utils/"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 4 test suites [ELAPSED]: 16 tests passed, 0 failed, 0 skipped (16 total tests)
+...
+"#]]);
+}

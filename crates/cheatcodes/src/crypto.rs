@@ -1,19 +1,13 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
 use crate::{
-    Cheatcode, CheatcodesCore, Result,
+    Cheatcode, Result,
     Vm::*,
     wallet::{parse_wallet, validate_private_key},
 };
-use alloy_primitives::{Address, B256, U256, keccak256};
-use alloy_signer::{Signer, SignerSync};
-use alloy_signer_local::{
-    MnemonicBuilder, PrivateKeySigner,
-    coins_bip39::{
-        ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
-        Portuguese, Spanish, Wordlist,
-    },
-};
+use alloy_primitives::{B256, U256};
+use alloy_signer::SignerSync;
+use alloy_signer_local::coins_bip39::{English, Wordlist};
 use alloy_sol_types::SolValue;
 use foundry_common::wallet::{derive_private_key, derive_private_key_with_language};
 use k256::{
@@ -35,12 +29,30 @@ use ed25519_consensus::{
     Signature as Ed25519Signature, SigningKey as Ed25519SigningKey,
     VerificationKey as Ed25519VerificationKey,
 };
+
+#[cfg(feature = "revm")]
+use crate::CheatcodesCore;
+#[cfg(feature = "revm")]
+use alloy_primitives::{Address, keccak256};
+#[cfg(feature = "revm")]
+use alloy_signer::Signer;
+#[cfg(feature = "revm")]
+use alloy_signer_local::{
+    MnemonicBuilder, PrivateKeySigner,
+    coins_bip39::{
+        ChineseSimplified, ChineseTraditional, Czech, French, Italian, Japanese, Korean,
+        Portuguese, Spanish,
+    },
+};
+#[cfg(feature = "revm")]
 use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
+#[cfg(feature = "revm")]
 const PRIVATE_KEY_SIGNER_CACHE_LIMIT: usize = 64;
 
+#[cfg(feature = "revm")]
 impl Cheatcode for createWallet_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { walletLabel } = self;
@@ -48,6 +60,7 @@ impl Cheatcode for createWallet_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for createWallet_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey } = self;
@@ -55,6 +68,7 @@ impl Cheatcode for createWallet_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for createWallet_2Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, walletLabel } = self;
@@ -80,6 +94,7 @@ impl Cheatcode for signWithNonceUnsafeCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for signKeychainCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, account, digest } = self;
@@ -87,6 +102,7 @@ impl Cheatcode for signKeychainCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for signKeychainAdminCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, account, digest } = self;
@@ -130,6 +146,7 @@ impl Cheatcode for deriveKey_3Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for rememberKeyCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey } = self;
@@ -139,6 +156,7 @@ impl Cheatcode for rememberKeyCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for rememberKeys_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
@@ -153,6 +171,7 @@ impl Cheatcode for rememberKeys_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for rememberKeys_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { mnemonic, derivationPath, language, count } = self;
@@ -167,12 +186,14 @@ impl Cheatcode for rememberKeys_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 fn inject_wallet(state: &mut CheatcodesCore, wallet: PrivateKeySigner) -> Address {
     let address = wallet.address();
     state.wallets().add_local_signer(wallet);
     address
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for sign_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, digest } = self;
@@ -181,6 +202,7 @@ impl Cheatcode for sign_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for signCompact_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, digest } = self;
@@ -189,6 +211,7 @@ impl Cheatcode for signCompact_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for sign_2Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { digest } = self;
@@ -197,6 +220,7 @@ impl Cheatcode for sign_2Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for signCompact_2Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { digest } = self;
@@ -205,6 +229,7 @@ impl Cheatcode for signCompact_2Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for sign_3Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { signer, digest } = self;
@@ -213,6 +238,7 @@ impl Cheatcode for sign_3Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for signCompact_3Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { signer, digest } = self;
@@ -324,6 +350,7 @@ impl Cheatcode for verifyEd25519Call {
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
+#[cfg(feature = "revm")]
 fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut CheatcodesCore) -> Result {
     let (addr, pub_key_x, pub_key_y) = with_private_key_signer(state, private_key, |wallet| {
         let addr = wallet.address();
@@ -365,6 +392,7 @@ fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature
     Ok(sig)
 }
 
+#[cfg(feature = "revm")]
 fn sign_cached(
     state: &mut CheatcodesCore,
     private_key: &U256,
@@ -377,6 +405,7 @@ fn sign_cached(
     })
 }
 
+#[cfg(feature = "revm")]
 fn sign_keychain(
     state: &mut CheatcodesCore,
     private_key: &U256,
@@ -472,6 +501,7 @@ fn sign_with_nonce(
     Ok(alloy_primitives::Signature::new(r_u256, s_u256, y_parity))
 }
 
+#[cfg(feature = "revm")]
 fn sign_with_wallet(
     state: &mut CheatcodesCore,
     signer: Option<Address>,
@@ -636,6 +666,7 @@ fn verify_ed25519(signature: &[u8], namespace: &[u8], message: &[u8], public_key
     Ok(valid.abi_encode())
 }
 
+#[cfg(feature = "revm")]
 pub(super) fn with_private_key_signer<R>(
     state: &mut CheatcodesCore,
     private_key: &U256,
@@ -668,6 +699,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
     Ok(private_key.abi_encode())
 }
 
+#[cfg(feature = "revm")]
 fn derive_wallets_str(
     mnemonic: &str,
     path: &str,
@@ -689,6 +721,7 @@ fn derive_wallets_str(
     }
 }
 
+#[cfg(feature = "revm")]
 fn derive_wallets<W: Wordlist>(
     mnemonic: &str,
     path: &str,
@@ -708,7 +741,7 @@ fn derive_wallets<W: Wordlist>(
     Ok(wallets)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use alloy_primitives::{FixedBytes, hex::FromHex};
