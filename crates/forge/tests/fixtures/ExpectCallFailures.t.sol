@@ -87,6 +87,20 @@ contract ExpectCallFailureTest is DSTest {
         target.add(1, 2);
     }
 
+    function testShouldFailExpectStaticCallWithCall() public {
+        Contract target = new Contract();
+        bytes memory data = abi.encodeWithSelector(target.pay.selector, 1);
+        vm.expectStaticCall(address(target), data);
+        target.pay(1);
+    }
+
+    function testShouldFailExpectRegularCallWithStaticCall() public {
+        Contract target = new Contract();
+        bytes memory data = abi.encodeWithSelector(target.add.selector, 1, 2);
+        vm.expectRegularCall(address(target), data);
+        target.add(1, 2);
+    }
+
     function testShouldFailExpectInnerCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
