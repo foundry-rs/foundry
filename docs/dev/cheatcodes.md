@@ -128,15 +128,21 @@ Multiple attributes can be specified by separating them with commas, e.g. `#[che
 ### `Cheatcode` trait
 
 This trait defines the interface that all cheatcode implementations must implement.
-There are three methods that can be implemented:
+Handlers implement the narrowest entry point that provides the state they need:
 
 | Method | Purpose | When to use |
 |--------|---------|-------------|
-| `apply` | Pure cheatcodes that don't need EVM data access | For simple state manipulations |
-| `apply_stateful` | Cheatcodes that need EVM data access | For operations requiring current EVM state |
-| `apply_full` | Cheatcodes that need EVM executor access | For operations requiring recursive EVM calls |
+| `apply_context_free` | No cheatcode state or EVM context | For conversions and host operations such as environment variables |
+| `apply_context` | Shared `CheatcodesCore` state | For labels, wallets, serialization and other engine-independent state |
+| `apply_stateful` | REVM context access | For operations requiring current EVM state |
+| `apply_full` | REVM executor access | For operations requiring recursive EVM calls |
 
-Only one of these methods can be implemented.
+The REVM defaults delegate from `apply_full` through `apply_stateful` and `apply_context` to
+`apply_context_free`. Native dispatch calls `apply_context_free` directly for supported calls, so
+strings, environment operations, Base64 and version comparisons reuse the same handler bodies.
+The existing execution-dependent `apply_evm2` adapters are separate and unchanged by this migration.
+Other calls still return the unsupported cheatcode diagnostic. Shared state-taking handlers are not
+yet enabled natively.
 
 This trait is implemented manually for each cheatcode in the [`foundry-cheatcodes`](../../crates/cheatcodes/)
 crate on the `sol!`-generated function call structs.
