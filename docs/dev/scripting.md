@@ -194,9 +194,10 @@ pending, and receipt associations. Resume then:
 5. prepares and submits that remaining work.
 
 A reverted receipt is terminal but unsuccessful. Resume never resubmits a reverted operation, but it
-continues with the remaining operations. Verification skips reverted receipts, including predicted
-CREATE2 addresses from a reverted batch. `--resume-retry` resolves only an unknown delegated outcome
-and cannot override a confirmed revert.
+continues with the remaining operations and reports completion with reverted transactions instead of
+success. Verification skips reverted receipts, including predicted CREATE2 addresses from a reverted
+batch. `--resume-retry` resolves only an unknown delegated outcome and cannot override a confirmed
+revert.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
 endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.

@@ -1109,7 +1109,18 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
-            sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+            // Resume continues past persisted reverts, so completion does not imply success.
+            if self
+                .sequence
+                .sequences()
+                .iter()
+                .flat_map(|sequence| &sequence.receipts)
+                .any(|receipt| !receipt.status())
+            {
+                sh_println!("\nONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS.")?;
+            } else {
+                sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+            }
         }
 
         Ok(BroadcastedState {

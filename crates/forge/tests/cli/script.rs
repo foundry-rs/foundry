@@ -1406,6 +1406,108 @@ Error: Transaction Failure: 0x[..]
     assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 3);
 }
 
+// Unlike `resume_skips_reverted_transaction`, all operations are submitted before any receipt is
+// checked, so a later operation is already mined when the earlier revert is observed.
+#[forgetest_init]
+async fn resume_skips_revert_before_mined_transaction(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "RevertBeforeMined.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Gate {
+    event Passed();
+
+    uint256 public hits;
+
+    // Simulation executes every transaction in the latest block, so this passes there and reverts
+    // once mined in a later block.
+    function onlyAt(uint256 blockNumber) external {
+        require(block.number == blockNumber, "mined after simulation");
+        emit Passed();
+    }
+
+    function later() external {
+        hits++;
+    }
+}
+
+contract RevertBeforeMined is Script {
+    function run() external {
+        vm.startBroadcast();
+        Gate gate = new Gate();
+        gate.onlyAt(block.number);
+        gate.later();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/RevertBeforeMined.s.sol/31337/run-latest.json");
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "RevertBeforeMined",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: Transaction Failure: 0x[..]
+
+"#]]);
+
+    // Every operation has its own receipt, including the revert between two mined operations.
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let statuses = sequence["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|transaction| {
+            let receipt = sequence["receipts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|receipt| receipt["transactionHash"] == transaction["hash"])
+                .unwrap();
+            receipt["status"].as_str().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(statuses, ["0x1", "0x0", "0x1"]);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let reverted_hash = sequence["transactions"][1]["hash"].as_str().unwrap().to_string();
+    assert_eq!(submissions.lock().unwrap().len(), 3);
+
+    // A fresh process neither resubmits the revert nor the mined operation after it.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RevertBeforeMined",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success()
+        .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS.
+...
+"#]])
+        .stderr_eq(format!(
+            "Warning: transaction {reverted_hash} on chain 31337 reverted; resume will not resubmit it\n"
+        ));
+    assert_eq!(submissions.lock().unwrap().len(), 3);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 3);
+}
+
 #[forgetest]
 async fn can_deploy_script_remember_key(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
