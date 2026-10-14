@@ -1,6 +1,6 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatcodesCore, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Authorization;
@@ -276,8 +276,8 @@ impl Cheatcode for stopBroadcastCall {
 }
 
 impl Cheatcode for getWalletsCall {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let wallets = ccx.state.core.wallets().signers().unwrap_or_default();
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let wallets = state.wallets().signers().unwrap_or_default();
         Ok(wallets.abi_encode())
     }
 }
