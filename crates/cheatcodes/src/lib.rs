@@ -76,6 +76,9 @@ mod fs;
 #[path = "fs/artifacts.rs"]
 mod fs;
 
+#[path = "fs/time.rs"]
+mod time;
+
 #[cfg(feature = "revm")]
 mod inspector;
 #[cfg(feature = "revm")]
@@ -108,7 +111,6 @@ pub use test::expect::ExpectedCallTracker;
 
 mod toml;
 
-#[cfg(feature = "revm")]
 mod utils;
 
 /// Cheatcode implementation.

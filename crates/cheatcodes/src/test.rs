@@ -4,9 +4,11 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Result, Vm::*};
 use alloy_chains::Chain as AlloyChain;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
-use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::{constants::MAGIC_SKIP, evm::FoundryEvmNetwork};
 use std::str::FromStr;
+
+#[path = "test/context_free.rs"]
+mod context_free;
 
 pub(crate) mod assert;
 pub(crate) mod assume;
@@ -24,13 +26,6 @@ impl Cheatcode for breakpoint_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { char, value } = self;
         breakpoint(ccx.state, &ccx.caller, char, *value)
-    }
-}
-
-impl Cheatcode for getFoundryVersionCall {
-    fn apply_context_free(&self) -> Result {
-        let Self {} = self;
-        Ok(SEMVER_VERSION.abi_encode())
     }
 }
 
@@ -53,15 +48,6 @@ impl Cheatcode for rpcUrlStructsCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
-    }
-}
-
-impl Cheatcode for sleepCall {
-    fn apply_context_free(&self) -> Result {
-        let Self { duration } = self;
-        let sleep_duration = std::time::Duration::from_millis(duration.saturating_to());
-        std::thread::sleep(sleep_duration);
-        Ok(Default::default())
     }
 }
 
