@@ -783,7 +783,7 @@ impl Cheatcodes {
                             $(Vm::VmCalls::$context_free(cheat) => {
                                 cheat.apply_context_free().map(Into::into).map_err(|error| {
                                     if error.is_str() {
-                                        let name = signature(&cheat).split('(').next().unwrap();
+                                        let name = stringify!($context_free).split('_').next().unwrap();
                                         fmt_err!("vm.{name}: {error}").into()
                                     } else {
                                         error.into()
@@ -1954,11 +1954,10 @@ impl Inspector<FoundryEvmTypes> for Cheatcodes {
     }
 }
 
-const fn signature<C: crate::CheatcodeDef>(_: &C) -> &'static str {
-    C::CHEATCODE.func.signature
-}
-
 fn unsupported_call(call: Vm::VmCalls) -> Result<Bytes, ApplyError> {
+    const fn signature<C: crate::CheatcodeDef>(_: &C) -> &'static str {
+        C::CHEATCODE.func.signature
+    }
     macro_rules! unsupported {
         ($($variant:ident),*) => {
             match call {
