@@ -298,6 +298,7 @@ impl SymbolicExecutor {
         let callvalue = SymExpr::zero(&mut self.cx);
         state.frame =
             CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);
+        state.gas = GasMeter::new(sender, target, state.world.storage_writes());
         state.constraints.extend(constraints);
         Ok(SequenceCall {
             code,

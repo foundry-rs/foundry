@@ -465,6 +465,90 @@ Supported ABI shapes include:
 - fixed and dynamic arrays
 - tuples and structs, represented through ABI tuples
 
+### Gas bounds
+
+`vm.startSnapshotGas` and `vm.stopSnapshotGas` work in symbolic tests. On each
+path, `stopSnapshotGas` returns an upper bound on the value the concrete
+cheatcode returns, so an assertion on it proves a gas limit for every input:
+
+```solidity
+function checkWithdrawGas(uint256 amount) public {
+    vm.startSnapshotGas("withdraw");
+    vault.withdraw(amount);
+    assertLe(vm.stopSnapshotGas(), 100_000);
+}
+```
+
+A `FAIL` with a counterexample is a concrete input that exceeds the limit.
+
+Without an assertion, a passing test reports the largest value of each snapshot
+over every successful path. Forge writes it to the gas snapshot file, replays
+an input that reaches it, and records both in the JSON `symbolic.gas` field.
+
+A `@custom:max-gas` NatSpec tag on a function of a contract that `setUp`
+deploys sets the most gas one transaction calling it may use:
+
+```solidity
+/// @custom:max-gas 2_000_000
+function distribute() external { ... }
+```
+
+`forge test --symbolic` checks each tagged function in every test suite that
+deploys the contract, as a transaction from the test contract with symbolic
+arguments, and reports it as `maxGas:<Contract>.<signature>`. A failure shows
+the worst-case input, replayed concretely. The suite must contain at least one
+test function.
+
+The executor charges each opcode with revm's gas tables for the active fork,
+including EIP-2929 cold accesses, EIP-2200 storage costs, and EIP-3529 refunds
+on the slot's original and present values. With test isolation, a top-level
+call pays its transaction's receipt gas, including intrinsic and EIP-7623 floor
+gas over symbolic calldata. A cost that depends on a symbolic value is either
+kept symbolic or charged at its maximum: an account or slot that this path did
+not access is cold. The run is incomplete if the measured gas contains a cost
+with no bound: `CREATE`, `SELFDESTRUCT`, precompile calls, other cheatcode
+calls, exceptional halts in a callee, or memory accesses with a symbolic size.
+Forks from Berlin through Osaka are supported.
+
+Symbolic calldata makes gas searches harder for the solver. If z3 times out,
+set `symbolic.solver = "bitwuzla"` or `"yices"`.
+
+`forge build --gas-limits` checks the same tags without tests. Each contract
+runs without its constructor, from any sender and any storage state, with
+unknown immutables. Calls to other contracts have no bound, so a function that
+makes them is incomplete. A dynamic parameter needs
+`@custom:max-length <parameter> N`, with `N` at most 16; each length is a
+separate run.
+
+A `@custom:max-length N` tag on a dynamic storage array is an invariant: every
+transaction starts with the array at most `N` long. The build check proves it
+for each function that can write storage, and reports an input that breaks it.
+The invariant bounds loops over the array:
+
+```solidity
+/// @custom:max-length 500
+address[] employees;
+
+/// @custom:max-gas 5_000_000
+function settle() external {
+    for (uint256 i; i < employees.length; ++i) owed[employees[i]] = 0;
+}
+```
+
+The executor runs the first iteration exactly. Then it replaces every value the
+loop changes with an unknown value, and proves that one iteration from that
+state leads back to it. The bound is the first iteration, plus the most gas of
+one later iteration times the most iterations, plus the most gas after the
+loop. A counter that grows by a constant step and is bounded on every
+iteration gives the iterations. See
+[`docs/gas-bounds-guide.md`](docs/gas-bounds-guide.md) for how to write gas
+checks that finish within the time budget. Later iterations are priced as if every
+account and slot they touch is cold, every `SSTORE` has no known original value,
+and the transaction has no refunds, so the bound is above every input. A loop
+with at most 8 more iterations runs exactly instead. The bound is incomplete
+for nested or consecutive loops, loops that allocate memory, and loops without
+a bounded counter.
+
 ## Stateful Symbolic Invariants
 
 When `--symbolic` is enabled, `invariant*` and `statefulFuzz*` functions use a

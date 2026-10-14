@@ -656,6 +656,28 @@ impl SymBoolExpr {
         ControlFlow::Continue(())
     }
 
+    /// Visits the word expressions in this condition in the order of [`Self::visit_exprs`],
+    /// skipping word nodes already in `visited`.
+    pub(crate) fn visit_exprs_once(
+        &self,
+        visited: &mut HashSet<SymExpr>,
+        visitor: &mut impl FnMut(&SymExpr),
+    ) {
+        match self.kind() {
+            SymBoolExprKind::Const(_) => {}
+            SymBoolExprKind::Not(value) => value.visit_exprs_once(visited, visitor),
+            SymBoolExprKind::And(values) => {
+                for value in values.iter() {
+                    value.visit_exprs_once(visited, visitor);
+                }
+            }
+            SymBoolExprKind::Cmp(_, left, right) => {
+                left.visit_once(visited, visitor);
+                right.visit_once(visited, visitor);
+            }
+        }
+    }
+
     /// Returns whether any word node satisfies `visitor`, visiting each distinct node once.
     pub(crate) fn visit_bool(&self, visitor: impl FnMut(&SymExpr) -> bool) -> bool {
         visit_unique(vec![self.clone()], Vec::new(), visitor)
@@ -762,20 +784,14 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit_exprs(&mut |expr| {
-            if let Some(var) = expr.kind().get_var() {
-                vars.insert(var);
-            }
-            ControlFlow::<()>::Continue(())
+        self.visit_exprs_once(&mut HashSet::default(), &mut |expr| {
+            vars.extend(expr.kind().get_var());
         });
     }
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit_exprs(&mut |expr| {
-            if let Some(var) = expr.kind().get_eval_var() {
-                vars.insert(var);
-            }
-            ControlFlow::<()>::Continue(())
+        self.visit_exprs_once(&mut HashSet::default(), &mut |expr| {
+            vars.extend(expr.kind().get_eval_var());
         });
     }
 

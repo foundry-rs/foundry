@@ -598,6 +598,7 @@ impl SymbolicExecutor {
         }
         let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
         let args_offset = in_offset + 4;
+        meter_cheatcode(state, selector);
         match selector {
             assumeCall::SELECTOR => self.handle_assume(state, in_offset + 4),
             assumeNoRevert_0Call::SELECTOR
@@ -1612,10 +1613,27 @@ impl SymbolicExecutor {
             snapshotGasLastFrame_0Call::SELECTOR | snapshotGasLastFrame_1Call::SELECTOR => {
                 Err(SymbolicError::Unsupported("symbolic vm.snapshotGasLastFrame not modeled"))
             }
+            startSnapshotGas_0Call::SELECTOR | startSnapshotGas_1Call::SELECTOR => {
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
+                let name = match values.as_slice() {
+                    [name] => (None, dyn_string(name)?),
+                    [group, name] => (Some(dyn_string(group)?), dyn_string(name)?),
+                    _ => {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic vm.startSnapshotGas args",
+                        ));
+                    }
+                };
+                state.gas.start_snapshot(name);
+                Ok(CheatcodeOutcome::Continue(Vec::new()))
+            }
             stopSnapshotGas_0Call::SELECTOR
             | stopSnapshotGas_1Call::SELECTOR
             | stopSnapshotGas_2Call::SELECTOR => {
-                Err(SymbolicError::Unsupported("symbolic vm.stopSnapshotGas not modeled"))
+                let gas_used = state.gas.stop_snapshot(&mut self.cx)?;
+                trace!(target: "symbolic_gas", ?gas_used, "stopSnapshotGas");
+                Ok(CheatcodeOutcome::Continue(vec![gas_used]))
             }
             pauseGasMeteringCall::SELECTOR
             | resumeGasMeteringCall::SELECTOR
@@ -1624,8 +1642,6 @@ impl SymbolicExecutor {
             | breakpoint_1Call::SELECTOR
             | snapshotValue_0Call::SELECTOR
             | snapshotValue_1Call::SELECTOR
-            | startSnapshotGas_0Call::SELECTOR
-            | startSnapshotGas_1Call::SELECTOR
             | sleepCall::SELECTOR
             | coolCall::SELECTOR
             | accessListCall::SELECTOR
@@ -2410,5 +2426,35 @@ impl SymbolicExecutor {
                 Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }
         }
+    }
+}
+
+/// Keeps the path's gas bound sound across a cheatcode call.
+fn meter_cheatcode(state: &mut PathState, selector: [u8; 4]) {
+    match selector {
+        stopSnapshotGas_0Call::SELECTOR
+        | stopSnapshotGas_1Call::SELECTOR
+        | stopSnapshotGas_2Call::SELECTOR => {}
+        // The concrete cost of a cheatcode call is not modeled.
+        _ if state.gas.is_snapshot_active() => {
+            state.gas.unmodeled("symbolic gas across cheatcode calls not modeled");
+        }
+        _ => {}
+    }
+    match selector {
+        // State restores can make warm accounts and slots cold again and remove writes made
+        // earlier in the transaction.
+        revertToCall::SELECTOR
+        | revertToStateCall::SELECTOR
+        | revertToAndDeleteCall::SELECTOR
+        | revertToStateAndDeleteCall::SELECTOR
+        | selectForkCall::SELECTOR
+        | rollFork_0Call::SELECTOR
+        | rollFork_2Call::SELECTOR => {
+            state.gas.cool_all();
+            state.gas.forget_transaction_writes();
+        }
+        coolCall::SELECTOR | coolSlotCall::SELECTOR => state.gas.cool_all(),
+        _ => {}
     }
 }

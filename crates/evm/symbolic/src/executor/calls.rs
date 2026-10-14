@@ -10,6 +10,13 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
+        if let Ok(target) = state.stack.peek(1)
+            && self.is_unknown_account(executor, state, target)
+        {
+            return Err(SymbolicError::Unsupported(
+                "external call to unknown code has no gas bound",
+            ));
+        }
         let pre_call_state = (!state.function_mocks.is_empty()
             || !state.expected_calls.is_empty()
             || !state.call_mocks.is_empty()
@@ -596,12 +603,61 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Returns whether the account at `address` has unknown code and balance: in a run where
+    /// every account other than the target, the cheatcode address, and precompiles is unknown.
+    pub(super) fn is_unknown_account<FEN: FoundryEvmNetwork>(
+        &self,
+        executor: &Executor<FEN>,
+        state: &PathState,
+        address: &SymExpr,
+    ) -> bool {
+        let Some(own) = self.unknown_callees_of else { return false };
+        let spec: SpecId = executor.spec_id().into();
+        state.world.resolve_address(address).is_none_or(|address| {
+            address != own
+                && address != CHEATCODE_ADDRESS
+                && precompile_number_for_spec(address, spec).is_none()
+        })
+    }
+
+    /// Returns an unknown value of an unknown account, the same for the same address expression.
+    pub(super) fn unknown_account_word(
+        &mut self,
+        prefix: &'static str,
+        address: &SymExpr,
+    ) -> SymExpr {
+        let digest = ExpressionDigests::identity([address]);
+        let symbol = stable_symbol(&mut self.cx, prefix, digest.as_slice());
+        SymExpr::get_var(&mut self.cx, symbol)
+    }
+
     pub(super) fn take_loop_jump(
         &self,
         state: &mut PathState,
         source_pc: usize,
         dest: usize,
     ) -> bool {
+        if self.loop_summaries && state.call_depth == 0 {
+            match self.function_jumps.get(&(source_pc - 1)) {
+                Some(FunctionJump::Into) => state.activations.push(Activation::default()),
+                Some(FunctionJump::Out) => {
+                    if state.activations.len() > 1 {
+                        state.activations.pop();
+                    }
+                }
+                // Within one activation, structured code only returns to a destination it
+                // executed in a loop.
+                None => {
+                    if state
+                        .activations
+                        .last()
+                        .is_some_and(|activation| activation.is_back_edge(dest))
+                    {
+                        state.back_edge = Some(dest);
+                    }
+                }
+            }
+        }
         let Some(bound) = self.config.loop_bound else {
             return true;
         };

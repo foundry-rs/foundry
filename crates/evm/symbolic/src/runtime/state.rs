@@ -3,6 +3,43 @@ use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
+/// Jump destinations one internal function activation executed, to find loops.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Activation {
+    /// Destinations in the order of their first execution.
+    order: Vec<usize>,
+    visited: HashSet<usize>,
+    /// Destinations executed before a summarized loop. A jump to one leaves the loop for an
+    /// enclosing loop.
+    outer: HashSet<usize>,
+}
+
+impl Activation {
+    pub(crate) fn visit(&mut self, pc: usize) {
+        if self.visited.insert(pc) {
+            self.order.push(pc);
+        }
+    }
+
+    /// Returns whether a jump to `dest` returns to code this activation already executed.
+    pub(crate) fn is_back_edge(&self, dest: usize) -> bool {
+        self.visited.contains(&dest) || self.outer.contains(&dest)
+    }
+
+    /// Starts a loop summary at `head`, or in a caller of the loop's function without `head`.
+    ///
+    /// Destinations executed before the head become outer; the others are forgotten, so the
+    /// loop body can run again.
+    pub(crate) fn enter_loop(&mut self, head: Option<usize>) {
+        let end = head
+            .and_then(|head| self.order.iter().position(|&pc| pc == head))
+            .unwrap_or(self.order.len());
+        self.outer.extend(&self.order[..end]);
+        self.order.clear();
+        self.visited.clear();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PathState {
     pub(crate) depth: usize,
@@ -27,6 +64,16 @@ pub(crate) struct PathState {
     branch_target_reached: bool,
     needs_feasibility_check: bool,
     pub(crate) loop_jumps: HashMap<usize, u32>,
+    /// Jump destinations this path executed in the root frame, one entry per internal function
+    /// activation, to find loops.
+    pub(crate) activations: Vec<Activation>,
+    /// Loop head the last root-frame jump returned to.
+    pub(crate) back_edge: Option<usize>,
+    /// Loop heads this path runs without a summary, with the reason the summary failed, or
+    /// `None` for loops with few iterations.
+    pub(crate) unsummarized_heads: HashMap<usize, Option<&'static str>>,
+    /// Iterations this path ran of loops whose summary failed.
+    pub(crate) unsummarized_iterations: u32,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
@@ -43,6 +90,7 @@ pub(crate) struct PathState {
     pub(crate) mapping_hook_keccak_preimages: HashMap<(Address, SymExpr), Arc<[SymExpr]>>,
     pub(crate) storage_hook_active: bool,
     pub(crate) pending_storage_hook_revert: bool,
+    pub(crate) gas: GasMeter,
 }
 
 impl PathState {
@@ -98,6 +146,10 @@ impl PathState {
             branch_target_reached: false,
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
+            activations: vec![Activation::default()],
+            back_edge: None,
+            unsummarized_heads: HashMap::default(),
+            unsummarized_iterations: 0,
             expected_revert: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
@@ -114,6 +166,7 @@ impl PathState {
             mapping_hook_keccak_preimages: HashMap::default(),
             storage_hook_active: false,
             pending_storage_hook_revert: false,
+            gas: GasMeter::new(caller, address, 0),
         }
     }
 
@@ -1626,6 +1679,11 @@ pub(crate) struct SymbolicWorldState {
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
+    /// Arbitrary storage symbols read at symbolic keys, with the account and key of each read.
+    replay_symbolic_storage_keys: HashMap<Symbol, Vec<(Address, SymExpr)>>,
+    /// Accounts whose storage a loop summary replaced with unknown values, with the summary's
+    /// epoch.
+    havoced_storage: HashMap<Address, u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -1673,6 +1731,60 @@ impl SymbolicWorld {
         Ok(StorageWrite::select_from(cx, &self.storage, address, read_key, base))
     }
 
+    /// Reads a slot as it was after the first `writes` storage writes of this path.
+    ///
+    /// With the write count at the start of a transaction, this is the slot's original value.
+    pub(crate) fn sload_before<FEN: FoundryEvmNetwork>(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &Executor<FEN>,
+        address: Address,
+        key: SymExpr,
+        concrete_key: Option<U256>,
+        writes: usize,
+    ) -> Result<SymExpr, SymbolicError> {
+        let base = self.storage_base(cx, executor, address, &key, concrete_key)?;
+        let read_key = concrete_key.map(|key| SymExpr::constant(cx, key)).unwrap_or(key);
+        let writes = &self.storage[..writes.min(self.storage.len())];
+        Ok(StorageWrite::select_from(cx, writes, address, read_key, base))
+    }
+
+    /// Number of storage writes on this path.
+    pub(crate) fn storage_writes(&self) -> usize {
+        self.storage.len()
+    }
+
+    /// Accounts this path wrote storage of after its first `writes` storage writes.
+    pub(crate) fn storage_written_since(&self, writes: usize) -> HashSet<Address> {
+        self.storage.iter().skip(writes).map(|write| write.address).collect()
+    }
+
+    /// Constant keys this path wrote in the storage of `address` after its first `writes`
+    /// storage writes.
+    pub(crate) fn storage_keys_written_since(&self, writes: usize, address: Address) -> Vec<U256> {
+        self.storage
+            .iter()
+            .skip(writes)
+            .filter(|write| write.address == address)
+            .filter_map(|write| write.key.as_const())
+            .collect()
+    }
+
+    /// Number of transient storage writes on this path.
+    pub(crate) fn transient_storage_writes(&self) -> usize {
+        self.transient_storage.len()
+    }
+
+    /// Replaces the storage of `address` with unknown values, named after `epoch`.
+    ///
+    /// Each read returns a symbol for its key expression, the same for the same expression.
+    /// Later writes apply on top as usual.
+    pub(crate) fn havoc_storage(&mut self, address: Address, epoch: u64) {
+        let state = Arc::make_mut(&mut self.state);
+        state.storage.retain(|write| write.address != address);
+        state.havoced_storage.insert(address, epoch);
+    }
+
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         Arc::make_mut(&mut self.state).storage.push(StorageWrite::new(address, key, value));
     }
@@ -1711,7 +1823,11 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn replay_storage_symbols(&self) -> SymbolicVars {
-        self.replay_storage_slots.keys().copied().collect()
+        self.replay_storage_slots
+            .keys()
+            .chain(self.replay_symbolic_storage_keys.keys())
+            .copied()
+            .collect()
     }
 
     pub(crate) fn replay_storage_assignments(
@@ -1733,6 +1849,16 @@ impl SymbolicWorld {
                             "conflicting symbolic storage replay assignments".to_string(),
                         ));
                     }
+                }
+            }
+        }
+        // Symbolic keys are replayed at their model value. Distinct key expressions can take the
+        // same value; the first read wins, and a replay that differs is reported by the caller.
+        for (symbol, reads) in &self.replay_symbolic_storage_keys {
+            let Some(value) = model.get(symbol).copied() else { continue };
+            for (address, key) in reads {
+                if let Some(slot) = key.eval_model_if_complete(model)? {
+                    assignments.entry((*address, slot)).or_insert(value);
                 }
             }
         }
@@ -1798,6 +1924,15 @@ impl SymbolicWorld {
         key: &SymExpr,
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
+        if let Some(&epoch) = self.havoced_storage.get(&address) {
+            let key = concrete_key.map(|key| SymExpr::constant(cx, key)).unwrap_or(key.clone());
+            let symbol = stable_symbol(
+                cx,
+                "loop_storage",
+                format!("{epoch}:{address:?}:{:?}", ExpressionDigests::identity([&key])).as_bytes(),
+            );
+            return Ok(SymExpr::get_var(cx, symbol));
+        }
         if let Some(base) = self.arbitrary_storage_base(cx, executor, address, key, concrete_key)? {
             return Ok(base);
         }
@@ -1876,13 +2011,16 @@ impl SymbolicWorld {
         };
         let symbol = symbolic_storage_symbol(cx, symbol_address, key);
         if let Some(slot) = concrete_key.or_else(|| key.as_const()) {
-            if has_arbitrary_storage {
+            if self.arbitrary_storage_all || has_arbitrary_storage {
                 self.record_replay_storage_slot(symbol, address, slot);
             }
             if let Some(source) = copied_source {
                 self.record_replay_storage_slot(symbol, source, slot);
                 self.record_replay_storage_slot(symbol, address, slot);
             }
+        } else if self.arbitrary_storage_all && copied_source.is_none() {
+            // Generic storage replays reads at symbolic keys too.
+            self.record_replay_symbolic_storage_key(symbol, address, key);
         }
         let value = SymExpr::get_var(cx, symbol);
         if let Some(source) = copied_source {
@@ -1904,10 +2042,33 @@ impl SymbolicWorld {
             .push(SymbolicReplayStorageSlot { address, slot });
     }
 
+    fn record_replay_symbolic_storage_key(
+        &mut self,
+        symbol: Symbol,
+        address: Address,
+        key: &SymExpr,
+    ) {
+        if self.replay_symbolic_storage_keys.get(&symbol).is_some_and(|reads| {
+            reads.iter().any(|(existing, existing_key)| *existing == address && existing_key == key)
+        }) {
+            return;
+        }
+        Arc::make_mut(&mut self.state)
+            .replay_symbolic_storage_keys
+            .entry(symbol)
+            .or_default()
+            .push((address, key.clone()));
+    }
+
     fn merge_replay_metadata_from(&mut self, other: &Self) {
         for (symbol, slots) in &other.replay_storage_slots {
             for slot in slots {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
+            }
+        }
+        for (symbol, reads) in &other.replay_symbolic_storage_keys {
+            for (address, key) in reads {
+                self.record_replay_symbolic_storage_key(*symbol, *address, key);
             }
         }
         let state = Arc::make_mut(&mut self.state);

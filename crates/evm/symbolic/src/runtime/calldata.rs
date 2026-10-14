@@ -13,6 +13,11 @@ impl SymCalldata {
         Self { size_word: SymExpr::constant(cx, U256::from(size)), size, bytes }
     }
 
+    /// Returns one expression per calldata byte.
+    pub(crate) fn materialize(&self, cx: &mut SymCx) -> Vec<SymExpr> {
+        self.bytes.materialize(cx)
+    }
+
     pub(crate) fn size_word(&self) -> SymExpr {
         self.size_word.clone()
     }

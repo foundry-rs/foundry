@@ -4,7 +4,9 @@ mod calls;
 mod cheatcodes;
 mod constraints;
 mod create;
+mod gas;
 mod invariant;
+mod loops;
 mod opcodes;
 mod run;
 
@@ -149,6 +151,13 @@ impl SymbolicExecutor {
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
         parent.take_call_outcome_state(&mut outcome.state);
+        parent
+            .gas
+            .join_child(&mut outcome.state.gas, matches!(outcome.status, CallStatus::Success));
+        if matches!(outcome.status, CallStatus::ExceptionalHalt) {
+            // The child consumed all forwarded gas, which depends on the caller's gas limit.
+            parent.gas.unmodeled("symbolic gas after an exceptional halt not modeled");
+        }
 
         if let Some(assumption) = parent.assume_no_revert_next_call.take()
             && matches!(outcome.status, CallStatus::Revert)

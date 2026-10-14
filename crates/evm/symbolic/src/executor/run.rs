@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    loops::{MAX_EXACT_ITERATIONS, MAX_UNSUMMARIZED_ITERATIONS},
+    *,
+};
 use std::cmp::Reverse;
 
 impl SymbolicExecutor {
@@ -19,6 +22,14 @@ impl SymbolicExecutor {
             deadline: None,
             nested_deferred_mode: DeferredPathMode::Skip,
             stateless_retry_safe: true,
+            unknown_callees_of: None,
+            symbolic_immutables: Vec::new(),
+            storage_max_lengths: Vec::new(),
+            loop_summaries: false,
+            loop_epochs: 0,
+            function_jumps: Default::default(),
+            finished_gas: Vec::new(),
+            finished_length_violations: Vec::new(),
         }
     }
 
@@ -133,6 +144,16 @@ impl SymbolicExecutor {
         self.execute_run(input, None)
     }
 
+    /// Returns the gas bounds and length violations of the successful paths the last run
+    /// finished.
+    ///
+    /// After an incomplete run, they cover only the paths explored before it stopped. A gas
+    /// bound then says nothing about the other paths, but its witness is still an input to
+    /// replay, and a length violation is still an input to confirm.
+    pub fn finished_paths(&self) -> (&[SymbolicGasBound], &[SymbolicLengthViolation]) {
+        (&self.finished_gas, &self.finished_length_violations)
+    }
+
     /// Searches for concrete inputs that complete after reaching a requested branch outcome.
     ///
     /// Unlike [`Self::run`], this retains replay candidates independently of the proof result, so a
@@ -169,7 +190,10 @@ impl SymbolicExecutor {
         input: SymbolicRunInput<'_, FEN>,
         mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
     ) -> SymbolicRunResult {
-        self.reset_run_state(false);
+        // A gas check is one transaction: bound its wall-clock time like invariant exploration.
+        self.reset_run_state(input.transaction_gas.is_some());
+        self.finished_gas.clear();
+        self.finished_length_violations.clear();
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -369,7 +393,32 @@ impl SymbolicExecutor {
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
-        let code = SymCode::from_bytecode(&mut self.cx, &bytecode);
+        let mut code = SymCode::from_bytecode(&mut self.cx, &bytecode);
+        self.symbolic_immutables = input
+            .transaction_gas
+            .as_ref()
+            .map(|transaction| transaction.immutables.clone())
+            .unwrap_or_default();
+        if !self.symbolic_immutables.is_empty() {
+            code = code.with_symbolic_words(&mut self.cx, &self.symbolic_immutables);
+        }
+        self.unknown_callees_of = input
+            .transaction_gas
+            .as_ref()
+            .is_some_and(|transaction| transaction.unknown_callees)
+            .then_some(input.target);
+        self.storage_max_lengths = input
+            .transaction_gas
+            .as_ref()
+            .map(|transaction| transaction.max_lengths.clone())
+            .unwrap_or_default();
+        // Summaries need every callee to be unknown, so a loop cannot change other accounts.
+        self.loop_summaries = self.unknown_callees_of.is_some();
+        self.function_jumps = input
+            .transaction_gas
+            .as_ref()
+            .map(|transaction| transaction.function_jumps.clone())
+            .unwrap_or_default();
         let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config, &mut self.cx)? {
             let corpus_seed_models = input
@@ -390,6 +439,42 @@ impl SymbolicExecutor {
             root.apply_executor_env(&mut self.cx, input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
+            if input.transaction_gas.is_some() {
+                // Any account can send the transaction: the sender is symbolic.
+                let sender = SymExpr::var(&mut self.cx, TRANSACTION_SENDER);
+                root.constraints.push(SymBoolExpr::cmp_word_const(
+                    &mut self.cx,
+                    SymCmpOp::Ult,
+                    &sender,
+                    U256::ONE << 160,
+                ));
+                root.frame.caller_word = sender.clone();
+                root.origin_word = sender.clone();
+                let calldata = root.frame.calldata.materialize(&mut self.cx);
+                root.gas.begin_isolated_call(TRANSACTION_DEPTH, Some(input.target), calldata, 0);
+                root.gas.access_account_word(sender);
+                if self.unknown_callees_of.is_some() {
+                    // Any storage state comes with any balance.
+                    let balance = SymExpr::var(&mut self.cx, "target_balance");
+                    root.world.set_balance_word(input.target, balance);
+                }
+                for &(slot, max) in &self.storage_max_lengths {
+                    let key = SymExpr::constant(&mut self.cx, slot);
+                    let length = root.world.sload(
+                        &mut self.cx,
+                        input.executor,
+                        input.target,
+                        key,
+                        Some(slot),
+                    )?;
+                    root.constraints.push(SymBoolExpr::cmp_word_const(
+                        &mut self.cx,
+                        SymCmpOp::Ule,
+                        &length,
+                        U256::from(max),
+                    ));
+                }
+            }
             roots.push(root);
         }
         order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
@@ -442,6 +527,45 @@ impl SymbolicExecutor {
 
             loop {
                 self.check_timeout()?;
+                if let Some(head) = state.back_edge.take() {
+                    if let Some(&reason) = state.unsummarized_heads.get(&head) {
+                        // A loop without a summary runs as before, up to a fixed count.
+                        if let Some(reason) = reason {
+                            state.unsummarized_iterations += 1;
+                            if state.unsummarized_iterations > MAX_UNSUMMARIZED_ITERATIONS {
+                                return Ok(SymbolicRunResult::Incomplete {
+                                    kind: SymbolicStopReason::Stuck,
+                                    reason: format!("loop at pc {head} is not bounded: {reason}"),
+                                    stats: self.stats_with_paths(*completed_paths),
+                                });
+                            }
+                        }
+                    } else {
+                        match self.summarize_loop(
+                            input.executor,
+                            &code,
+                            input.target,
+                            &state,
+                            completed_paths,
+                        )? {
+                            // Running a few iterations is exact and terminates.
+                            Ok(bound) if bound.iterations <= MAX_EXACT_ITERATIONS => {
+                                state.unsummarized_heads.insert(head, None);
+                            }
+                            Ok(bound) => {
+                                self.finish_summarized_path(input, &mut state, bound)?;
+                                self.raise_gas_bounds(input.function, &state)?;
+                                *completed_paths += 1;
+                                normal_paths += 1;
+                                break;
+                            }
+                            Err(reason) => {
+                                debug!(head, reason, "loop not summarized");
+                                state.unsummarized_heads.insert(head, Some(reason));
+                            }
+                        }
+                    }
+                }
                 if state.depth >= depth_limit {
                     debug!(depth = state.depth, depth_limit, "symbolic depth limit reached");
                     return Ok(SymbolicRunResult::Incomplete {
@@ -497,6 +621,16 @@ impl SymbolicExecutor {
                             };
                             success_input = Some((state.depth, input));
                         }
+                        if input.transaction_gas.is_some() {
+                            self.measure_transaction(input.executor, &mut state, input.function)?;
+                            self.check_max_lengths(
+                                input.executor,
+                                input.target,
+                                input.function,
+                                &mut state,
+                            )?;
+                        }
+                        self.raise_gas_bounds(input.function, &state)?;
                         *completed_paths += 1;
                         normal_paths += 1;
                         break;
@@ -511,7 +645,7 @@ impl SymbolicExecutor {
                             "materializing counterexample from solver model"
                         );
                         let SymbolicConcreteInput { args, calldata } =
-                            self.materialize_root_input(input.function, &state)?;
+                            self.materialize_hinted_root_model(input.function, &state)?.0;
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata,
@@ -551,6 +685,8 @@ impl SymbolicExecutor {
         Ok(SymbolicRunResult::Safe {
             stats: self.stats_with_paths(*completed_paths),
             success_input: success_input.map(|(_, input)| input),
+            gas: self.finished_gas.clone(),
+            length_violations: self.finished_length_violations.clone(),
         })
     }
 
@@ -573,11 +709,37 @@ impl SymbolicExecutor {
     }
 
     /// Materializes the root call input for `state` from a solver model.
-    fn materialize_root_input(
+    pub(super) fn materialize_root_input(
         &mut self,
         function: &Function,
         state: &PathState,
     ) -> Result<SymbolicConcreteInput, SymbolicError> {
+        self.materialize_root_model(function, state).map(|(input, _)| input)
+    }
+
+    /// Materializes the root call input for `state`, preferring a model that also satisfies the
+    /// gas meter's witness hints, so a gas witness or counterexample reaches its calldata pricing.
+    pub(super) fn materialize_hinted_root_model(
+        &mut self,
+        function: &Function,
+        state: &PathState,
+    ) -> Result<(SymbolicConcreteInput, SymbolicModel), SymbolicError> {
+        if !state.gas.witness_hints().is_empty() {
+            let mut hinted = state.clone();
+            hinted.constraints.extend(state.gas.witness_hints().iter().cloned());
+            if let Ok(materialized) = self.materialize_root_model(function, &hinted) {
+                return Ok(materialized);
+            }
+        }
+        self.materialize_root_model(function, state)
+    }
+
+    /// Materializes the root call input for `state` and returns the solver model it came from.
+    pub(super) fn materialize_root_model(
+        &mut self,
+        function: &Function,
+        state: &PathState,
+    ) -> Result<(SymbolicConcreteInput, SymbolicModel), SymbolicError> {
         let calldata = state
             .root_calldata
             .as_ref()
@@ -590,7 +752,7 @@ impl SymbolicExecutor {
         )?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
-        Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
+        Ok((SymbolicConcreteInput { args, calldata: calldata_bytes }, model))
     }
 
     pub(super) fn run_invariant_inner<FEN: FoundryEvmNetwork>(

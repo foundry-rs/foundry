@@ -163,7 +163,7 @@ Ran 18 tests for test/SymbolicFalsePassPrevention.t.sol:SymbolicFalsePassPrevent
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.snapshotGasLastCall not modeled] checkSnapshotGasLastCallFailsClosed() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.snapshotGasLastFrame not modeled] checkSnapshotGasLastFrameFailsClosed() ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.stopExpectSafeMemory not modeled] checkStopExpectSafeMemoryFailsClosed() ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.stopSnapshotGas not modeled] checkStopSnapshotGasFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.stopSnapshotGas without snapshot] checkStopSnapshotGasFailsClosed() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicAddmodFailsClosed(uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicMulmodFailsClosed(uint256) ([METRICS])
 Suite result: FAILED. 1 passed; 17 failed; 0 skipped; [ELAPSED]

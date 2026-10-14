@@ -25,13 +25,16 @@ use foundry_evm::{
         bytecode::{Bytecode, JumpTable, opcode},
         context::{Block, Cfg, Transaction},
         database::DatabaseRef,
-        precompile::{blake2, bn254, hash, identity, kzg_point_evaluation, modexp, secp256k1},
+        precompile::{
+            EthPrecompileResult, blake2, bn254, hash, identity, kzg_point_evaluation, modexp,
+            secp256k1,
+        },
         primitives::hardfork::SpecId,
     },
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     fmt::{self, Write as _},
     io::Write,
     ops::{ControlFlow, Deref, DerefMut},
@@ -54,7 +57,9 @@ mod executor;
 mod runtime;
 
 pub(crate) use consts::*;
-pub use runtime::{SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
+pub use runtime::{
+    FunctionJump, SymbolicBranchTarget, SymbolicError, SymbolicRunInput, TransactionGas,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SymbolicVmCheatcode {
@@ -141,6 +146,10 @@ pub enum SymbolicRunResult {
         stats: SymbolicStats,
         /// One concrete successful input, when requested by the caller.
         success_input: Option<SymbolicConcreteInput>,
+        /// Largest value of each gas snapshot over all successful paths.
+        gas: Vec<SymbolicGasBound>,
+        /// Successful paths that leave a storage array longer than its declared maximum.
+        length_violations: Vec<SymbolicLengthViolation>,
     },
     /// A feasible failure was found.
     Counterexample {
@@ -169,6 +178,56 @@ pub struct SymbolicConcreteInput {
     pub args: Vec<DynSolValue>,
     /// ABI-encoded calldata for replay.
     pub calldata: Bytes,
+}
+
+/// Largest value one `vm.stopSnapshotGas` can return, with an input that returns it.
+#[derive(Clone, Debug)]
+pub struct SymbolicGasBound {
+    /// Snapshot group passed to `vm.startSnapshotGas`, if any.
+    pub group: Option<String>,
+    /// Snapshot name passed to `vm.startSnapshotGas`.
+    pub name: String,
+    /// Upper bound on the snapshot over every successful path. The witness's path reaches it.
+    pub max: u64,
+    /// Input whose path returns `max`.
+    pub witness: SymbolicConcreteInput,
+    /// Sender of the witness, when the bound is for the root transaction.
+    pub sender: Option<Address>,
+    /// Storage values the witness path assumes, to set before replay.
+    pub storage: Vec<SymbolicStorageAssignment>,
+    /// Values the witness path assumes for symbolic immutables, by byte offset in the code.
+    pub immutables: Vec<(usize, U256)>,
+    /// Loops the witness path summarized. The bound is then above the gas of every input, but
+    /// the witness need not reach it.
+    pub loops: Vec<SymbolicLoopBound>,
+}
+
+/// Gas bound of a loop, summarized instead of running every iteration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolicLoopBound {
+    /// Program counter of the loop head.
+    pub pc: usize,
+    /// Most gas of one iteration after the first.
+    pub iteration: u64,
+    /// Most iterations after the first.
+    pub iterations: u64,
+    /// Most gas from the loop head to the end of the call, after the last iteration.
+    pub exit: u64,
+}
+
+/// A successful transaction that leaves a storage array longer than its declared maximum.
+#[derive(Clone, Debug)]
+pub struct SymbolicLengthViolation {
+    /// Storage slot of the array length.
+    pub slot: U256,
+    /// Input whose path leaves the array too long.
+    pub witness: SymbolicConcreteInput,
+    /// Sender of the witness.
+    pub sender: Option<Address>,
+    /// Storage values the witness path assumes, to set before replay.
+    pub storage: Vec<SymbolicStorageAssignment>,
+    /// Values the witness path assumes for symbolic immutables, by byte offset in the code.
+    pub immutables: Vec<(usize, U256)>,
 }
 
 /// Result of best-effort symbolic exploration toward one branch target.
@@ -408,6 +467,23 @@ pub struct SymbolicExecutor {
     deadline: Option<Instant>,
     nested_deferred_mode: DeferredPathMode,
     stateless_retry_safe: bool,
+    /// Target of the current run if the code of every other account is unknown.
+    unknown_callees_of: Option<Address>,
+    /// Byte offsets of the target's symbolic immutables in the current run.
+    symbolic_immutables: Vec<usize>,
+    /// Storage slots of the target's bounded array lengths in the current run, with their
+    /// maximum.
+    storage_max_lengths: Vec<(U256, u64)>,
+    /// Whether root-frame loops are summarized in the current run.
+    loop_summaries: bool,
+    /// Loop summary rounds started, to name their unknown values.
+    loop_epochs: u64,
+    /// Jumps into and out of internal functions of the target in the current run.
+    function_jumps: BTreeMap<usize, FunctionJump>,
+    /// Gas bounds of the successful paths the current run finished.
+    finished_gas: Vec<SymbolicGasBound>,
+    /// Length violations of the successful paths the current run finished.
+    finished_length_violations: Vec<SymbolicLengthViolation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

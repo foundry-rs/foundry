@@ -2,6 +2,7 @@
 
 use crate::{
     ContractRunner, TestFilter,
+    gas_limits::{GasLimits, artifact_gas_limits},
     progress::TestsProgress,
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
@@ -85,6 +86,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub invariant_literals: LiteralsDictionary,
     /// Variant counts for project enums, used to constrain fuzzed enum inputs.
     pub enum_bounds: EnumBounds,
+    /// `@custom:max-gas` limits that symbolic execution checks on contracts deployed in `setUp`.
+    pub gas_limits: Arc<GasLimits>,
 
     /// Pristine backend cloned for every test execution.
     pub backend: Backend<FEN>,
@@ -846,6 +849,17 @@ impl MultiContractRunnerBuilder {
             );
         }
 
+        let gas_limits = Arc::new(
+            output
+                .artifact_ids()
+                .map(|(id, artifact)| {
+                    let limits = artifact_gas_limits(&id, artifact);
+                    (artifact_id(id).identifier(), limits)
+                })
+                .filter(|(_, limits)| !limits.is_empty())
+                .collect::<GasLimits>(),
+        );
+
         // Create known contracts from linked contracts and storage layout information (if any).
         let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
             .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
@@ -922,6 +936,7 @@ impl MultiContractRunnerBuilder {
             fuzz_literals,
             invariant_literals,
             enum_bounds,
+            gas_limits,
 
             tcfg: TestRunnerConfig {
                 evm_opts,

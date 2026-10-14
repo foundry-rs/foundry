@@ -7,6 +7,7 @@ mod cheatcodes;
 mod control;
 mod evm;
 mod expr;
+mod gas;
 mod memory;
 mod precompiles;
 mod solver;
@@ -20,6 +21,7 @@ pub(crate) use cheatcodes::*;
 pub(crate) use control::*;
 pub(crate) use evm::*;
 pub(crate) use expr::*;
+pub(crate) use gas::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
 pub(crate) use solver::{BranchFeasibility, SmtLibSubprocessSolver};
@@ -72,6 +74,35 @@ pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     pub corpus_seeds: Vec<SymbolicConcreteInput>,
     /// Optional comparison site whose opposite branch should be solved.
     pub branch_target: Option<SymbolicBranchTarget>,
+    /// Bounds the gas of the root call as a transaction, reported as a gas bound named after the
+    /// function signature.
+    pub transaction_gas: Option<TransactionGas>,
+}
+
+/// Settings for bounding the gas of the root call as a transaction.
+#[derive(Clone, Debug, Default)]
+pub struct TransactionGas {
+    /// Byte offsets of 32-byte immutable values in the target's runtime code. The executor reads
+    /// them as unknown symbolic words, for code deployed without its constructor.
+    pub immutables: Vec<usize>,
+    /// Whether the code of every account other than the target is unknown. External calls then
+    /// have no gas bound.
+    pub unknown_callees: bool,
+    /// Storage slots of the target's array lengths with their declared maximum. Each length is
+    /// at most its maximum when the transaction starts, and every successful path is checked
+    /// to keep it there.
+    pub max_lengths: Vec<(U256, u64)>,
+    /// Program counters of the target's jumps into and out of internal functions, from the
+    /// source map. Without them, a function entered twice can look like a loop head, which
+    /// costs time but not soundness.
+    pub function_jumps: BTreeMap<usize, FunctionJump>,
+}
+
+/// A jump into or out of an internal function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FunctionJump {
+    Into,
+    Out,
 }
 
 /// Error returned by the internal symbolic executor.

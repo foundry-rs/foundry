@@ -1,5 +1,8 @@
 use super::watch::WatchArgs;
-use crate::Lockfile;
+use crate::{
+    Lockfile,
+    gas_limits::{GAS_BOUNDS_GUIDE, GasLimitCheck, GasLimitOutcome, LoopGas, check_gas_limits},
+};
 use clap::Parser;
 use eyre::Result;
 use forge_lint::{
@@ -11,7 +14,7 @@ use foundry_cli::{
     utils::{Git, LoadConfig, cache_local_signatures},
 };
 use foundry_common::{
-    compile::{ContractSizeLimits, ProjectCompiler},
+    compile::{ContractSizeLimits, ProjectCompiler, add_storage_layout_output},
     shell,
 };
 use foundry_compilers::{
@@ -80,6 +83,16 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub no_lint: bool,
 
+    /// Check `@custom:max-gas` limits and `@custom:max-length` invariants after the build.
+    ///
+    /// Each tagged function is checked symbolically as one transaction from any sender, with any
+    /// arguments, from any storage state that keeps the `@custom:max-length` of storage arrays.
+    /// Every function that can write storage must keep those lengths. Calls to other contracts
+    /// have no gas bound yet.
+    #[arg(long)]
+    #[serde(skip)]
+    pub gas_limits: bool,
+
     #[command(flatten)]
     #[serde(flatten)]
     pub build: BuildOpts,
@@ -101,7 +114,11 @@ impl BuildArgs {
 
         self.check_soldeer_lock_consistency(&config).await;
 
-        let project = config.project()?;
+        let mut project = config.project()?;
+        if self.gas_limits {
+            // `@custom:max-length` on storage arrays needs their slots.
+            add_storage_layout_output(&mut project);
+        }
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
@@ -153,6 +170,12 @@ impl BuildArgs {
                 emit_lint_failure_notice();
             }
             return Err(err.wrap_err("post-build lint step failed"));
+        }
+
+        if self.gas_limits && !output.has_compiler_errors() {
+            let (_, evm_opts) = self.load_config_and_evm_opts()?;
+            let checks = check_gas_limits(&config, &evm_opts, &output).await?;
+            report_gas_limits(&checks)?;
         }
 
         Ok(output)
@@ -371,5 +394,99 @@ impl Provider for BuildArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+/// Prints build-time gas annotation checks and fails unless every annotation is proven.
+fn report_gas_limits(checks: &[GasLimitCheck]) -> Result<()> {
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string_pretty(checks)?)?;
+    } else {
+        for check in checks {
+            let name = format!("{}.{}", check.contract, check.signature);
+            let limit = check.limit.unwrap_or_default();
+            match &check.outcome {
+                GasLimitOutcome::Within { max, replayed, loops } => sh_println!(
+                    "[PASS] {name}: gas {max} <= @custom:max-gas {limit}{}{}",
+                    loops_note(loops),
+                    replayed_note(*replayed, loops)
+                )?,
+                GasLimitOutcome::Exceeds {
+                    replayed: Some(replayed),
+                    sender,
+                    calldata,
+                    stopped: Some(stopped),
+                    ..
+                } => sh_println!(
+                    "[FAIL] {name}: an input replays at {replayed} > @custom:max-gas {limit}, found before the search stopped ({stopped}); sender={sender} calldata={calldata}"
+                )?,
+                GasLimitOutcome::Exceeds { max, replayed, sender, calldata, loops, .. } => {
+                    sh_println!(
+                        "[FAIL] {name}: gas {max} > @custom:max-gas {limit}{}{}; sender={sender} calldata={calldata}",
+                        loops_note(loops),
+                        replayed_note(*replayed, loops)
+                    )?
+                }
+                GasLimitOutcome::KeepsLengths => {
+                    sh_println!("[PASS] {name}: keeps every @custom:max-length")?
+                }
+                GasLimitOutcome::LengthExceeds { variable, max, length, sender, calldata } => {
+                    sh_println!(
+                        "[FAIL] {name}: `{variable}` can grow to {length} > @custom:max-length {max}; sender={sender} calldata={calldata}"
+                    )?
+                }
+                GasLimitOutcome::Incomplete { reason, found, hint } => {
+                    let found = found.as_ref().map_or_else(String::new, |found| {
+                        let replayed = found.replayed.map_or_else(
+                            || "did not replay".to_string(),
+                            |gas| format!("replays at {gas}"),
+                        );
+                        format!("; worst found so far: gas {}, {replayed}", found.max)
+                    });
+                    sh_println!("[INCOMPLETE] {name}: {reason}{found}")?;
+                    if let Some(hint) = hint {
+                        sh_println!("  hint: {hint}")?;
+                    }
+                }
+            }
+        }
+        if checks
+            .iter()
+            .any(|check| matches!(check.outcome, GasLimitOutcome::Incomplete { hint: Some(_), .. }))
+        {
+            sh_println!("\nSee {GAS_BOUNDS_GUIDE} for how to write gas checks that finish.")?;
+        }
+    }
+    let unproven = checks
+        .iter()
+        .filter(|check| {
+            !matches!(check.outcome, GasLimitOutcome::Within { .. } | GasLimitOutcome::KeepsLengths)
+        })
+        .count();
+    if unproven > 0 {
+        eyre::bail!("{unproven} of {} gas annotation checks are not proven", checks.len());
+    }
+    Ok(())
+}
+
+/// Describes the summarized loops of a bound.
+fn loops_note(loops: &[LoopGas]) -> String {
+    loops
+        .iter()
+        .map(|LoopGas { pc, iteration, iterations, exit }| {
+            format!(
+                " (loop at pc {pc}: {iterations} more iterations of <= {iteration} gas, then <= {exit})"
+            )
+        })
+        .collect()
+}
+
+/// Describes the concrete replay of a worst-case input. With summarized loops, the input need
+/// not reach the bound.
+fn replayed_note(replayed: Option<u64>, loops: &[LoopGas]) -> String {
+    let input = if loops.is_empty() { "worst case" } else { "witness" };
+    match replayed {
+        Some(replayed) => format!(" ({input} replays at {replayed})"),
+        None => format!(" ({input} did not replay)"),
     }
 }

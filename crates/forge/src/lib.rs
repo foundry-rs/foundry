@@ -21,6 +21,8 @@ pub mod coverage;
 
 pub mod brutalizer;
 
+pub mod gas_limits;
+
 pub mod gas_report;
 
 pub mod multi_runner;

@@ -4,6 +4,7 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
+    gas_limits::{GAS_BOUNDS_GUIDE, GasLimit, incomplete_hint},
     multi_runner::{
         FuzzMinimizeConfig, FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment,
         TestContract, TestFunctionMatcher, TestRunnerConfig,
@@ -16,9 +17,9 @@ use crate::{
         SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
         SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
         SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
-        SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite, SymbolicReplayMetadata,
-        SymbolicReplayStatus, SymbolicResult, TestKind, TestResult, TestSetup, TestStatus,
-        invariant_campaign_display_name, invariant_kind,
+        SymbolicGasSnapshot, SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite,
+        SymbolicReplayMetadata, SymbolicReplayStatus, SymbolicResult, TestKind, TestResult,
+        TestSetup, TestStatus, invariant_campaign_display_name, invariant_kind,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -33,6 +34,7 @@ use alloy_primitives::{
 use eyre::Result;
 use foundry_common::{
     LIBRARY_DEPLOYER, TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress,
+    get_contract_name,
 };
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{
@@ -71,10 +73,11 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor, SymbolicInvariantCandidateInput,
-    SymbolicInvariantCounterexampleKind, SymbolicInvariantRunInput, SymbolicInvariantRunResult,
-    SymbolicInvariantStep, SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult,
-    SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
+    SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor, SymbolicGasBound,
+    SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
+    SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
+    SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
+    SymbolicStopReason, SymbolicStorageAssignment, TransactionGas,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -935,14 +938,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             }
         }
 
-        // Invariant testing requires tracing to figure out what contracts were created.
-        // For regular test runs we disable debug-level setup traces as an optimization.
-        // In `forge test --debug`, keep setup traces in debug mode so setup failures are
-        // inspectable in the debugger.
+        // Invariant testing and `@custom:max-gas` checks require tracing to figure out what
+        // contracts were created. For regular test runs we disable debug-level setup traces as an
+        // optimization. In `forge test --debug`, keep setup traces in debug mode so setup failures
+        // are inspectable in the debugger.
         let has_invariants = !invariant_fns.is_empty();
+        let checks_gas_limits = self.config.symbolic.enabled && !self.mcr.gas_limits.is_empty();
 
-        let should_override_setup_tracing =
-            !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
+        let should_override_setup_tracing = !self.tcfg.debug
+            && (self.executor.inspector().tracer.is_some() || has_invariants || checks_gas_limits);
 
         let prev_tracer = should_override_setup_tracing.then(|| {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
@@ -979,7 +983,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             find_timer.elapsed(),
         );
 
-        let identified_contracts = has_invariants.then(|| {
+        let identified_contracts = (has_invariants || checks_gas_limits).then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
         });
 
@@ -1086,7 +1090,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.name,
         );
 
-        let test_results = functions
+        let mut test_results = functions
             .par_iter()
             .filter_map(|&func| {
                 // Early exit if we're running with fail-fast and a test already failed.
@@ -1156,7 +1160,41 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             })
             .collect::<BTreeMap<_, _>>();
 
+        if let Some(contracts) = identified_contracts.as_ref().filter(|_| checks_gas_limits) {
+            test_results.extend(self.run_gas_limits(&setup, contracts, filter));
+        }
+
         SuiteResult::new(start.elapsed(), test_results, warnings)
+    }
+
+    /// Checks the `@custom:max-gas` limits of the contracts deployed in `setUp`.
+    ///
+    /// Each tagged function becomes a result named `maxGas:<contract>.<signature>`.
+    fn run_gas_limits(
+        &self,
+        setup: &TestSetup,
+        contracts: &ContractsByAddress,
+        filter: &dyn TestFilter,
+    ) -> Vec<(String, TestResult)> {
+        let mut results = Vec::new();
+        for (&address, (identifier, abi)) in contracts {
+            let Some(limits) = self.mcr.gas_limits.get(identifier) else { continue };
+            let contract = get_contract_name(identifier);
+            for function in abi.functions() {
+                let signature = function.signature();
+                let Some(limit) = limits.get(&signature) else { continue };
+                let name = format!("maxGas:{contract}.{signature}");
+                if !filter.matches_test(&name) {
+                    continue;
+                }
+                let start = Instant::now();
+                let mut result =
+                    FunctionRunner::new(self, setup).run_gas_limit(address, function, limit);
+                result.duration = start.elapsed();
+                results.push((name, result));
+            }
+        }
+        results
     }
 
     /// Returns a suite that failed before its tests could run, tripping the global fail-fast
@@ -1968,6 +2006,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             collect_success_input,
             corpus_seeds,
             branch_target,
+            transaction_gas: None,
         }
     }
 
@@ -2414,8 +2453,44 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             symbolic.run(self.symbolic_run_input(func, self.sender, false, corpus_seeds, None));
 
         let (status, reason, counterexample, symbolic_result) = match result {
-            SymbolicRunResult::Safe { stats, .. } => {
-                (TestStatus::Success, None, None, SymbolicResult::pass(&symbolic_config, stats))
+            SymbolicRunResult::Safe { stats, gas, .. } => {
+                let gas = self.replay_symbolic_gas(gas);
+                match gas
+                    .iter()
+                    .find(|snapshot| snapshot.replayed.is_some_and(|gas| gas > snapshot.max))
+                {
+                    // A replay above the bound means the gas model is wrong: fail closed.
+                    Some(snapshot) => {
+                        let reason = format!(
+                            "symbolic gas bound {} for snapshot {} is below its concrete replay",
+                            snapshot.max, snapshot.name
+                        );
+                        (
+                            TestStatus::Failure,
+                            Some(format!(
+                                "incomplete symbolic execution ({:?}): {reason}",
+                                SymbolicStopReason::Stuck
+                            )),
+                            None,
+                            SymbolicResult::incomplete(
+                                &symbolic_config,
+                                SymbolicStopReason::Stuck,
+                                reason,
+                                stats,
+                                SymbolicReplayMetadata::not_required(),
+                                SymbolicCallTrace::none(),
+                                None,
+                            )
+                            .with_gas(gas),
+                        )
+                    }
+                    None => (
+                        TestStatus::Success,
+                        None,
+                        None,
+                        SymbolicResult::pass(&symbolic_config, stats).with_gas(gas),
+                    ),
+                }
             }
             SymbolicRunResult::Incomplete { kind, reason, stats } => (
                 TestStatus::Failure,
@@ -2441,6 +2516,230 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
         self.result.symbolic_result(status, reason, counterexample, symbolic_result);
         self.result
+    }
+
+    /// Proves that one transaction calling `function` on `target` uses at most `limit` gas.
+    ///
+    /// The sender and the arguments are symbolic. Calls the contract makes are not isolated, as
+    /// on a real chain.
+    fn run_gas_limit(
+        mut self,
+        target: Address,
+        function: &Function,
+        limit: &GasLimit,
+    ) -> TestResult {
+        let mut executor = self.clone_executor();
+        executor.inspector_mut().enable_isolation(false);
+        let symbolic_config = match limit.symbolic_config(&self.config.symbolic, function) {
+            Ok(config) => config,
+            Err(reason) => {
+                let result = SymbolicResult::incomplete(
+                    &self.config.symbolic,
+                    SymbolicStopReason::Stuck,
+                    reason.clone(),
+                    SymbolicStats::default(),
+                    SymbolicReplayMetadata::not_required(),
+                    SymbolicCallTrace::none(),
+                    None,
+                );
+                let reason = format!("incomplete symbolic execution (Stuck): {reason}");
+                self.result.symbolic_result(TestStatus::Failure, Some(reason), None, result);
+                return self.result;
+            }
+        };
+        let limit = limit.max_gas;
+        let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
+        let result = symbolic.run(SymbolicRunInput {
+            executor: &executor,
+            target,
+            sender: self.address,
+            function,
+            value: U256::ZERO,
+            ffi_enabled: self.config.ffi,
+            collect_success_input: false,
+            corpus_seeds: Vec::new(),
+            branch_target: None,
+            transaction_gas: Some(TransactionGas::default()),
+        });
+
+        let incomplete = |reason: String, stats| {
+            let symbolic_result = SymbolicResult::incomplete(
+                &symbolic_config,
+                SymbolicStopReason::Stuck,
+                reason.clone(),
+                stats,
+                SymbolicReplayMetadata::not_required(),
+                SymbolicCallTrace::none(),
+                None,
+            );
+            let reason = format!(
+                "incomplete symbolic execution ({:?}): {reason}",
+                SymbolicStopReason::Stuck
+            );
+            (TestStatus::Failure, Some(reason), None, symbolic_result)
+        };
+        let (bound, stats, stopped) = match result {
+            SymbolicRunResult::Safe { stats, mut gas, .. } => (gas.pop(), stats, None),
+            // The paths the run finished before it stopped can still fail the check.
+            SymbolicRunResult::Incomplete { kind, reason, stats } => {
+                (symbolic.finished_paths().0.last().cloned(), stats, Some((kind, reason)))
+            }
+            SymbolicRunResult::Counterexample { stats, .. } => {
+                let (status, reason, counterexample, result) =
+                    incomplete("the function can halt with an error".to_string(), stats);
+                self.result.symbolic_result(status, reason, counterexample, result);
+                return self.result;
+            }
+        };
+        let stopped_result = |kind: SymbolicStopReason, reason: &str, stats, found: &str| {
+            let hint = incomplete_hint(reason)
+                .map_or_else(String::new, |hint| format!("; hint: {hint} ({GAS_BOUNDS_GUIDE})"));
+            let result = SymbolicResult::incomplete(
+                &symbolic_config,
+                kind,
+                reason.to_string(),
+                stats,
+                SymbolicReplayMetadata::not_required(),
+                SymbolicCallTrace::none(),
+                None,
+            );
+            let reason = format!("incomplete symbolic execution ({kind:?}): {reason}{found}{hint}");
+            (TestStatus::Failure, Some(reason), None, result)
+        };
+        let Some(SymbolicGasBound { name, max, witness, sender, storage, .. }) = bound else {
+            let (status, reason, counterexample, result) = match stopped {
+                Some((kind, reason)) => stopped_result(kind, &reason, stats, ""),
+                None => {
+                    incomplete("no successful path measured transaction gas".to_string(), stats)
+                }
+            };
+            self.result.symbolic_result(status, reason, counterexample, result);
+            return self.result;
+        };
+        let sender = sender.unwrap_or(self.address);
+        let replayed = self
+            .clone_executor_with_symbolic_storage(&storage)
+            .ok()
+            .and_then(|mut executor| {
+                executor.inspector_mut().enable_isolation(false);
+                executor.call_raw(sender, target, witness.calldata.clone(), U256::ZERO).ok()
+            })
+            // A reverted replay did not take the witness path.
+            .filter(|raw| !raw.reverted)
+            .map(|raw| raw.gas_used);
+        let snapshot = SymbolicGasSnapshot {
+            group: None,
+            name,
+            max,
+            calldata: witness.calldata.clone(),
+            sender: Some(sender),
+            replayed,
+        };
+        let counterexample = CounterExample::Single(BaseCounterExample {
+            sender: Some(sender),
+            addr: Some(target),
+            ..BaseCounterExample::from_fuzz_call(witness.calldata, witness.args, None)
+        });
+        let (status, reason, counterexample, symbolic_result) = if replayed
+            .is_some_and(|replayed| replayed > max)
+        {
+            let reason = format!("symbolic gas bound {max} is below its concrete replay");
+            let (status, reason, counterexample, result) = incomplete(reason, stats);
+            (status, reason, counterexample, result.with_gas(vec![snapshot]))
+        } else if let Some((kind, stopped)) = stopped {
+            match replayed {
+                // An input that replays above the limit fails the check, even if the search
+                // stopped.
+                Some(replayed) if replayed > limit => {
+                    let reason = format!(
+                        "an input replays at {replayed} > @custom:max-gas {limit}, found before \
+                         the search stopped ({stopped})"
+                    );
+                    let result = SymbolicResult::incomplete(
+                        &symbolic_config,
+                        kind,
+                        stopped,
+                        stats,
+                        SymbolicReplayMetadata::not_required(),
+                        SymbolicCallTrace::none(),
+                        None,
+                    )
+                    .with_gas(vec![snapshot]);
+                    (TestStatus::Failure, Some(reason), Some(counterexample), result)
+                }
+                _ => {
+                    let replayed = replayed.map_or_else(
+                        || "did not replay".to_string(),
+                        |gas| format!("replays at {gas}"),
+                    );
+                    let found = format!("; worst found so far: gas {max}, {replayed}");
+                    let (status, reason, counterexample, result) =
+                        stopped_result(kind, &stopped, stats, &found);
+                    (status, reason, counterexample, result.with_gas(vec![snapshot]))
+                }
+            }
+        } else if max > limit {
+            let reason = format!(
+                "gas {max} exceeds @custom:max-gas {limit}; worst-case input replays at {}",
+                replayed.map_or_else(|| "an unknown value".to_string(), |gas| gas.to_string())
+            );
+            let result = SymbolicResult::pass(&symbolic_config, stats).with_gas(vec![snapshot]);
+            (TestStatus::Failure, Some(reason), Some(counterexample), result)
+        } else {
+            let result = SymbolicResult::pass(&symbolic_config, stats).with_gas(vec![snapshot]);
+            (TestStatus::Success, None, None, result)
+        };
+        self.result.symbolic_result(status, reason, counterexample, symbolic_result);
+        self.result
+    }
+
+    /// Replays the witness of each symbolic gas bound and records the bounds as gas snapshots.
+    fn replay_symbolic_gas(&mut self, bounds: Vec<SymbolicGasBound>) -> Vec<SymbolicGasSnapshot> {
+        bounds
+            .into_iter()
+            .map(|bound| {
+                let SymbolicGasBound { group, name, max, witness, storage, .. } = bound;
+                let snapshots = self
+                    .clone_executor_with_symbolic_storage(&storage)
+                    .ok()
+                    .and_then(|executor| {
+                        executor
+                            .call_raw(
+                                self.sender,
+                                self.address,
+                                witness.calldata.clone(),
+                                U256::ZERO,
+                            )
+                            .ok()
+                    })
+                    .and_then(|raw| raw.cheatcodes)
+                    .map(|cheatcodes| cheatcodes.gas_snapshots)
+                    .unwrap_or_default();
+                let replayed = snapshots.into_iter().find_map(|(replayed_group, values)| {
+                    let value = values.get(&name)?;
+                    group
+                        .as_ref()
+                        .is_none_or(|group| *group == replayed_group)
+                        .then(|| (replayed_group, value.parse::<u64>().ok()))
+                });
+                let replayed = replayed.and_then(|(replayed_group, value)| {
+                    self.result
+                        .gas_snapshots
+                        .entry(replayed_group)
+                        .or_default()
+                        .insert(name.clone(), max.to_string());
+                    value
+                });
+                SymbolicGasSnapshot {
+                    group,
+                    name,
+                    max,
+                    calldata: witness.calldata,
+                    sender: None,
+                    replayed,
+                }
+            })
+            .collect()
     }
 
     /// Replays a symbolic counterexample concretely, minimizing and persisting it when it
@@ -3475,6 +3774,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 collect_success_input: false,
                 corpus_seeds: vec![input],
                 branch_target: Some(target),
+                transaction_gas: None,
             });
             if let SymbolicRunResult::Incomplete { kind, reason, .. } = &search.execution {
                 debug!(
