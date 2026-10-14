@@ -171,7 +171,14 @@ impl<T> Miner<T> {
     /// auto mining mode are mined once mining resumes. The pause persists across mining mode
     /// changes. Manual mining, e.g. via `evm_mine`, is not affected.
     pub fn set_paused(&self, paused: bool) {
+        let mut mode = self.mode.write();
+        if !paused && self.is_paused() {
+            // The service may not have polled while paused, e.g. with a candidate in flight.
+            // Discard elapsed ticks before allowing it to select another block.
+            mode.poll_paused(&mut Context::from_waker(futures::task::noop_waker_ref()));
+        }
         self.paused.store(paused, Ordering::SeqCst);
+        drop(mode);
         trace!(target: "miner", paused, "updated mining pause");
         self.inner.wake();
     }
@@ -350,7 +357,11 @@ impl FixedBlockTimeMiner {
 
     /// Keeps the interval ticking while paused, skipping any block that comes due.
     fn poll_paused(&mut self, cx: &mut Context<'_>) {
+        // Skip missed slots without shifting the schedule. Keep normal mining's delay policy.
+        let behavior = self.interval.missed_tick_behavior();
+        self.interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         while self.interval.poll_tick(cx).is_ready() {}
+        self.interval.set_missed_tick_behavior(behavior);
     }
 }
 
@@ -512,21 +523,37 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn paused_interval_skips_due_block() {
-        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_millis(20)));
-        let pool = Arc::new(Pool::default());
-        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
-        miner.set_paused(true);
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        assert!(miner.poll(&pool, &mut cx).is_pending());
+        for mixed in [false, true] {
+            for poll_while_paused in [false, true] {
+                let (_tx, rx) = mpsc::channel(1);
+                let period = Duration::from_secs(1);
+                let mode = if mixed {
+                    MiningMode::mixed(1, rx, period)
+                } else {
+                    MiningMode::interval(period)
+                };
+                let mut miner = Miner::<()>::new(mode);
+                let pool = Arc::new(Pool::default());
+                let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+                let start = tokio::time::Instant::now();
+                miner.set_paused(true);
+                tokio::time::advance(Duration::from_millis(3500)).await;
+                if poll_while_paused {
+                    assert!(miner.poll(&pool, &mut cx).is_pending());
+                }
 
-        // Resuming does not mine the skipped block, the next tick does.
-        miner.set_paused(false);
-        assert!(miner.poll(&pool, &mut cx).is_pending());
-        tokio::time::timeout(Duration::from_secs(1), poll_fn(|cx| miner.poll(&pool, cx)))
-            .await
-            .unwrap();
+                // Resume must skip overdue ticks even if no paused poll ran, without moving
+                // the next tick from 4s to 4.5s.
+                miner.set_paused(false);
+                assert!(miner.poll(&pool, &mut cx).is_pending());
+                poll_fn(|cx| miner.poll(&pool, cx)).await;
+                let elapsed = start.elapsed();
+                assert!(elapsed >= Duration::from_secs(4));
+                assert!(elapsed <= Duration::from_millis(4001), "tick at {elapsed:?}");
+            }
+        }
     }
 
     #[test]

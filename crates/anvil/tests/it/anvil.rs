@@ -105,6 +105,50 @@ async fn test_pause_interval_mining() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_pause_automining_with_manual_timestamp_and_mode_changes() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    provider.raw_request::<_, ()>("anvil_setMiningPaused".into(), [true]).await.unwrap();
+
+    // Changing modes must not unpause mining.
+    api.anvil_set_interval_mining(60).unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    let from = handle.dev_accounts().next().unwrap();
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE);
+    let pending = provider.send_transaction(tx.clone().into()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
+
+    // Aztec's explicit timestamp controls and manual mining remain usable while paused.
+    let timestamp = provider
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp
+        + 100;
+    api.evm_set_block_timestamp_interval(2).unwrap();
+    api.evm_set_next_block_timestamp(timestamp).unwrap();
+    api.evm_mine(None).await.unwrap();
+    assert_eq!(pending.get_receipt().await.unwrap().block_number, Some(1));
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, timestamp);
+
+    let pending = provider.send_transaction(tx.into()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert_eq!(provider.get_block_number().await.unwrap(), 1);
+    provider.raw_request::<_, ()>("anvil_setMiningPaused".into(), [false]).await.unwrap();
+    let receipt = tokio::time::timeout(std::time::Duration::from_secs(5), pending.get_receipt())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.block_number, Some(2));
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, timestamp + 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_default_dev_keys() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
