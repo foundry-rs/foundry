@@ -487,3 +487,36 @@ contract WriteTomlTest is Test {
         vm.removeFile(path);
     }
 }
+
+contract ContextFreeTomlTest is Test {
+    function test_defaultsOnlyApplyToMissingPaths() public {
+        string memory toml = "value = 7\narray = [3, 9]\nobject = {}\n";
+        assertEq(vm.parseTomlUint(toml, ".missing", 42), 42);
+        assertEq(vm.parseTomlUint(toml, ".value", 42), 7);
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        uint256[] memory expected = new uint256[](2);
+        expected[0] = 3;
+        expected[1] = 9;
+        assertEq(abi.encode(vm.parseTomlUintArray(toml, ".array", defaultValue)), abi.encode(expected));
+        assertEq(abi.encode(vm.parseTomlUintArray(toml, ".missing", defaultValue)), abi.encode(defaultValue));
+
+        vm._expectCheatcodeRevert("expected uint256, found JSON object");
+        vm.parseTomlUint(toml, ".object", 42);
+        vm._expectCheatcodeRevert('path ".array[*]" must return exactly one JSON value');
+        vm.parseTomlUint(toml, ".array[*]", 42);
+    }
+
+    function test_keysAndDatetime() public {
+        string memory toml = "# comment\nobject = { z = 7, a = false }\ndate = 2024-04-27T11:57:21Z\n";
+        assertTrue(vm.keyExistsToml(toml, ".object.a"));
+        assertTrue(!vm.keyExistsToml(toml, ".missing"));
+        string[] memory keys = new string[](2);
+        keys[0] = "z";
+        keys[1] = "a";
+        assertEq(abi.encode(vm.parseTomlKeys(toml, ".object")), abi.encode(keys));
+        assertEq(vm.parseTomlString(toml, ".date"), "2024-04-27T11:57:21Z");
+        vm._expectCheatcodeRevert('JSON value at ".date" is not an object');
+        vm.parseTomlKeys(toml, ".date");
+    }
+}

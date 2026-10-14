@@ -55,7 +55,7 @@ base64.workspace = true
 dialoguer = { workspace = true, optional = true }
 eyre.workspace = true
 itertools.workspace = true
-jsonpath_lib = { workspace = true, optional = true }
+jsonpath_lib.workspace = true
 k256 = { workspace = true, features = ["expose-field"] }
 memchr.workspace = true
 p256 = { version = "0.13", optional = true }
@@ -67,7 +67,7 @@ revm = { workspace = true, optional = true }
 semver.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-toml = { workspace = true, optional = true, features = ["preserve_order"] }
+toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = { workspace = true, optional = true }
 tracing.workspace = true
 walkdir = { workspace = true, optional = true }
@@ -101,12 +101,10 @@ revm = [
     "dep:alloy-chains",
     "dep:alloy-ens",
     "dep:dialoguer",
-    "dep:jsonpath_lib",
     "dep:p256",
     "dep:ed25519-consensus",
     "dep:rand",
     "dep:revm",
-    "dep:toml",
     "dep:toml_edit",
     "dep:walkdir",
     "dep:proptest",

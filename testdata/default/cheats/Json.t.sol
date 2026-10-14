@@ -668,3 +668,40 @@ contract WriteJsonTest is Test {
         vm.removeFile(path);
     }
 }
+
+contract ContextFreeJsonTest is Test {
+    function test_defaultsOnlyApplyToMissingPaths() public {
+        string memory json = '{"value":7,"array":[3,9],"object":{}}';
+        assertEq(vm.parseJsonUint(json, ".missing", 42), 42);
+        assertEq(vm.parseJsonUint(json, ".value", 42), 7);
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        uint256[] memory expected = new uint256[](2);
+        expected[0] = 3;
+        expected[1] = 9;
+        assertEq(abi.encode(vm.parseJsonUintArray(json, ".array", defaultValue)), abi.encode(expected));
+        assertEq(abi.encode(vm.parseJsonUintArray(json, ".missing", defaultValue)), abi.encode(defaultValue));
+
+        vm._expectCheatcodeRevert("expected uint256, found JSON object");
+        vm.parseJsonUint(json, ".object", 42);
+        vm._expectCheatcodeRevert('path ".array[*]" must return exactly one JSON value');
+        vm.parseJsonUint(json, ".array[*]", 42);
+        vm._expectCheatcodeRevert("failed parsing JSON: unterminated block comment");
+        vm.parseJsonUint("{} /*", ".missing", 42);
+    }
+
+    function test_keysAndArrayLength() public {
+        string memory json = '{/* comment */"object":{"z":null,"a":false},"array":[3,9],"empty":[]}';
+        assertTrue(vm.keyExists(json, ".object.z"));
+        assertTrue(vm.keyExistsJson(json, ".object.a"));
+        assertTrue(!vm.keyExistsJson(json, ".missing"));
+        string[] memory keys = new string[](2);
+        keys[0] = "z";
+        keys[1] = "a";
+        assertEq(abi.encode(vm.parseJsonKeys(json, ".object")), abi.encode(keys));
+        assertEq(vm.parseJsonArrayLength(json, ".array"), 2);
+        assertEq(vm.parseJsonArrayLength(json, ".empty"), 0);
+        vm._expectCheatcodeRevert('JSON value at ".object" is not an array');
+        vm.parseJsonArrayLength(json, ".object");
+    }
+}

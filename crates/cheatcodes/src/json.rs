@@ -1,16 +1,24 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
-use crate::{Cheatcode, CheatcodesCore, Result, Vm::*, string};
-use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
-use alloy_primitives::{Address, B256, I256, U256, hex};
+use crate::{Cheatcode, Result, Vm::*, string};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::U256;
 use alloy_sol_types::SolValue;
-use foundry_common::{fmt::StructDefinitions, fs};
-use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::{Map, Value};
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::borrow::Cow;
+
+#[cfg(feature = "revm")]
+use crate::CheatcodesCore;
+#[cfg(feature = "revm")]
+use alloy_dyn_abi::{Resolver, eip712_parser::EncodeType};
+#[cfg(feature = "revm")]
+use alloy_primitives::{Address, B256, I256, hex};
+#[cfg(feature = "revm")]
+use foundry_common::{fmt::StructDefinitions, fs};
+#[cfg(feature = "revm")]
+use foundry_config::fs_permissions::FsAccessKind;
+#[cfg(feature = "revm")]
+use std::collections::{BTreeMap, BTreeSet};
 
 impl Cheatcode for keyExistsCall {
     fn apply_context_free(&self) -> Result {
@@ -26,6 +34,7 @@ impl Cheatcode for keyExistsJsonCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseJson_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json } = self;
@@ -33,6 +42,7 @@ impl Cheatcode for parseJson_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseJson_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, key } = self;
@@ -109,6 +119,7 @@ impl_parse_json!(
     DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))
 );
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseJsonType_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, typeDescription } = self;
@@ -117,6 +128,7 @@ impl Cheatcode for parseJsonType_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseJsonType_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, key, typeDescription } = self;
@@ -125,6 +137,7 @@ impl Cheatcode for parseJsonType_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for parseJsonTypeArrayCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, key, typeDescription } = self;
@@ -140,6 +153,7 @@ impl Cheatcode for parseJsonKeysCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeJsonCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, value } = self;
@@ -148,6 +162,7 @@ impl Cheatcode for serializeJsonCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeBool_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -155,6 +170,7 @@ impl Cheatcode for serializeBool_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeUint_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -162,6 +178,7 @@ impl Cheatcode for serializeUint_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeInt_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -169,6 +186,7 @@ impl Cheatcode for serializeInt_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeAddress_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -176,6 +194,7 @@ impl Cheatcode for serializeAddress_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeBytes32_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -183,6 +202,7 @@ impl Cheatcode for serializeBytes32_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeString_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -190,6 +210,7 @@ impl Cheatcode for serializeString_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeBytes_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -197,6 +218,7 @@ impl Cheatcode for serializeBytes_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeBool_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
@@ -209,6 +231,7 @@ impl Cheatcode for serializeBool_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeUint_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
@@ -221,6 +244,7 @@ impl Cheatcode for serializeUint_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeInt_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
@@ -233,6 +257,7 @@ impl Cheatcode for serializeInt_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeAddress_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
@@ -245,6 +270,7 @@ impl Cheatcode for serializeAddress_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeBytes32_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
@@ -257,6 +283,7 @@ impl Cheatcode for serializeBytes32_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeString_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
@@ -269,6 +296,7 @@ impl Cheatcode for serializeString_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeBytes_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
@@ -283,6 +311,7 @@ impl Cheatcode for serializeBytes_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeJsonType_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { typeDescription, value } = self;
@@ -294,6 +323,7 @@ impl Cheatcode for serializeJsonType_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeJsonType_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, typeDescription, value } = self;
@@ -303,6 +333,7 @@ impl Cheatcode for serializeJsonType_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for serializeUintToHexCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
@@ -311,6 +342,7 @@ impl Cheatcode for serializeUintToHexCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for writeJson_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, path } = self;
@@ -320,6 +352,7 @@ impl Cheatcode for writeJson_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for writeJson_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json: value, path, valueKey } = self;
@@ -348,6 +381,7 @@ pub(super) fn check_json_key_exists(json: &str, key: &str) -> Result {
     Ok(exists.abi_encode())
 }
 
+#[cfg(feature = "revm")]
 pub(super) fn parse_json(json: &str, path: &str, defs: Option<&StructDefinitions>) -> Result {
     let value = parse_json_str(json)?;
     let selected = select(&value, path)?;
@@ -535,6 +569,7 @@ fn strip_json_comments(json: &str) -> Result<Cow<'_, str>> {
     })
 }
 
+#[cfg(feature = "revm")]
 fn json_to_sol(defs: Option<&StructDefinitions>, json: &[&Value]) -> Result<Vec<DynSolValue>> {
     let mut sol = Vec::with_capacity(json.len());
     for value in json {
@@ -553,6 +588,7 @@ fn select<'a>(value: &'a Value, mut path: &str) -> Result<Vec<&'a Value>> {
         .map_err(|e| fmt_err!("failed selecting from JSON: {:?}", e.to_string()))
 }
 
+#[cfg(feature = "revm")]
 fn encode(values: Vec<DynSolValue>) -> Vec<u8> {
     // Double `abi_encode` is intentional
     let bytes = match &values[..] {
@@ -575,6 +611,7 @@ pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
+#[cfg(feature = "revm")]
 #[instrument(target = "cheatcodes", level = "trace", ret)]
 pub(super) fn json_value_to_token(
     value: &Value,
@@ -587,6 +624,7 @@ pub(super) fn json_value_to_token(
     }
 }
 
+#[cfg(feature = "revm")]
 fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
@@ -725,6 +763,7 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
     }
 }
 
+#[cfg(feature = "revm")]
 fn parse_fixed_array(
     value: &Value,
     type_description: &str,
@@ -747,6 +786,7 @@ fn parse_fixed_array(
     Some(if custom { parse_json_custom_array(value, &ty, defs) } else { parse_json_as(value, &ty) })
 }
 
+#[cfg(feature = "revm")]
 fn parse_json_custom_array(
     value: &Value,
     ty: &DynSolType,
@@ -771,6 +811,7 @@ fn parse_json_custom_array(
     }
 }
 
+#[cfg(feature = "revm")]
 fn contains_fixed_array(ty: &DynSolType) -> bool {
     match ty {
         DynSolType::FixedArray(_, _) => true,
@@ -787,6 +828,7 @@ fn contains_fixed_array(ty: &DynSolType) -> bool {
 /// object, so that the user can use that as a value to a new invocation of the same function with a
 /// new object key. This enables the user to reuse the same function to crate arbitrarily complex
 /// object structures (JSON).
+#[cfg(feature = "revm")]
 fn serialize_json(
     state: &mut CheatcodesCore,
     object_key: &str,
@@ -801,6 +843,7 @@ fn serialize_json(
 }
 
 /// Resolves a [DynSolType] from user input.
+#[cfg(feature = "revm")]
 pub(super) fn resolve_type(
     type_description: &str,
     struct_defs: Option<&StructDefinitions>,
@@ -841,6 +884,7 @@ pub(super) fn resolve_type(
 /// * `value` - The string representation of the value to upsert. This string is first parsed as
 ///   JSON, and if that fails, it's treated as a plain JSON string.
 /// * `key` - A dot-separated string representing the path to the location for upserting.
+#[cfg(feature = "revm")]
 pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Result<()> {
     let parts = split_value_key(key)?;
 
@@ -875,6 +919,7 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
 }
 
 /// Splits the `valueKey` of a write cheatcode into the object keys leading to the value.
+#[cfg(feature = "revm")]
 pub(super) fn split_value_key(key: &str) -> Result<Vec<String>> {
     // Parse the path key into segments.
     let canonical_key = canonicalize_json_path(key);
@@ -898,6 +943,7 @@ pub(super) fn split_value_key(key: &str) -> Result<Vec<String>> {
 ///
 /// This is necessary because the EIP-712 resolver sorts struct fields alphabetically,
 /// but we want to respect the order defined in the Solidity source code.
+#[cfg(feature = "revm")]
 fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSolType> {
     match ty {
         DynSolType::CustomStruct { name, prop_names, tuple } => {
@@ -942,7 +988,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSo
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "revm"))]
 mod tests {
     use super::*;
     use alloy_primitives::FixedBytes;

@@ -82,7 +82,6 @@ mod inspector;
 #[cfg(feature = "revm")]
 pub use inspector::CheatcodeAnalysis;
 
-#[cfg(feature = "revm")]
 mod json;
 
 #[cfg(feature = "monad")]
@@ -108,7 +107,6 @@ mod test;
 mod test;
 pub use test::expect::ExpectedCallTracker;
 
-#[cfg(feature = "revm")]
 mod toml;
 
 #[cfg(feature = "revm")]
