@@ -7,6 +7,9 @@ proves a bound or finds a counterexample inside `symbolic.timeout`.
 For a complete fixed-budget example, see the
 [Chainlink VRF callback demo](examples/chainlink-vrf/README.md). It proves that
 three words fit a 100,000-gas callback and replays an out-of-gas input for four.
+The [SKALE ERC-1155 bridge demo](examples/skale-erc1155/README.md) checks an audited
+message path against its 1,000,000-gas cap. It proves batch sizes through 39 and
+replays an out-of-gas batch of 40.
 
 ## How the cost grows
 
