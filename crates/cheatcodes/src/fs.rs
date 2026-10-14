@@ -23,7 +23,7 @@ use std::{
     process::Command,
     sync::mpsc,
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 use walkdir::WalkDir;
 
@@ -98,16 +98,6 @@ impl Cheatcode for currentFilePathCall {
             .ok_or_else(|| fmt_err!("no running contract found"))?;
         let relative = artifact.source.strip_prefix(&state.config.root).unwrap_or(&artifact.source);
         Ok(relative.display().to_string().abi_encode())
-    }
-}
-
-impl Cheatcode for unixTimeCall {
-    fn apply_context_free(&self) -> Result {
-        let Self {} = self;
-        let difference = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| fmt_err!("failed getting Unix timestamp: {e}"))?;
-        Ok(difference.as_millis().abi_encode())
     }
 }
 
@@ -907,7 +897,7 @@ mod tests {
         },
     };
     use semver::Version;
-    use std::{env, fs as stdfs, path::PathBuf, str::FromStr, sync::Arc};
+    use std::{env, fs as stdfs, path::PathBuf, str::FromStr, sync::Arc, time::SystemTime};
     use tempfile::TempDir;
     use tempo_alloy::TempoNetwork;
 

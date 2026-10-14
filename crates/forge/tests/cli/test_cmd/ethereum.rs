@@ -23,6 +23,38 @@ struct NativeInvariantFailureRecord {
 }
 
 #[forgetest_init]
+fn ethereum_native_context_free_utilities(prj: _, cmd: _) {
+    prj.add_test(
+        "ContextFreeUtilities.t.sol",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/default/cheats/ContextFreeUtilities.t.sol"
+        )),
+    );
+    for (name, source) in [
+        ("Test.sol", include_str!("../../../../../testdata/utils/Test.sol")),
+        ("DSTest.sol", include_str!("../../../../../testdata/utils/DSTest.sol")),
+        ("Vm.sol", include_str!("../../../../../testdata/utils/Vm.sol")),
+        ("console.sol", include_str!("../../../../../testdata/utils/console.sol")),
+    ] {
+        prj.add_source(&format!("utils/{name}"), source);
+    }
+    cmd.args([
+        "test",
+        "--remappings",
+        "utils/=src/utils/",
+        "--match-contract",
+        "^ContextFreeUtilitiesTest$",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test suite [ELAPSED]: 5 tests passed, 0 failed, 0 skipped (5 total tests)
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn ethereum_native_setup_and_test_state(prj: _, cmd: _) {
     prj.add_test(
         "NativeEthereum.t.sol",

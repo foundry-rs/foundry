@@ -1,18 +1,33 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
+use crate::{Cheatcode, Result, Vm::*};
+use alloy_dyn_abi::TypedData;
 use alloy_ens::namehash;
-use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
+use alloy_primitives::Bytes;
 use alloy_rlp::{Decodable, Encodable};
 use alloy_sol_types::SolValue;
+
+#[cfg(feature = "revm")]
+use crate::{CheatcodesCore, CheatcodesExecutor, CheatsCtxt};
+#[cfg(feature = "revm")]
+use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
+#[cfg(feature = "revm")]
+use alloy_primitives::{B64, I256, U256, aliases::B32, keccak256, map::HashMap};
+#[cfg(feature = "revm")]
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
+#[cfg(feature = "revm")]
 use foundry_config::fs_permissions::FsAccessKind;
+#[cfg(feature = "revm")]
 use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, evm::FoundryEvmNetwork};
+#[cfg(feature = "revm")]
 use foundry_evm_fuzz::strategies::BoundMutator;
+#[cfg(feature = "revm")]
 use proptest::prelude::Strategy;
+#[cfg(feature = "revm")]
 use rand::{Rng, RngCore, seq::SliceRandom};
+#[cfg(feature = "revm")]
 use revm::context::{ContextTr, JournalTr};
+#[cfg(feature = "revm")]
 use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
@@ -21,6 +36,7 @@ use std::path::PathBuf;
 /// index of a call trace node, and item_idx is a value between 0 and `node.ordering.len()` where i
 /// represents point after ith item, and 0 represents the beginning of the node trace.
 #[derive(Debug, Default, Clone)]
+#[cfg(feature = "revm")]
 pub struct IgnoredTraces {
     /// Mapping from (start_node_idx, start_item_idx) to (end_node_idx, end_item_idx) representing
     /// ranges of trace nodes to ignore.
@@ -29,6 +45,7 @@ pub struct IgnoredTraces {
     pub last_pause_call: Option<(usize, usize)>,
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for labelCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { account, newLabel } = self;
@@ -37,6 +54,7 @@ impl Cheatcode for labelCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for getLabelCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { account } = self;
@@ -47,6 +65,7 @@ impl Cheatcode for getLabelCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for computeCreateAddressCall {
     fn apply_context_free(&self) -> Result {
         let Self { nonce, deployer } = self;
@@ -55,6 +74,7 @@ impl Cheatcode for computeCreateAddressCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for computeCreate2Address_0Call {
     fn apply_context_free(&self) -> Result {
         let Self { salt, initCodeHash, deployer } = self;
@@ -62,6 +82,7 @@ impl Cheatcode for computeCreate2Address_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for computeCreate2Address_1Call {
     fn apply_context_free(&self) -> Result {
         let Self { salt, initCodeHash } = self;
@@ -76,6 +97,7 @@ impl Cheatcode for ensNamehashCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for bound_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { current, min, max } = *self;
@@ -86,6 +108,7 @@ impl Cheatcode for bound_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for bound_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { current, min, max } = *self;
@@ -96,12 +119,14 @@ impl Cheatcode for bound_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomUint_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         random_uint(state, None, None)
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomUint_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { min, max } = *self;
@@ -109,6 +134,7 @@ impl Cheatcode for randomUint_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomUint_2Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { bits } = *self;
@@ -116,6 +142,7 @@ impl Cheatcode for randomUint_2Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomAddressCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         Ok(DynSolType::Address
@@ -127,12 +154,14 @@ impl Cheatcode for randomAddressCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomInt_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         random_int(state, None)
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomInt_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { bits } = *self;
@@ -140,6 +169,7 @@ impl Cheatcode for randomInt_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomBoolCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let rand_bool: bool = state.rng().random();
@@ -147,6 +177,7 @@ impl Cheatcode for randomBoolCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomBytesCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { len } = *self;
@@ -158,6 +189,7 @@ impl Cheatcode for randomBytesCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomBytes4Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let rand_u32 = state.rng().next_u32();
@@ -165,6 +197,7 @@ impl Cheatcode for randomBytes4Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for randomBytes8Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let rand_u64 = state.rng().next_u64();
@@ -172,6 +205,7 @@ impl Cheatcode for randomBytes8Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for pauseTracingCall {
     fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
@@ -195,6 +229,7 @@ impl Cheatcode for pauseTracingCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for resumeTracingCall {
     fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
@@ -218,6 +253,7 @@ impl Cheatcode for resumeTracingCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for interceptInitcodeCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
@@ -229,6 +265,7 @@ impl Cheatcode for interceptInitcodeCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for setArbitraryStorage_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
@@ -238,6 +275,7 @@ impl Cheatcode for setArbitraryStorage_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for setArbitraryStorage_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, overwrite } = self;
@@ -247,6 +285,7 @@ impl Cheatcode for setArbitraryStorage_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for copyStorageCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { from, to } = self;
@@ -282,6 +321,7 @@ impl Cheatcode for sortCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for shuffleCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { array } = self;
@@ -294,6 +334,7 @@ impl Cheatcode for shuffleCall {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for setSeedCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { seed } = self;
@@ -302,6 +343,7 @@ impl Cheatcode for setSeedCall {
     }
 }
 
+#[cfg(feature = "revm")]
 fn random_uint(
     state: &mut CheatcodesCore,
     bits: Option<U256>,
@@ -339,6 +381,7 @@ fn random_uint(
         .abi_encode())
 }
 
+#[cfg(feature = "revm")]
 fn random_int(state: &mut CheatcodesCore, bits: Option<U256>) -> Result {
     let bits = bits.unwrap_or(U256::from(256));
     let bits = usize::try_from(bits)
@@ -352,6 +395,7 @@ fn random_int(state: &mut CheatcodesCore, bits: Option<U256>) -> Result {
         .abi_encode())
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for eip712HashType_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { typeNameOrDefinition } = self;
@@ -362,6 +406,7 @@ impl Cheatcode for eip712HashType_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for eip712HashType_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { bindingsPath, typeName } = self;
@@ -373,6 +418,7 @@ impl Cheatcode for eip712HashType_1Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for eip712HashStruct_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { typeNameOrDefinition, abiEncodedData } = self;
@@ -384,6 +430,7 @@ impl Cheatcode for eip712HashStruct_0Call {
     }
 }
 
+#[cfg(feature = "revm")]
 impl Cheatcode for eip712HashStruct_1Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { bindingsPath, typeName, abiEncodedData } = self;
@@ -407,6 +454,7 @@ impl Cheatcode for eip712HashTypedDataCall {
 
 /// Returns EIP-712 canonical type definition from the provided string type representation or type
 /// name. If type name provided, then it looks up bindings from file generated by `forge bind-json`.
+#[cfg(feature = "revm")]
 fn get_canonical_type_def(
     name_or_def: &String,
     state: &mut CheatcodesCore,
@@ -427,6 +475,7 @@ fn get_canonical_type_def(
 
 /// Returns the EIP-712 type definition from the bindings in the provided path.
 /// Assumes that read validation for the path has already been checked.
+#[cfg(feature = "revm")]
 fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> Result<String> {
     let content = fs::read_to_string(&path)?;
 
@@ -460,6 +509,7 @@ fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> R
 }
 
 /// Returns the EIP-712 struct hash for provided name, definition and ABI encoded data.
+#[cfg(feature = "revm")]
 fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -> Result {
     let mut resolver = Resolver::default();
 
