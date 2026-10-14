@@ -778,14 +778,84 @@ impl Cheatcodes {
             }
             call => {
                 macro_rules! dispatch {
-                    ($($variant:ident),*) => {
+                    (context_free: [$($context_free:ident),*], native: [$($variant:ident),*]) => {
                         match call {
+                            $(Vm::VmCalls::$context_free(cheat) => {
+                                cheat.apply_context_free().map(Into::into).map_err(|error| {
+                                    if error.is_str() {
+                                        let name = stringify!($context_free).split('_').next().unwrap();
+                                        fmt_err!("vm.{name}: {error}").into()
+                                    } else {
+                                        error.into()
+                                    }
+                                })
+                            },)*
                             $(Vm::VmCalls::$variant(cheat) => cheat.apply_evm2(self, interp),)*
                             call => unsupported_call(call),
                         }
                     };
                 }
                 return dispatch!(
+                    context_free: [
+                        contains,
+                        envAddress_0,
+                        envAddress_1,
+                        envBool_0,
+                        envBool_1,
+                        envBytes32_0,
+                        envBytes32_1,
+                        envBytes_0,
+                        envBytes_1,
+                        envExists,
+                        envInt_0,
+                        envInt_1,
+                        envOr_0,
+                        envOr_1,
+                        envOr_10,
+                        envOr_11,
+                        envOr_12,
+                        envOr_13,
+                        envOr_2,
+                        envOr_3,
+                        envOr_4,
+                        envOr_5,
+                        envOr_6,
+                        envOr_7,
+                        envOr_8,
+                        envOr_9,
+                        envString_0,
+                        envString_1,
+                        envUint_0,
+                        envUint_1,
+                        foundryVersionAtLeast,
+                        foundryVersionCmp,
+                        indexOf,
+                        isContext,
+                        parseAddress,
+                        parseBool,
+                        parseBytes,
+                        parseBytes32,
+                        parseInt,
+                        parseUint,
+                        replace,
+                        resolveEnv,
+                        setEnv,
+                        split,
+                        toBase64URL_0,
+                        toBase64URL_1,
+                        toBase64_0,
+                        toBase64_1,
+                        toLowercase,
+                        toString_0,
+                        toString_1,
+                        toString_2,
+                        toString_3,
+                        toString_4,
+                        toString_5,
+                        toUppercase,
+                        trim
+                    ],
+                    native: [
                     _expectCheatcodeRevert_0,
                     _expectCheatcodeRevert_1,
                     _expectCheatcodeRevert_2,
@@ -953,6 +1023,7 @@ impl Cheatcodes {
                     mockCalls_0,
                     mockCalls_1,
                     mockFunction
+                    ]
                 );
             }
         }

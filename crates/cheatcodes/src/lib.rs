@@ -43,7 +43,6 @@ pub use spec::{CheatcodeDef, Vm};
 #[macro_use]
 mod error;
 
-#[cfg(feature = "revm")]
 mod base64;
 
 mod config;
@@ -51,11 +50,9 @@ mod config;
 #[cfg(feature = "revm")]
 mod crypto;
 
-#[cfg(feature = "revm")]
 mod version;
 
 mod context;
-#[cfg(feature = "revm")]
 mod env;
 pub use context::{current_execution_context, set_execution_context};
 
@@ -99,7 +96,6 @@ mod state;
 #[cfg(feature = "revm")]
 pub use state::CheatcodesCore;
 
-#[cfg(feature = "revm")]
 mod string;
 
 #[cfg(feature = "revm")]
@@ -154,7 +150,6 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode without accessing cheatcode state or the EVM context.
     ///
     /// This may still read or modify external host state, such as environment variables.
-    #[cfg(feature = "revm")]
     fn apply_context_free(&self) -> Result {
         unimplemented!("{}", Self::CHEATCODE.func.id)
     }
