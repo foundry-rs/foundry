@@ -1501,16 +1501,7 @@ impl CallTraceDecoder {
         {
             return format!("{}({})", error.name, decoded.iter().map(format_token).format(", "));
         }
-        // Payloads shorter than a selector that are not ASCII text fall back to the halt reason,
-        // like `RevertDecoder::decode` does with a status.
-        if output.len() < SELECTOR_LEN
-            && !(output.is_ascii() && !output.is_empty())
-            && let Some(status) = status
-            && !status.is_success()
-        {
-            return format!("EvmError: {status:?}");
-        }
-        self.revert_decoder.decode(output, None)
+        self.revert_decoder.decode(output, status)
     }
 
     async fn decode_revert_at(

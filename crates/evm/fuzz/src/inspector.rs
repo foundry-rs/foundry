@@ -2,9 +2,9 @@ use crate::invariant::RandomCallGenerator;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
 use evm2::{
     EvmTypes, EvmTypesHost, Inspector,
-    interpreter::{Interpreter, Message, MessageKind, MessageResult, op},
+    interpreter::{Interpreter, Message, MessageKind, MessageResult},
 };
-use foundry_common::mapping_slots::{MappingSlots, PendingMappingHash};
+use foundry_common::mapping_slots::{self, MappingSlots, PendingMappingHash};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 
 /// A sub-call observed by the [`Fuzzer`] inspector.
@@ -115,38 +115,16 @@ impl Fuzzer {
     /// before it executes.
     fn capture_mapping_hash<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         let Some(mapping_slots) = &mut self.mapping_slots else { return };
-        let address = interp.message().destination;
-        let stack = interp.stack();
-        let op = interp.opcode();
-        if op == op::SSTORE
-            && let Some(slots) = mapping_slots.get_mut(&address)
-            && let Some(slot) = stack.peek(0)
-        {
-            slots.insert(slot.into());
-        }
-        self.pending_mapping_hash = if op == op::KECCAK256
-            && stack.peek(1) == Some(U256::from(0x40))
-            && let Some(offset) = stack.peek(0).and_then(|offset| offset.try_into().ok())
-        {
-            Some(PendingMappingHash { address, offset })
-        } else {
-            None
-        };
+        mapping_slots::step(mapping_slots, interp);
+        self.pending_mapping_hash = mapping_slots::capture_hash(interp);
     }
 
     /// Records a successfully executed 64-byte `KECCAK256` operation after memory expansion.
     fn record_mapping_hash<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         if let Some(pending) = self.pending_mapping_hash.take()
-            && interp.result().is_ok()
             && let Some(mapping_slots) = &mut self.mapping_slots
-            && let Some(result) = interp.stack().peek(0)
         {
-            let data = interp.memory().slice(pending.offset, 0x40);
-            mapping_slots.entry(pending.address).or_default().record_hash(
-                result.into(),
-                B256::from_slice(&data[..0x20]),
-                B256::from_slice(&data[0x20..]),
-            );
+            mapping_slots::record_hash(mapping_slots, interp, pending);
         }
     }
 
