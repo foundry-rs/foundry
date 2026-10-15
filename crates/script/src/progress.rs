@@ -1,4 +1,6 @@
-use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_receipt};
+use crate::receipts::{
+    PendingReceiptError, TxStatus, check_tx_status, check_tx_status_once, format_receipt,
+};
 use alloy_chains::Chain;
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{
@@ -134,6 +136,10 @@ impl SequenceProgressState {
     /// Hides transactions and receipts progress bar, leaving only top line with the latest set
     /// status.
     pub fn finish(&self) {
+        // Polling can stop before every pending transaction is checked.
+        for spinner in self.tx_spinners.values() {
+            spinner.finish_and_clear();
+        }
         self.top_spinner.finish();
         self.txs.finish_and_clear();
         self.receipts.finish_and_clear();
@@ -190,7 +196,7 @@ impl ScriptProgress {
     /// node's mempool, we wait for its receipt to be available. If the transaction
     /// has not confirmed, and cannot be found in the mempool, we remove it from
     /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
-    /// later steps.
+    /// later steps, stop polling, and check every remaining hash once.
     pub async fn wait_for_pending<N: Network>(
         &self,
         sequence_idx: usize,
@@ -217,12 +223,26 @@ impl ScriptProgress {
             .clone()
             .into_iter()
             .map(|tx| check_tx_status(provider, tx, timeout, confirmations));
-        let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
+        let mut tasks = Some(futures::stream::iter(futs).buffer_unordered(10));
+        let mut polled = Vec::with_capacity(count);
+        let mut unpolled = Vec::new();
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
 
-        while let Some((tx_hash, result)) = tasks.next().await {
+        loop {
+            let (tx_hash, result) = if let Some(tasks) = &mut tasks {
+                let Some((tx_hash, result)) = tasks.next().await else { break };
+                polled.push(tx_hash);
+                (tx_hash, result)
+            } else {
+                let Some(tx_hash) = unpolled.pop() else { break };
+                let Some(status) = check_tx_status_once(provider, tx_hash, confirmations).await
+                else {
+                    continue;
+                };
+                (tx_hash, Ok(status))
+            };
             match result {
                 Err(err) => {
                     // Check if this is a retry error for pending receipts
@@ -266,6 +286,18 @@ impl ScriptProgress {
                         "Transaction {tx_hash:?} is not currently visible to the RPC endpoint."
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+
+                    // A later nonce can stay visible indefinitely behind this transaction, so
+                    // stop polling and check every remaining hash once instead.
+                    if tasks.take().is_some() {
+                        unpolled = deployment_sequence
+                            .pending
+                            .iter()
+                            .rev()
+                            .filter(|hash| !polled.contains(hash))
+                            .copied()
+                            .collect();
+                    }
                 }
                 Ok(TxStatus::Success(receipt)) => {
                     trace!(tx_hash=?tx_hash, "received tx receipt");

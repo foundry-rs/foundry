@@ -154,6 +154,12 @@ also remove the compatibility hash from `pending`. Neither that incomplete recei
 returning no transaction proves that a submission never reached the network, so neither condition
 permits the recovery store to infer a replacement attempt.
 
+Polling stops at the first transaction the endpoint no longer returns, because a later nonce can
+remain visible behind it indefinitely. Each hash left unpolled is then checked once: a receipt with
+the requested confirmations is recorded, and a confirmed revert still fails the broadcast; a
+transaction the endpoint no longer returns is handled like the first one; anything still visible
+stays in `pending` for a later batch or `--resume`.
+
 Receipts are sorted by block number and transaction index before persistence. Their order is not an
 operation identity. Associate a receipt with a transaction by hash, as `BroadcastReader` does,
 rather than by position.
