@@ -364,9 +364,9 @@ tempo-hardfork-evm2 = { package = "tempo-hardfork", git = "https://github.com/te
 tempo-primitives-evm2 = { package = "tempo-primitives", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
 tempo-precompiles-evm2 = { package = "tempo-precompiles", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
 # Op, Base and Monad evm2 type families.
-op-evm2 = { path = "../evm2-networks/crates/op", default-features = false }
-base-evm2 = { path = "../evm2-networks/crates/base", default-features = false }
-monad-evm2 = { path = "../evm2-networks/crates/monad", default-features = false }
+op-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "3755f376f4a7a36e968cb78b33353b8fd99b5374", default-features = false }
+base-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "3755f376f4a7a36e968cb78b33353b8fd99b5374", default-features = false }
+monad-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "3755f376f4a7a36e968cb78b33353b8fd99b5374", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }
