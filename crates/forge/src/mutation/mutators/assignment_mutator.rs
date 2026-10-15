@@ -65,7 +65,7 @@ impl Mutator for AssignmentMutator {
                     },
                 ]),
                 OwnedLiteral::Str { .. } => Ok(vec![]),
-                OwnedLiteral::Rational(_) => Ok(vec![]),
+                OwnedLiteral::Rational(_) | OwnedLiteral::BigNumber(_) => Ok(vec![]),
                 OwnedLiteral::Address(_) => Ok(vec![]),
                 OwnedLiteral::Err(_) => Ok(vec![]),
                 // `NegatedNumber` is only ever constructed *as* a mutant; it
@@ -138,7 +138,7 @@ fn extract_rhs_info<'ast>(context: &MutationContext<'ast>) -> Option<(AssignVarT
 
     match &relevant_expr_for_rhs.kind {
         ExprKind::Lit(kind, _) => {
-            let owned = OwnedLiteral::from(&kind.kind);
+            let owned = OwnedLiteral::from(&**kind);
             Some((AssignVarTypes::Literal(owned), relevant_expr_for_rhs.span))
         }
         ExprKind::Ident(val) => {

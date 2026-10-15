@@ -691,7 +691,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
         value.refresh(state);
         self.use_value(&value);
         value.scalar = value.scalar.or_else(|| {
-            self.gcx.try_eval_const_value(expr).ok().and_then(|value| {
+            self.gcx.const_eval().eval_expr(expr).ok().and_then(|value| {
                 value.as_bool().map(Scalar::Bool).or_else(|| value.as_u256().map(Scalar::Uint))
             })
         });
@@ -1013,7 +1013,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             return None;
         }
         let expr = expr.peel_parens();
-        if let Ok(value) = self.gcx.try_eval_const(expr) {
+        if let Ok(value) = self.gcx.const_eval().eval_int(expr) {
             return value.as_u256();
         }
         if let Some(id) = self.gcx.resolved_variable(expr) {
@@ -1030,7 +1030,8 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
             {
                 let arg = args.exprs().next()?;
                 if self.gcx.resolved_builtin(callee) == Some(Builtin::Keccak256) {
-                    let ConstValue::String(bytes) = self.gcx.try_eval_const_value(arg).ok()? else {
+                    let ConstValue::Bytes(bytes, _) = self.gcx.const_eval().eval_expr(arg).ok()?
+                    else {
                         return None;
                     };
                     return Some(keccak256(bytes.as_byte_str()).into());
