@@ -585,7 +585,7 @@ impl ConstraintContext {
         };
         root_candidate
             || expr.contains_udiv()
-            || expr.visit_unique_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
+            || expr.visit_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
     }
 
     fn normalize_bool(
@@ -595,7 +595,7 @@ impl ConstraintContext {
         context_free_changed: bool,
     ) -> SymBoolExpr {
         let may_normalize_word = !self.is_exact_value_constraint(&expr)
-            && expr.visit_unique_bool(|word| self.may_normalize_word(word));
+            && expr.visit_bool(|word| self.may_normalize_word(word));
         let expr = if may_normalize_word {
             let expr = expr.fold_exprs(cx, &mut |cx, expr| self.normalize_word(cx, expr));
             normalize_bool_for_solver(cx, expr)

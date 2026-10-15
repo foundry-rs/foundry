@@ -87,7 +87,7 @@ impl<CTX: ContextTr> Inspector<CTX> for LogCollector {
     }
 
     fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
+        if inputs.transfer_to() == HARDHAT_CONSOLE_ADDRESS {
             return self.do_hardhat_log(context, inputs);
         }
         None

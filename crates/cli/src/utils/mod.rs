@@ -1081,7 +1081,7 @@ ignore them in the `.gitignore` file."
 
     /// Returns remote branch names as a newline-separated string.
     pub fn remote_branches(self) -> Result<String> {
-        self.cmd().args(["branch", "-r"]).get_stdout_lossy()
+        self.cmd().args(["branch", "-r", "--no-color", "--no-column"]).get_stdout_lossy()
     }
 
     /// Fetches a branch from origin and checks out a local tracking branch at the given path.
@@ -1338,10 +1338,9 @@ mod tests {
 
     #[test]
     fn deserialize_submodule() {
-        let submodule: Submodule = serde_json::from_str(
-            r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#,
-        )
-        .unwrap();
+        let submodule: Submodule =
+            parse_json(r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#)
+                .unwrap();
         assert_eq!(submodule.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
         assert_eq!(submodule.path(), Path::new("lib/dep"));
         assert_eq!(

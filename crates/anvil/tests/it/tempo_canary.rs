@@ -496,7 +496,7 @@ async fn replay(pinned: PinnedTransaction, hardfork: TempoHardfork) -> Replayed 
         receipt
     };
     assert_eq!(
-        receipt.transaction_hash(),
+        receipt.tx_hash(),
         pinned.hash,
         "block {number} does not hold the pinned transaction {explorer}/receipt/{}",
         pinned.hash

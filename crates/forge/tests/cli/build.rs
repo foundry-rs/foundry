@@ -887,7 +887,7 @@ Compiler settings (profile: no-metadata): optimizer=true, optimizer_runs=777, vi
 fn build_sizes_no_forge_std(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27)));
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
     });
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"

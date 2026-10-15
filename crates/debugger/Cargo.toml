@@ -31,7 +31,6 @@ tracing.workspace = true
 serde.workspace = true
 
 # soldb
-dialoguer = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 soldb-core = { workspace = true, optional = true }
 soldb-debugger = { workspace = true, optional = true }
@@ -55,7 +54,6 @@ optimism = [
     "foundry-evm-traces/optimism",
 ]
 soldb = [
-    "dep:dialoguer",
     "dep:serde_json",
     "dep:soldb-core",
     "dep:soldb-debugger",

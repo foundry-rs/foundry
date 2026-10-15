@@ -41,7 +41,9 @@ use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project_cached},
     external_compiler::is_external_artifact,
-    fs, sh_status, sh_warn, shell,
+    fs,
+    fs::canonicalize_path,
+    sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
@@ -1982,13 +1984,15 @@ impl TestArgs {
                     )?;
                     sources.insert_compiled_sources(&build_info_dir)?;
 
-                    // Prefer execution traces for normal debug runs, but when execution never
-                    // starts (for example if `setUp()` reverts), fall back to available
-                    // setup/deployment traces.
+                    // The built-in debugger starts with execution, falling back to setup if it
+                    // failed. SolDB keeps deployment, setup, and execution in one session.
                     let mut traces = test_result
                         .traces
                         .iter()
-                        .filter(|(kind, _)| kind.is_execution())
+                        .filter(|(kind, _)| {
+                            self.debugger.unwrap_or_default() != DebuggerFrontend::Foundry
+                                || kind.is_execution()
+                        })
                         .cloned()
                         .collect::<Vec<_>>();
                     if traces.is_empty() {
@@ -2984,7 +2988,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
     let root = &config.root;
     let canonicalize_through_existing_ancestor = |path: &Path| -> PathBuf {
         let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
-        if let Ok(canon) = dunce::canonicalize(&resolved) {
+        if let Ok(canon) = canonicalize_path(&resolved) {
             return canon;
         }
         let mut missing = Vec::new();
@@ -2995,7 +2999,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
             let Some(parent) = ancestor.parent() else { break };
             ancestor = parent;
         }
-        let mut canon = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.into());
+        let mut canon = canonicalize_path(ancestor).unwrap_or_else(|_| ancestor.into());
         canon.extend(missing.iter().rev());
         canon
     };

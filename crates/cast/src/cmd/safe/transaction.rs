@@ -84,7 +84,7 @@ impl SafeCall {
         N: Network + RecommendedFillers,
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: Serialize,
     {
         ensure!(

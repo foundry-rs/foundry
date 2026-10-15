@@ -949,6 +949,143 @@ fn can_update_only_selected_dependencies(prj: _, cmd: _) {
 }
 
 #[forgetest]
+fn update_rejects_unresolved_ref_override(prj: _, cmd: _) {
+    cmd.git_init();
+
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let source_git = Git::new(source.path());
+    let first = source_git.head().unwrap();
+
+    let path = PathBuf::from("lib/dependency");
+    let other_path = PathBuf::from("lib/other");
+    let mut lock = Lockfile::new(prj.root());
+    for path in [&path, &other_path] {
+        let output = Command::new("git")
+            .current_dir(prj.root())
+            .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+            .arg(source.path())
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        lock.insert(path.clone(), DepIdentifier::Rev { rev: first.clone(), r#override: false });
+    }
+    let dependency_path = prj.root().join(&path);
+    let dependency_git = Git::new(&dependency_path);
+    lock.write().unwrap();
+    cmd.git_add();
+    cmd.git_commit("pin dependency fixture");
+    let original_lock = fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/dependency@DOES_NOT_EXIST"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: Failed to resolve ref `DOES_NOT_EXIST` for dependency `lib/dependency`
+
+Context:
+- git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
+
+"#]]);
+    assert_eq!(dependency_git.head().unwrap(), first);
+    assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
+    assert_eq!(
+        fs::read_to_string(prj.root().join(&path).join("source.txt")).unwrap(),
+        "dependency source\n"
+    );
+
+    // Create refs only after installation so resolution must fetch without checking out.
+    fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("second revision").unwrap();
+    let second = source_git.head().unwrap();
+    for args in [["tag", "v2"], ["branch", "new-branch"]] {
+        let output = Command::new("git").current_dir(source.path()).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // A valid ref must not move either dependency when another override is invalid.
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/other@v2", "example/dependency@DOES_NOT_EXIST"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+...
+Error: Failed to resolve ref `DOES_NOT_EXIST` for dependency `lib/dependency`
+
+Context:
+- git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
+
+"#]]);
+    for path in [&path, &other_path] {
+        assert_eq!(Git::new(&prj.root().join(path)).head().unwrap(), first);
+        assert_eq!(
+            fs::read_to_string(prj.root().join(path).join("source.txt")).unwrap(),
+            "dependency source\n"
+        );
+    }
+    assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
+
+    // A newly published tag still updates the checkout and lockfile.
+    let output =
+        Command::new("git").current_dir(source.path()).args(["tag", "v2-fresh"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/dependency@v2-fresh"]).assert_success();
+    assert_eq!(dependency_git.head().unwrap(), second);
+    let updated = lockfile_get(prj.root(), &path).unwrap();
+    assert_eq!(updated.name(), "v2-fresh");
+    assert_eq!(updated.rev(), second);
+
+    // A remote-only branch must retain branch semantics, not become a revision pin.
+    let output = Command::new("git")
+        .current_dir(prj.root().join(&other_path))
+        .args(["config", "color.branch", "always"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/other@new-branch"]).assert_success();
+    assert_eq!(Git::new(&prj.root().join(&other_path)).head().unwrap(), second);
+    let updated = lockfile_get(prj.root(), &other_path).unwrap();
+    assert!(updated.is_branch());
+    assert_eq!(updated.name(), "new-branch");
+    assert_eq!(updated.rev(), second);
+
+    // A commit published after the earlier updates must also be fetched before resolution.
+    fs::write(source.path().join("source.txt"), "third revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("third revision").unwrap();
+    let third = source_git.head().unwrap();
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", &format!("example/dependency@{third}")]).assert_success();
+    assert_eq!(dependency_git.head().unwrap(), third);
+    let updated = lockfile_get(prj.root(), &path).unwrap();
+    assert!(matches!(updated, DepIdentifier::Rev { .. }));
+    assert_eq!(updated.rev(), third);
+
+    // A cached tag remains usable offline when Git is configured to skip remote updates.
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["config", "submodule.lib/dependency.update", "none"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "none");
+    cmd.args(["update", "example/dependency@v2-fresh"]).assert_success();
+    assert_eq!(dependency_git.head().unwrap(), second);
+    assert_eq!(lockfile_get(prj.root(), &path).unwrap().name(), "v2-fresh");
+}
+
+#[forgetest]
 fn can_override_tag_in_update(prj: _, cmd: _) {
     cmd.git_init();
 

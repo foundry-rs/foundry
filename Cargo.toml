@@ -453,7 +453,6 @@ comfy-table = "8"
 crossterm = "0.29"
 dirs = "7"
 dunce = "1"
-evm-disassembler = "0.6"
 evmole = "0.9"
 eyre = "0.6"
 figment = { package = "figment2", version = "0.11" }
@@ -481,17 +480,17 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 # https://github.com/rust-cli/rexpect/pull/106
 rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 ron = "0.12"
-rustls = "0.23.45"
+rustls = "0.23.46"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 shlex = "2"
 similar-asserts = "2.0"
-soldb-core = "0.4.0"
-soldb-debugger = "0.4.0"
-soldb-ethdebug = "0.4.0"
-soldb-repl = "0.4.0"
-soldb-tui = "0.4.0"
+soldb-core = "0.4.1"
+soldb-debugger = "0.4.1"
+soldb-ethdebug = "0.4.1"
+soldb-repl = "0.4.1"
+soldb-tui = "0.4.1"
 soldeer-commands = "=0.12.0"
 soldeer-core = { version = "=0.12.0", features = ["serde"] }
 strum = "0.28"
@@ -579,10 +578,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "b3d988b227d6597bafc9a1857f75db0a8123baec" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "b3d988b227d6597bafc9a1857f75db0a8123baec" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "b3d988b227d6597bafc9a1857f75db0a8123baec" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "b3d988b227d6597bafc9a1857f75db0a8123baec" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "39c03a49ade2f74a6e97e2af308283a42d78d302" }

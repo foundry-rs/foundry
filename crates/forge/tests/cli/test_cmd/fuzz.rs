@@ -971,24 +971,28 @@ contract ForgeFuzzReplayFailureTest {
         prj.root().join("cache/fuzz/failures/ForgeFuzzReplayFailureTest/testFuzz_reverts");
     let mut failure: Value =
         serde_json::from_str(&std::fs::read_to_string(&failure_path).unwrap()).unwrap();
+    let persisted = serde_json::from_value::<BaseCounterExample>(failure.clone()).unwrap();
+    let persisted_value = U256::from_be_slice(&persisted.calldata[4..]);
     let failure = failure.as_object_mut().unwrap();
     failure.remove("sender");
     failure.remove("addr");
     failure.remove("value");
     std::fs::write(&failure_path, serde_json::to_vec_pretty(failure).unwrap()).unwrap();
 
-    let replay = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
-        .assert_failure();
-    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.contains("[FAIL: EvmError: Revert; counterexample: calldata=0x")
-            && stdout.contains("args=[200]] testFuzz_reverts(uint256) (runs: 0,"),
-        "{stdout}"
-    );
-    assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
-    assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
+        .assert_failure()
+        .stdout_eq(format!(
+            r#"...
+[FAIL: EvmError: Revert; counterexample: calldata={calldata} args=[{persisted_value}]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+Traces:
+  [[..]] ForgeFuzzReplayFailureTest::testFuzz_reverts({persisted_value})
+...
+[SKIP: not runnable in replay mode] test_unit() ([GAS])
+...
+"#,
+            calldata = persisted.calldata,
+        ));
 }
 
 #[forgetest_init]
@@ -1172,22 +1176,31 @@ contract ForgeFuzzReplayAssumeRejectTest {
 
     cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayAssumeRejectTest", "-q"]).assert_failure();
 
+    let failure_path =
+        prj.root().join("cache/fuzz/failures/ForgeFuzzReplayAssumeRejectTest/testFuzz_reverts");
+    let failure =
+        serde_json::from_slice::<BaseCounterExample>(&std::fs::read(failure_path).unwrap())
+            .unwrap();
+    let persisted_value = U256::from_be_slice(&failure.calldata[4..]);
+
     prj.add_test(
         "ForgeFuzzReplayAssumeReject.t.sol",
-        r#"
-interface Vm {
+        &format!(
+            r#"
+interface Vm {{
     function assume(bool) external;
-}
+}}
 
-contract ForgeFuzzReplayAssumeRejectTest {
+contract ForgeFuzzReplayAssumeRejectTest {{
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-    function testFuzz_reverts(uint256 value) public {
-        vm.assume(value != 200);
+    function testFuzz_reverts(uint256 value) public {{
+        vm.assume(value != {persisted_value});
         require(false, "fresh unrelated failure");
-    }
-}
-   "#,
+    }}
+}}
+   "#
+        ),
     );
 
     cmd.forge_fuse()

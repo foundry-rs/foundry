@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::U256;
+use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
 use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
 use proptest::test_runner::TestRunner;
@@ -427,10 +427,34 @@ impl SequenceGenerator {
 }
 
 /// An EVM comparison observed while executing an input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ComparisonHint {
     pub lhs: U256,
     pub rhs: U256,
+}
+
+impl ComparisonHint {
+    /// Collects the distinct `hints` that a cmp mutation can apply to `calldata`, in first-seen
+    /// order.
+    ///
+    /// Cmp mutations only rewrite the calldata stored with the hints, so other hints can never
+    /// produce a mutation.
+    pub fn applicable(calldata: &[u8], hints: impl IntoIterator<Item = Self>) -> Vec<Self> {
+        let mut seen = HashSet::<Self>::default();
+        hints.into_iter().filter(|hint| seen.insert(*hint) && hint.applies_to(calldata)).collect()
+    }
+
+    /// Returns whether a cmp mutation can replace one of this comparison's operands in
+    /// `calldata`.
+    pub fn applies_to(&self, calldata: &[u8]) -> bool {
+        let lhs = self.lhs.to_be_bytes::<32>();
+        let rhs = self.rhs.to_be_bytes::<32>();
+        CMP_WIDTHS.iter().any(|&width| {
+            let lhs = &lhs[32 - width..];
+            let rhs = &rhs[32 - width..];
+            lhs != rhs && (contains_operand(calldata, lhs) || contains_operand(calldata, rhs))
+        })
+    }
 }
 
 /// Pure mutations shared by stateless and invariant sequence producers.
@@ -578,17 +602,19 @@ impl SequenceMutator {
     }
 }
 
+/// Operand widths, in bytes, that cmp mutations try to replace.
+const CMP_WIDTHS: [usize; 6] = [32, 16, 8, 4, 2, 1];
+
 fn cmp_mutated_calldata(
     calldata: &[u8],
     hint: ComparisonHint,
     runner: &mut TestRunner,
 ) -> Option<Vec<u8>> {
-    const WIDTHS: [usize; 6] = [32, 16, 8, 4, 2, 1];
     let lhs = hint.lhs.to_be_bytes::<32>();
     let rhs = hint.rhs.to_be_bytes::<32>();
-    let start = runner.rng().random_range(0..WIDTHS.len());
-    for offset in 0..WIDTHS.len() {
-        let width = WIDTHS[(start + offset) % WIDTHS.len()];
+    let start = runner.rng().random_range(0..CMP_WIDTHS.len());
+    for offset in 0..CMP_WIDTHS.len() {
+        let width = CMP_WIDTHS[(start + offset) % CMP_WIDTHS.len()];
         let lhs = &lhs[32 - width..];
         let rhs = &rhs[32 - width..];
         if lhs == rhs {
@@ -605,18 +631,29 @@ fn cmp_mutated_calldata(
     None
 }
 
+/// Length of the function selector that cmp mutations never rewrite.
+const SELECTOR_LEN: usize = 4;
+
+/// Returns whether `pattern` can be searched for in `calldata` arguments.
+fn is_replaceable_operand(calldata: &[u8], pattern: &[u8]) -> bool {
+    !pattern.is_empty()
+        && calldata.len() >= SELECTOR_LEN + pattern.len()
+        && (pattern.len() == 32 || pattern.iter().any(|byte| *byte != 0))
+}
+
+/// Returns whether `pattern` occurs in `calldata` arguments.
+fn contains_operand(calldata: &[u8], pattern: &[u8]) -> bool {
+    is_replaceable_operand(calldata, pattern)
+        && calldata[SELECTOR_LEN..].windows(pattern.len()).any(|window| window == pattern)
+}
+
 fn replace_operand(
     calldata: &[u8],
     pattern: &[u8],
     replacement: &[u8],
     runner: &mut TestRunner,
 ) -> Option<Vec<u8>> {
-    const SELECTOR_LEN: usize = 4;
-    if pattern.is_empty()
-        || pattern.len() != replacement.len()
-        || calldata.len() < SELECTOR_LEN + pattern.len()
-        || (pattern.len() < 32 && pattern.iter().all(|byte| *byte == 0))
-    {
+    if pattern.len() != replacement.len() || !is_replaceable_operand(calldata, pattern) {
         return None;
     }
     let search_len = calldata.len() - SELECTOR_LEN - pattern.len() + 1;
@@ -1049,5 +1086,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(accesses, 2);
+    }
+
+    #[test]
+    fn applicable_hints_dedup_and_drop_operands_missing_from_calldata() {
+        let function = Function::parse("testCmp(uint256)").unwrap();
+        let calldata = function.abi_encode_input(&[DynSolValue::Uint(U256::from(7), 256)]).unwrap();
+        let hint =
+            |lhs: u64, rhs: u64| ComparisonHint { lhs: U256::from(lhs), rhs: U256::from(rhs) };
+
+        let hints = [hint(7, 42), hint(1000, 2000), hint(7, 42), hint(5, 5), hint(42, 7)];
+        let applicable = ComparisonHint::applicable(&calldata, hints);
+        assert_eq!(applicable, [hint(7, 42), hint(42, 7)]);
+        for hint in hints {
+            let mut input = tx(7);
+            input.call_details.calldata = calldata.clone().into();
+            let mutated = SequenceMutator::cmp_mutate(
+                &mut input,
+                &function,
+                &[hint],
+                &mut TestRunner::default(),
+                &FuzzFixtures::default(),
+            )
+            .unwrap();
+            assert_eq!(mutated, applicable.contains(&hint));
+        }
     }
 }

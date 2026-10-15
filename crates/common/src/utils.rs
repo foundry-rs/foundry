@@ -74,6 +74,18 @@ pub fn ignore_metadata_hash(bytecode: &[u8]) -> &[u8] {
     }
 }
 
+/// Returns whether the CBOR metadata at the end of the bytecode contains a metadata hash
+/// (`ipfs`, `bzzr0` or `bzzr1`), which commits to the contract's sources and compiler settings.
+pub fn has_metadata_hash(bytecode: &[u8]) -> bool {
+    let Some(start) = find_metadata_start(bytecode) else { return false };
+    let Ok(ciborium::Value::Map(entries)) =
+        ciborium::from_reader::<ciborium::Value, _>(&bytecode[start..bytecode.len() - 2])
+    else {
+        return false;
+    };
+    entries.iter().any(|(key, _)| matches!(key.as_text(), Some("ipfs" | "bzzr0" | "bzzr1")))
+}
+
 /// Strips all __$xxx$__ placeholders from the bytecode if it's an unlinked bytecode.
 /// by replacing them with 20 zero bytes.
 /// This is useful for matching bytecodes to a contract source, and for the source map,

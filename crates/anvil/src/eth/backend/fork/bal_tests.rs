@@ -323,7 +323,7 @@ fn fork_bal_seed_keeps_final_account_code() {
         let account = &accounts[&address];
         assert_eq!(account.balance, U256::from(42));
         assert_eq!(account.nonce, 3);
-        assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
+        assert_eq!(account.code_hash(), alloy_primitives::keccak256(&code));
         assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
         assert_eq!(
             account.code.as_ref().unwrap().is_eip7702(),

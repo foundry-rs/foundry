@@ -2280,3 +2280,58 @@ contract SymbolicHandlerAssumptions is Test {
 }
 "#]]);
 }
+
+#[forgetest_init]
+fn symbolic_invariant_replays_generic_storage(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invariant_replays_generic_storage");
+    prj.update_config(|config| config.invariant.runs = 0);
+    prj.add_test(
+        "SymbolicGenericReplay.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract GenericStorageTarget {
+    uint256 value;
+    mapping(uint256 => uint256) values;
+
+    function read(uint256 key) external {
+        require(key > 0 && key < 4);
+        require(value == 42);
+        require(values[key] == 17);
+        assert(false);
+    }
+}
+
+contract SymbolicGenericReplay is Test {
+    function setUp() public {
+        targetContract(address(new GenericStorageTarget()));
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "generic"
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    for mode in ["--symbolic", "--rerun"] {
+        assert_symbolic_witness(cmd.forge_fuse().args([
+            "test",
+            mode,
+            "--match-contract",
+            "SymbolicGenericReplay",
+        ]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicGenericReplay.t.sol:SymbolicGenericReplay
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] test/SymbolicGenericReplay.t.sol:GenericStorageTarget::read
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=read(uint256) [ARGS]
+ invariant_ok() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}

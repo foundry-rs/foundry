@@ -30,7 +30,6 @@ forge-script-sequence.workspace = true
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
-dunce.workspace = true
 foundry-compilers.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 tracing.workspace = true
@@ -61,14 +60,19 @@ thiserror.workspace = true
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 
+# monad
+monad-revm = { workspace = true, optional = true }
+
 [dev-dependencies]
 anvil.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+alloy-signer-local.workspace = true
 
 [features]
 default = ["optimism"]
 soldb = ["foundry-debugger/soldb"]
 monad = [
+    "dep:monad-revm",
     "anvil/monad",
     "foundry-config/monad",
     "foundry-evm/monad",

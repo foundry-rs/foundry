@@ -18,7 +18,7 @@ use foundry_evm_traces::{
 use std::path::Path;
 
 #[cfg(feature = "soldb")]
-use crate::soldb::{SoldbDebugger, select_call, write_bundle};
+use crate::soldb::{SoldbDebugger, write_bundle};
 
 /// Debugger builder.
 #[derive(Debug, Default)]
@@ -204,8 +204,8 @@ impl DebuggerBuilder {
 
     /// Opens the selected frontend, or writes its data to `dump` instead.
     ///
-    /// soldb debugs one call, so with several trace arenas the user selects one, and its dump is
-    /// a directory that soldb's own tools read.
+    /// The soldb frontend includes every trace arena in one session, and its dump is a directory
+    /// that soldb's own tools read.
     pub fn run(self, dump: Option<&Path>) -> Result<()> {
         match self.frontend {
             DebuggerFrontend::Foundry => {
@@ -225,31 +225,35 @@ impl DebuggerBuilder {
                     breakpoints,
                     ..
                 } = self;
-                let arena = select_call(trace_arenas)?;
                 let mut identified_code = HashMap::default();
-                let contract_names = arena
-                    .nodes()
+                let contract_names = trace_arenas
                     .iter()
-                    .map(|node| {
-                        node_contract_name(
-                            node,
-                            &known_contracts,
-                            &identified_contracts,
-                            &mut identified_code,
-                        )
+                    .map(|arena| {
+                        arena
+                            .nodes()
+                            .iter()
+                            .map(|node| {
+                                node_contract_name(
+                                    node,
+                                    &known_contracts,
+                                    &identified_contracts,
+                                    &mut identified_code,
+                                )
+                            })
+                            .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
                 match dump {
                     Some(dir) => {
-                        write_bundle(dir, arena, &contract_names, &sources, &known_contracts)
+                        write_bundle(dir, trace_arenas, &contract_names, &sources, &known_contracts)
                     }
                     None => SoldbDebugger::new(
-                        arena,
+                        trace_arenas,
                         &contract_names,
                         &sources,
                         &known_contracts,
                         &breakpoints,
-                    )
+                    )?
                     .try_run(),
                 }
             }
@@ -376,7 +380,7 @@ mod tests {
 
     #[test]
     fn trace_arena_accumulates_stats() {
-        let builder = DebuggerBuilder::new().trace_arena(trace_arena(100, 1));
+        let builder = Debugger::builder().trace_arena(trace_arena(100, 1));
 
         assert_eq!(builder.stats.session_subcalls, 1);
         assert_eq!(builder.stats.session_trace_gas_used, 100);
@@ -385,9 +389,8 @@ mod tests {
 
     #[test]
     fn trace_arena_accumulates_session_stats_across_multiple_arenas() {
-        let builder = DebuggerBuilder::new()
-            .trace_arena(trace_arena(100, 1))
-            .trace_arena(trace_arena(200, 2));
+        let builder =
+            Debugger::builder().trace_arena(trace_arena(100, 1)).trace_arena(trace_arena(200, 2));
 
         assert_eq!(builder.stats.session_subcalls, 3);
         assert_eq!(builder.stats.session_trace_gas_used, 300);

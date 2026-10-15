@@ -20,13 +20,14 @@ use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{
     bytecode::InstIter, eip2935::is_history_storage_address, utils::StateChangeset,
 };
-#[cfg(test)]
-use revm::database::InMemoryDB;
 use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
+
+#[cfg(test)]
+use revm::database::InMemoryDB;
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -524,11 +525,11 @@ impl FuzzDictionary {
                 for (slot, value) in &account.storage {
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
-                        let value_word = B256::from(value.present_value);
+                        let value_word = B256::from(value.present_value());
                         self.identify_storage_slot(key, slot, mapping_slots)
                             .filter(|slot_info| slot_info.decode(value_word).is_some())
                     });
-                    self.insert_storage_value(slot, &value.present_value, slot_info);
+                    self.insert_storage_value(slot, &value.present_value(), slot_info);
                 }
             }
         }
@@ -575,7 +576,7 @@ impl FuzzDictionary {
         if self.values_full() {
             return;
         }
-        if self.push_bytecode_hashes.insert(account_info.code_hash) {
+        if self.push_bytecode_hashes.insert(account_info.code_hash()) {
             self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
         }
     }
@@ -834,6 +835,7 @@ impl FuzzDictionary {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
@@ -855,11 +857,7 @@ mod tests {
         let contract = TargetedContract::new("Target".to_string(), abi);
         let matched_events = contract.event_lookup.by_topic(&selector, 0).unwrap();
         let word: B256 = U256::from(42).into();
-        let log = Log::new_unchecked(
-            Address::ZERO,
-            vec![selector],
-            Bytes::copy_from_slice(word.as_slice()),
-        );
+        let log = Log::new_unchecked(Address::ZERO, vec![selector], Bytes::from(word));
         let mut samples = Vec::new();
 
         assert!(FuzzDictionary::decode_log_events(
