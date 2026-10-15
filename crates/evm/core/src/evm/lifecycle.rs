@@ -3,8 +3,16 @@
 //! evm2's [`State`] owns transaction scratch, journaling, warmth, transient storage, logs and the
 //! accepted overlay of the running context. This module owns everything Foundry layers on top:
 //! which backing database is active, the accepted state of every inactive fork, user-visible
-//! snapshots, and nested transactions. It replaces the corresponding parts of the REVM-era
-//! `DatabaseExt`.
+//! snapshots, and nested transactions.
+//!
+//! # Executions
+//!
+//! [`ExecutionLifecycle::create_evm`] builds an EVM over the active context without copying its
+//! accepted state: the EVM reads it through a shared view and its overlay only collects what the
+//! execution reads and writes. [`ExecutionLifecycle::park`] accepts the EVM's state back into the
+//! active context, after a commit; dropping the EVM instead discards it, as for calls. Lifecycle
+//! operations that capture or replace the running state (fork switches, snapshots, nested
+//! transactions) first materialize the view into the EVM's overlay, once.
 //!
 //! # Execution phases
 //!
@@ -15,22 +23,22 @@
 //! applies the deferred environment at the next transaction boundary. Callers must surface a
 //! deferred transition rather than ignore it.
 //!
-//! Suspending a context accepts its in-flight writes, so a fork switch, like on the REVM backend,
-//! is not undone when an enclosing call reverts.
+//! Suspending a context accepts its in-flight writes, so a fork switch is not undone when an
+//! enclosing call reverts.
 
 use super::{
-    BackingDb, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt, FoundryEvmFactory, LifecycleSnapshot,
-    Parked, evm_env,
+    AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt, FoundryEvmFactory,
+    LifecycleSnapshot, Parked, evm_env,
 };
 use crate::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
 use alloy_consensus::transaction::Recovered;
-use alloy_primitives::{KECCAK256_EMPTY, Log, U256};
+use alloy_primitives::{Address, KECCAK256_EMPTY, Log, U256};
 use evm2::{
-    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, TxResult,
+    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
     evm::{Cache, DbResult, PrewarmSet, State},
 };
-use std::mem;
+use std::{mem, sync::Arc};
 
 /// Whether a lifecycle operation runs between transactions or inside one, such as from a
 /// cheatcode.
@@ -53,6 +61,22 @@ pub enum EnvTransition {
     Deferred,
 }
 
+/// Environment, inspector and network state of a nested transaction.
+pub struct NestedTx<'a, T: EvmTypesHost> {
+    /// Environment to execute with; the running environment if `None`.
+    pub env: Option<EvmEnv<T>>,
+    /// Network extension state to execute with; derived from the running EVM if `None`.
+    pub ext: Option<T::EvmExt>,
+    /// Inspector observing the nested transaction.
+    pub inspector: Option<&'a mut dyn Inspector<T>>,
+}
+
+impl<T: EvmTypesHost> Default for NestedTx<'_, T> {
+    fn default() -> Self {
+        Self { env: None, ext: None, inspector: None }
+    }
+}
+
 /// Fork, snapshot and nested-execution lifecycle for one EVM network family.
 ///
 /// `C` is caller-owned state captured with every snapshot, such as cheatcode state.
@@ -61,6 +85,17 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory, C = ()> {
     forks: ForkRegistry<F::Types>,
     snapshots: StateSnapshots<LifecycleSnapshot<F::Types, C>>,
     pending_env: Option<EvmEnv<F::Types>>,
+}
+
+impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
+    fn clone(&self) -> Self {
+        Self {
+            factory: self.factory.clone(),
+            forks: self.forks.clone(),
+            snapshots: self.snapshots.clone(),
+            pending_env: self.pending_env,
+        }
+    }
 }
 
 impl<F: FoundryEvmFactory, C> std::fmt::Debug for ExecutionLifecycle<F, C> {
@@ -96,26 +131,103 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         &mut self.forks
     }
 
-    /// Creates an EVM for the active context as it was when last suspended.
+    /// Returns the active context.
+    pub fn active(&self) -> &Parked<F::Types> {
+        self.forks.context(self.forks.active()).expect("active context exists")
+    }
+
+    /// Returns the active context mutably.
     ///
-    /// Call this once; afterwards the running EVM holds the active context's state.
-    pub fn create_evm(&mut self) -> Evm<'static, F::Types> {
+    /// Use it between executions only: a running EVM holds its own view of the context.
+    pub fn active_mut(&mut self) -> &mut Parked<F::Types> {
         let active = self.forks.active();
-        let context = self.forks.context_mut(active).expect("active context exists");
+        self.forks.context_mut(active).expect("active context exists")
+    }
+
+    /// Returns the active context's accepted state for modification between executions,
+    /// initializing the context first if it never ran.
+    pub fn accepted_mut(&mut self) -> &mut Cache {
+        if self.active().cache.is_none() {
+            let evm = self.create_evm();
+            self.park(evm);
+        }
+        Arc::make_mut(self.active_mut().cache.as_mut().expect("context is initialized"))
+    }
+
+    /// Returns a database reading the active context's accepted state over its backing database,
+    /// for reads between executions.
+    pub fn accepted_db(&self) -> impl BackingDb + use<F, C> {
+        let context = self.active();
+        AcceptedView {
+            cache: context.cache.clone().unwrap_or_default(),
+            backing: context.db.clone_backing(),
+        }
+    }
+
+    /// Returns whether a snapshot exists.
+    pub fn has_snapshot(&self, id: U256) -> bool {
+        self.snapshots.get(id).is_some()
+    }
+
+    /// Creates an EVM over the active context without copying its accepted state.
+    ///
+    /// A context that never ran is initialized first (network genesis, sentinels). Pass the EVM to
+    /// [`Self::park`] to accept its state, or drop it to discard it.
+    pub fn create_evm<'a>(&self) -> Evm<'a, F::Types> {
+        let context = self.active();
         let db = context.db.clone_backing();
         let env = context.env;
-        let cache = context.cache.take();
-        let ext = context.ext.clone();
         let factory = self.factory.configure_for(&db, &env);
-        match cache {
+        match &context.cache {
             None => factory.create_evm(db, env),
             Some(cache) => {
-                let mut evm = factory.new_evm(db, env);
-                evm.state_mut().overlay_db_mut().cache = cache;
-                *evm.ext_mut() = ext;
+                let view = AcceptedView { cache: Arc::clone(cache), backing: db };
+                let mut evm = factory.new_evm(view, env);
+                *evm.ext_mut() = context.ext.clone();
                 evm
             }
         }
+    }
+
+    /// Accepts `evm`'s state, environment and network extension state into the active context.
+    ///
+    /// Call this between transactions, with an EVM created by [`Self::create_evm`] whose
+    /// executions were committed. In-flight state that was not committed is discarded, and a
+    /// deferred environment change is applied first.
+    pub fn park(&mut self, mut evm: Evm<'_, F::Types>) {
+        self.begin_transaction(&mut evm);
+        evm.state_mut().clear_transaction_state();
+        let is_view = AcceptedView::is(evm.database());
+        let local = mem::take(&mut evm.state_mut().overlay_db_mut().cache);
+        let env = evm_env(&evm);
+        let ext = evm.ext().clone();
+        // Release the EVM's handle on the accepted state before updating it in place.
+        drop(evm);
+        let context = self.active_mut();
+        match (is_view, &mut context.cache) {
+            (true, Some(accepted)) => Arc::make_mut(accepted).merge(local),
+            _ => context.cache = Some(Arc::new(local)),
+        }
+        context.env = env;
+        context.ext = ext;
+    }
+
+    /// Materializes the accepted state `evm` reads through a shared view into its own overlay.
+    ///
+    /// Operations that capture or replace the running state call this first; it copies the
+    /// accepted state once per execution.
+    pub fn materialize(&self, evm: &mut Evm<'_, F::Types>) {
+        if !AcceptedView::is(evm.database()) {
+            return;
+        }
+        let context = self.active();
+        let mut cache = context.cache.as_deref().cloned().unwrap_or_default();
+        // Replace only the overlay's cache and backing database: `Evm::set_database` would also
+        // clear the overlay and the in-flight transaction state.
+        let overlay = evm.state_mut().overlay_db_mut();
+        cache.merge(mem::take(&mut overlay.cache));
+        overlay.cache = cache;
+        overlay.db = Box::new(context.db.clone_backing());
     }
 
     /// Registers a fork without selecting it and returns its local fork ID.
@@ -161,20 +273,60 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         env: EvmEnv<F::Types>,
         phase: ExecutionPhase,
     ) -> eyre::Result<EnvTransition> {
+        self.roll_fork_with(evm, id, db, env, None, phase)
+    }
+
+    /// Like [`Self::roll_fork`], but resumes the fork with `cache` as its accepted state, such as
+    /// state replayed up to a transaction.
+    pub fn roll_fork_with(
+        &mut self,
+        evm: &mut Evm<'_, F::Types>,
+        id: Option<U256>,
+        db: impl BackingDb,
+        env: EvmEnv<F::Types>,
+        cache: Option<Cache>,
+        phase: ExecutionPhase,
+    ) -> eyre::Result<EnvTransition> {
         let active = self.forks.active();
         let id = id.or(active);
-        let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
-        let Some(context) = self.forks.context_mut(id) else {
-            eyre::bail!("fork {} does not exist", id.unwrap_or_default());
-        };
-        *context = Parked::new(Box::new(db), env, ext);
         if id != active {
+            self.replace_inactive(id, db, env, cache)?;
             return Ok(EnvTransition::Applied);
         }
+        let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
         let suspended = self.suspend(evm);
-        // Suspending saved the running state into the context being replaced; drop it.
-        self.forks.context_mut(id).expect("active context exists").cache = None;
+        let context = self.active_mut();
+        *context = Parked::new(Box::new(db), env, ext);
+        context.cache = cache.map(Arc::new);
         Ok(self.resume(evm, suspended, phase))
+    }
+
+    /// Moves the inactive fork `id`, or the local context for `None`, onto a new backing database
+    /// and environment, optionally with `cache` as its accepted state.
+    ///
+    /// The fork's accepted state is discarded except for persistent accounts.
+    pub fn replace_inactive(
+        &mut self,
+        id: Option<U256>,
+        db: impl BackingDb,
+        env: EvmEnv<F::Types>,
+        cache: Option<Cache>,
+    ) -> eyre::Result<()> {
+        eyre::ensure!(id != self.forks.active(), "fork {} is active", id.unwrap_or_default());
+        let Some(previous) = self.forks.context(id) else {
+            eyre::bail!("fork {} does not exist", id.unwrap_or_default());
+        };
+        let previous = previous.cache.clone();
+        let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
+        let mut context = Parked::new(Box::new(db), env, ext);
+        if let Some(mut cache) = cache {
+            if let Some(previous) = previous {
+                self.forks.merge_persistent(&previous, &mut cache);
+            }
+            context.cache = Some(Arc::new(cache));
+        }
+        *self.forks.context_mut(id).expect("context exists") = context;
+        Ok(())
     }
 
     /// Applies an environment change deferred by an in-flight operation. Call before every
@@ -188,7 +340,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     }
 
     /// Captures the running context, every fork, and `extra`, and returns the snapshot ID.
-    pub fn snapshot(&mut self, evm: &Evm<'_, F::Types>, extra: C) -> U256 {
+    pub fn snapshot(&mut self, evm: &mut Evm<'_, F::Types>, extra: C) -> U256 {
+        self.materialize(evm);
         self.snapshots.insert(LifecycleSnapshot {
             state: evm.state().snapshot(),
             forks: self.forks.clone(),
@@ -200,7 +353,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
 
     /// Restores snapshot `id` and returns its `extra`, or `None` if it does not exist.
     ///
-    /// Logs emitted since the snapshot are kept, like on the REVM backend.
+    /// Logs emitted since the snapshot are kept. Persistent accounts and forks created after the
+    /// snapshot survive the revert; every fork that existed at the snapshot gets its state back.
     pub fn revert(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
@@ -214,9 +368,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             self.snapshots.remove(id)
         }?;
         let LifecycleSnapshot { state, forks, env, ext, extra } = snapshot;
-        let next_id = self.forks.next_id;
-        self.forks = forks;
-        self.forks.next_id = next_id;
+        let mut current = mem::replace(&mut self.forks, forks);
+        self.forks.next_id = current.next_id;
+        self.forks.persistent = mem::take(&mut current.persistent);
+        for (id, entry) in current.forks {
+            self.forks.forks.entry(id).or_insert(entry);
+        }
         let db = self.forks.active_db();
         let logs = mem::take(evm.state_mut().logs_mut());
         let mut state = state.into_state(db.clone_backing());
@@ -248,35 +405,115 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm: &mut Evm<'_, F::Types>,
         tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
     ) -> eyre::Result<TxResult<F::Types>> {
+        self.nested_transaction_with(evm, tx, NestedTx::default())
+    }
+
+    /// Like [`Self::nested_transaction`], with an explicit environment, network extension state
+    /// and inspector.
+    pub fn nested_transaction_with(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
+        nested: NestedTx<'_, F::Types>,
+    ) -> eyre::Result<TxResult<F::Types>> {
+        self.materialize(evm);
         let db = self.forks.active_db();
         let mut state = evm.state().snapshot().into_state(db.clone_backing());
         state.commit_transaction();
         state.clear_transaction_state();
-        let env = evm_env(evm);
-        let mut nested = self.factory.configure_for(&db, &env).new_evm(db, env);
-        *nested.state_mut() = state;
-        *nested.ext_mut() = evm.ext().clone();
-        nested.ext_mut().for_transaction(tx);
-        let executed = nested.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        let ext = nested.ext.unwrap_or_else(|| {
+            let mut ext = evm.ext().clone();
+            ext.for_transaction(tx);
+            ext
+        });
+        let env = nested.env.unwrap_or_else(|| evm_env(evm));
+        let mut executor = self.factory.configure_for(&db, &env).new_evm(db, env);
+        *executor.state_mut() = state;
+        *executor.ext_mut() = ext;
+        if let Some(inspector) = nested.inspector {
+            executor.set_inspector(inspector);
+        }
+        let executed = executor.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
         let result = executed.result().clone();
         if result.status {
-            merge_changes(evm.state_mut(), &executed)?;
+            merge_changes(evm.state_mut(), &executed, |_| true)?;
         }
+        Ok(result)
+    }
+
+    /// Executes `tx` on the inactive fork `id`, or the local context for `None`, and accepts its
+    /// state there, such as for `vm.transact` on another fork.
+    ///
+    /// Persistent accounts carry the running transaction's state into the fork, and the
+    /// transaction's changes to them are merged back into the running transaction as journaled
+    /// writes.
+    pub fn transact_on_inactive(
+        &mut self,
+        evm: &mut Evm<'_, F::Types>,
+        id: Option<U256>,
+        tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
+        nested: NestedTx<'_, F::Types>,
+    ) -> eyre::Result<TxResult<F::Types>> {
+        eyre::ensure!(id != self.forks.active(), "fork {} is active", id.unwrap_or_default());
+        let Some(context) = self.forks.context(id) else {
+            eyre::bail!("fork {} does not exist", id.unwrap_or_default());
+        };
+        let db = context.db.clone_backing();
+        let env = nested.env.unwrap_or(context.env);
+        let ext = nested.ext.unwrap_or_else(|| {
+            let mut ext = context.ext.clone();
+            ext.for_transaction(tx);
+            ext
+        });
+        let factory = self.factory.configure_for(&db, &env);
+        // A context that never ran gets its network genesis before the transaction.
+        let mut executor = match &context.cache {
+            None => factory.create_evm(db, env),
+            Some(cache) => {
+                let mut executor = factory.new_evm(db, env);
+                executor.state_mut().overlay_db_mut().cache = Cache::clone(cache);
+                executor
+            }
+        };
+        *executor.ext_mut() = ext;
+
+        // Carry the running transaction's accepted and in-flight persistent accounts over.
+        self.materialize(evm);
+        let mut running = evm.state().snapshot().into_state(self.forks.active_db());
+        running.commit_transaction();
+        self.forks.merge_persistent(
+            &running.overlay_db().cache,
+            &mut executor.state_mut().overlay_db_mut().cache,
+        );
+
+        if let Some(inspector) = nested.inspector {
+            executor.set_inspector(inspector);
+        }
+        let executed = executor.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        let persistent = &self.forks.persistent;
+        merge_changes(evm.state_mut(), &executed, |address| persistent.contains(address))?;
+        let result = executed.commit();
+        executor.clear_inspector();
+        let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
+        self.forks.context_mut(id).expect("context exists").cache = Some(Arc::new(cache));
         Ok(result)
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active
     /// context. Returns what the running transaction carries into the next context.
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
+        self.materialize(evm);
         let state = evm.state_mut();
         state.commit_transaction();
         let logs = mem::take(state.logs_mut());
         let prewarm = state.prewarm_set().clone();
         let cache = state.overlay_db().cache.clone();
-        let context = self.forks.context_mut(self.forks.active()).expect("active context exists");
-        context.cache = Some(cache.clone());
-        context.env = evm_env(evm);
-        context.ext = evm.ext().clone();
+        let env = evm_env(evm);
+        let ext = evm.ext().clone();
+        let context = self.active_mut();
+        context.cache = Some(Arc::new(cache.clone()));
+        context.env = env;
+        context.ext = ext;
         Suspended { cache, logs, prewarm }
     }
 
@@ -289,11 +526,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         phase: ExecutionPhase,
     ) -> EnvTransition {
         let Suspended { cache: source, logs, prewarm } = suspended;
-        let active = self.forks.active();
-        let context = self.forks.context_mut(active).expect("active context exists");
+        let context = self.active_mut();
         let fresh = context.cache.is_none();
         // The running EVM owns the active context's accepted state.
-        let mut cache = context.cache.take().unwrap_or_default();
+        let mut cache = context.cache.take().map(Arc::unwrap_or_clone).unwrap_or_default();
         let db = context.db.clone_backing();
         let env = context.env;
         let ext = context.ext.clone();
@@ -372,13 +608,18 @@ pub fn nested_frame<T: EvmTypes, R, E>(
     result
 }
 
-/// Applies a nested transaction's state changes to `state` as journaled writes.
+/// Applies a nested transaction's changes to the accounts selected by `filter` to `state` as
+/// journaled writes.
 fn merge_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
+    filter: impl Fn(&Address) -> bool,
 ) -> DbResult<()> {
     for change in executed.account_changes().filter(|change| change.is_changed()) {
         let address = change.address;
+        if !filter(&address) {
+            continue;
+        }
         {
             let mut account = state.account(&address)?;
             match change.current {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{backend::RevertStateSnapshotAction, evm::EthEvmNetwork, fork::ForkId};
+use crate::{backend::RevertStateSnapshotAction, fork::ForkId};
 use alloy_network::TxSignerSync;
 use alloy_primitives::{B256, Bytes, TxKind, U256};
 use alloy_signer_local::PrivateKeySigner;
@@ -10,17 +10,17 @@ use evm2::{
 };
 
 const GWEI: u128 = 1_000_000_000;
-const ETHER: u128 = 1_000_000_000_000_000_000;
+pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
 
 /// `sstore(0, calldataload(0))`.
-const STORE: &[u8] = &[0x60, 0x00, 0x35, 0x60, 0x00, 0x55, 0x00];
+pub(crate) const STORE: &[u8] = &[0x60, 0x00, 0x35, 0x60, 0x00, 0x55, 0x00];
 /// `sstore(0, calldataload(0)); revert(0, 0)`.
 const STORE_THEN_REVERT: &[u8] = &[0x60, 0x00, 0x35, 0x60, 0x00, 0x55, 0x60, 0x00, 0x80, 0xfd];
 
-const STORE_ADDRESS: Address = Address::with_last_byte(0x5A);
-const REVERT_ADDRESS: Address = Address::with_last_byte(0x5B);
+pub(crate) const STORE_ADDRESS: Address = Address::with_last_byte(0x5A);
+pub(crate) const REVERT_ADDRESS: Address = Address::with_last_byte(0x5B);
 
-fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
+pub(crate) fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
     let mut db = InMemoryDB::default();
     for (address, balance) in accounts {
         db.insert_account_info(address, AccountInfo::default().with_balance(U256::from(*balance)));
@@ -35,20 +35,20 @@ fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
     db
 }
 
-fn balance<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> U256 {
+pub(crate) fn balance<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> U256 {
     evm.read_account_info(&address).unwrap().map(|info| info.balance).unwrap_or_default()
 }
 
-fn nonce<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> u64 {
+pub(crate) fn nonce<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> u64 {
     evm.read_account_info(&address).unwrap().map(|info| info.nonce).unwrap_or_default()
 }
 
-fn slot<T: EvmTypes>(evm: &mut Evm<'_, T>) -> U256 {
+pub(crate) fn slot<T: EvmTypes>(evm: &mut Evm<'_, T>) -> U256 {
     evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::ZERO).unwrap()
 }
 
 /// A complete, fee-free request that stores `value` through the `STORE` contract.
-fn store_request<FEN: FoundryEvmNetwork>(
+pub(crate) fn store_request<FEN: FoundryEvmNetwork>(
     from: Address,
     to: Address,
     nonce: u64,
@@ -114,10 +114,10 @@ where
     assert_eq!(nonce(&mut evm, caller), 3);
 
     // Snapshots restore state and return their extra; removal also drops later snapshots.
-    let first = lifecycle.snapshot(&evm, "first");
+    let first = lifecycle.snapshot(&mut evm, "first");
     let tx = FEN::tx_from_request(request(STORE_ADDRESS, 3, 11, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().commit().status);
-    let second = lifecycle.snapshot(&evm, "second");
+    let second = lifecycle.snapshot(&mut evm, "second");
     let keep = RevertStateSnapshotAction::RevertKeep;
     let remove = RevertStateSnapshotAction::RevertRemove;
     let phase = ExecutionPhase::Boundary;
@@ -169,11 +169,7 @@ where
     evm.state_mut().account(&persistent).unwrap().set_balance(U256::from(5));
     evm.state_mut().commit_transaction();
     let fork_env = EvmEnv::new(spec, factory.version(spec, chain_id), Default::default());
-    let info = |n: u64| ForkInfo {
-        id: ForkId::new("http://fork", Some(n)),
-        url: "http://fork".to_string(),
-        block: Some(n),
-    };
+    let info = |n: u64| ForkInfo::new(ForkId::new("http://fork", Some(n)), "http://fork", Some(n));
     let fork = lifecycle.create_fork(info(1), db_with(&[(caller, ETHER)], 100), fork_env);
     assert_eq!(lifecycle.select_fork(&mut evm, Some(fork), phase).unwrap(), EnvTransition::Applied);
     assert_eq!(lifecycle.forks().active(), Some(fork));
@@ -185,7 +181,7 @@ where
     evm.state_mut().commit_transaction();
 
     // Reverting a snapshot taken on the fork restores every fork's state and the selection.
-    let on_fork = lifecycle.snapshot(&evm, "fork");
+    let on_fork = lifecycle.snapshot(&mut evm, "fork");
     assert_eq!(lifecycle.select_fork(&mut evm, None, phase).unwrap(), EnvTransition::Applied);
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(balance(&mut evm, persistent), U256::from(6));
