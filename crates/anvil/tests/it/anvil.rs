@@ -148,6 +148,37 @@ async fn test_pause_automining_with_manual_timestamp_and_mode_changes() {
     assert_eq!(block.header.timestamp, timestamp + 2);
 }
 
+#[test]
+fn test_pause_skips_queued_interval_block() {
+    // With a single blocking thread kept busy, the block due at the 1 second mark is selected but
+    // its mining task stays queued until after mining is paused and resumed.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let blocker = tokio::task::spawn_blocking(move || release_rx.recv());
+        api.anvil_set_interval_mining(1).unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+        api.anvil_set_mining_paused(true).await.unwrap();
+        api.anvil_set_mining_paused(false).await.unwrap();
+        release_tx.send(()).unwrap();
+        blocker.await.unwrap().unwrap();
+
+        // The candidate selected before the pause is not mined on resume.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(api.block_number().unwrap(), U256::ZERO);
+
+        // The next block lands on the next tick of the original schedule.
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        assert_eq!(api.block_number().unwrap(), U256::ONE);
+    });
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_default_dev_keys() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
