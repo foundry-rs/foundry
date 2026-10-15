@@ -35,8 +35,6 @@ pub struct ContractConstructorData {
 /// Keeps data about a single contract definition.
 #[derive(Debug)]
 pub(crate) struct ContractData {
-    /// Whether the helper needs an explicit ABI coder v2 pragma.
-    needs_abi_coder_v2: bool,
     /// Path of the source file.
     path: PathBuf,
     /// Name of the contract
@@ -53,7 +51,6 @@ impl ContractData {
         contract_id: ContractId,
         contract: &Contract<'_>,
         path: &Path,
-        constructor_context: ConstructorContext,
         reserved_identifiers: &str,
         source_units: &[PathBuf],
     ) -> Self {
@@ -109,8 +106,6 @@ impl ContractData {
             });
 
         Self {
-            needs_abi_coder_v2: !constructor_context.abi_coder_v2
-                && constructor_context.for_source(gcx, contract.source).abi_coder_v2,
             path: path.to_path_buf(),
             name: contract.name.to_string(),
             constructor_data,
@@ -161,8 +156,8 @@ impl ContractData {
     /// ```solidity
     /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs({name: name, symbol: symbol})))
     /// ```
-    pub fn build_helper(&self) -> Option<String> {
-        let Self { path, name, constructor_data, needs_abi_coder_v2, artifact: _ } = self;
+    pub fn build_helper(&self, abi_pragma: &str) -> Option<String> {
+        let Self { path, name, constructor_data, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };
         let struct_fields = &constructor_details.struct_fields;
@@ -172,9 +167,6 @@ impl ContractData {
         let encode_function = &constructor_details.encode_function;
 
         let path = solidity_string_content(path.to_slash_lossy().as_ref());
-        // ABI coder selection is local to each source unit, including derived helpers.
-        // Do not emit the deprecated pragma when the compiler already defaults to v2.
-        let abi_pragma = if *needs_abi_coder_v2 { "pragma experimental ABIEncoderV2;" } else { "" };
         let helper = format!(
             r#"
 // SPDX-License-Identifier: MIT
@@ -223,7 +215,6 @@ fn solidity_string_content(value: &str) -> String {
 /// Collects preprocessor data from referenced contracts.
 pub(crate) fn collect_preprocessor_data(
     gcx: Gcx<'_>,
-    constructor_context: ConstructorContext,
     referenced_contracts: &HashSet<ContractId>,
     root_dir: &Path,
     source_units: &[PathBuf],
@@ -250,7 +241,6 @@ pub(crate) fn collect_preprocessor_data(
             *contract_id,
             contract,
             path,
-            constructor_context,
             &reserved_identifiers,
             source_units,
         );
@@ -262,10 +252,22 @@ pub(crate) fn collect_preprocessor_data(
 /// Creates helper libraries for contracts with a non-empty constructor.
 ///
 /// See [`ContractData::build_helper`] for more details.
-pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -> Sources {
+pub(crate) fn create_deploy_helpers(
+    gcx: Gcx<'_>,
+    constructor_context: ConstructorContext,
+    data: &BTreeMap<ContractId, ContractData>,
+) -> Sources {
     let mut deploy_helpers = Sources::new();
-    for contract in data.values() {
-        if let Some(code) = contract.build_helper() {
+    for (id, contract) in data {
+        // Helpers need their own pragma only when the compiler defaults to ABI coder v1.
+        let abi_pragma = if !constructor_context.abi_coder_v2
+            && constructor_context.for_source(gcx, gcx.hir.contract(*id).source).abi_coder_v2
+        {
+            "pragma experimental ABIEncoderV2;"
+        } else {
+            ""
+        };
+        if let Some(code) = contract.build_helper(abi_pragma) {
             let path = contract.constructor_data.as_ref().unwrap().helper_path.clone();
             deploy_helpers.insert(path, Source::new(code));
         }

@@ -141,14 +141,13 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             // Collect data of source contracts referenced in tests and scripts.
             let data = collect_preprocessor_data(
                 gcx,
-                constructor_context,
                 &deps.referenced_contracts,
                 &paths.root,
                 source_units,
             );
 
             // Extend existing sources with preprocessor deploy helper sources.
-            sources.extend(create_deploy_helpers(&data));
+            sources.extend(create_deploy_helpers(gcx, constructor_context, &data));
 
             // Generate and apply preprocessor source updates.
             apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data));
