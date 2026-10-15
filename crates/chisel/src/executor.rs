@@ -551,8 +551,6 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
         ElementaryType::Int(size) => DynSolType::Int(size.bits() as usize),
         ElementaryType::UInt(size) => DynSolType::Uint(size.bits() as usize),
         ElementaryType::FixedBytes(size) => DynSolType::FixedBytes(size.bytes() as usize),
-        // Fixed-point numbers are not yet representable as DynSolType.
-        ElementaryType::Fixed(_, _) | ElementaryType::UFixed(_, _) => return None,
     })
 }
 
