@@ -3,7 +3,7 @@ use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler, shell};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
-use foundry_debugger::{Debugger, DebuggerFrontend};
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     opts::ForkEndpointIdentity,
     traces::{
@@ -63,13 +63,13 @@ pub(crate) async fn handle_traces(
     contracts_bytecode: &AddressHashMap<Bytes>,
     tracing: &TracingConfig,
     with_local_artifacts: bool,
-    debugger: Option<DebuggerFrontend>,
+    debug: bool,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
         let mut config = config.clone();
-        if debugger.is_some() {
+        if debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
             }
@@ -81,7 +81,7 @@ pub(crate) async fn handle_traces(
         let compiler = ProjectCompiler::new();
         let output = compiler.compile(&project)?;
         let mut sources = ContractSources::from_project_output(&output, project.root(), None)?;
-        if debugger.is_some() {
+        if debug {
             sources.insert_compiled_sources(&project.paths.build_infos)?;
         }
         (
@@ -118,17 +118,16 @@ pub(crate) async fn handle_traces(
         decoder.identify(trace, &mut identifier);
     }
 
-    if tracing.decode_internal || debugger.is_some() {
+    if tracing.decode_internal || debug {
         if let Some(ref etherscan_identifier) = identifier.external {
             sources.merge(etherscan_identifier.get_compiled_contracts().await?);
         }
 
-        if let Some(frontend) = debugger {
-            let mut builder = Debugger::builder()
+        if debug {
+            let mut builder = DebuggerBuilder::new()
                 .traces(result.traces.expect("missing traces"))
                 .decoder(&decoder)
-                .sources(sources)
-                .frontend(frontend);
+                .sources(sources);
             if let Some(known_contracts) = &known_contracts {
                 builder = builder.known_contracts(known_contracts);
             }

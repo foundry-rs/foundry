@@ -22,7 +22,7 @@ use foundry_common::{
 };
 use foundry_compilers::multi::MultiCompilerLanguage;
 use foundry_config::{Chain, NamedChain};
-use foundry_debugger::{Debugger, DebuggerBuilder, DebuggerFrontend};
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
@@ -611,22 +611,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         sources.insert_compiled_sources(
             &self.script_config.config.project_paths::<MultiCompilerLanguage>().build_infos,
         )?;
-        Ok(Debugger::builder()
-            .traces(
-                self.execution_result
-                    .traces
-                    .into_iter()
-                    .filter(|(kind, _)| {
-                        self.args.debugger.unwrap_or_default() != DebuggerFrontend::Foundry
-                            || kind.is_execution()
-                    })
-                    .collect(),
-            )
+        Ok(DebuggerBuilder::new()
+            .traces(self.execution_result.traces)
             .decoder(&self.execution_artifacts.decoder)
             .known_contracts(&self.build_data.known_contracts)
             .sources(sources)
-            .breakpoints(self.execution_result.breakpoints)
-            .layout(self.args.debug_layout.unwrap_or_default())
-            .frontend(self.args.debugger.unwrap_or_default()))
+            .breakpoints(self.execution_result.breakpoints))
     }
 }

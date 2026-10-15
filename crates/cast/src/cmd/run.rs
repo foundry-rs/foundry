@@ -47,7 +47,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerFrontend;
 use foundry_evm::{
     core::{
         FoundryBlock as _, FoundryTransaction as _,
@@ -92,12 +91,6 @@ pub struct RunArgs {
     /// Opens the transaction in the debugger.
     #[arg(long, short)]
     debug: bool,
-
-    /// Debugger frontend to use.
-    ///
-    /// The `soldb` frontend needs cast built with the `soldb` feature.
-    #[arg(long, requires = "debug", value_enum)]
-    debugger: Option<DebuggerFrontend>,
 
     /// Print out opcode traces.
     #[arg(long, short)]
@@ -485,7 +478,7 @@ impl RunArgs {
             &contracts_bytecode,
             &tracing,
             with_local_artifacts,
-            None,
+            false,
         )
         .await
     }
@@ -843,7 +836,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             &contracts_bytecode,
             &self.tracing,
             self.args.with_local_artifacts,
-            self.args.debug.then(|| self.args.debugger.unwrap_or_default()),
+            self.args.debug,
         )
         .await?;
         self.warn_on_receipt_mismatch(success, gas_used)

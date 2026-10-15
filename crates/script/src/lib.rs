@@ -44,7 +44,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::{DebuggerFrontend, DebuggerLayout};
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -236,19 +235,9 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    pub debug_layout: Option<DebuggerLayout>,
-
-    /// Debugger frontend to use.
+    /// Writes a SolDB trace and source bundle to a directory.
     ///
-    /// The `soldb` frontend needs forge built with the `soldb` feature.
-    #[arg(long, requires = "debug", value_enum)]
-    pub debugger: Option<DebuggerFrontend>,
-
-    /// Dumps all debugger steps to file.
-    ///
-    /// With `--debugger soldb`, writes a directory that soldb's own tools read, e.g.
+    /// Read the bundle with SolDB tools, for example:
     /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,

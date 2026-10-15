@@ -741,7 +741,6 @@ async fn cast_run_rejects_mismatched_transaction(cmd: _) {
 
 // Opens a replayed transaction in soldb and checks a source stop with its variables.
 #[forgetest]
-#[cfg(feature = "soldb")]
 async fn cast_run_debug_soldb(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
@@ -755,8 +754,6 @@ async fn cast_run_debug_soldb(prj: _, cmd: _) {
             "--rpc-url",
             &endpoint,
             "--debug",
-            "--debugger",
-            "soldb",
             "--with-local-artifacts",
         ])
         .stdin("break src/Counter.sol:8\ncontinue\nvars\nbacktrace\nquit\n")

@@ -70,7 +70,6 @@ alloy-signer-local.workspace = true
 
 [features]
 default = ["optimism"]
-soldb = ["foundry-debugger/soldb"]
 monad = [
     "dep:monad-revm",
     "anvil/monad",

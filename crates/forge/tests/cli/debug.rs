@@ -57,7 +57,10 @@ contract MultiNetworkTest {
     assert!(output.contains("[PASS] testTempo()"), "selected test did not run: {output}");
     assert!(!output.contains("[PASS] testDefault()"), "unselected test also ran: {output}");
     assert!(dump_path.exists(), "debugger dump was not created");
-    serde_json::from_slice::<serde_json::Value>(&std::fs::read(dump_path).unwrap()).unwrap();
+    serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_path.join("trace.json")).unwrap(),
+    )
+    .unwrap();
 }
 
 // Sets up a debuggable test case.
@@ -161,7 +164,6 @@ contract Script0 is Script, Test {
 // frames, and the `--dump` bundle. Dynamic test linking rewrites `new Counter()` in the test, so
 // the test file's lines come from the source the compiler saw.
 #[forgetest]
-#[cfg(feature = "soldb")]
 fn debugger_soldb_session(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
@@ -207,7 +209,7 @@ contract CounterTest {
 "#,
     );
 
-    cmd.args(["test", "--debug", "--debugger", "soldb", "--mt", "test_increment"])
+    cmd.args(["test", "--debug", "--mt", "test_increment"])
         .stdin("break src/Counter.sol:13\ncontinue\ncontinue\nvars\nbacktrace\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
@@ -246,7 +248,7 @@ Exiting debugger.
     // `--dump` writes a bundle that soldb's own tools read instead.
     let dump_dir = prj.root().join("soldb");
     cmd.forge_fuse()
-        .args(["test", "--debug", "--debugger", "soldb", "--mt", "test_increment", "--dump"])
+        .args(["test", "--debug", "--mt", "test_increment", "--dump"])
         .arg(&dump_dir)
         .assert_success();
     let read_json = |path: &str| {
@@ -295,7 +297,6 @@ Exiting debugger.
 
 // Transient storage resets after setup, and the return buffer survives the following local steps.
 #[forgetest]
-#[cfg(feature = "soldb")]
 fn debugger_soldb_transient_storage_and_return_data(prj: _, cmd: _) {
     prj.add_test(
         "TraceData.t.sol",
@@ -321,7 +322,7 @@ contract TraceDataTest {
 }
 "#,
     );
-    cmd.args(["test", "--debug", "--debugger", "soldb", "--mt", "test_data"])
+    cmd.args(["test", "--debug", "--mt", "test_data"])
         .stdin("break test/TraceData.t.sol:16\nbreak test/TraceData.t.sol:20\ncontinue\ntransient\ncontinue\ntransient\nreturndata\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
@@ -359,7 +360,6 @@ Exiting debugger.
 
 // Opens a script in soldb and checks a stop inside a contract the script creates.
 #[forgetest]
-#[cfg(feature = "soldb")]
 fn script_debugger_soldb_session(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
@@ -388,7 +388,7 @@ contract CounterScript {
 "#,
     );
 
-    cmd.args(["script", "script/Counter.s.sol", "--debug", "--debugger", "soldb"])
+    cmd.args(["script", "script/Counter.s.sol", "--debug"])
         .stdin("break src/Counter.sol:8\ncontinue\ncontinue\nvars\nbacktrace\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
