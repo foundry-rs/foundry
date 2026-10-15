@@ -80,6 +80,9 @@ pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 mod snapshot;
 pub use snapshot::{RevertStateSnapshotAction, StateSnapshot};
 
+#[cfg(test)]
+mod tests;
+
 /// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
 ///
 /// The difference between `ForkId` and `LocalForkId` is that `ForkId` tracks pairs of `endpoint +
