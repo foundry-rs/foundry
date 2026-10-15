@@ -82,7 +82,9 @@ async fn test_pause_interval_mining() {
     let provider = handle.http_provider();
 
     api.anvil_set_interval_mining(1).unwrap();
+    assert!(!provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
     api.anvil_set_mining_paused(true).await.unwrap();
+    assert!(provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
 
     // a transaction sent while paused stays in the pool
     let from = handle.dev_accounts().next().unwrap();
@@ -95,6 +97,7 @@ async fn test_pause_interval_mining() {
 
     // and not mined on resume
     api.anvil_set_mining_paused(false).await.unwrap();
+    assert!(!api.anvil_get_mining_paused().unwrap());
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert_eq!(provider.get_block_number().await.unwrap(), 0);
 

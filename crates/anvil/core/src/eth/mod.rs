@@ -579,6 +579,10 @@ pub enum EthRequest {
     #[serde(rename = "anvil_setMiningPaused", with = "sequence")]
     SetMiningPaused(bool),
 
+    /// Returns true if automatic block production is paused
+    #[serde(rename = "anvil_getMiningPaused", with = "empty_params")]
+    GetMiningPaused(()),
+
     /// Removes transactions from the pool
     #[serde(rename = "anvil_dropTransaction", alias = "hardhat_dropTransaction", with = "sequence")]
     DropTransaction(B256),
@@ -1246,6 +1250,14 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         assert!(matches!(req, EthRequest::SetMiningPaused(true)));
+    }
+
+    #[test]
+    fn test_get_mining_paused() {
+        let s = r#"{"method": "anvil_getMiningPaused", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::GetMiningPaused(())));
     }
 
     #[test]

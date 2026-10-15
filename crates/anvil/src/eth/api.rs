@@ -358,6 +358,14 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Returns `true` if automatic block production is paused.
+    ///
+    /// Handler for RPC call: `anvil_getMiningPaused`
+    pub fn anvil_get_mining_paused(&self) -> Result<bool> {
+        node_info!("anvil_getMiningPaused");
+        Ok(self.miner.is_paused())
+    }
+
     /// Removes transactions from the pool
     ///
     /// Handler for RPC call: `anvil_dropTransaction`
@@ -2448,6 +2456,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::SetMiningPaused(paused) => {
                 self.anvil_set_mining_paused(paused).await.to_rpc_result()
             }
+            EthRequest::GetMiningPaused(()) => self.anvil_get_mining_paused().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
