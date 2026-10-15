@@ -246,13 +246,24 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     ) -> Evm<'a, Self::Types> {
         let factory = self.configure_for(&db, &env);
         let ext = factory.evm_ext(&env);
-        let precompiles = factory.precompiles(&env, &ext);
+        factory.new_evm_with_ext(db, env, ext)
+    }
+
+    /// Creates a Foundry-configured EVM with the given network extension state, such as the
+    /// running EVM's for a nested frame.
+    fn new_evm_with_ext<'a>(
+        &self,
+        db: impl FoundryDatabase + 'a,
+        env: EvmEnv<Self::Types>,
+        ext: <Self::Types as EvmTypesHost>::EvmExt,
+    ) -> Evm<'a, Self::Types> {
+        let precompiles = self.precompiles(&env, &ext);
         let EvmEnv { spec, version, block } = env;
         Evm::new_with_execution_config_and_ext(
-            factory.execution_config(spec, version),
+            self.execution_config(spec, version),
             spec,
             block,
-            factory.tx_registry(spec),
+            self.tx_registry(spec),
             db,
             precompiles,
             ext,

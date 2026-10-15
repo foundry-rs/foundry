@@ -47,12 +47,14 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use evm2::{
-    EvmFeatures, Inspector,
+    EvmFeatures, ExecutionError, Inspector,
     bytecode::Bytecode,
+    env::TxEnv,
     evm::{
-        AccountInfo, Cache, DynDatabase, EmptyDB,
+        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState,
         bal::{Bal, BlockAccessIndex},
     },
+    interpreter::{Message, MessageResult},
 };
 use eyre::WrapErr;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
@@ -460,6 +462,18 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         account.slots.extend(storage);
     }
 
+    /// Accepts a detached transaction's state, such as a call's, into the active context's
+    /// accepted state.
+    ///
+    /// Use this between executions only; a running EVM does not observe it.
+    pub fn commit_pending(&mut self, pending: &PendingState) {
+        let cache = mem::take(self.lifecycle.accepted_mut());
+        let mut db = CacheDB::new(EmptyDB::default());
+        db.cache = cache;
+        db.commit_pending(pending);
+        *self.lifecycle.accepted_mut() = db.cache;
+    }
+
     // ---- Test configuration ----
 
     /// Sets the address of the `DSTest` contract that is being executed.
@@ -845,6 +859,30 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             tx,
             NestedTx { env: None, ext: None, inspector },
         )
+    }
+
+    /// Builds the EVM a nested transaction of the running one executes on, such as an isolated
+    /// call. See [`ExecutionLifecycle::nested_evm`]; merge a successful transaction's changes
+    /// back with [`merge_nested_changes`](crate::evm::merge_nested_changes).
+    pub fn nested_evm<'a>(
+        &self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        tx: &Recovered<TxFor<FEN>>,
+        env: Option<EvmEnvFor<FEN>>,
+    ) -> FoundryEvmFor<'a, FEN> {
+        self.lifecycle.nested_evm(evm, tx, env, None)
+    }
+
+    /// Executes `message` as a nested frame of the running transaction. See
+    /// [`ExecutionLifecycle::nested_message`].
+    pub fn nested_message(
+        &self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        tx_env: &TxEnv<TypesFor<FEN>>,
+        message: &mut Message<TypesFor<FEN>>,
+        inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
+    ) -> Result<MessageResult<TypesFor<FEN>>, ExecutionError> {
+        self.lifecycle.nested_message(evm, tx_env, message, inspector)
     }
 
     // ---- Running-state operations ----

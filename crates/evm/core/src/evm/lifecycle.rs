@@ -34,9 +34,11 @@ use crate::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, KECCAK256_EMPTY, Log, U256};
 use evm2::{
-    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
+    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, ExecutionError, Inspector, TxResult,
     bytecode::Bytecode,
-    evm::{Cache, DbResult, PrewarmSet, State},
+    env::TxEnv,
+    evm::{Cache, DbResult, EmptyDB, PrewarmSet, State},
+    interpreter::{Host, Message, MessageResult},
 };
 use std::{mem, sync::Arc};
 
@@ -416,29 +418,81 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
         nested: NestedTx<'_, F::Types>,
     ) -> eyre::Result<TxResult<F::Types>> {
-        self.materialize(evm);
-        let db = self.forks.active_db();
-        let mut state = evm.state().snapshot().into_state(db.clone_backing());
-        state.commit_transaction();
-        state.clear_transaction_state();
-        let ext = nested.ext.unwrap_or_else(|| {
-            let mut ext = evm.ext().clone();
-            ext.for_transaction(tx);
-            ext
-        });
-        let env = nested.env.unwrap_or_else(|| evm_env(evm));
-        let mut executor = self.factory.configure_for(&db, &env).new_evm(db, env);
-        *executor.state_mut() = state;
-        *executor.ext_mut() = ext;
-        if let Some(inspector) = nested.inspector {
+        let NestedTx { env, ext, inspector } = nested;
+        let mut executor = self.nested_evm(evm, tx, env, ext);
+        if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
         }
         let executed = executor.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
         let result = executed.result().clone();
         if result.status {
-            merge_changes(evm.state_mut(), &executed, |_| true)?;
+            merge_nested_changes(evm.state_mut(), &executed)?;
         }
         Ok(result)
+    }
+
+    /// Builds the EVM a nested transaction of the running one executes on: a copy of the running
+    /// transaction's current state, with `env` or the running environment, and `ext` or network
+    /// extension state derived from the running EVM for `tx`.
+    ///
+    /// Merge a successful transaction's changes back with [`merge_nested_changes`]. Use this
+    /// instead of [`Self::nested_transaction_with`] when the nested inspector needs access to the
+    /// lifecycle's owner while it runs.
+    pub fn nested_evm<'a>(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
+        env: Option<EvmEnv<F::Types>>,
+        ext: Option<<F::Types as EvmTypesHost>::EvmExt>,
+    ) -> Evm<'a, F::Types> {
+        self.materialize(evm);
+        let db = self.forks.active_db();
+        let mut state = evm.state().snapshot().into_state(db.clone_backing());
+        state.commit_transaction();
+        state.clear_transaction_state();
+        let ext = ext.unwrap_or_else(|| {
+            let mut ext = evm.ext().clone();
+            ext.for_transaction(tx);
+            ext
+        });
+        let env = env.unwrap_or_else(|| evm_env(evm));
+        let mut executor = self.factory.configure_for(&db, &env).new_evm(db, env);
+        *executor.state_mut() = state;
+        *executor.ext_mut() = ext;
+        executor
+    }
+
+    /// Executes `message` as a nested frame of the transaction `evm` is running, such as for
+    /// `deployCode`, with `inspector` observing it.
+    ///
+    /// The frame runs on a separate EVM that takes over the running state for its duration, so the
+    /// running EVM's own inspector is not re-entered. Its writes, logs, block and network extension
+    /// state are handed back to `evm`; a failed frame rolls its writes back like any other frame.
+    pub fn nested_message(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        tx_env: &TxEnv<F::Types>,
+        message: &mut Message<F::Types>,
+        inspector: Option<&mut dyn Inspector<F::Types>>,
+    ) -> Result<MessageResult<F::Types>, ExecutionError> {
+        let env = evm_env(evm);
+        let db = self.forks.active_db();
+        let factory = self.factory.configure_for(&db, &env);
+        let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
+        *frame.state_mut() = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
+        if let Some(inspector) = inspector {
+            frame.set_inspector(inspector);
+        }
+        let result = Host::execute_message(&mut frame, tx_env, message);
+        frame.clear_inspector();
+        let state = mem::replace(frame.state_mut(), State::new(EmptyDB::default()));
+        // SAFETY: `State`'s lifetime only bounds its backing database. The frame's state is the
+        // running state moved in above, whose database outlives `evm`; the frame only ever
+        // installs `'static` backing databases, such as on a fork switch.
+        *evm.state_mut() = unsafe { mem::transmute::<State<'_>, State<'_>>(state) };
+        *evm.ext_mut() = frame.ext().clone();
+        evm.set_block(*frame.block());
+        result
     }
 
     /// Executes `tx` on the inactive fork `id`, or the local context for `None`, and accepts its
@@ -606,6 +660,15 @@ pub fn nested_frame<T: EvmTypes, R, E>(
         evm.state_mut().rollback(checkpoint, features);
     }
     result
+}
+
+/// Applies a successful nested transaction's changes to the running transaction's `state` as
+/// journaled writes, so they revert with the enclosing call.
+pub fn merge_nested_changes<T: EvmTypesHost>(
+    state: &mut State<'_>,
+    executed: &ExecutedTx<'_, '_, T>,
+) -> DbResult<()> {
+    merge_changes(state, executed, |_| true)
 }
 
 /// Applies a nested transaction's changes to the accounts selected by `filter` to `state` as
