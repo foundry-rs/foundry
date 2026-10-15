@@ -39,7 +39,7 @@ use crate::{
     cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         SurvivedSpans,
-        mutant::{Mutant, MutationResult},
+        mutant::{Mutant, MutationResult, MutationType},
         progress::MutationProgress,
     },
     result::SuiteResult,
@@ -450,9 +450,11 @@ fn test_single_mutant_isolated(
         }
     };
 
-    // Track adaptive survived spans only for genuinely Alive mutants; TimedOut
-    // is unresolved and must not mask other mutations on the same span.
-    if matches!(result, MutationResult::Alive) {
+    // Timeouts are unresolved, and surviving body replacements must not suppress
+    // other return values or finer expression mutations.
+    if matches!(result, MutationResult::Alive)
+        && !matches!(mutant.mutation, MutationType::FunctionBody(_))
+    {
         shared_state.mark_span_survived(mutant.span);
     }
 

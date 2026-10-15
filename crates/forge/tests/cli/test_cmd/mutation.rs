@@ -8,6 +8,36 @@ fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
 }
 
+forgetest_init!(mutation_testing_body_survivors_do_not_skip_other_mutants, |prj, cmd| {
+    prj.add_source(
+        "Body.sol",
+        r#"pragma solidity ^0.8.13;
+contract Body {
+    uint public number;
+    function check(bool value) public returns (bool) { number = 7; return value; }
+}"#,
+    );
+    prj.add_test(
+        "Body.t.sol",
+        r#"pragma solidity ^0.8.13;
+import "../src/Body.sol";
+contract BodyTest {
+    function testCheck() public { assert(new Body().check(true)); }
+}"#,
+    );
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[mutation]
+exclude_operators = ["assembly", "binary-op", "delete-expression", "elim-delegate", "require", "unary-op"]
+"#,
+    )
+    .unwrap();
+    cmd.args(["test", "--mutate", "src/Body.sol", "--mutation-jobs", "1", "--json"])
+        .assert_json_stdout(str![[r#"
+{"summary":{"total":3,"killed":1,"survived":2,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":33.33333333333333,"duration_secs":"{...}"},"survived_mutants":{"src/Body.sol":[{"line":5,"column":54,"original":"{ number = 7; return value; }","mutant":"{ return true; }"},{"line":5,"column":56,"original":"number = 7","mutant":"0"}]}}
+"#]]);
+});
+
 forgetest_init!(can_run_mutation_testing, |prj, cmd| {
     prj.add_source(
         "Counter.sol",
@@ -70,9 +100,9 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 1         ┆ 20.0%      │
+│ Survived ┆ 1         ┆ 14.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 4         ┆ 80.0%      │
+│ Killed   ┆ 6         ┆ 85.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -86,7 +116,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
+Mutation Score: 85.7% (6/7 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -99,7 +129,7 @@ Survived mutants
        + ++number
 ...
 ────────────────────────────────────────────────────────────
-4 mutants killed
+6 mutants killed
 
 ════════════════════════════════════════════════════════════
 
@@ -107,7 +137,7 @@ Survived mutants
 
     // Run mutation testing with --json - verify the output contains valid mutation JSON
     cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
-{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":7,"killed":6,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":85.71428571428571,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
 });
@@ -156,6 +186,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -218,6 +249,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -305,6 +337,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -373,6 +406,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -455,6 +489,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -965,16 +1000,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 18.2%      │
+│ Survived ┆ 2         ┆ 15.4%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 72.7%      │
+│ Killed   ┆ 10        ┆ 76.9%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 9.1%       │
+│ Invalid  ┆ 1         ┆ 7.7%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 ...
 "#]]);
 });
@@ -1027,11 +1062,11 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 18.2%      │
+│ Survived ┆ 2         ┆ 15.4%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 72.7%      │
+│ Killed   ┆ 10        ┆ 76.9%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 9.1%       │
+│ Invalid  ┆ 1         ┆ 7.7%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
@@ -1043,7 +1078,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -1059,7 +1094,7 @@ Survived mutants
        - a + b
 ...
 ────────────────────────────────────────────────────────────
-8 mutants killed
+10 mutants killed
 
 ────────────────────────────────────────────────────────────
 1 mutants invalid
@@ -1782,6 +1817,11 @@ contract UsesSharedTest {
 
 // Test require/assert mutation for security-critical patterns
 forgetest_init!(mutation_testing_require_mutator, |prj, cmd| {
+    fs::write(
+        prj.root().join("foundry.toml"),
+        "[mutation]\nexclude_operators = [\"function-body\"]\n",
+    )
+    .unwrap();
     // A contract with security-critical require checks (access control, input validation)
     prj.add_source(
         "Vault.sol",

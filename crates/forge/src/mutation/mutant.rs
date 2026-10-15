@@ -199,6 +199,9 @@ pub enum MutationType {
     /// Gambit doesn't implement nor define it?
     FunctionCall,
 
+    /// Replace a function body with a no-op or constant return.
+    FunctionBody(String),
+
     // /// For a if(x) condition x:
     // /// replace x with true; replace x with false
     // This mutation is not used anymore, as we mutate the condition as an expression,
@@ -258,6 +261,7 @@ impl Display for MutationType {
             Self::ElimDelegate => write!(f, "call"),
             Self::UnaryOperator(mutated) => write!(f, "{mutated}"),
             Self::RequireCondition { mutated_call } => write!(f, "{mutated_call}"),
+            Self::FunctionBody(body) => write!(f, "{body}"),
 
             Self::YulOpcode { mutated_expr, .. } => write!(f, "{mutated_expr}"),
 
