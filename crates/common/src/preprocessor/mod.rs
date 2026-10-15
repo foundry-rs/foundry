@@ -93,6 +93,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         let mut compiler =
             foundry_compilers::resolver::parse::SolParser::new(parser_paths.with_language_ref())
                 .into_compiler();
+        // Solc validates the input version; Solar only analyzes deployment dependencies.
+        compiler.dcx().set_allowed_diagnostic_codes(["5333".into()]);
         let result = compiler.enter_mut(|compiler| -> solar::interface::Result {
             let mut pcx = compiler.parse();
 

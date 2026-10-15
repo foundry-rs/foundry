@@ -4590,7 +4590,14 @@ fn preprocess_constructor_validation(prj: _, cmd: _) {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+        let expected = if target == "library Target {}" {
+            let mut expected = b"Warning: dynamic test linking disabled for 1 files: error[1130]: invalid use of a library name\n".to_vec();
+            expected.extend_from_slice(&native);
+            expected
+        } else {
+            native
+        };
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
     }
 }
 
