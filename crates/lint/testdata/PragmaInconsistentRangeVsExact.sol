@@ -2,6 +2,6 @@
 
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0 <0.9.0; //~NOTE: 2 different Solidity pragma version requirements are used: `0.8.20`, `>=0.8.0 <0.9.0`
-pragma solidity 0.8.20;
+pragma solidity 0.8.20; //~WARN: source file requires different compiler version
 
 contract Main {}

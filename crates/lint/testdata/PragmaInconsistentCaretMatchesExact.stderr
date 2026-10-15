@@ -1,3 +1,9 @@
+warning[5333]: source file requires different compiler version (current compiler is 0.8.37)
+   ╭▸ ROOT/testdata/PragmaInconsistentCaretMatchesExact.sol:LL:CC
+   │
+LL │ pragma solidity 0.8.20;
+   ╰╴━━━━━━━━━━━━━━━━━━━━━━━
+
 note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: `0.8.20`, `^0.8.20`
    ╭▸ ROOT/testdata/PragmaInconsistentCaretMatchesExact.sol:LL:CC
    │

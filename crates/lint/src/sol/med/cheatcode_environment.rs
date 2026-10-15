@@ -1006,15 +1006,14 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
         Some((function, environments))
     }
 
-    /// Evaluates only the constant-address forms used by cheatcode declarations. The pinned
-    /// compiler's integer evaluator does not yet support general casts or keccak calls.
+    /// Evaluates the constant-address forms used by cheatcode declarations.
     fn constant_word(&self, expr: &Expr<'_>, depth: usize) -> Option<U256> {
         if depth >= 16 {
             return None;
         }
         let expr = expr.peel_parens();
-        if let Ok(value) = self.gcx.const_eval().eval_int(expr) {
-            return value.as_u256();
+        if let Ok(value) = self.gcx.const_eval().eval_expr(expr) {
+            return value.as_word();
         }
         if let Some(id) = self.gcx.resolved_variable(expr) {
             let var = self.gcx.hir.variable(id);
