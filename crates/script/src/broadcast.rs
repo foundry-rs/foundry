@@ -6,7 +6,7 @@ use crate::{
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
-    sequence::{ScriptSequenceKind, completed_transaction_prefix},
+    sequence::{ScriptSequenceKind, completed_transaction_prefix, operation_ordinal},
     session::{
         SignerScope, insert_session_access_key_for_remaining_transactions,
         script_session_expected_sender_if_configured,
@@ -22,7 +22,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, Bytes, TxHash, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressHashSet, HashMap},
+    map::{AddressHashMap, AddressHashSet, HashMap, HashSet},
     utils::format_units,
 };
 use alloy_provider::{
@@ -33,7 +33,7 @@ use alloy_provider::{
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::Signature;
 use eyre::{Context, ContextCompat, Result, bail};
-use forge_script_sequence::ScriptSequence;
+use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
@@ -43,7 +43,9 @@ use foundry_common::{
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     },
     shell,
-    tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        TempoSponsor, active_tempo_hardfork, maybe_print_fee_token, resolve_and_set_fee_token,
+    },
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -51,6 +53,7 @@ use foundry_evm::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
     },
+    hardfork::TempoHardfork,
     traces::CallKind,
 };
 use foundry_wallets::{
@@ -63,7 +66,7 @@ use tempo_alloy::{
     TempoNetwork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
-use tempo_primitives::transaction::{Call, TempoTxEnvelope};
+use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
 
 /// Represents how to send a single transaction.
 #[derive(Clone)]
@@ -107,7 +110,9 @@ where
 
         reject_access_key_create::<N>(tx, tempo_wallet.is_some())?;
 
-        if sequential_broadcast {
+        // An expiring nonce is a TIP-1106 discriminator rather than a position in the sender's
+        // nonce sequence, so there is no provider nonce to wait for.
+        if sequential_broadcast && tx.nonce_key() != Some(TEMPO_EXPIRING_NONCE_KEY) {
             let from = tx.from().expect("no sender");
 
             let tx_nonce = tx.nonce().expect("no nonce");
@@ -210,6 +215,47 @@ where
             Self::Unlocked(request) => PreparedTransaction::Unlocked(request),
             Self::Browser(request, signer) => PreparedTransaction::Browser(request, signer),
         })
+    }
+
+    /// CREATE uses the protocol account nonce even when the signed nonce is a discriminator.
+    async fn validate_expiring_create_nonce(
+        &self,
+        provider: &RootProvider<N>,
+        planned: &TransactionWithMetadata<N>,
+    ) -> Result<()> {
+        if planned.tx().to().is_some() {
+            return Ok(());
+        }
+        let nonce_key = match self {
+            Self::Raw(tx, _)
+            | Self::Unlocked(tx)
+            | Self::Browser(tx, _)
+            | Self::AccessKey(tx, _) => tx.nonce_key(),
+            Self::Signed(tx) => {
+                <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
+            }
+            Self::PreparedRaw(payload, _) => <N::TransactionRequest as From<N::TxEnvelope>>::from(
+                N::TxEnvelope::decode_2718_exact(payload)?,
+            )
+            .nonce_key(),
+        };
+        if nonce_key == Some(TEMPO_EXPIRING_NONCE_KEY) {
+            let sender = planned.tx().from().context("CREATE is missing its planned sender")?;
+            let expected = match planned.tx() {
+                TransactionMaybeSigned::Signed { .. } => {
+                    planned.contract_address.context("CREATE is missing its planned address")?
+                }
+                TransactionMaybeSigned::Unsigned(tx) => sender
+                    .create(tx.nonce().context("CREATE is missing its planned account nonce")?),
+            };
+            let actual = sender.create(provider.get_transaction_count(sender).await?);
+            if actual != expected {
+                bail!(
+                    "CREATE address changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider nonce."
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -529,8 +575,8 @@ impl<N: Network> SendTransactionsKind<N> {
 }
 
 /// State after we have bundled all
-/// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
-/// single [`ScriptSequenceKind`] object containing one or more script sequences.
+/// [`TransactionWithMetadata`] objects into a single [`ScriptSequenceKind`] object containing one
+/// or more script sequences.
 pub struct BundledState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig<FEN>,
@@ -584,6 +630,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
     /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
+        if self.script_config.tempo.expiring_nonce {
+            reject_expiring_call_before_create(self.sequence.sequences())?;
+        }
         let remaining_transactions = remaining_unsigned_transactions_for_recovery(&self.sequence);
         let ordering_addresses = remaining_sender_addresses(&self.sequence);
         let has_unprepared_transactions =
@@ -697,6 +746,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress = ScriptProgress::default();
 
         for i in 0..self.sequence.sequences().len() {
+            let sequence_offset = operation_ordinal(self.sequence.sequences(), i, 0);
             let remaining_indices = remaining_operation_indices(&self.sequence, i);
             let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
                 .map(|index| {
@@ -784,6 +834,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     }
                 };
 
+                // TIP-1106: from T12 the nonce of an expiring nonce transaction is an opaque
+                // discriminator. Each transaction gets its ordinal in the complete script plan,
+                // which is monotonic and stable across `--resume`, so that
+                // otherwise identical transactions keep distinct signing and replay
+                // hashes. Earlier hardforks only accept 0, which is also the
+                // fallback when the hardfork cannot be determined.
+                let tempo_hardfork = if self.script_config.evm_opts.networks.is_tempo() {
+                    active_tempo_hardfork(provider.as_ref()).await.ok()
+                } else {
+                    None
+                };
+                let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
+                    && tempo_hardfork.is_some_and(|fork| fork >= TempoHardfork::T12);
+
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
                 let sequence_chain = sequence.chain;
@@ -825,7 +889,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
                             }
 
-                            self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
+                            self.script_config.tempo.apply::<FEN::Network>(
+                                &mut tx,
+                                expiring_nonce_discriminators
+                                    .then_some((sequence_offset + index) as u64),
+                            );
 
                             send_kind.for_sender(sequence_chain, &from, tx)?
                         }
@@ -868,6 +936,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                     let mut prepared = Vec::with_capacity(batch.len());
                     for (kind, is_fixed_gas_limit, index) in batch {
+                        kind.validate_expiring_create_nonce(
+                            &provider,
+                            &self.sequence.sequences()[i].transactions[*index],
+                        )
+                        .await?;
                         let mut kind = kind
                             .clone()
                             .prepare_for_durable_send(
@@ -880,8 +953,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             )
                             .await?;
                         if let PreparedTransaction::Raw(payload, hash) = &mut kind {
-                            *hash =
-                                self.sequence.persist_signed_payload(i, *index, payload.clone())?;
+                            *hash = self.sequence.persist_signed_payload(
+                                i,
+                                *index,
+                                payload.clone(),
+                                tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
+                            )?;
                         }
                         prepared.push((kind, *index));
                     }
@@ -1713,6 +1790,40 @@ where
     }
 }
 
+/// Collection increments the sender's protocol nonce for CALLs, but expiring CALLs do not.
+/// Reject a subsequent CREATE before submitting anything, since its simulated address is stale.
+/// Called only when expiring nonce mode is enabled.
+fn reject_expiring_call_before_create<N: Network>(sequences: &[ScriptSequence<N>]) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let mut called = HashSet::new();
+    for sequence in sequences {
+        for transaction in &sequence.transactions {
+            let tx = transaction.tx();
+            if let Some(sender) = tx.from() {
+                let scope = (sequence.chain, sender);
+                if tx.to().is_none() && called.contains(&scope) {
+                    bail!(
+                        "Tempo expiring nonce scripts cannot use CREATE after a CALL from the same sender on the same chain; use CREATE2 or disable --tempo.expiring-nonce"
+                    );
+                }
+                let expiring = match tx {
+                    TransactionMaybeSigned::Unsigned(request) => request.supports_fee_token(),
+                    TransactionMaybeSigned::Signed { tx, .. } => {
+                        <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
+                            == Some(TEMPO_EXPIRING_NONCE_KEY)
+                    }
+                };
+                if expiring && tx.to().is_some() {
+                    called.insert(scope);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Returns the total gas used, the average gas price and the total fee paid in wei for the given
 /// `(gas_used, effective_gas_price)` receipt pairs.
 fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u128>, u128) {
@@ -1737,7 +1848,6 @@ mod tests {
     use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
-    use forge_script_sequence::TransactionWithMetadata;
     use foundry_common::tempo::PATH_USD_ADDRESS;
     use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
@@ -1859,7 +1969,7 @@ mod tests {
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
         let payload = Bytes::from_static(SIGNED_TX);
-        sequence.persist_signed_payload(0, 0, payload).unwrap();
+        sequence.persist_signed_payload(0, 0, payload, true).unwrap();
 
         assert!(remaining_unsigned_transactions_for_recovery(&sequence).is_empty());
     }
@@ -1915,7 +2025,7 @@ mod tests {
         };
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
-        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
 
         let required = remaining_unsigned_transactions_for_recovery(&sequence);
         assert_eq!(required.iter().map(|tx| tx.sender).collect::<Vec<_>>(), [unsigned]);
@@ -1966,9 +2076,10 @@ mod tests {
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
-        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
-        let second_hash =
-            sequence.persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX)).unwrap();
+        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
+        let second_hash = sequence
+            .persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX), true)
+            .unwrap();
         let mut second_receipt = receipt();
         second_receipt.transaction_hash = second_hash;
         sequence.sequences_mut()[0].receipts.push(second_receipt);
@@ -2004,7 +2115,7 @@ mod tests {
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
         let first_hash =
-            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
         let mut first_receipt = receipt();
         first_receipt.transaction_hash = first_hash;
         sequence.sequences_mut()[0].receipts = vec![first_receipt.clone(), first_receipt];
@@ -2131,6 +2242,61 @@ mod tests {
     }
 
     #[test]
+    fn expiring_nonce_create_preflight_tracks_chain_and_sender_across_sequences() {
+        let sender = Address::with_last_byte(1);
+        let transaction = |sender, to| {
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<TempoNetwork>::new(
+                TempoTransactionRequest {
+                    inner: TransactionRequest { from: Some(sender), to, ..Default::default() },
+                    ..Default::default()
+                },
+            ))
+        };
+        let mut sequences = [
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction(sender, Some(TxKind::Call(Address::with_last_byte(2))))]
+                    .into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4218,
+                transactions: [transaction(sender, None)].into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction(sender, None)].into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            reject_expiring_call_before_create(&sequences).unwrap_err().to_string(),
+            "Tempo expiring nonce scripts cannot use CREATE after a CALL from the same sender on the same chain; use CREATE2 or disable --tempo.expiring-nonce"
+        );
+        sequences[2].chain = 4219;
+        reject_expiring_call_before_create(&sequences).unwrap();
+        sequences[2].chain = 4217;
+        sequences[2].transactions[0] = transaction(Address::with_last_byte(3), None);
+        reject_expiring_call_before_create(&sequences).unwrap();
+        sequences[2].transactions[0] =
+            transaction(sender, Some(TxKind::Call(Address::with_last_byte(2))));
+        reject_expiring_call_before_create(&sequences).unwrap();
+
+        let mut ethereum = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [script_tx(sender), script_tx(sender)].into(),
+            ..Default::default()
+        };
+        ethereum.transactions[0]
+            .tx_mut()
+            .as_unsigned_mut()
+            .unwrap()
+            .set_to(Address::with_last_byte(2));
+        reject_expiring_call_before_create(&[ethereum]).unwrap();
+    }
+
+    #[test]
     fn fee_totals_do_not_overflow_u64() {
         let gwei = 1_000_000_000;
         let receipts = [(30_000_000, 1_000 * gwei), (30_000_000, 2_000 * gwei)];
@@ -2217,6 +2383,85 @@ mod tests {
             to: None,
             contract_address: None,
         }
+    }
+
+    #[tokio::test]
+    async fn expiring_create_checks_planned_nonce_including_durable_payloads() {
+        let request = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(Address::with_last_byte(1)),
+                to: Some(TxKind::Create),
+                nonce: Some(7),
+                chain_id: Some(4217),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                ..Default::default()
+            },
+            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
+            valid_before: NonZeroU64::new(100),
+            ..Default::default()
+        };
+        let planned = TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<
+            TempoNetwork,
+        >::new(request.clone()));
+        let mut request = request;
+        // The discriminator differs from the planned protocol nonce.
+        request.inner.nonce = Some(0);
+        let envelope = TempoTxEnvelope::AA(
+            request
+                .clone()
+                .build_aa()
+                .unwrap()
+                .into_signed(tempo_primitives::TempoSignature::default()),
+        );
+        let kinds = [
+            SendTransactionKind::Unlocked(request.clone()),
+            SendTransactionKind::Signed(envelope.clone()),
+            SendTransactionKind::PreparedRaw(
+                Bytes::from(envelope.encoded_2718()),
+                envelope.trie_hash(),
+            ),
+        ];
+        let sender = request.inner.from.unwrap();
+        let mut signed_plan =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Signed {
+                tx: envelope,
+                from: sender,
+            });
+        signed_plan.contract_address = Some(sender.create(7));
+        for kind in kinds {
+            for planned in [&planned, &signed_plan] {
+                for actual in [6, 7, 8] {
+                    let asserter = Asserter::new();
+                    let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
+                        .connect_mocked_client(asserter.clone());
+                    asserter.push_success(&format!("{actual:#x}"));
+                    let result = kind.validate_expiring_create_nonce(&provider, planned).await;
+                    if actual == 7 {
+                        result.unwrap();
+                    } else {
+                        let expected = format!(
+                            "CREATE address changed unexpectedly while sending transactions. Expected {} got {} from provider nonce.",
+                            sender.create(7),
+                            sender.create(actual)
+                        );
+                        assert_eq!(result.unwrap_err().to_string(), expected);
+                    }
+                }
+            }
+        }
+        // Expiring CALLs have no protocol nonce to synchronize.
+        request.inner.to = Some(TxKind::Call(Address::with_last_byte(2)));
+        let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
+            .connect_mocked_client(Asserter::new());
+        SendTransactionKind::Unlocked(request.clone())
+            .validate_expiring_create_nonce(
+                &provider,
+                &TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request)),
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

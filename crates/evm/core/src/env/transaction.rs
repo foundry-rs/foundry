@@ -129,6 +129,11 @@ pub trait FoundryTransaction: Transaction {
 
     /// Sets the fee payer for this transaction.
     fn set_fee_payer(&mut self, _payer: Option<Option<Address>>) {}
+
+    /// Returns whether this transaction executes a single contract creation.
+    fn is_single_create(&self) -> bool {
+        self.kind().is_create()
+    }
 }
 
 impl FoundryTransaction for TxEnv {
@@ -275,6 +280,11 @@ impl FoundryTransaction for TempoTxEnv {
 
     fn set_fee_payer(&mut self, payer: Option<Option<Address>>) {
         self.fee_payer = payer;
+    }
+
+    fn is_single_create(&self) -> bool {
+        self.kind().is_create()
+            && self.tempo_tx_env.as_ref().is_none_or(|env| env.aa_calls.len() == 1)
     }
 }
 

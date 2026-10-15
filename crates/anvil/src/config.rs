@@ -2246,22 +2246,26 @@ latest block number: {latest_block}"
             self.block_cache_path_for_rpc(source_chain_id, fork_block_number, &eth_rpc_url);
         let block_chain_db = BlockchainDb::new(meta, cache_path);
 
+        let fork_provider = || {
+            if self.fork_urls.len() <= 1 {
+                return self.fork_provider(&eth_rpc_url);
+            }
+            ProviderBuilder::new(&eth_rpc_url)
+                .timeout(self.fork_request_timeout)
+                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
+                .max_retry(self.fork_request_retries)
+                .headers(self.fork_headers.clone())
+                .build_fallback(self.fork_urls.clone())
+                .wrap_err("failed to establish round-robin provider to fork urls")
+        };
         // After bootstrap, rebuild the provider with round-robin if multiple URLs are
         // configured. This ensures bootstrap used only the primary endpoint for consistency,
         // while ongoing requests are distributed across all endpoints.
         let provider = if self.fork_urls.len() > 1 {
             let urls = self.fork_urls.iter().map(|url| redact_url(url)).collect::<Vec<_>>();
             debug!(target: "node", ?urls, "using multi-endpoint round-robin provider");
-            Arc::new(
-                ProviderBuilder::new(&eth_rpc_url)
-                    .timeout(self.fork_request_timeout)
-                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                    .compute_units_per_second(self.compute_units_per_second)
-                    .max_retry(self.fork_request_retries)
-                    .headers(self.fork_headers.clone())
-                    .build_fallback(self.fork_urls.clone())
-                    .wrap_err("failed to establish round-robin provider to fork urls")?,
-            )
+            Arc::new(fork_provider()?)
         } else {
             provider
         };
@@ -2273,14 +2277,16 @@ latest block number: {latest_block}"
             fork_block_number,
             block_hash,
         );
+        // Keep the worker's connections on its runtime, independent of foreground RPC requests.
+        let backend_provider = fork_provider()?;
         let (backend, handler) = if self.fork_state_by_number {
             SharedBackend::new_with_anchor_by_number(
-                Arc::clone(&provider),
+                backend_provider,
                 block_chain_db.clone(),
                 anchor,
             )?
         } else {
-            SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor)?
+            SharedBackend::new_with_anchor(backend_provider, block_chain_db.clone(), anchor)?
         };
         // The handler gets its own thread and runtime: `SharedBackend` reads block the calling
         // thread via `block_in_place`, so under enough concurrent reads they can occupy every

@@ -152,9 +152,6 @@ impl FlowState {
 /// A place written by an assignment, paired with the expression it receives.
 type Pair<'gcx> = (Option<ValueKey>, Option<&'gcx Expr<'gcx>>);
 
-/// The `s` argument of an `ecrecover` call.
-type Signature<'gcx> = &'gcx Expr<'gcx>;
-
 struct Analyzer<'gcx> {
     gcx: Gcx<'gcx>,
     returns: &'gcx [VariableId],
@@ -317,7 +314,7 @@ impl<'gcx> Analyzer<'gcx> {
     fn ecrecover_call(
         &self,
         expr: &'gcx Expr<'gcx>,
-    ) -> Option<(&'gcx Expr<'gcx>, Signature<'gcx>)> {
+    ) -> Option<(&'gcx Expr<'gcx>, &'gcx Expr<'gcx>)> {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args) = &expr.kind else { return None };
         let callee = self.gcx.resolved_builtin(callee.peel_parens());
@@ -385,12 +382,12 @@ impl<'gcx> Analyzer<'gcx> {
                 };
                 Some(U256::MAX >> (256 - size.bits()))
             }
-            _ => self.gcx.try_eval_const(expr).ok()?.as_u256(),
+            _ => self.gcx.const_eval().eval_int(expr).ok()?.as_u256(),
         }
     }
 
     fn const_bool(&self, expr: &Expr<'_>) -> Option<bool> {
-        match self.gcx.try_eval_const_value(expr).ok()? {
+        match self.gcx.const_eval().eval_expr(expr).ok()? {
             ConstValue::Bool(value) => Some(*value),
             _ => None,
         }

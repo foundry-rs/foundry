@@ -22,7 +22,7 @@ jobs:
       has_regression: ${{ steps.compare.outputs.has_regression }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,7 +38,7 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
 
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 

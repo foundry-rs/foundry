@@ -12,4 +12,4 @@ VS Code Solidity extension; see `syntaxes/README.md` and `syntaxes/LICENSE`.
 
 The language and command IDs, `solarLsp.*` settings and initialization protocol
 remain unchanged. The source package `solar-lsp` had no publisher; Foundry
-publishes it as `paradigm.forge`.
+publishes it as `paradigm.forge-lsp`.
