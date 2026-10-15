@@ -1,4 +1,4 @@
-use crate::{CallTrace, DecodedCallData};
+use crate::{CallTrace, DecodedCallData, DecodedCallTrace};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
 use foundry_config::{Chain, NamedChain};
@@ -13,7 +13,6 @@ use foundry_evm_core::{
 use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use itertools::Itertools;
-use revm_inspectors::tracing::types::DecodedCallTrace;
 
 sol! {
 /// EVM precompiles interface. For illustration purposes only, as precompiles don't follow the
@@ -539,10 +538,10 @@ pub(crate) fn is_known_precompile(
             |networks| networks.is_monad(),
         );
         if is_monad_context {
-            if address == monad_revm::staking::STAKING_ADDRESS {
+            if address == monad_evm2::staking::STAKING_ADDRESS {
                 return true;
             }
-            if address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
+            if address == monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS
                 && monad_hardfork.is_none_or(|hardfork| {
                     foundry_evm_networks::is_monad_precompile_active_at(address, hardfork)
                 })

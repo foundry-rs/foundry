@@ -1,8 +1,5 @@
+use crate::{CallTraceArena, CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder};
 use alloy_primitives::hex::ToHexExt;
-use revm_inspectors::tracing::{
-    CallTraceArena,
-    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
-};
 
 /// Wrapper for building a folded stack trace using EVM call trace node.
 #[derive(Default)]
@@ -232,12 +229,10 @@ pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::DecodedInternalCall;
     use alloy_primitives::{Bytes, U256};
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::{
-        CallTraceArena,
-        types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep, TraceMemberOrder},
-    };
+    use evm2::interpreter::{InstrStop, opcode::OpCode};
 
     fn trace_step(gas_remaining: u64) -> CallTraceStep {
         CallTraceStep {
@@ -255,7 +250,7 @@ mod tests {
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: Some(InstructionResult::Stop),
+            status: Some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }

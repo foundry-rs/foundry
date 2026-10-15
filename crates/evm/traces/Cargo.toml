@@ -32,11 +32,11 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-sol-types.workspace = true
-revm-inspectors.workspace = true
+evm2.workspace = true
+evm2-inspectors.workspace = true
 
 tempo-contracts.workspace = true
-tempo-precompiles.workspace = true
-monad-revm = { workspace = true, optional = true }
+monad-evm2 = { workspace = true, optional = true }
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 
 async-trait.workspace = true
@@ -47,7 +47,6 @@ itertools.workspace = true
 memchr.workspace = true
 rayon.workspace = true
 reqwest.workspace = true
-revm.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 serde.workspace = true
 solar.workspace = true
@@ -57,6 +56,7 @@ tracing.workspace = true
 yansi.workspace = true
 
 [dev-dependencies]
+alloy-network.workspace = true
 ron.workspace = true
 snapbox.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
@@ -64,7 +64,7 @@ tokio = { workspace = true, features = ["test-util"] }
 [features]
 default = ["optimism"]
 monad = [
-    "dep:monad-revm",
+    "dep:monad-evm2",
     "foundry-evm-core/monad",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
