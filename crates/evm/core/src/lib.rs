@@ -41,6 +41,7 @@ pub mod constants;
 pub mod decode;
 pub mod eip2935;
 pub mod evm;
+pub mod evm2;
 pub mod fork;
 pub mod hardfork;
 pub mod ic;

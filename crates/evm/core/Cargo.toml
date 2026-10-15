@@ -94,6 +94,16 @@ tempo-contracts.workspace = true
 tempo-evm.workspace = true
 tempo-precompiles.workspace = true
 
+# evm2
+evm2.workspace = true
+tempo-evm2.workspace = true
+tempo-hardfork-evm2.workspace = true
+tempo-precompiles-evm2.workspace = true
+tempo-primitives-evm2.workspace = true
+op-evm2 = { workspace = true, optional = true }
+base-evm2 = { workspace = true, optional = true }
+monad-evm2 = { workspace = true, optional = true }
+
 auto_impl.workspace = true
 eyre.workspace = true
 futures.workspace = true
@@ -125,6 +135,7 @@ monad = [
     "anvil/monad",
     "dep:alloy-monad-evm",
     "dep:monad-revm",
+    "dep:monad-evm2",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
 ]
@@ -136,6 +147,7 @@ base = [
     "dep:base-common-network",
     "dep:base-common-precompiles",
     "dep:base-common-rpc-types",
+    "dep:base-evm2",
     "foundry-common/base",
     "foundry-config/base",
     "foundry-evm-hardforks/base",
@@ -147,6 +159,7 @@ optimism = [
     "dep:op-alloy-rpc-types",
     "dep:alloy-op-evm",
     "dep:op-revm",
+    "dep:op-evm2",
     "foundry-common/optimism",
     "foundry-evm-hardforks/optimism",
     "foundry-evm-networks/optimism",

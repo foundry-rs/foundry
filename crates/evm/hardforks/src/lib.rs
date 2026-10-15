@@ -32,6 +32,8 @@ pub use monad_revm::MonadHardfork;
 #[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
 
+mod evm2_specs;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(into = "String")]
 pub enum FoundryHardfork {

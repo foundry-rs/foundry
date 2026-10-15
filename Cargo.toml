@@ -353,6 +353,21 @@ svm = { package = "svm-rs", version = "0.5.28", default-features = false, featur
     "rustls",
 ] }
 
+## evm2
+# Keep in lockstep with Tempo's evm2 integration so every network shares one `evm2` graph.
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "23b49a5de13becb00311fedafb12991690465726", default-features = false, features = [
+    "std",
+] }
+# Tempo's evm2 integration (tempoxyz/tempo#7871), renamed while the revm-based Tempo crates are wired.
+tempo-evm2 = { package = "tempo-evm", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
+tempo-hardfork-evm2 = { package = "tempo-hardfork", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
+tempo-primitives-evm2 = { package = "tempo-primitives", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
+tempo-precompiles-evm2 = { package = "tempo-precompiles", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
+# Op, Base and Monad evm2 type families.
+op-evm2 = { path = "../evm2-networks/crates/op", default-features = false }
+base-evm2 = { path = "../evm2-networks/crates/base", default-features = false }
+monad-evm2 = { path = "../evm2-networks/crates/monad", default-features = false }
+
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }
 alloy-contract = { version = "2.5.0", default-features = false }
@@ -643,6 +658,10 @@ alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "20
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+
+## tempo-nitro-attestation — see patches/tempo-nitro-attestation/Cargo.toml.
+[patch."https://github.com/tempoxyz/tempo"]
+tempo-nitro-attestation = { path = "patches/tempo-nitro-attestation" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
