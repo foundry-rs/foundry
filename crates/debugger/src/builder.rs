@@ -239,8 +239,8 @@ fn identify_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evm2::interpreter::{InstrStop, opcode::OpCode};
     use foundry_evm_traces::{CallKind, CallTrace, CallTraceStep, TraceMemberOrder};
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 
     fn step() -> CallTraceStep {
         CallTraceStep {
@@ -258,7 +258,7 @@ mod tests {
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: Some(InstructionResult::Stop),
+            status: Some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }

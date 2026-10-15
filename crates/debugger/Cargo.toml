@@ -26,7 +26,7 @@ clap = { version = "4", features = ["derive"] }
 crossterm.workspace = true
 eyre.workspace = true
 ratatui = { workspace = true, features = ["crossterm"] }
-revm.workspace = true
+evm2.workspace = true
 tracing.workspace = true
 serde.workspace = true
 
