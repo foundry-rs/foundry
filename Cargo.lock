@@ -5206,6 +5206,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm2-inspectors"
+version = "0.1.0"
+source = "git+https://github.com/mablr/evm2?rev=17c92c1efeee6f15f631861486be41a7a961aca4#17c92c1efeee6f15f631861486be41a7a961aca4"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eip2930",
+ "alloy-primitives",
+ "alloy-rpc-types-eth",
+ "alloy-rpc-types-trace",
+ "alloy-sol-types",
+ "anstyle",
+ "colorchoice",
+ "evm2",
+ "num-bigint 0.5.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "evm2-macros"
 version = "0.1.0"
 source = "git+https://github.com/mablr/evm2?rev=17c92c1efeee6f15f631861486be41a7a961aca4#17c92c1efeee6f15f631861486be41a7a961aca4"
@@ -5644,11 +5664,11 @@ version = "1.8.6"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
+ "evm2-inspectors",
  "eyre",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
- "revm-inspectors",
  "serde",
  "serde_json",
  "walkdir",
@@ -6135,6 +6155,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "crossterm",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -6142,7 +6163,6 @@ dependencies = [
  "foundry-evm-traces",
  "foundry-tui",
  "ratatui",
- "revm",
  "serde",
  "tracing",
 ]
@@ -6281,13 +6301,15 @@ dependencies = [
 name = "foundry-evm-coverage"
 version = "1.8.6"
 dependencies = [
+ "alloy-network",
  "alloy-primitives",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
+ "foundry-config",
  "foundry-evm-core",
  "rayon",
- "revm",
  "semver 1.0.28",
  "solar-compiler",
  "tracing",
@@ -6299,7 +6321,9 @@ version = "1.8.6"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
+ "alloy-network",
  "alloy-primitives",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -6311,7 +6335,6 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand 0.9.5",
- "revm",
  "serde",
  "solar-compiler",
  "thiserror 2.0.21",
@@ -6395,11 +6418,14 @@ version = "1.8.6"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
+ "alloy-network",
  "alloy-primitives",
  "alloy-sol-types",
  "async-trait",
  "base-common-precompiles",
  "ciborium",
+ "evm2",
+ "evm2-inspectors",
  "eyre",
  "foundry-block-explorers",
  "foundry-common",
@@ -6412,11 +6438,9 @@ dependencies = [
  "futures",
  "itertools 0.15.0",
  "memchr",
- "monad-revm",
+ "monad-evm2",
  "rayon",
  "reqwest 0.13.5",
- "revm",
- "revm-inspectors",
  "ron",
  "serde",
  "serde_json",
@@ -6424,7 +6448,6 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "tempo-contracts 1.11.0",
- "tempo-precompiles 1.14.0",
  "tokio",
  "tracing",
  "yansi",
@@ -8567,6 +8590,7 @@ checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
 dependencies = [
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]

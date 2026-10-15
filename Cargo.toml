@@ -358,6 +358,9 @@ svm = { package = "svm-rs", version = "0.5.28", default-features = false, featur
 evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "23b49a5de13becb00311fedafb12991690465726", default-features = false, features = [
     "std",
 ] }
+evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "23b49a5de13becb00311fedafb12991690465726", features = [
+    "serde",
+] }
 # Tempo's evm2 integration (tempoxyz/tempo#7871), renamed while the revm-based Tempo crates are wired.
 tempo-evm2 = { package = "tempo-evm", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
 tempo-hardfork-evm2 = { package = "tempo-hardfork", git = "https://github.com/tempoxyz/tempo", rev = "b97d16de1cad12f3189a2b7e7df88182554b409d", default-features = false }
@@ -664,6 +667,7 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9
 [patch."https://github.com/alloy-rs/evm2"]
 evm2 = { git = "https://github.com/mablr/evm2", rev = "17c92c1efeee6f15f631861486be41a7a961aca4" }
 evm2-macros = { git = "https://github.com/mablr/evm2", rev = "17c92c1efeee6f15f631861486be41a7a961aca4" }
+evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "17c92c1efeee6f15f631861486be41a7a961aca4" }
 
 ## tempo-nitro-attestation — see patches/tempo-nitro-attestation/Cargo.toml.
 [patch."https://github.com/tempoxyz/tempo"]
