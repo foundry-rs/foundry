@@ -2,20 +2,35 @@
 //! inactive one resumes with.
 
 use super::{BackingDb, EvmEnv};
-use crate::fork::ForkId;
+use crate::fork::{Fork, ForkId};
 use alloy_primitives::{Address, U256, map::AddressSet};
 use evm2::{EvmTypesHost, evm::Cache};
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 /// Identity of a fork as Foundry users see it: its RPC endpoint and pinned block.
+///
+/// It travels with the fork's context, so snapshot reverts restore it together with the state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForkInfo {
     /// Deduplicating identifier of the RPC endpoint and block.
     pub id: ForkId,
     /// RPC endpoint.
     pub url: String,
-    /// Pinned block number, if any.
+    /// RPC block number whose state the fork executes on, if any.
+    ///
+    /// After rolling to a transaction this is the transaction's block, whose parent state was
+    /// replayed up to the transaction.
     pub block: Option<u64>,
+    /// The remote fork backing the context, if it is RPC-backed.
+    pub remote: Option<Fork>,
+}
+
+impl ForkInfo {
+    /// Creates the identity of a fork that is not RPC-backed, such as one over an in-memory
+    /// database.
+    pub fn new(id: ForkId, url: impl Into<String>, block: Option<u64>) -> Self {
+        Self { id, url: url.into(), block, remote: None }
+    }
 }
 
 /// An execution context that is not running: its backing database, environment, network
@@ -27,8 +42,11 @@ pub struct Parked<T: EvmTypesHost> {
     pub env: EvmEnv<T>,
     /// Network extension state to resume with.
     pub ext: T::EvmExt,
-    /// Accepted state to resume with; `None` until the context first runs and suspends.
-    pub cache: Option<Cache>,
+    /// Accepted state to resume with; `None` until the context is first initialized.
+    ///
+    /// The cache is shared with snapshots and with EVMs created over the context, so taking a
+    /// snapshot or starting an execution does not copy it.
+    pub cache: Option<Arc<Cache>>,
 }
 
 impl<T: EvmTypesHost> Parked<T> {
@@ -144,13 +162,30 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
         self.forks.get(&id)
     }
 
+    /// Returns a registered fork mutably.
+    pub fn get_mut(&mut self, id: U256) -> Option<&mut ForkEntry<T>> {
+        self.forks.get_mut(&id)
+    }
+
+    /// Returns the number of registered forks.
+    pub fn len(&self) -> usize {
+        self.forks.len()
+    }
+
+    /// Returns whether no fork is registered.
+    pub fn is_empty(&self) -> bool {
+        self.forks.is_empty()
+    }
+
     /// Returns the registered forks.
     pub fn iter(&self) -> impl Iterator<Item = (U256, &ForkEntry<T>)> {
         self.forks.iter().map(|(id, entry)| (*id, entry))
     }
 
     /// Returns a context, or `None` for an unknown fork.
-    pub(super) fn context(&self, id: Option<U256>) -> Option<&Parked<T>> {
+    ///
+    /// The active context's accepted state is stale while an EVM runs it.
+    pub fn context(&self, id: Option<U256>) -> Option<&Parked<T>> {
         match id {
             None => Some(&self.local),
             Some(id) => self.forks.get(&id).map(|entry| &entry.context),
@@ -158,7 +193,7 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
     }
 
     /// Returns a context mutably, or `None` for an unknown fork.
-    pub(super) fn context_mut(&mut self, id: Option<U256>) -> Option<&mut Parked<T>> {
+    pub fn context_mut(&mut self, id: Option<U256>) -> Option<&mut Parked<T>> {
         match id {
             None => Some(&mut self.local),
             Some(id) => self.forks.get_mut(&id).map(|entry| &mut entry.context),
@@ -170,19 +205,25 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
         self.context(self.active).expect("active context exists").db.clone_backing()
     }
 
-    /// Marks an account as persistent across fork switches.
-    pub fn add_persistent(&mut self, address: Address) {
-        self.persistent.insert(address);
+    /// Marks an account as persistent across fork switches. Returns whether it was not yet
+    /// persistent.
+    pub fn add_persistent(&mut self, address: Address) -> bool {
+        self.persistent.insert(address)
     }
 
-    /// Stops an account from persisting across fork switches.
-    pub fn remove_persistent(&mut self, address: &Address) {
-        self.persistent.remove(address);
+    /// Stops an account from persisting across fork switches. Returns whether it was persistent.
+    pub fn remove_persistent(&mut self, address: &Address) -> bool {
+        self.persistent.remove(address)
     }
 
     /// Returns whether an account persists across fork switches.
     pub fn is_persistent(&self, address: &Address) -> bool {
         self.persistent.contains(address)
+    }
+
+    /// Returns the accounts that persist across fork switches.
+    pub const fn persistent(&self) -> &AddressSet {
+        &self.persistent
     }
 
     /// Copies persistent accounts' accepted state from `source` into `target`.

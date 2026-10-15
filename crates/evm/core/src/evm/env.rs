@@ -6,9 +6,9 @@ use alloy_primitives::U256;
 use evm2::{EvmFeatures, EvmTypesHost, Version, env::BlockEnv};
 use std::fmt::Debug;
 
-/// Successor of [`crate::EvmEnv`]: the spec, runtime version and block an EVM is built with.
+/// The spec, runtime version and block an EVM is built with.
 ///
-/// [`Version`] replaces REVM's `CfgEnv`. Foundry's execution toggles map onto [`EvmFeatures`]:
+/// Foundry's execution toggles map onto [`EvmFeatures`] of the [`Version`]:
 /// `disable_nonce_check` is `NONCE_CHECK`, `disable_balance_check` is `BALANCE_CHECK`,
 /// `disable_base_fee` is `BASE_FEE_CHECK`, `disable_block_gas_limit` is `BLOCK_GAS_LIMIT_CHECK`,
 /// `disable_eip3607` is `EIP3607`, `disable_fee_charge` is `FEE_CHARGE`,
@@ -53,8 +53,7 @@ impl<T: EvmTypesHost> EvmEnv<T> {
         self.version.features.set(feature, enabled);
     }
 
-    /// Sets the blob base fee from the excess blob gas, replacing REVM's
-    /// `BlockEnv::set_blob_excess_gas_and_price`.
+    /// Sets the blob base fee from the excess blob gas.
     pub fn set_blob_excess_gas(&mut self, excess_blob_gas: u64, base_fee_update_fraction: u64) {
         self.block.blob_basefee = U256::from(fake_exponential(
             BLOB_TX_MIN_BLOB_GASPRICE,
@@ -104,7 +103,7 @@ pub fn carry_execution_policy(
     next
 }
 
-/// Successor of the network-specific half of [`crate::FoundryBlock`].
+/// Network-specific block environment fields.
 ///
 /// Common block fields are public on [`BlockEnv`]; only extension fields need accessors.
 pub trait FoundryBlockExt: Copy + Debug + Default + Send + Sync + 'static {
@@ -119,11 +118,21 @@ pub trait FoundryBlockExt: Copy + Debug + Default + Send + Sync + 'static {
 
 impl FoundryBlockExt for () {}
 
-/// Successor of [`crate::FoundryChain`]: per-EVM network state such as OP L1 block info or Monad's
-/// reserve-balance tracker.
+/// Per-EVM network state, such as OP L1 block info or Monad's reserve-balance context.
 pub trait FoundryEvmExt<Tx>: Clone + Debug + Default + 'static {
     /// Prepares the state for a standalone synthetic transaction.
     fn for_transaction(&mut self, _tx: &Recovered<Tx>) {}
+
+    /// Prepares the state for the transaction at `index` of `current`, a block whose parent and
+    /// grandparent blocks contained `parent` and `grandparent`, such as when replaying a block.
+    fn for_block(
+        &mut self,
+        _grandparent: &[Recovered<Tx>],
+        _parent: &[Recovered<Tx>],
+        _current: &[Recovered<Tx>],
+        _index: usize,
+    ) {
+    }
 
     /// Clears cached per-transaction protocol fees after a synthetic transaction restores state.
     fn clear_transaction_fee_cache(&mut self) {}
@@ -131,9 +140,9 @@ pub trait FoundryEvmExt<Tx>: Clone + Debug + Default + 'static {
 
 impl<Tx> FoundryEvmExt<Tx> for () {}
 
-/// Successor of `IntoInstructionResult` for halt reasons.
+/// Network-only transaction outcome flags.
 ///
-/// The shared `TxResult::stop` carries the outcome; this exposes network-only outcome flags.
+/// The shared `TxResult::stop` carries the outcome.
 pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
     /// Returns whether an OP-stack deposit failed and kept only its mint and nonce bump.
     fn is_failed_deposit(&self) -> bool {

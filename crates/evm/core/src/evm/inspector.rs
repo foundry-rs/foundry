@@ -5,10 +5,7 @@ use alloy_primitives::Address;
 use evm2::{EvmTypesHost, Inspector, NoopInspector, interpreter::Message};
 use foundry_evm_networks::NetworkConfigs;
 
-/// Successor of [`crate::FoundryInspectorExt`] over evm2's [`Inspector`].
-///
-/// The Foundry hooks are unchanged apart from receiving evm2 [`Message`]s instead of REVM
-/// `CreateInputs`.
+/// Foundry's hooks on top of evm2's [`Inspector`].
 pub trait FoundryInspectorExt<T: EvmTypesHost>: Inspector<T> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 message.
     ///

@@ -6,14 +6,13 @@
 //! It includes the shared genesis initialization function used by both anvil and forge.
 
 use alloy_primitives::{Address, Bytes, U256};
-use revm::state::Bytecode;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE, precompiles::VALIDATOR_CONFIG_ADDRESS,
 };
-use tempo_hardfork::TempoHardfork;
-use tempo_precompiles::{
+use tempo_hardfork_evm2::TempoHardfork;
+use tempo_precompiles_evm2::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
     tip20::{ITIP20, TIP20Token},
@@ -26,9 +25,7 @@ use crate::constants::SYSTEM_PRECOMPILE_STUB;
 pub use foundry_common::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
 };
-pub use foundry_evm_networks::{
-    TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
-};
+pub use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 pub use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, IAccountKeychain, IAddressRegistry,
     IFeeManager, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, ITIP20ChannelReserve,
@@ -36,7 +33,7 @@ pub use tempo_contracts::precompiles::{
     STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
     TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
-pub use tempo_precompiles::{
+pub use tempo_precompiles_evm2::{
     address_registry::{AddressRegistry, IMPLICIT_APPROVAL_LIST, is_implicitly_approved},
     signature_verifier::SignatureVerifier,
     stablecoin_dex::StablecoinDEX,
@@ -47,6 +44,26 @@ pub use tempo_precompiles::{
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
+
+/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
+pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
+    foundry_evm_networks::is_tempo_precompile_active_at(address, revm_tempo_hardfork(hardfork))
+}
+
+/// Returns the well-known Tempo precompile addresses active at `hardfork`.
+pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
+    TEMPO_PRECOMPILE_ADDRESSES
+        .iter()
+        .copied()
+        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
+}
+
+/// Maps an evm2 Tempo hardfork onto the hardfork type `foundry-evm-networks` schedules with.
+///
+/// Both types share hardfork names.
+fn revm_tempo_hardfork(hardfork: TempoHardfork) -> tempo_hardfork::TempoHardfork {
+    hardfork.to_string().parse().unwrap_or_default()
+}
 
 /// Initialize Tempo precompiles and contracts for a specific active hardfork.
 pub fn initialize_tempo_genesis_at_hardfork(
@@ -101,9 +118,8 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
     for precompile in precompiles {
-        ctx.set_code(precompile, sentinel.clone())?;
+        ctx.set_code(precompile, Bytes::from_static(SYSTEM_PRECOMPILE_STUB))?;
     }
 
     // Create PathUSD token: 0x20C0000000000000000000000000000000000000
@@ -158,26 +174,11 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     ctx.sstore(VALIDATOR_CONFIG_ADDRESS, validator_config::slots::OWNER, admin.into_word().into())?;
 
     // Set bytecode for standard contracts
-    ctx.set_code(
-        MULTICALL3_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&Multicall3::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        CREATEX_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&CreateX::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        SAFE_DEPLOYER_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&SafeDeployer::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        PERMIT2_ADDRESS,
-        Bytecode::new_legacy(Bytes::from_static(&Permit2::DEPLOYED_BYTECODE)),
-    )?;
-    ctx.set_code(
-        ARACHNID_CREATE2_FACTORY_ADDRESS,
-        Bytecode::new_legacy(ARACHNID_CREATE2_FACTORY_BYTECODE),
-    )?;
+    ctx.set_code(MULTICALL3_ADDRESS, Multicall3::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(CREATEX_ADDRESS, CreateX::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(SAFE_DEPLOYER_ADDRESS, SafeDeployer::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(PERMIT2_ADDRESS, Permit2::DEPLOYED_BYTECODE.clone())?;
+    ctx.set_code(ARACHNID_CREATE2_FACTORY_ADDRESS, ARACHNID_CREATE2_FACTORY_BYTECODE)?;
 
     Ok(())
 }

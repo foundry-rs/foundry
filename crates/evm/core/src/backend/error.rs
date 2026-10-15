@@ -1,11 +1,10 @@
 use alloy_primitives::Address;
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
-use revm::context_interface::result::EVMError;
 use std::convert::Infallible;
 
 pub type BackendResult<T> = Result<T, BackendError>;
 
-/// Errors that can happen when working with [`revm::Database`]
+/// Errors of [`Backend`](super::Backend) operations.
 #[derive(Debug, thiserror::Error)]
 #[expect(missing_docs)]
 pub enum BackendError {
@@ -15,6 +14,8 @@ pub enum BackendError {
     NoCheats(Address),
     #[error(transparent)]
     Database(#[from] DatabaseError),
+    #[error(transparent)]
+    State(#[from] evm2::DatabaseError),
     #[error("failed to fetch account info for {0}")]
     MissingAccount(Address),
     #[error(
@@ -47,18 +48,5 @@ impl From<tokio::task::JoinError> for BackendError {
 impl From<Infallible> for BackendError {
     fn from(value: Infallible) -> Self {
         match value {}
-    }
-}
-
-// Note: this is mostly necessary to use some revm internals that return an [EVMError]
-impl<T: Into<Self>> From<EVMError<T>> for BackendError {
-    fn from(err: EVMError<T>) -> Self {
-        match err {
-            EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => Self::msg(err),
-            EVMError::Header(err) => Self::msg(err.to_string()),
-            EVMError::Transaction(err) => Self::msg(err.to_string()),
-            EVMError::CustomAny(err) => Self::msg(err.to_string()),
-        }
     }
 }

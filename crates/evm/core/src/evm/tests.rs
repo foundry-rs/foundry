@@ -1,7 +1,13 @@
 use super::*;
-use crate::{backend::RevertStateSnapshotAction, evm::EthEvmNetwork, fork::ForkId};
-use alloy_network::TxSignerSync;
+use crate::{backend::RevertStateSnapshotAction, fork::ForkId};
+use alloy_consensus::TxEip1559;
+use alloy_eips::Encodable2718;
+use alloy_network::{
+    AnyTxEnvelope, AnyTxType, TxSignerSync, UnknownTxEnvelope, UnknownTypedTransaction,
+};
 use alloy_primitives::{B256, Bytes, TxKind, U256};
+use alloy_rpc_types::Transaction as RpcTransaction;
+use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use evm2::{
     EvmFeatures, SpecId,
@@ -10,17 +16,17 @@ use evm2::{
 };
 
 const GWEI: u128 = 1_000_000_000;
-const ETHER: u128 = 1_000_000_000_000_000_000;
+pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
 
 /// `sstore(0, calldataload(0))`.
-const STORE: &[u8] = &[0x60, 0x00, 0x35, 0x60, 0x00, 0x55, 0x00];
+pub(crate) const STORE: &[u8] = &[0x60, 0x00, 0x35, 0x60, 0x00, 0x55, 0x00];
 /// `sstore(0, calldataload(0)); revert(0, 0)`.
 const STORE_THEN_REVERT: &[u8] = &[0x60, 0x00, 0x35, 0x60, 0x00, 0x55, 0x60, 0x00, 0x80, 0xfd];
 
-const STORE_ADDRESS: Address = Address::with_last_byte(0x5A);
-const REVERT_ADDRESS: Address = Address::with_last_byte(0x5B);
+pub(crate) const STORE_ADDRESS: Address = Address::with_last_byte(0x5A);
+pub(crate) const REVERT_ADDRESS: Address = Address::with_last_byte(0x5B);
 
-fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
+pub(crate) fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
     let mut db = InMemoryDB::default();
     for (address, balance) in accounts {
         db.insert_account_info(address, AccountInfo::default().with_balance(U256::from(*balance)));
@@ -35,20 +41,20 @@ fn db_with(accounts: &[(Address, u128)], slot: u64) -> InMemoryDB {
     db
 }
 
-fn balance<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> U256 {
+pub(crate) fn balance<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> U256 {
     evm.read_account_info(&address).unwrap().map(|info| info.balance).unwrap_or_default()
 }
 
-fn nonce<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> u64 {
+pub(crate) fn nonce<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address) -> u64 {
     evm.read_account_info(&address).unwrap().map(|info| info.nonce).unwrap_or_default()
 }
 
-fn slot<T: EvmTypes>(evm: &mut Evm<'_, T>) -> U256 {
+pub(crate) fn slot<T: EvmTypes>(evm: &mut Evm<'_, T>) -> U256 {
     evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::ZERO).unwrap()
 }
 
 /// A complete, fee-free request that stores `value` through the `STORE` contract.
-fn store_request<FEN: FoundryEvmNetwork>(
+pub(crate) fn store_request<FEN: FoundryEvmNetwork>(
     from: Address,
     to: Address,
     nonce: u64,
@@ -114,10 +120,10 @@ where
     assert_eq!(nonce(&mut evm, caller), 3);
 
     // Snapshots restore state and return their extra; removal also drops later snapshots.
-    let first = lifecycle.snapshot(&evm, "first");
+    let first = lifecycle.snapshot(&mut evm, "first");
     let tx = FEN::tx_from_request(request(STORE_ADDRESS, 3, 11, chain_id)).unwrap();
     assert!(evm.transact(&tx).unwrap().commit().status);
-    let second = lifecycle.snapshot(&evm, "second");
+    let second = lifecycle.snapshot(&mut evm, "second");
     let keep = RevertStateSnapshotAction::RevertKeep;
     let remove = RevertStateSnapshotAction::RevertRemove;
     let phase = ExecutionPhase::Boundary;
@@ -169,11 +175,7 @@ where
     evm.state_mut().account(&persistent).unwrap().set_balance(U256::from(5));
     evm.state_mut().commit_transaction();
     let fork_env = EvmEnv::new(spec, factory.version(spec, chain_id), Default::default());
-    let info = |n: u64| ForkInfo {
-        id: ForkId::new("http://fork", Some(n)),
-        url: "http://fork".to_string(),
-        block: Some(n),
-    };
+    let info = |n: u64| ForkInfo::new(ForkId::new("http://fork", Some(n)), "http://fork", Some(n));
     let fork = lifecycle.create_fork(info(1), db_with(&[(caller, ETHER)], 100), fork_env);
     assert_eq!(lifecycle.select_fork(&mut evm, Some(fork), phase).unwrap(), EnvTransition::Applied);
     assert_eq!(lifecycle.forks().active(), Some(fork));
@@ -185,7 +187,7 @@ where
     evm.state_mut().commit_transaction();
 
     // Reverting a snapshot taken on the fork restores every fork's state and the selection.
-    let on_fork = lifecycle.snapshot(&evm, "fork");
+    let on_fork = lifecycle.snapshot(&mut evm, "fork");
     assert_eq!(lifecycle.select_fork(&mut evm, None, phase).unwrap(), EnvTransition::Applied);
     assert_eq!(slot(&mut evm), U256::from(8));
     assert_eq!(balance(&mut evm, persistent), U256::from(6));
@@ -421,4 +423,112 @@ fn base_factory_plants_precompile_sentinels() {
         planted += usize::from(has_code);
     }
     assert!(planted > 0);
+}
+
+/// An Ethereum EIP-1559 transaction as a fork RPC endpoint returns it.
+fn eth_rpc_transaction(from: Address) -> AnyRpcTransaction {
+    let tx = TxEip1559 {
+        chain_id: 1,
+        nonce: 42,
+        gas_limit: 21001,
+        to: TxKind::Call(Address::with_last_byte(0xBB)),
+        value: U256::from(101),
+        ..Default::default()
+    };
+    let signed =
+        Signed::new_unchecked(tx, Signature::new(U256::ZERO, U256::ZERO, false), B256::ZERO);
+    rpc_transaction(AnyTxEnvelope::Ethereum(signed.into()), from)
+}
+
+fn rpc_transaction(envelope: AnyTxEnvelope, from: Address) -> AnyRpcTransaction {
+    AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
+        inner: Recovered::new_unchecked(envelope, from),
+        block_hash: None,
+        block_number: None,
+        transaction_index: None,
+        effective_gas_price: None,
+        block_timestamp: None,
+    }))
+}
+
+/// Every family converts Ethereum envelopes fetched over RPC and rejects unknown types.
+fn rpc_conversion_suite<FEN: FoundryEvmNetwork>() {
+    let from = Address::with_last_byte(0xAA);
+    let tx = FEN::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
+    assert_eq!((tx.signer(), tx.ty()), (from, 2));
+
+    let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+        hash: B256::ZERO,
+        inner: UnknownTypedTransaction {
+            ty: AnyTxType(0xFF),
+            fields: Default::default(),
+            memo: Default::default(),
+        },
+    });
+    assert!(FEN::tx_from_any_rpc(&rpc_transaction(unknown, from)).is_err());
+}
+
+#[test]
+fn rpc_transactions_convert_natively() {
+    rpc_conversion_suite::<EthEvmNetwork>();
+    rpc_conversion_suite::<crate::evm::TempoEvmNetwork>();
+    #[cfg(feature = "optimism")]
+    rpc_conversion_suite::<crate::evm::OpEvmNetwork>();
+    #[cfg(feature = "monad")]
+    rpc_conversion_suite::<crate::evm::MonadEvmNetwork>();
+    #[cfg(feature = "base")]
+    rpc_conversion_suite::<crate::evm::BaseEvmNetwork>();
+}
+
+#[test]
+fn celo_fee_currency_transactions_fail_explicitly() {
+    let tx: AnyRpcTransaction = serde_json::from_value(serde_json::json!({
+        "accessList": [],
+        "blockHash": B256::ZERO,
+        "blockNumber": "0x1",
+        "chainId": "0xa4ec",
+        "feeCurrency": Address::with_last_byte(0xCC),
+        "from": Address::with_last_byte(0xAA),
+        "gas": "0x5208",
+        "gasPrice": "0x3",
+        "hash": B256::ZERO,
+        "input": "0x1234",
+        "maxFeePerGas": "0x3",
+        "maxPriorityFeePerGas": "0x1",
+        "nonce": "0x2a",
+        "r": B256::ZERO,
+        "s": B256::ZERO,
+        "to": Address::with_last_byte(0xBB),
+        "transactionIndex": "0x0",
+        "type": "0x7b",
+        "v": "0x0",
+        "value": "0x65",
+        "yParity": "0x0"
+    }))
+    .unwrap();
+    assert_eq!(
+        EthEvmNetwork::tx_from_any_rpc(&tx).unwrap_err().to_string(),
+        format!(
+            "cannot replay Celo CIP-64 transaction {}: evm2 has no fee-currency transaction type",
+            B256::ZERO
+        )
+    );
+}
+
+#[test]
+fn captured_tempo_aa_rpc_transactions_convert_exactly() {
+    for json in [
+        include_str!("../../test-data/tempo-aa-sponsored-batch.json"),
+        include_str!("../../test-data/tempo-aa-nonce-lane.json"),
+        include_str!("../../test-data/tempo-aa-keychain.json"),
+        include_str!("../../test-data/tempo-aa-authorization-list.json"),
+    ] {
+        let rpc: AnyRpcTransaction = serde_json::from_str(json).unwrap();
+        let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&rpc).unwrap();
+        // The hash and the recovered signer only match if every signed field decoded.
+        assert_eq!(alloy_primitives::keccak256(envelope.encoded_2718()), rpc.tx_hash());
+        assert_eq!(envelope.recover_signer().unwrap(), rpc.from());
+        let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&rpc).unwrap();
+        assert_eq!((tx.signer(), tx.ty()), (rpc.from(), 0x76));
+    }
 }

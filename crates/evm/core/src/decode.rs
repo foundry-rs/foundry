@@ -8,9 +8,9 @@ use alloy_sol_types::{
     ContractError::Revert, RevertReason, RevertReason::ContractError, SolEventInterface,
     SolInterface, SolValue,
 };
+use evm2::interpreter::InstrStop;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
-use revm::interpreter::InstructionResult;
 use std::{fmt, sync::OnceLock};
 
 /// Stable user-facing fallback for empty revert payloads.
@@ -123,7 +123,7 @@ impl RevertDecoder {
     ///
     /// Note that this is just a best-effort guess, and should not be relied upon for anything other
     /// than user output.
-    pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
+    pub fn decode(&self, err: &[u8], status: Option<InstrStop>) -> String {
         self.maybe_decode(err, status).unwrap_or_else(|| {
             if err.is_empty() { EMPTY_REVERT_DATA.to_string() } else { trimmed_hex(err) }
         })
@@ -132,7 +132,7 @@ impl RevertDecoder {
     /// Tries to decode an error message from the given revert bytes.
     ///
     /// See [`decode`](Self::decode) for more information.
-    pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+    pub fn maybe_decode(&self, err: &[u8], status: Option<InstrStop>) -> Option<String> {
         self.maybe_decode_known(err)
             .or_else(|| decode_as_non_empty_string(err))
             .or_else(|| Self::maybe_decode_fallback(err, status))
@@ -175,7 +175,7 @@ impl RevertDecoder {
     }
 
     /// Formats revert bytes that could not be decoded as a known error.
-    fn maybe_decode_fallback(err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+    fn maybe_decode_fallback(err: &[u8], status: Option<InstrStop>) -> Option<String> {
         // Generic custom error.
         if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
             return Some({
@@ -192,7 +192,7 @@ impl RevertDecoder {
         }
 
         if let Some(status) = status
-            && !status.is_ok()
+            && !status.is_success()
         {
             return Some(format!("EvmError: {status:?}"));
         }

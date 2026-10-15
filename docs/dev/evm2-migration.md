@@ -3,7 +3,7 @@
 Foundry executes every supported network family (Ethereum, OP, Base, Monad and Tempo) on
 [evm2](https://github.com/alloy-rs/evm2). This document records the cross-crate contract of that
 execution stack and the known parity gaps. Crate-level details live in Rustdoc, starting at
-[`foundry_evm_core::evm`](../../crates/evm/core/src/evm2/mod.rs).
+[`foundry_evm_core::evm`](../../crates/evm/core/src/evm/mod.rs).
 
 ## Ownership
 
@@ -39,9 +39,15 @@ execution stack and the known parity gaps. Crate-level details live in Rustdoc, 
 
 ## Execution
 
-An execution moves the backend into the inspector stack for its duration, so cheatcodes reach the
-lifecycle through the stack while `evm2::Evm` runs, and takes it back afterwards. Committing
-parks the EVM's accepted state back into the active context; calls discard it.
+`Backend::create_evm` builds an `evm2::Evm` over the active context. The EVM does not borrow the
+backend: it reads the context's accepted state through a shared copy-on-write view, so the backend
+stays free while the EVM runs. Inspectors that implement cheatcodes hold `&mut Backend` (or a
+`CowBackend`) for the duration of the execution and pass the `&mut Evm` they receive from their
+hooks to the backend operations that act on the running transaction (fork selection and rolls,
+snapshots, `vm.transact`, allocs, account refreshes), together with the `ExecutionPhase`.
+`Backend::park` accepts a committed EVM's state, environment and network state back into the
+active context; dropping the EVM discards it, as for calls. `Backend::inspect_call` and
+`Backend::inspect_commit` wrap these steps for executions whose inspector needs no backend access.
 
 ## Known parity gaps
 
@@ -59,6 +65,14 @@ explicitly or is documented as different; none falls back to REVM.
 | Fork cache | `foundry-fork-db` stores REVM-typed accounts. | `ForkDb` converts at the read boundary. | evm2-typed fork cache in `foundry-core`. |
 | Fuzz | The evm2 accepted overlay holds only committed changes, while REVM's fork `CacheDB` also cached every account `setUp` read. | `EvmFuzzState::new` seeds the dictionary from accounts, code and storage `setUp` accepted; accounts it only read from a fork are not seeded. | Seed from the fork cache as well. |
 | Fuzz | evm2 reports account changes, not REVM's touched flag. | Contracts are discovered from accounts a call changed; an account it only called without changing is not rediscovered. | None needed. |
+| Replay | Celo CIP-64 fee-currency transactions have no evm2 transaction type. | Replaying or `vm.transact`-ing one fails with an explicit error. | evm2 Celo transaction type. |
+| Replay | The Celo transfer precompile and the BSC P256 precompile are not installed. | Fork prefix replay and `vm.transact` run with the network family's standard precompiles; transactions that call them diverge from chain. | Network precompile injection in `FoundryEvmFactory::precompiles`. |
+| Replay | Protocol system transactions (known system senders, except `0x7E` deposits) have no native representation; Monad protocol system calls included. | They are skipped when replaying a block prefix, so state they write is missing. | Family system-call handlers. |
+| Monad | Synthetic transactions on a fork (`transact_from_tx`, calls) do not reconstruct the block-position context. | They prepare Monad's reserve-balance context with `FoundryEvmExt::for_transaction`; `vm.transact` and prefix replay use the exact block context. | Track the fork's block position in `ForkInfo`. |
+| Backend | `refresh_fork_storage` cannot override a slot the running transaction already loaded. | The refreshed value is set as a journaled write, so its original value (for `SSTORE` gas and refunds) stays the pre-refresh value. | evm2 slot override, like `AccountHandle::override_balance`. |
+| Backend | The local database is evm2's `EmptyDB`, which reports unknown accounts as absent. | REVM's `EmptyDBWrapper` reported them as empty existing accounts; only pre-Spurious Dragon execution can observe the difference. | None needed. |
+| Hardforks | `foundry-evm-hardforks` keeps the REVM spec types (`SpecId`, `OpSpecId`, `TempoHardfork`, `MonadHardfork`, `BaseSpecId`) for hardfork name parsing and activation schedules. | evm2 spec types implement `ExecutionSpec` by delegating to them by name; `tempo` precompile activation in `foundry-evm-networks` maps the evm2 Tempo hardfork to the REVM one by name. | Port the name tables and schedules to the evm2 types. |
+| Anvil storage | Anvil's state dumps and forked database use REVM account types. | `backend::{MemDb, FoundryEvmInMemoryDB, EmptyDBWrapper, StateSnapshot}` and `fork::database` stay REVM-typed in `foundry-evm-core` until Anvil is ported. | Anvil layer. |
 
 ## Dependencies
 
