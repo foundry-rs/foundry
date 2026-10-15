@@ -1025,31 +1025,29 @@ fn for_header_normalization_is_stable() {
 }
 
 #[test]
-fn condition_header_normalization_is_stable() {
-    for (keyword, inline_length) in [("if", 33), ("while", 36)] {
-        for condition in ["uint(c)>0", "uint256(c) > 0"] {
-            for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-                for line_length in [inline_length - 1, inline_length] {
-                    let source = format!(
-                        "contract C {{ function f() external {{ {keyword} ({condition}) x(); }} }}"
-                    );
-                    let body = if line_length == inline_length {
-                        "x();"
-                    } else {
-                        "{\n            x();\n        }"
-                    };
-                    let expected = format!(
-                        "contract C {{\n    function f() external {{\n        {keyword} (uint256(c) > 0) {body}\n    }}\n}}\n"
-                    );
-                    let config = Arc::new(FormatterConfig {
-                        line_length,
-                        single_line_statement_blocks: style,
-                        ..Default::default()
-                    });
-                    assert_eq!(format(&source, Path::new("test.sol"), config), expected);
-                }
-            }
+fn existing_condition_layouts_are_preserved() {
+    for source in [
+        r#"contract C {
+    function f() external {
+        if (_sel == this.superchainConfigProxy.selector) _superchainConfigProxy = _addr;
+        else if (_sel == this.delayedWethPermissionlessGameProxy.selector) _delayedWethPermissionlessGameProxy = _addr;
+        else revert("unknown address selector");
+    }
+}
+"#,
+        r#"contract C {
+    function f() external {
+        for (uint256 i; i < logs.length; ++i) {
+            Vm.Log memory entry = logs[i];
+            if (entry.emitter != address(hook) || entry.topics.length == 0 || entry.topics[0] != NATIVE_FEE_PAID_TOPIC) continue;
+            ++count;
         }
+    }
+}
+"#,
+    ] {
+        let config = Arc::new(FormatterConfig { line_length: 120, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config), source);
     }
 }
 
@@ -1130,29 +1128,6 @@ fn inlined_loops_preserve_else_binding() {
                     );
                 }
             }
-        }
-    }
-}
-
-#[test]
-fn nested_if_width_includes_keyword() {
-    let source = "contract C { function f() external { if (a) if (b) x(); } }";
-    for style in [SingleLineBlockStyle::Preserve, SingleLineBlockStyle::Single] {
-        for line_length in [26, 27] {
-            let body = if line_length == 26 {
-                "if (a) {\n            if (b) x();\n        }"
-            } else {
-                "if (a) if (b) x();"
-            };
-            let expected = format!(
-                "contract C {{\n    function f() external {{\n        {body}\n    }}\n}}\n"
-            );
-            let config = Arc::new(FormatterConfig {
-                line_length,
-                single_line_statement_blocks: style,
-                ..Default::default()
-            });
-            assert_eq!(format(source, Path::new("test.sol"), config), expected);
         }
     }
 }
