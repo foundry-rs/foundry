@@ -3679,10 +3679,6 @@ const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<
     T::CHEATCODE
 }
 
-fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
-    cheatcode_signature(cheat).split('(').next().unwrap()
-}
-
 const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.id
 }
@@ -3722,25 +3718,12 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
             }
         };
     }
-    let mut result =
-        if ccx.state.core.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
-            Err(fmt_err!("disabled during restricted execution"))
-        } else {
-            vm_calls!(dispatch)
-        };
-
-    // Format the error message to include the cheatcode name.
-    if let Err(e) = &mut result
-        && e.is_str()
-    {
-        let name = cheatcode_name(cheat);
-        // Skip showing the cheatcode name for:
-        // - assertions: too verbose, and can already be inferred from the error message
-        // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
-        if !name.contains("assert") && name != "rpcUrl" {
-            *e = fmt_err!("vm.{name}: {e}");
-        }
+    let result = if ccx.state.core.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
+        Err(fmt_err!("disabled during restricted execution"))
+    } else {
+        vm_calls!(dispatch)
     }
+    .map_err(|error| error.with_cheatcode_name(cheat));
 
     trace!(
         target: "cheatcodes",
