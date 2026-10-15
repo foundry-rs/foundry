@@ -720,7 +720,9 @@ impl InvariantTest {
         self.test_data.runs += 1;
         self.test_data.calls += run.fuzz_runs.len();
 
-        // Revert state to not persist values between runs.
+        if run.new_coverage {
+            self.fuzz_state.promote_ephemeral_values();
+        }
         self.fuzz_state.revert();
     }
 
@@ -2397,6 +2399,7 @@ mod tests {
     use super::*;
     use crate::executors::ExecutorBuilder;
     use alloy_evm::EvmEnv;
+    use alloy_primitives::B256;
     use foundry_cheatcodes::CheatsConfig;
     use foundry_config::FuzzDictionaryConfig;
     use foundry_evm_core::{backend::Backend, evm::EthEvmNetwork};
@@ -3295,5 +3298,54 @@ mod tests {
         assert_eq!(metrics.failures, 0);
         assert!(metrics.unique_failures.is_empty());
         assert_eq!(metrics.broken_handlers, 0);
+    }
+
+    #[test]
+    fn end_run_promotes_dictionary_only_with_new_coverage() {
+        for new_coverage in [false, true] {
+            let fuzz_state = EvmFuzzState::new(
+                &[],
+                &InMemoryDB::default(),
+                FuzzDictionaryConfig::default(),
+                None,
+            )
+            .into_invariant();
+            let learned = B256::from(U256::from(0xcafe_u64));
+            let trace_cmp = B256::from(U256::from(0xbeef_u64));
+            fuzz_state.collect_values([learned]);
+            fuzz_state.collect_typed_cmp_values([(16, trace_cmp)]);
+            let mut test = InvariantTest::new(
+                fuzz_state,
+                FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+                InvariantFailures::default(),
+                test_runner(),
+            );
+            let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+            let executor = ExecutorBuilder::default().gas_limit(1 << 24).build(
+                EvmEnv::default(),
+                TxEnv::default(),
+                backend,
+                Default::default(),
+            );
+            let first_input = BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender: Address::ZERO,
+                call_details: CallDetails {
+                    target: Address::ZERO,
+                    calldata: Bytes::new(),
+                    value: None,
+                },
+            };
+            let mut run = InvariantTestRun::new(first_input, executor, 1);
+            run.new_coverage = new_coverage;
+
+            test.end_run(run, 0);
+
+            test.fuzz_state.with_dictionary(|dictionary| {
+                assert_eq!(dictionary.values().contains(&learned), new_coverage);
+                assert!(dictionary.values().contains(&trace_cmp));
+            });
+        }
     }
 }
