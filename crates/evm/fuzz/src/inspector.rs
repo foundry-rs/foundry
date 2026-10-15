@@ -332,7 +332,7 @@ mod tests {
     };
     use foundry_evm_core::{
         constants::MONAD_CHEATCODE_ADDRESS,
-        evm2::{
+        evm::{
             EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
             TransactionRequestFor, TypesFor,
         },

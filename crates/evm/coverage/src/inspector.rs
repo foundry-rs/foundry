@@ -106,7 +106,7 @@ pub(crate) mod tests {
         bytecode::Bytecode,
         evm::{AccountInfo, InMemoryDB},
     };
-    use foundry_evm_core::evm2::{
+    use foundry_evm_core::evm::{
         EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
         TransactionRequestFor, TypesFor,
     };

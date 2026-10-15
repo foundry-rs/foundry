@@ -3,6 +3,7 @@ use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
 use foundry_config::{Chain, NamedChain};
 use foundry_evm_core::{
+    evm::{SpecFor, TempoEvmNetwork},
     precompiles::{
         BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
@@ -10,7 +11,7 @@ use foundry_evm_core::{
     },
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses},
 };
-use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
+use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use itertools::Itertools;
 
@@ -476,7 +477,7 @@ pub(crate) fn is_known_precompile(
     chain_id: Option<u64>,
     hardfork: Option<FoundryHardfork>,
 ) -> bool {
-    let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
+    let tempo_hardfork = hardfork.and_then(SpecFor::<TempoEvmNetwork>::from_foundry_hardfork);
 
     // Standard EVM precompiles (all chains).
     // An 18-byte zero prefix, as `P256_VERIFY` (0x..0100) occupies the two lowest bytes.

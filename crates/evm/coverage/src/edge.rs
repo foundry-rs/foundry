@@ -469,7 +469,7 @@ fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
 mod tests {
     use super::*;
     use crate::inspector::tests::{BRANCH, TARGET, inspect};
-    use foundry_evm_core::evm2::{FoundryEvmNetwork, TransactionRequestFor};
+    use foundry_evm_core::evm::{FoundryEvmNetwork, TransactionRequestFor};
 
     fn dense_counts(inspector: &EdgeCovInspector) -> Vec<u8> {
         inspector.dense_hits().into_iter().map(|hit| hit.count).collect()

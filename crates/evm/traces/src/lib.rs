@@ -746,7 +746,7 @@ mod tests {
         evm::{AccountInfo, InMemoryDB},
         interpreter::InstrStop,
     };
-    use foundry_evm_core::evm2::{
+    use foundry_evm_core::evm::{
         EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TransactionRequestFor,
     };
     use snapbox::{assert_data_eq, str};
