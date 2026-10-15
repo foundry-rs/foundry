@@ -1758,3 +1758,60 @@ fn configure_local_install(cmd: &mut TestCommand, source: &Path) {
     cmd.env("GIT_CONFIG_KEY_0", format!("url.{source_url}.insteadOf"));
     cmd.env("GIT_CONFIG_VALUE_0", "https://github.com/fixture/parent");
 }
+
+#[forgetest]
+fn install_with_quoted_submodule_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let output =
+        Command::new("git").current_dir(source.path()).args(["branch", "v1"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let rev = Git::new(source.path()).head().unwrap();
+
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source.path())
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let gitmodules = prj.root().join(".gitmodules");
+    let contents = fs::read_to_string(&gitmodules).unwrap();
+
+    for branch in ["v1", "\"v1\""] {
+        fs::write(&gitmodules, format!("{contents}\tbranch = {branch}\n")).unwrap();
+        cmd.forge_fuse().arg("install").assert_success();
+        assert_eq!(
+            lockfile_get(prj.root(), Path::new("lib/dep")),
+            Some(DepIdentifier::Branch {
+                name: "v1".to_string(),
+                rev: rev.clone(),
+                r#override: false,
+            })
+        );
+        assert_eq!(Git::new(&prj.root().join("lib/dep")).head().unwrap(), rev);
+        fs::remove_file(prj.root().join(FOUNDRY_LOCK)).unwrap();
+    }
+
+    cmd.forge_fuse().arg("install").assert_success();
+
+    // Advance the configured branch and ensure update records its new revision.
+    let git = Git::new(source.path());
+    git.checkout(false, "v1").unwrap();
+    fs::write(source.path().join("source.txt"), "updated dependency source\n").unwrap();
+    git.add(["source.txt"]).unwrap();
+    git.commit("advance v1").unwrap();
+    let updated_rev = git.head().unwrap();
+    assert_ne!(updated_rev, rev);
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep"]).assert_success();
+    assert_eq!(Git::new(&prj.root().join("lib/dep")).head().unwrap(), updated_rev);
+    assert_eq!(
+        lockfile_get(prj.root(), Path::new("lib/dep")),
+        Some(DepIdentifier::Branch { name: "v1".to_string(), rev: updated_rev, r#override: false })
+    );
+}
