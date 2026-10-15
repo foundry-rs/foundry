@@ -608,7 +608,7 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         TyKind::Type(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::Meta(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::IntLiteral(neg, size, _) => {
-            let bits = (size.bits() as usize).max(8);
+            let bits = (size as usize).max(8);
             // Round up to the nearest multiple of 8 bits, capped at 256.
             let bits = bits.div_ceil(8) * 8;
             let bits = bits.min(256);
