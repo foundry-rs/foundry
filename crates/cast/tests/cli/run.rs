@@ -257,7 +257,7 @@ contract CounterInExternalLibScript is Script {
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
     // Assert cast with local artifacts can decode external lib signature.
     cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args(["run", tx_hash, "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
