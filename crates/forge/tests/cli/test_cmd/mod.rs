@@ -34,6 +34,7 @@ mod invariant;
 mod logs;
 mod mutation;
 mod repros;
+mod setup;
 mod showmap;
 mod spec;
 mod symbolic;

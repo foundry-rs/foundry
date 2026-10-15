@@ -2315,6 +2315,9 @@ impl TestArgs {
         } else {
             for (name, suite) in &outcome.results {
                 sh_println!()?;
+                for warning in &suite.warnings {
+                    sh_warn!("{warning}")?;
+                }
                 let count = suite.test_results.len();
                 let tests = if count == 1 { "test" } else { "tests" };
                 sh_println!("Ran {count} {tests} for {name}")?;

@@ -6,7 +6,9 @@ use crate::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, TestKind, TestResult, TestStatus,
     },
     test_artifacts::{LibraryDeployment, PreparedTestArtifacts, prepare_artifacts},
-    test_config::{TestFunctionMatcher, inline_config_for, select_invariant_campaigns},
+    test_config::{
+        TestFunctionMatcher, inline_config_for, select_invariant_campaigns, setup_function,
+    },
 };
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, TxKind, U256, keccak256};
@@ -104,6 +106,24 @@ impl EthereumRunner {
                 continue;
             }
             let timer = Instant::now();
+            let mut warnings = Vec::new();
+            let setup = match setup_function(&contract.abi, &mut warnings) {
+                Ok(setup) => setup,
+                Err(reason) => {
+                    suites.insert(
+                        id.identifier(),
+                        SuiteResult::new(
+                            timer.elapsed(),
+                            BTreeMap::from([(
+                                "setUp()".to_string(),
+                                TestResult::fail(reason.to_string()),
+                            )]),
+                            warnings,
+                        ),
+                    );
+                    continue;
+                }
+            };
             let config = inline_config_for(&self.config, &self.inline, &id.identifier(), None)?;
             let mut env = EthereumEnv::local_from_config(&config, &self.opts)?;
             let database = match &self.fork {
@@ -209,18 +229,14 @@ impl EthereumRunner {
                     SuiteResult::new(
                         timer.elapsed(),
                         BTreeMap::from([("constructor()".to_owned(), result)]),
-                        Vec::new(),
+                        warnings,
                     ),
                 );
                 continue;
             }
             let address = deployment.created_address.expect("successful deployment has no address");
             executor.set_balance(address, self.opts.initial_balance)?;
-            if let Some(setup) =
-                contract.abi.functions.get("setUp").and_then(|functions| {
-                    functions.iter().find(|function| function.inputs.is_empty())
-                })
-            {
+            if let Some(setup) = setup {
                 let input = Bytes::copy_from_slice(setup.selector().as_slice());
                 let (result, next) = executor.inspect_transact(
                     &self.tx(&executor, self.opts.sender, TxKind::Call(address), input.clone())?,
@@ -244,7 +260,7 @@ impl EthereumRunner {
                         SuiteResult::new(
                             timer.elapsed(),
                             BTreeMap::from([("setUp()".to_owned(), result)]),
-                            Vec::new(),
+                            warnings,
                         ),
                     );
                     continue;
@@ -433,7 +449,7 @@ impl EthereumRunner {
             for result in results.values_mut() {
                 result.merge_coverages(setup_coverage.clone());
             }
-            suites.insert(id.identifier(), SuiteResult::new(timer.elapsed(), results, Vec::new()));
+            suites.insert(id.identifier(), SuiteResult::new(timer.elapsed(), results, warnings));
         }
         Ok(suites)
     }

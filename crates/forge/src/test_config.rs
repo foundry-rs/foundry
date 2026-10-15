@@ -292,3 +292,64 @@ pub(crate) fn select_invariant_campaigns<'a>(
         optimization_anchors,
     }
 }
+
+/// Selects the setup hook and records diagnostics without executing the contract.
+/// Parameterized overloads are ordinary functions, not setup hooks.
+pub(crate) fn setup_function<'a>(
+    abi: &'a JsonAbi,
+    warnings: &mut Vec<String>,
+) -> Result<Option<&'a Function>, &'static str> {
+    let functions = abi.functions().filter(|function| function.is_setup()).collect::<Vec<_>>();
+    for function in &functions {
+        if function.name != "setUp" {
+            warnings.push(format!(
+                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                function.signature()
+            ));
+        }
+    }
+    if functions.len() > 1 {
+        return Err("multiple setUp functions");
+    }
+    Ok(functions.first().copied().filter(|function| function.name == "setUp"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_discovery_ignores_parameterized_functions() {
+        let mut abi = JsonAbi::parse([
+            "function setUp(uint256)",
+            "function setup(bytes)",
+            "function testExample()",
+        ])
+        .unwrap();
+        let mut warnings = Vec::new();
+        assert_eq!(setup_function(&abi, &mut warnings), Ok(None));
+        assert!(warnings.is_empty());
+
+        abi.functions
+            .entry("setUp".to_string())
+            .or_default()
+            .push(Function::parse("setUp()").unwrap());
+        assert_eq!(setup_function(&abi, &mut warnings).unwrap().unwrap().signature(), "setUp()");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn ambiguous_setup_preserves_all_warnings() {
+        let abi = JsonAbi::parse(["function Setup()", "function setup()"]).unwrap();
+        let mut warnings = vec!["existing warning".to_string()];
+        assert_eq!(setup_function(&abi, &mut warnings), Err("multiple setUp functions"));
+        assert_eq!(
+            warnings,
+            [
+                "existing warning",
+                "Found invalid setup function \"Setup()\" did you mean \"setUp()\"?",
+                "Found invalid setup function \"setup()\" did you mean \"setUp()\"?",
+            ]
+        );
+    }
+}

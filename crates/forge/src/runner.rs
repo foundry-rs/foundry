@@ -28,7 +28,7 @@ use crate::{
     },
     test_config::{
         InvariantCampaignSelection, contract_short_name, fuzz_test_path_name, fuzzer_with_cases,
-        inline_config_for, select_invariant_campaigns,
+        inline_config_for, select_invariant_campaigns, setup_function,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -749,28 +749,16 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
         }
 
-        // Check if `setUp` function with valid signature declared.
-        let setup_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
-        let call_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
-        // There is a single miss-cased `setUp` function, so we add a warning
-        for &setup_fn in &setup_fns {
-            if setup_fn.name != "setUp" {
-                warnings.push(format!(
-                    "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                    setup_fn.signature()
-                ));
+        let call_setup = match setup_function(&self.contract.abi, &mut warnings) {
+            Ok(setup) => setup.is_some(),
+            Err(reason) => {
+                return self.failed_suite(
+                    start,
+                    warnings,
+                    [("setUp()".to_string(), TestResult::fail(reason.to_string()))],
+                );
             }
-        }
-
-        // There are multiple setUp function, so we return a single test result for `setUp`
-        if setup_fns.len() > 1 {
-            return self.failed_suite(
-                start,
-                warnings,
-                [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))],
-            );
-        }
+        };
 
         // Check if `afterInvariant` function with valid signature declared.
         let after_invariant_fns: Vec<_> =
