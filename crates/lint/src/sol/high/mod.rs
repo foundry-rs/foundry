@@ -14,33 +14,21 @@ mod rtlo;
 mod unchecked_calls;
 mod unprotected_initializer;
 
-use arbitrary_send_erc20::{ARBITRARY_SEND_ERC20, ARBITRARY_SEND_ERC20_PERMIT};
-use arbitrary_send_eth::ARBITRARY_SEND_ETH;
-use controlled_delegatecall::CONTROLLED_DELEGATECALL;
-use encode_packed_collision::ENCODE_PACKED_COLLISION;
-use enumerable_loop_removal::ENUMERABLE_LOOP_REMOVAL;
-use function_selector_collision::FUNCTION_SELECTOR_COLLISION;
-use incorrect_exp::INCORRECT_EXP;
-use incorrect_shift::INCORRECT_SHIFT;
-use protected_vars::PROTECTED_VARS;
-use reentrancy::{REENTRANCY_BALANCE, REENTRANCY_ETH, REENTRANCY_NO_ETH};
-use rtlo::RTLO;
-use unchecked_calls::{ERC20_UNCHECKED_TRANSFER, UNCHECKED_CALL};
-use unprotected_initializer::UNPROTECTED_INITIALIZER;
-
 register_lints!(
-    (ArbitrarySendErc20, late, (ARBITRARY_SEND_ERC20, ARBITRARY_SEND_ERC20_PERMIT)),
-    (ArbitrarySendEth, late, (ARBITRARY_SEND_ETH)),
-    (ControlledDelegatecall, late, (CONTROLLED_DELEGATECALL)),
-    (EncodedPackedCollision, late, (ENCODE_PACKED_COLLISION)),
-    (EnumerableLoopRemoval, late, (ENUMERABLE_LOOP_REMOVAL)),
-    (FunctionSelectorCollision, late, (FUNCTION_SELECTOR_COLLISION)),
-    (IncorrectExp, late, (INCORRECT_EXP)),
-    (IncorrectShift, early, (INCORRECT_SHIFT)),
-    (ProtectedVars, late, (PROTECTED_VARS)),
-    (ReentrancyEth, late, (REENTRANCY_BALANCE, REENTRANCY_ETH, REENTRANCY_NO_ETH)),
-    (UncheckedCall, early, (UNCHECKED_CALL)),
-    (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER)),
-    (UnprotectedInitializer, late, (UNPROTECTED_INITIALIZER)),
-    (Rtlo, early, (RTLO))
+    arbitrary_send_erc20:
+        (ArbitrarySendErc20, late, (ARBITRARY_SEND_ERC20, ARBITRARY_SEND_ERC20_PERMIT));
+    arbitrary_send_eth: (ArbitrarySendEth, late, (ARBITRARY_SEND_ETH));
+    controlled_delegatecall: (ControlledDelegatecall, late, (CONTROLLED_DELEGATECALL));
+    encode_packed_collision: (EncodedPackedCollision, late, (ENCODE_PACKED_COLLISION));
+    enumerable_loop_removal: (EnumerableLoopRemoval, late, (ENUMERABLE_LOOP_REMOVAL));
+    function_selector_collision: (FunctionSelectorCollision, late, (FUNCTION_SELECTOR_COLLISION));
+    incorrect_exp: (IncorrectExp, late, (INCORRECT_EXP));
+    incorrect_shift: (IncorrectShift, early, (INCORRECT_SHIFT));
+    protected_vars: (ProtectedVars, late, (PROTECTED_VARS));
+    reentrancy: (ReentrancyEth, late, (REENTRANCY_BALANCE, REENTRANCY_ETH, REENTRANCY_NO_ETH));
+    unchecked_calls:
+        (UncheckedCall, early, (UNCHECKED_CALL)),
+        (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER));
+    unprotected_initializer: (UnprotectedInitializer, late, (UNPROTECTED_INITIALIZER));
+    rtlo: (Rtlo, early, (RTLO));
 );

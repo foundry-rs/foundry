@@ -203,7 +203,8 @@ interface IToken {
 }
 "#;
 
-forgetest!(lint_does_not_write_artifacts, |prj, cmd| {
+#[forgetest]
+fn lint_does_not_write_artifacts(prj: _, cmd: _) {
     use std::fs;
 
     prj.add_source("LintTarget", "contract LintTarget {}");
@@ -217,9 +218,10 @@ forgetest!(lint_does_not_write_artifacts, |prj, cmd| {
 
     cmd.forge_fuse().arg("lint").assert_success();
     assert_eq!(fs::read(artifact).unwrap(), b"sentinel");
-});
+}
 
-forgetest!(can_use_config, |prj, cmd| {
+#[forgetest]
+fn can_use_config(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -234,7 +236,7 @@ forgetest!(can_use_config, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
@@ -244,9 +246,10 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 
 
 "#]]);
-});
+}
 
-forgetest!(can_use_config_ignore, |prj, cmd| {
+#[forgetest]
+fn can_use_config_ignore(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
 
@@ -261,7 +264,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
   [FILE]:9:14
   │
 9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
@@ -286,14 +289,135 @@ note[mixed-case-function]: function names should use mixedCase
 nothing to lint
 
 "#]]);
-});
 
-forgetest!(default_lint_severity_includes_info, |prj, cmd| {
+    // Check config again, ignoring a directory via the documented `dir/**` glob form
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src/**".into()],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
+
+    // Check config again, ignoring a bare directory path
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src".into()],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
+}
+
+#[forgetest]
+fn inline_config_suppresses_lint_in_inherited_source(prj: _, cmd: _) {
+    prj.add_source(
+        "Base",
+        r#"
+abstract contract Base {
+    uint256 public value;
+}
+"#,
+    );
+    prj.add_source(
+        "Concrete",
+        r#"
+import {Base} from "./Base.sol";
+
+contract Concrete is Base {
+    function readValue() external view returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "uninitialized-state", "-D", "warnings"]).assert_failure();
+
+    prj.add_source(
+        "Base",
+        r#"
+abstract contract Base {
+    // forge-lint: disable-next-line(uninitialized-state)
+    uint256 public value;
+}
+"#,
+    );
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "uninitialized-state", "-D", "warnings"])
+        .assert_success()
+        .stderr_eq("");
+}
+
+#[forgetest]
+fn ignored_inherited_source_does_not_receive_lints(prj: _, cmd: _) {
+    prj.add_source(
+        "Base",
+        r#"
+abstract contract Base {
+    uint256 public value;
+}
+"#,
+    );
+    prj.add_source(
+        "Concrete",
+        r#"
+import {Base} from "./Base.sol";
+
+contract Concrete is Base {
+    function readValue() external view returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.lint.ignore = vec!["src/Base.sol".into()]);
+
+    cmd.args(["lint", "--only-lint", "uninitialized-state"]).assert_success().stderr_eq("");
+}
+
+#[forgetest]
+fn span_owner_activates_lint_for_inherited_source(prj: _, cmd: _) {
+    prj.add_source(
+        "Base",
+        r#"
+contract Base {
+    uint256 public value = 1;
+}
+"#,
+    );
+    prj.add_test(
+        "Concrete",
+        r#"
+import {Base} from "../src/Base.sol";
+
+contract ConcreteTest is Base {}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "could-be-constant", "-D", "notes"]).assert_failure();
+}
+
+#[forgetest]
+fn default_lint_severity_excludes_info(prj: _, cmd: _) {
     prj.add_source("DefaultInfoLintsImport", DEFAULT_INFO_LINTS_IMPORT);
     prj.add_source("DefaultInfoLints", DEFAULT_INFO_LINTS);
 
-    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note[mixed-case-function]: function names should use mixedCase
+    cmd.arg("lint").assert_success().stderr_eq("");
+    cmd.forge_fuse().args(["lint", "--severity", "info"]).assert_success().stderr_eq(str![[r#"
+note[mixed-case-function]: function name is not `mixedCase`
   [FILE]:8:14
   │
 8 │     function BAD_CASE() public { uint256 x = 1; }
@@ -301,7 +425,7 @@ note[mixed-case-function]: function names should use mixedCase
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
   [FILE]:5:10
   │
 5 │ import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
@@ -311,9 +435,399 @@ note[unused-import]: unused imports should be removed
 
 
 "#]]);
-});
+}
 
-forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
+#[forgetest]
+fn skip_test_and_script_lints(prj: _, cmd: _) {
+    let fixture = r#"
+contract Initializer {
+    address bob = makeAddr("bob");
+
+    function makeAddr(string memory name) internal returns (address) {
+        return address(uint160(uint256(keccak256(bytes(name)))));
+    }
+
+    function incorrectShift(uint256 value) public pure {
+        assembly { pop(shr(value, 1)) }
+    }
+}
+"#;
+    prj.add_test("Initializer", fixture);
+    prj.add_script("Initializer", fixture);
+
+    cmd.args(["build"]).assert_success().stderr_eq("");
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+    cmd.forge_fuse()
+        .args(["lint", "--severity", "high", "med", "low", "info", "gas", "code-size"])
+        .assert_success()
+        .stderr_eq("");
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "function-init-state", "incorrect-shift"])
+        .assert_success()
+        .stderr_eq("");
+
+    std::fs::rename(prj.root().join("test"), prj.root().join("checks")).unwrap();
+    std::fs::rename(prj.root().join("script"), prj.root().join("deploy")).unwrap();
+    prj.update_config(|config| {
+        config.test = "checks".into();
+        config.script = "deploy".into();
+    });
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "function-init-state", "incorrect-shift"])
+        .assert_success()
+        .stderr_eq("");
+
+    prj.add_source("Initializer", fixture);
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "function-init-state"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+  [FILE]:5:5
+  │
+5 │     address bob = makeAddr("bob");
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+
+"#]]);
+}
+
+#[forgetest]
+fn unsafe_cheatcode_lints_tests_and_scripts(prj: _, cmd: _) {
+    let fixture = r#"
+interface Vm {
+    function readFile(string calldata path) external returns (string memory);
+}
+
+contract Unsafe {
+    function read(Vm vm) external {
+        vm.readFile("input.txt");
+    }
+}
+"#;
+    let test = prj.add_test("Unsafe", fixture);
+    let script = prj.add_script("Unsafe", fixture);
+
+    cmd.arg("lint").assert_success().stderr_eq("");
+    for path in [test, script] {
+        cmd.forge_fuse()
+            .arg("lint")
+            .arg(path)
+            .args(["--only-lint", "unsafe-cheatcode"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+   [FILE]:10:12
+   │
+10 │         vm.readFile("input.txt");
+   │            ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
+
+
+"#]]);
+    }
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Info];
+        config.lint.exclude_lints = vec!["unsafe-cheatcode".into()];
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+}
+
+const BLOCK_ENVIRONMENT_CAPTURE: &str = r#"
+interface Vm {
+    function roll(uint256 height) external;
+    function warp(uint256 time) external;
+}
+contract EnvironmentCapture {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    function capture() public returns (uint256, uint256) {
+        uint256 height = block.number;
+        uint256 time = block.timestamp;
+        vm.roll(200);
+        vm.warp(200);
+        return (height, time);
+    }
+}
+"#;
+
+#[forgetest]
+fn block_environment_lints_tests_and_scripts(prj: _, cmd: _) {
+    prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
+    let expected = str![[r#"
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
+   [FILE]:11:26
+   │
+11 │         uint256 height = block.number;
+   │                          ━━━━━━━━━━━━
+12 │         uint256 time = block.timestamp;
+13 │         vm.roll(200);
+   │         ──────────── `vm.roll` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`
+   [FILE]:12:24
+   │
+12 │         uint256 time = block.timestamp;
+   │                        ━━━━━━━━━━━━━━━
+13 │         vm.roll(200);
+14 │         vm.warp(200);
+   │         ──────────── `vm.warp` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+
+"#]];
+    cmd.arg("lint").assert_success().stderr_eq(expected.clone());
+    cmd.forge_fuse().args(["lint", "--deny", "warnings"]).assert_failure();
+
+    let script = prj.add_script("EnvironmentCapture.s.sol", BLOCK_ENVIRONMENT_CAPTURE);
+    cmd.forge_fuse().arg("lint").arg(script).assert_success().stderr_eq(expected);
+
+    prj.update_config(|config| {
+        config.lint.exclude_lints = vec!["environment-read-across-mutation".into()];
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+    prj.update_config(|config| {
+        config.lint.exclude_lints.clear();
+        config.lint.severity = vec![LintSeverity::Info];
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+}
+
+#[forgetest]
+fn block_environment_build_is_bytecode_neutral(prj: _, cmd: _) {
+    prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.via_ir = true;
+    });
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq("");
+    let artifact = prj.artifacts().join("EnvironmentCapture.t.sol/EnvironmentCapture.json");
+    let without_lints = std::fs::read(&artifact).unwrap();
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq(str![[r#"
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
+   [FILE]:11:26
+   │
+11 │         uint256 height = block.number;
+   │                          ━━━━━━━━━━━━
+12 │         uint256 time = block.timestamp;
+13 │         vm.roll(200);
+   │         ──────────── `vm.roll` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`
+   [FILE]:12:24
+   │
+12 │         uint256 time = block.timestamp;
+   │                        ━━━━━━━━━━━━━━━
+13 │         vm.roll(200);
+14 │         vm.warp(200);
+   │         ──────────── `vm.warp` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+
+"#]]);
+    assert_eq!(
+        without_lints,
+        std::fs::read(artifact).unwrap(),
+        "linting changed the build artifact"
+    );
+}
+
+#[forgetest]
+fn block_environment_mutation_secondary_span(prj: _, cmd: _) {
+    let capture = r#"
+abstract contract Capture {
+    function readTime() internal view returns (uint256) {
+        return block.timestamp;
+    }
+}
+"#;
+    let clock = r#"
+interface ClockVm { function warp(uint256 time) external; }
+abstract contract Clock {
+    ClockVm constant clock = ClockVm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    function advance() internal {
+        // Suppressions belong on the original read, not this secondary span.
+        // forge-lint: disable-next-line(environment-read-across-mutation)
+        clock.warp(200);
+    }
+}
+"#;
+    prj.add_source("Capture", capture);
+    prj.add_source("Clock", clock);
+    prj.add_test(
+        "SecondarySpan.t.sol",
+        r#"
+import {Capture} from "../src/Capture.sol";
+import {Clock} from "../src/Clock.sol";
+contract SecondarySpan is Capture, Clock {
+    function capture() public returns (uint256) {
+        uint256 saved = readTime();
+        advance();
+        return saved;
+    }
+}
+"#,
+    );
+    let output = cmd
+        .args(["lint", "--only-lint", "environment-read-across-mutation", "--json"])
+        .assert_success();
+    let diagnostics = serde_json::Deserializer::from_slice(&output.get_output().stdout)
+        .into_iter::<serde_json::Value>()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["message"], "`block.timestamp` may be reused across `vm.warp`");
+    assert_eq!(diagnostic["children"][0]["level"], "help");
+    assert_eq!(
+        diagnostic["children"][0]["message"],
+        "capture it with `vm.getBlockTimestamp()` instead"
+    );
+    let spans = diagnostic["spans"].as_array().unwrap();
+    assert_eq!(spans.len(), 2);
+    for (primary, file, snippet) in
+        [(true, "Capture.sol", "block.timestamp"), (false, "Clock.sol", "clock.warp(200)")]
+    {
+        let span = spans.iter().find(|span| span["is_primary"] == primary).unwrap();
+        assert!(span["file_name"].as_str().unwrap().ends_with(file));
+        let start = span["byte_start"].as_u64().unwrap() as usize;
+        let end = span["byte_end"].as_u64().unwrap() as usize;
+        let source = std::fs::read_to_string(prj.root().join("src").join(file)).unwrap();
+        assert_eq!(&source[start..end], snippet);
+        if !primary {
+            assert_eq!(span["label"], "`vm.warp` changes this environment here");
+        }
+    }
+
+    prj.add_source("Capture", &capture.replace("return block.timestamp;",
+        "// forge-lint: disable-next-line(environment-read-across-mutation)\n        return block.timestamp;"));
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "environment-read-across-mutation"])
+        .assert_success()
+        .stderr_eq("");
+    prj.add_source("Capture", capture);
+    prj.update_config(|config| config.lint.ignore = vec!["src/Capture.sol".into()]);
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "environment-read-across-mutation"])
+        .assert_success()
+        .stderr_eq("");
+}
+
+#[forgetest]
+fn block_environment_getters_materialize_captures(prj: _, cmd: _) {
+    prj.add_test(
+        "EnvironmentGetters.t.sol",
+        r#"
+interface Vm {
+    function roll(uint256 height) external;
+    function warp(uint256 time) external;
+    function getBlockNumber() external view returns (uint256);
+    function getBlockTimestamp() external view returns (uint256);
+}
+contract EnvironmentGetters {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    function testCapture() public {
+        vm.roll(100);
+        vm.warp(100);
+        uint256 height = vm.getBlockNumber();
+        uint256 time = vm.getBlockTimestamp();
+        vm.roll(200);
+        vm.warp(200);
+        vm.roll(height);
+        vm.warp(time);
+        require(vm.getBlockNumber() == 100, "height was not captured");
+        require(vm.getBlockTimestamp() == 100, "time was not captured");
+    }
+}
+"#,
+    );
+    for via_ir in [false, true] {
+        for optimizer in [false, true] {
+            prj.update_config(|config| {
+                config.via_ir = via_ir;
+                config.optimizer = Some(optimizer);
+            });
+            cmd.forge_fuse().args(["test", "--force"]).assert_success().stderr_eq("");
+        }
+    }
+}
+
+#[forgetest]
+fn skip_test_and_script_project_lints(prj: _, cmd: _) {
+    prj.add_test("Test", "pragma solidity ^0.8.0; contract Test {}");
+    prj.add_script("Script", "pragma solidity >=0.8.0; contract Script {}");
+
+    cmd.args(["lint", "--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq("");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/16662>
+#[forgetest]
+fn skip_reentrancy_events_for_expect_emit(prj: _, cmd: _) {
+    let fixture = r#"
+interface Vm {
+    function expectEmit(bool, bool, bool, bool, address) external;
+    function prank(address) external;
+}
+
+interface Governance {
+    event Rejected(uint256 taskId, address owner);
+    function removeOwner(address owner) external;
+    function vetoRemoveOwner(address owner) external;
+}
+
+contract EventExpectation {
+    function checkEvent(Vm vm, Governance harness, address alice, address bob) external {
+        vm.prank(bob);
+        harness.removeOwner(bob);
+        vm.expectEmit(true, true, false, false, address(harness));
+        emit Governance.Rejected(1, alice);
+        vm.prank(alice);
+        harness.vetoRemoveOwner(bob);
+    }
+}
+"#;
+    prj.add_test("EventExpectation", fixture);
+    prj.add_script("EventExpectation", fixture);
+
+    cmd.arg("lint").assert_success().stderr_eq("");
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "reentrancy-events"])
+        .assert_success()
+        .stderr_eq("");
+
+    prj.add_source("EventExpectation", fixture);
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "reentrancy-events"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   [FILE]:20:9
+   │
+20 │         emit Governance.Rejected(1, alice);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+
+"#]]);
+}
+
+#[forgetest]
+fn can_use_config_mixed_case_exception(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
 
@@ -331,9 +845,10 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
-});
+}
 
-forgetest!(multi_contract_file_no_exceptions, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_no_exceptions(prj: _, cmd: _) {
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     // Without exceptions, should flag all 8 contract-like items
@@ -364,9 +879,10 @@ forgetest!(multi_contract_file_no_exceptions, |prj, cmd| {
     assert!(stderr.contains("AbstractStorage"));
     assert!(stderr.contains("FirstContract"));
     assert!(stderr.contains("SecondContract"));
-});
+}
 
-forgetest!(multi_contract_file_interface_exception, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_interface_exception(prj: _, cmd: _) {
     use foundry_config::lint::ContractException;
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
@@ -400,9 +916,10 @@ forgetest!(multi_contract_file_interface_exception, |prj, cmd| {
     assert!(!stderr.contains("Token"));
     assert!(stderr.contains("MathLib"));
     assert!(stderr.contains("FirstContract"));
-});
+}
 
-forgetest!(multi_contract_file_library_exception, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_library_exception(prj: _, cmd: _) {
     use foundry_config::lint::ContractException;
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
@@ -434,9 +951,10 @@ forgetest!(multi_contract_file_library_exception, |prj, cmd| {
     assert!(!stderr.contains("MathLib"));
     assert!(!stderr.contains("StringLib"));
     assert!(stderr.contains("FirstContract"));
-});
+}
 
-forgetest!(multi_contract_file_abstract_exception, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_abstract_exception(prj: _, cmd: _) {
     use foundry_config::lint::ContractException;
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
@@ -469,9 +987,10 @@ forgetest!(multi_contract_file_abstract_exception, |prj, cmd| {
     assert!(stderr.contains("FirstContract"));
     assert!(!stderr.contains("BaseContract"));
     assert!(!stderr.contains("AbstractStorage"));
-});
+}
 
-forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_multiple_exceptions(prj: _, cmd: _) {
     use foundry_config::lint::ContractException;
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
@@ -509,9 +1028,10 @@ forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
     assert!(!stderr.contains("MathLib"));
     assert!(stderr.contains("BaseContract"));
     assert!(stderr.contains("FirstContract"));
-});
+}
 
-forgetest!(multi_contract_file_all_exceptions, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_all_exceptions(prj: _, cmd: _) {
     use foundry_config::lint::ContractException;
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
@@ -548,9 +1068,10 @@ forgetest!(multi_contract_file_all_exceptions, |prj, cmd| {
     assert!(!stderr.contains("BaseContract"));
     assert!(stderr.contains("FirstContract"));
     assert!(stderr.contains("SecondContract"));
-});
+}
 
-forgetest!(multi_contract_file_invalid_toml_value, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_invalid_toml_value(prj: _, cmd: _) {
     use std::fs;
 
     prj.add_source("Simple", "contract Simple {}");
@@ -576,9 +1097,10 @@ multi_contract_file_exceptions = ["interface", "bad_contract_type", "library"]
     // Assert specific error message for invalid enum variant
     assert!(stderr.contains("unknown variant"));
     assert!(stderr.contains("expected `one of `interface`, `library`, `abstract_contract`"));
-});
+}
 
-forgetest!(multi_contract_file_valid_toml_values, |prj, cmd| {
+#[forgetest]
+fn multi_contract_file_valid_toml_values(prj: _, cmd: _) {
     use std::fs;
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
@@ -608,9 +1130,10 @@ multi_contract_file_exceptions = ["interface", "library", "abstract_contract"]
     assert_eq!(stderr.matches("note[multi-contract-file]").count(), 2);
     assert!(stderr.contains("FirstContract"));
     assert!(stderr.contains("SecondContract"));
-});
+}
 
-forgetest!(interface_naming_fails_for_non_prefixed, |prj, cmd| {
+#[forgetest]
+fn interface_naming_fails_for_non_prefixed(prj: _, cmd: _) {
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
     prj.update_config(|config| {
@@ -629,9 +1152,10 @@ forgetest!(interface_naming_fails_for_non_prefixed, |prj, cmd| {
     // Should flag only the interface that doesn't start with 'I': Token
     assert_eq!(stderr.matches("note[interface-naming]").count(), 1);
     assert!(stderr.contains("Token"));
-});
+}
 
-forgetest!(interface_file_naming_fails_for_non_prefixed_file, |prj, cmd| {
+#[forgetest]
+fn interface_file_naming_fails_for_non_prefixed_file(prj: _, cmd: _) {
     prj.add_source("SoloInterfaces", SOLO_INTERFACES);
 
     prj.update_config(|config| {
@@ -652,9 +1176,10 @@ forgetest!(interface_file_naming_fails_for_non_prefixed_file, |prj, cmd| {
     // ERC20 is not prefixed with 'I', so interface-naming should trigger
     assert_eq!(stderr.matches("note[interface-naming]").count(), 1);
     assert!(stderr.contains("ERC20"));
-});
+}
 
-forgetest!(can_override_config_severity, |prj, cmd| {
+#[forgetest]
+fn can_override_config_severity(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -669,7 +1194,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-function]: function names should use mixedCase
+note[mixed-case-function]: function name is not `mixedCase`
   [FILE]:9:14
   │
 9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
@@ -679,9 +1204,10 @@ note[mixed-case-function]: function names should use mixedCase
 
 
 "#]]);
-});
+}
 
-forgetest!(can_override_config_path, |prj, cmd| {
+#[forgetest]
+fn can_override_config_path(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -696,7 +1222,7 @@ forgetest!(can_override_config_path, |prj, cmd| {
         };
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+warning[divide-before-multiply]: division before multiplication may lose precision
    [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
@@ -706,9 +1232,10 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 
 
 "#]]);
-});
+}
 
-forgetest!(can_override_config_lint, |prj, cmd| {
+#[forgetest]
+fn can_override_config_lint(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -735,9 +1262,10 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 
 "#
     ]]);
-});
+}
 
-forgetest!(build_runs_linter_by_default, |prj, cmd| {
+#[forgetest]
+fn build_runs_linter_by_default(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show only medium severity lints
@@ -752,8 +1280,10 @@ forgetest!(build_runs_linter_by_default, |prj, cmd| {
     });
 
     // Run forge build and expect linting output before compilation
-    cmd.arg("build").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+    cmd.arg("build")
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning[divide-before-multiply]: division before multiplication may lose precision
    [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
@@ -762,7 +1292,8 @@ warning[divide-before-multiply]: multiplication should occur before division to 
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
-"#]]).stdout_eq(str![[r#"
+"#]])
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
@@ -786,9 +1317,10 @@ Warning (2018): Function state mutability can be restricted to pure
 
 
 "#]]);
-});
+}
 
-forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
+#[forgetest]
+fn build_respects_quiet_flag_for_linting(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
@@ -804,9 +1336,10 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
 
     // Run forge build with --quiet flag - should not show linting output
     cmd.arg("build").arg("--quiet").assert_success().stderr_eq(str![[""]]).stdout_eq(str![[""]]);
-});
+}
 
-forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
+#[forgetest]
+fn build_with_json_uses_json_linter_output(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
@@ -832,9 +1365,10 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("\"errors\""));
     assert!(stdout.contains("\"sources\""));
-});
+}
 
-forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
+#[forgetest]
+fn build_respects_lint_on_build_false(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints but disable lint_on_build
@@ -873,11 +1407,12 @@ Warning (2018): Function state mutability can be restricted to pure
 
 
 "#]]);
-});
+}
 
 // Lint diagnostics produced during `forge build` must stream to stderr through the emitter
 // installed inside `SolidityLinter::lint`.
-forgetest!(build_emits_lint_diagnostics, |prj, cmd| {
+#[forgetest]
+fn build_emits_lint_diagnostics(prj: _, cmd: _) {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
@@ -885,7 +1420,7 @@ forgetest!(build_emits_lint_diagnostics, |prj, cmd| {
     });
 
     cmd.arg("build").assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
   [FILE]:6:20
   │
 6 │     uint256 public CounterA_Fail_Lint;
@@ -895,9 +1430,37 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 
 
 "#]]);
-});
+}
 
-forgetest!(build_no_lint_flag_skips_lint, |prj, cmd| {
+#[forgetest]
+fn build_lint_resolves_imports_with_explicit_root(prj: _, cmd: _) {
+    prj.add_source("Imported", "contract Imported {}");
+    prj.add_source(
+        "RelativeImporter",
+        r#"
+import {Imported} from "./Imported.sol";
+
+contract RelativeImporter is Imported {}
+"#,
+    );
+    prj.add_source(
+        "Importer",
+        r#"
+import {RelativeImporter} from "src/RelativeImporter.sol";
+
+contract Importer is RelativeImporter {}
+"#,
+    );
+
+    let root = prj.root();
+    cmd.current_dir(root.parent().unwrap())
+        .args(["build", "--force", "--no-cache", "--root"])
+        .arg(root.file_name().unwrap())
+        .assert_success();
+}
+
+#[forgetest]
+fn build_no_lint_flag_skips_lint(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints and ensure lint_on_build is enabled
@@ -938,10 +1501,11 @@ Warning (2018): Function state mutability can be restricted to pure
 
 "#
     ]]);
-});
+}
 
 // Denied lint diagnostics are expected failures and must not be presented as internal errors.
-forgetest!(build_denied_lints_do_not_emit_internal_failure_notice, |prj, cmd| {
+#[forgetest]
+fn build_denied_lints_do_not_emit_internal_failure_notice(prj: _, cmd: _) {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
@@ -950,7 +1514,7 @@ forgetest!(build_denied_lints_do_not_emit_internal_failure_notice, |prj, cmd| {
     });
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
   [FILE]:6:20
   │
 6 │     uint256 public CounterA_Fail_Lint;
@@ -964,11 +1528,12 @@ Context:
 - aborting due to 1 linter note(s)
 
 "#]]);
-});
+}
 
 // Solar currently rejects enum `@param` tags while solc accepts them. This recoverable frontend
 // diagnostic must not prevent type-dependent late lints from running.
-forgetest!(build_lints_after_recoverable_solar_diagnostic, |prj, cmd| {
+#[forgetest]
+fn build_lints_after_recoverable_solar_diagnostic(prj: _, cmd: _) {
     prj.add_source(
         "RecoverableSolarDiagnostic",
         r#"
@@ -989,7 +1554,7 @@ contract RecoverableSolarDiagnostic {
     });
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
+warning[unsafe-typecast]: typecast can truncate values
   [FILE]:9:16
   │
 9 │         return uint64(block.chainid);
@@ -1009,10 +1574,11 @@ Context:
 - aborting due to 1 linter warning(s)
 
 "#]]);
-});
+}
 
 // Same setup as above, but `--no-lint` skips the lint step so the failure notice never fires.
-forgetest!(build_no_lint_flag_does_not_emit_lint_failure_notice, |prj, cmd| {
+#[forgetest]
+fn build_no_lint_flag_does_not_emit_lint_failure_notice(prj: _, cmd: _) {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
@@ -1021,9 +1587,10 @@ forgetest!(build_no_lint_flag_does_not_emit_lint_failure_notice, |prj, cmd| {
     });
 
     cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(str![[r#""#]]);
-});
+}
 
-forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
+#[forgetest]
+fn can_process_inline_config_regardless_of_input_order(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     cmd.arg("lint").assert_success();
@@ -1031,14 +1598,15 @@ forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     prj.add_source("ContractWithLints", CONTRACT);
     cmd.arg("lint").assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11080>
-forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
+#[forgetest]
+fn can_use_only_lint_with_multilint_passes(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
-note[unused-import]: unused imports should be removed
+note[unused-import]: unused import
   [FILE]:8:10
   │
 8 │ import { _PascalCaseInfo } from "./ContractWithLints.sol";
@@ -1048,10 +1616,11 @@ note[unused-import]: unused imports should be removed
 
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11234>
-forgetest!(can_lint_only_built_files, |prj, cmd| {
+#[forgetest]
+fn can_lint_only_built_files(prj: _, cmd: _) {
     prj.add_source("CounterAWithLints", COUNTER_A);
     prj.add_source("CounterBWithLints", COUNTER_B);
 
@@ -1061,16 +1630,16 @@ forgetest!(can_lint_only_built_files, |prj, cmd| {
 
     // Both contracts should be linted on build. Redact contract as order is not guaranteed.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
 ...
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
 ...
 "#]]);
 
     // Only contract CounterBWithLints that we build should be linted.
     let args = ["build", "src/CounterBWithLints.sol"];
     cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
   [FILE]:6:20
   │
 6 │     uint256 public CounterB_Fail_Lint;
@@ -1080,10 +1649,11 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11392>
-forgetest!(can_lint_param_constants, |prj, cmd| {
+#[forgetest]
+fn can_lint_param_constants(prj: _, cmd: _) {
     prj.add_source("Counter", COUNTER_WITH_CONST);
     prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST);
 
@@ -1093,10 +1663,11 @@ forgetest!(can_lint_param_constants, |prj, cmd| {
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11460>
-forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
+#[forgetest]
+fn lint_json_output_no_ansi_escape_codes(prj: _, cmd: _) {
     prj.add_source(
         "UnwrappedModifierTest",
         r#"
@@ -1135,7 +1706,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
             str![[r#"
 {
   "$message_type": "diagnostic",
-  "message": "wrap modifier logic to reduce code size",
+  "message": "modifier logic can be wrapped to reduce code size",
   "code": {
     "code": "unwrapped-modifier-logic",
     "explanation": null
@@ -1244,14 +1815,15 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
       "rendered": null
     }
   ],
-  "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
+  "rendered": "note[unwrapped-modifier-logic]: modifier logic can be wrapped to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
         )
         .stderr_eq("");
-});
+}
 
-forgetest!(lint_json_compiler_error, |prj, cmd| {
+#[forgetest]
+fn lint_json_compiler_error(prj: _, cmd: _) {
     prj.add_source(
         "Broken",
         r#"pragma solidity ^0.8.30;
@@ -1299,9 +1871,10 @@ contract Broken {
 }
 "#]])
         .stderr_eq("");
-});
+}
 
-forgetest!(can_fail_on_lints, |prj, cmd| {
+#[forgetest]
+fn can_fail_on_lints(prj: _, cmd: _) {
     prj.add_source("ContractWithLints", CONTRACT);
 
     // -- LINT ALL SEVERITIES [OUTPUT: WARN + NOTE] ----------------------------
@@ -1370,57 +1943,9 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
         config.deny = DenyLevel::Never;
     });
     cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
-});
+}
 
 // ------------------------------------------------------------------------------------------------
-
-#[tokio::test]
-async fn ensure_lint_rule_docs() {
-    let client = reqwest::Client::new();
-    let mut failures = Vec::new();
-
-    for lint in registered_lints() {
-        let url = lint.help();
-        let response = match client.get(url).send().await {
-            Ok(response) => response,
-            Err(err) => {
-                failures.push(format!("{} ({url}) could not be fetched: {err}", lint.id()));
-                continue;
-            }
-        };
-
-        if !response.status().is_success() {
-            failures.push(format!("{} ({url}) returned HTTP {}", lint.id(), response.status()));
-            continue;
-        }
-
-        let content = match response.text().await {
-            Ok(content) => content.to_lowercase(),
-            Err(err) => {
-                failures
-                    .push(format!("{} ({url}) response body could not be read: {err}", lint.id()));
-                continue;
-            }
-        };
-
-        let selector = lint.id().to_lowercase();
-        let selector_with_space = selector.replace('-', " ");
-        if !content.contains(&selector) && !content.contains(&selector_with_space) {
-            failures.push(format!("{} ({url}) did not mention the lint id", lint.id()));
-        }
-    }
-
-    if !failures.is_empty() {
-        let mut msg = String::from(
-            "Foundry Book lint validation failed. The following lint pages are missing or invalid:\n",
-        );
-        for failure in failures {
-            msg.push_str(&format!("  - {failure}\n"));
-        }
-        msg.push_str("Please open a PR: https://github.com/foundry-rs/book");
-        panic!("{msg}");
-    }
-}
 
 #[test]
 fn ensure_no_privileged_lint_id() {
@@ -1440,7 +1965,8 @@ fn registered_lints() -> impl Iterator<Item = &'static SolLint> {
 }
 
 // <https://github.com/foundry-rs/foundry/issues/13107>
-forgetest!(dependency_warnings_do_not_affect_lint_exit_code, |prj, cmd| {
+#[forgetest]
+fn dependency_warnings_do_not_affect_lint_exit_code(prj: _, cmd: _) {
     // Library with code that triggers a solc warning (unused local variable)
     const LIB_WITH_WARNING: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -1482,9 +2008,10 @@ contract CleanContract {
     // Lint with deny = notes via CLI flag.
     // Should succeed because the linter only counts lint diagnostics, not build-phase warnings.
     cmd.args(["lint", "-D", "notes"]).assert_success();
-});
+}
 
-forgetest!(skips_linting_for_old_solidity_versions, |prj, cmd| {
+#[forgetest]
+fn skips_linting_for_old_solidity_versions(prj: _, cmd: _) {
     const OLD_CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.0;
@@ -1521,7 +2048,7 @@ contract OldContract {
 
 "#
     ]]);
-});
+}
 
 const PRAGMA_INCONSISTENT_ALPHA: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -1537,13 +2064,14 @@ pragma solidity 0.8.20;
 contract Beta {}
 "#;
 
-forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
+#[forgetest]
+fn pragma_inconsistent_cross_file(prj: _, cmd: _) {
     prj.add_source("Alpha", PRAGMA_INCONSISTENT_ALPHA);
     prj.add_source("Beta", PRAGMA_INCONSISTENT_BETA);
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: `0.8.20`, `^0.8.20`
   [FILE]:3:1
   │
 3 │ pragma solidity ^0.8.20;
@@ -1554,7 +2082,7 @@ note[pragma-inconsistent]: 2 different Solidity pragma version requirements are 
 
 "#]
     ]);
-});
+}
 
 const PRAGMA_EXACT_A: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -1605,7 +2133,8 @@ contract C {}
 "#;
 
 // Multiple files all using the exact same pragma must NOT warn.
-forgetest!(pragma_inconsistent_consistent_exact_no_warning, |prj, cmd| {
+#[forgetest]
+fn pragma_inconsistent_consistent_exact_no_warning(prj: _, cmd: _) {
     prj.add_source("A", PRAGMA_EXACT_A);
     prj.add_source("B", PRAGMA_EXACT_B);
     prj.add_source("C", PRAGMA_EXACT_C);
@@ -1614,10 +2143,11 @@ forgetest!(pragma_inconsistent_consistent_exact_no_warning, |prj, cmd| {
         .args(["--only-lint", "pragma-inconsistent"])
         .assert_success()
         .stderr_eq(str![[r#""#]]);
-});
+}
 
 // Multiple files all using the exact same caret pragma must NOT warn.
-forgetest!(pragma_inconsistent_consistent_caret_no_warning, |prj, cmd| {
+#[forgetest]
+fn pragma_inconsistent_consistent_caret_no_warning(prj: _, cmd: _) {
     prj.add_source("A", PRAGMA_CARET_A);
     prj.add_source("B", PRAGMA_CARET_B);
 
@@ -1625,28 +2155,30 @@ forgetest!(pragma_inconsistent_consistent_caret_no_warning, |prj, cmd| {
         .args(["--only-lint", "pragma-inconsistent"])
         .assert_success()
         .stderr_eq(str![[r#""#]]);
-});
+}
 
 // A single file in the project cannot conflict with itself.
-forgetest!(pragma_inconsistent_single_file_no_warning, |prj, cmd| {
+#[forgetest]
+fn pragma_inconsistent_single_file_no_warning(prj: _, cmd: _) {
     prj.add_source("A", PRAGMA_CARET_A);
 
     cmd.arg("lint")
         .args(["--only-lint", "pragma-inconsistent"])
         .assert_success()
         .stderr_eq(str![[r#""#]]);
-});
+}
 
 // Even files that share a requirement still emit when ANY other variant exists.
 // Two files with `0.8.20` plus one file with `^0.8.20` => 3 emits total.
-forgetest!(pragma_inconsistent_duplicates_among_conflict, |prj, cmd| {
+#[forgetest]
+fn pragma_inconsistent_duplicates_among_conflict(prj: _, cmd: _) {
     prj.add_source("A", PRAGMA_EXACT_A);
     prj.add_source("B", PRAGMA_EXACT_B);
     prj.add_source("C", PRAGMA_CARET_C);
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: `0.8.20`, `^0.8.20`
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;
@@ -1657,12 +2189,13 @@ note[pragma-inconsistent]: 2 different Solidity pragma version requirements are 
 
 "#]
     ]);
-});
+}
 
 // Files without a `pragma solidity` directive must not affect the conflict computation.
 // Note: `add_raw_source` is used here to bypass the helper that would otherwise inject a default
 // `pragma solidity =<SOLC_VERSION>;` for files that omit one.
-forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
+#[forgetest]
+fn pragma_inconsistent_files_without_pragma(prj: _, cmd: _) {
     prj.add_raw_source("A", PRAGMA_EXACT_A);
     prj.add_raw_source("B", PRAGMA_CARET_B);
     // C has no pragma at all; should be ignored by the cross-file check.
@@ -1670,7 +2203,7 @@ forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: `0.8.20`, `^0.8.20`
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;
@@ -1681,4 +2214,357 @@ note[pragma-inconsistent]: 2 different Solidity pragma version requirements are 
 
 "#]
     ]);
-});
+}
+
+// A suppression that does not suppress any diagnostic is only reported with the opt-in flag, at the
+// directive's own location.
+#[forgetest]
+fn report_unused_suppressions_reports_unused(prj: _, cmd: _) {
+    prj.add_source(
+        "Unused",
+        r#"
+contract Unused {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply)
+        return 42;
+    }
+}
+"#,
+    );
+
+    // Without the flag nothing is reported.
+    cmd.args(["lint", "--only-lint", "divide-before-multiply"]).assert_success().stderr_eq("");
+
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:6:9
+  │
+6 │         // forge-lint: disable-next-line(divide-before-multiply)
+  ╰╴        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+}
+
+// A suppression that actually silences a diagnostic is not reported as unused.
+#[forgetest]
+fn report_unused_suppressions_ignores_used(prj: _, cmd: _) {
+    prj.add_source(
+        "Used",
+        r#"
+contract Used {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply)
+        return (1 / 2) * 3;
+    }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq("");
+}
+
+// For a directive listing several ids, only the ids that suppressed nothing are reported.
+#[forgetest]
+fn report_unused_suppressions_reports_individual_ids(prj: _, cmd: _) {
+    prj.add_source(
+        "Partial",
+        r#"
+contract Partial {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply, incorrect-shift)
+        return (1 / 2) * 3;
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "lint",
+        "--only-lint",
+        "divide-before-multiply",
+        "incorrect-shift",
+        "--report-unused-suppressions",
+    ])
+    .assert_success()
+    .stderr_eq(str![[r#"
+warning: unused lint suppression for 'incorrect-shift'
+  [FILE]:6:9
+  │
+6 │         // forge-lint: disable-next-line(divide-before-multiply, incorrect-shift)
+  ╰╴        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+}
+
+// Every supported directive kind receives credit when it suppresses a diagnostic, including all
+// overlapping ranges.
+#[forgetest]
+fn report_unused_suppressions_supports_all_directive_kinds(prj: _, cmd: _) {
+    prj.add_source(
+        "DirectiveKinds",
+        r#"
+contract DirectiveKinds {
+    function line() public pure returns (uint256) {
+        return (1 / 2) * 3; // forge-lint: disable-line(divide-before-multiply)
+    }
+
+    function nextLine() public pure returns (uint256) {
+        // forge-lint: disable-next-line(all, divide-before-multiply)
+        return (1 / 2) * 3;
+    }
+
+    // forge-lint: disable-next-item(divide-before-multiply)
+    function nextItem() public pure returns (uint256) {
+        return (1 / 2) * 3;
+    }
+
+    // forge-lint: disable-start(all)
+    // forge-lint: disable-start(divide-before-multiply)
+    function blockRange() public pure returns (uint256) {
+        return (1 / 2) * 3;
+    }
+    // forge-lint: disable-end(divide-before-multiply)
+    // forge-lint: disable-end(all)
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq("");
+}
+
+// Nested blocks retain separate directive identities, so an unused inner block is reported even
+// when the outer block suppresses a diagnostic.
+#[forgetest]
+fn report_unused_suppressions_reports_unused_nested_block(prj: _, cmd: _) {
+    prj.add_source(
+        "Nested",
+        r#"
+contract Nested {
+    // forge-lint: disable-start(divide-before-multiply)
+    function usedOuter() public pure returns (uint256) {
+        return (1 / 2) * 3;
+    }
+    // forge-lint: disable-start(divide-before-multiply)
+    function unusedInner() public pure returns (uint256) {
+        return 42;
+    }
+    // forge-lint: disable-end(divide-before-multiply)
+    // forge-lint: disable-end(divide-before-multiply)
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:9:5
+  │
+9 │     // forge-lint: disable-start(divide-before-multiply)
+  ╰╴    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+}
+
+// Directives without a target are still tracked and reported as unused.
+#[forgetest]
+fn report_unused_suppressions_reports_missing_targets(prj: _, cmd: _) {
+    prj.add_source(
+        "MissingTargets",
+        concat!(
+            "contract MissingTargets {}\n",
+            "// forge-lint: disable-next-item(divide-before-multiply)\n",
+            "// forge-lint: disable-next-line(divide-before-multiply)",
+        ),
+    );
+
+    cmd.args(["lint", "--only-lint", "divide-before-multiply", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:4:1
+  │
+4 │ // forge-lint: disable-next-item(divide-before-multiply)
+  ╰╴━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:5:1
+  │
+5 │ // forge-lint: disable-next-line(divide-before-multiply)
+  ╰╴━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+"#]]);
+}
+
+// Catch-all suppressions are not assessed in a source where the selected lint is ineligible.
+#[forgetest]
+fn report_unused_suppressions_ignores_sources_without_active_lints(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "NoActiveLints",
+        r#"
+contract NoActiveLints {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(all)
+        return 42;
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "lint",
+        script.to_str().unwrap(),
+        "--only-lint",
+        "divide-before-multiply",
+        "--report-unused-suppressions",
+    ])
+    .assert_success()
+    .stderr_eq("");
+}
+
+// Only suppressions for rules active in the current run are assessed, while import diagnostics
+// still credit the importing file's directive.
+#[forgetest]
+fn report_unused_suppressions_respects_active_lints_and_import_spans(prj: _, cmd: _) {
+    prj.add_source("Imported", "contract Imported {}\n");
+    prj.add_source(
+        "Importer",
+        r#"
+// forge-lint: disable-next-line(unused-import)
+import { Imported } from "./Imported.sol";
+
+contract Importer {
+    // forge-lint: disable-next-line(unsafe-typecast)
+    function f() public pure returns (uint256) { return 42; }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "unused-import", "--report-unused-suppressions"])
+        .assert_success()
+        .stderr_eq("");
+}
+
+// Repeated paths share one suppression state and cannot create a false unused warning.
+#[forgetest]
+fn report_unused_suppressions_deduplicates_input_paths(prj: _, cmd: _) {
+    let source = prj.add_source(
+        "Duplicate",
+        r#"
+contract Duplicate {
+    function f() public pure returns (uint256) {
+        // forge-lint: disable-next-line(divide-before-multiply)
+        return (1 / 2) * 3;
+    }
+}
+"#,
+    );
+    let source = source.to_str().unwrap();
+
+    cmd.args([
+        "lint",
+        source,
+        source,
+        "--only-lint",
+        "divide-before-multiply",
+        "--report-unused-suppressions",
+    ])
+    .assert_success()
+    .stderr_eq("");
+}
+
+// Unused suppression warnings use the regular diagnostic emitter and participate in deny handling.
+#[forgetest]
+fn report_unused_suppressions_supports_json_and_deny(prj: _, cmd: _) {
+    prj.add_source(
+        "Json",
+        r#"
+contract Json {
+    // forge-lint: disable-next-item(divide-before-multiply)
+    function f() public pure returns (uint256) { return 42; }
+}
+"#,
+    );
+
+    cmd.args([
+        "lint",
+        "--only-lint",
+        "divide-before-multiply",
+        "--report-unused-suppressions",
+        "--deny",
+        "warnings",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+warning: unused lint suppression for 'divide-before-multiply'
+  [FILE]:5:5
+  │
+5 │     // forge-lint: disable-next-item(divide-before-multiply)
+  ╰╴    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Error: aborting due to 1 linter warning(s)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "lint",
+            "--only-lint",
+            "divide-before-multiply",
+            "--report-unused-suppressions",
+            "--json",
+            "--deny",
+            "warnings",
+        ])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "$message_type": "diagnostic",
+  "message": "unused lint suppression for 'divide-before-multiply'",
+  "code": null,
+  "level": "warning",
+  "spans": [
+    {
+      "file_name": "src/Json.sol",
+      "byte_start": 92,
+      "byte_end": 148,
+      "line_start": 5,
+      "line_end": 5,
+      "column_start": 5,
+      "column_end": 61,
+      "is_primary": true,
+      "text": [
+        {
+          "text": "    // forge-lint: disable-next-item(divide-before-multiply)",
+          "highlight_start": 5,
+          "highlight_end": 61
+        }
+      ],
+      "label": null,
+      "suggested_replacement": null,
+      "suggestion_applicability": null,
+      "expansion": null
+    }
+  ],
+  "children": [],
+  "rendered": "warning: unused lint suppression for 'divide-before-multiply'\n  ╭▸ src/Json.sol:5:5\n  │\n5 │     // forge-lint: disable-next-item(divide-before-multiply)\n  ╰╴    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+}
+"#]],
+        )
+        .stderr_eq(str![[r#"
+Error: aborting due to 1 linter warning(s)
+
+"#]]);
+}

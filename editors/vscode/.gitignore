@@ -1,0 +1,6 @@
+out
+node_modules
+bundle
+vscode.proposed.d.ts
+.vscode-test
+*.vsix

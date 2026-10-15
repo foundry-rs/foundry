@@ -8,7 +8,8 @@ use foundry_test_utils::{forgetest_init, str};
 // `toPoolId` omits `extension`. Breaking the property requires the four hashed
 // fields to match while `extension` differs. Random fuzzing missed this narrow
 // case, while symbolic execution solves it without searching for a hash collision.
-forgetest_init!(issue_9782_struct_hash_field_omission, |prj, cmd| {
+#[forgetest_init]
+fn issue_9782_struct_hash_field_omission(prj: _, cmd: _) {
     skip_unless_z3!("issue_9782_struct_hash_field_omission");
 
     prj.add_source(
@@ -65,4 +66,4 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}

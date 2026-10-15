@@ -1,14 +1,25 @@
 //! general eth api tests
 
-use alloy_consensus::constants::EMPTY_WITHDRAWALS;
+use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
 
 use alloy_eips::{
+    eip2935::HISTORY_STORAGE_ADDRESS,
+    eip4788::BEACON_ROOTS_ADDRESS,
     eip6110::DEPOSIT_REQUEST_TYPE,
     eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_TYPE},
     eip7251::{CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_TYPE},
     eip7685::{EMPTY_REQUESTS_HASH, Requests},
+    eip7928::{
+        AccountChanges, BlockAccessIndex, NonceChange, SlotChanges, StorageChange,
+        compute_block_access_list_hash,
+    },
 };
-use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
+use alloy_evm::{
+    block::system_calls::{
+        BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS,
+    },
+    precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
+};
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, TxKind, U256, address};
 use alloy_provider::Provider;
@@ -62,6 +73,115 @@ fn deposit_event_runtime(event: DepositEvent) -> Bytes {
     code.into()
 }
 
+/// Checks BAL contents and indices for pre-block, transaction, and post-block execution.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_block_access_list_hash_rpc() {
+    let from = Address::with_last_byte(0x41);
+    let contract = Address::with_last_byte(0x42);
+    let beneficiary = Address::with_last_byte(0x43);
+    let system_contracts = [
+        HISTORY_STORAGE_ADDRESS,
+        BEACON_ROOTS_ADDRESS,
+        WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+        CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+        BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS,
+        BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS,
+    ];
+    let mut overrides = serde_json::Map::new();
+    for address in system_contracts {
+        overrides.insert(address.to_string(), json!({"code": "0x", "state": {}}));
+    }
+    // Deterministic system writes expose the pre/post-block access indices in the BAL hash.
+    for address in [HISTORY_STORAGE_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS] {
+        overrides.insert(address.to_string(), json!({"code": "0x602a5f5500", "state": {}}));
+    }
+    overrides.insert(from.to_string(), json!({"nonce": "0x0"}));
+    overrides.insert(contract.to_string(), json!({"code": "0x5f5450602a60015500", "state": {}}));
+    let block = json!({
+        "stateOverrides": overrides,
+        "blockOverrides": {"feeRecipient": beneficiary},
+        "calls": [{"from": from, "to": contract}]
+    });
+    let mut expected = system_contracts.map(AccountChanges::new).to_vec();
+    for (address, index) in
+        [(HISTORY_STORAGE_ADDRESS, 0), (WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, 2)]
+    {
+        expected.iter_mut().find(|account| account.address() == address).unwrap().storage_changes =
+            vec![SlotChanges::new(
+                U256::ZERO,
+                vec![StorageChange::new(BlockAccessIndex::new(index), U256::from(42))],
+            )];
+    }
+    expected.push(AccountChanges {
+        nonce_changes: vec![NonceChange::new(BlockAccessIndex::new(1), 1)],
+        ..AccountChanges::new(from)
+    });
+    expected.push(AccountChanges {
+        storage_reads: vec![U256::ZERO],
+        storage_changes: vec![SlotChanges::new(
+            U256::ONE,
+            vec![StorageChange::new(BlockAccessIndex::new(1), U256::from(42))],
+        )],
+        ..AccountChanges::new(contract)
+    });
+    expected.push(AccountChanges::new(beneficiary));
+    expected.sort_by_key(|account| account.address());
+    let expected_hash = compute_block_access_list_hash(&expected);
+
+    for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
+        let (_api, handle) =
+            spawn(NodeConfig::test().with_hardfork(Some(hardfork.into())).with_base_fee(Some(0)))
+                .await;
+        for trace_transfers in [false, true] {
+            let response = rpc_request(
+                &handle.http_endpoint(),
+                "eth_simulateV1",
+                json!([{
+                    "blockStateCalls": [block.clone(), block.clone(), {}],
+                    "traceTransfers": trace_transfers,
+                    "returnFullTransactions": true
+                }, "latest"]),
+            )
+            .await;
+            assert!(response.get("error").is_none(), "{response}");
+            let blocks = response["result"].as_array().unwrap();
+            assert_eq!(blocks.len(), 3);
+            for block in &blocks[..2] {
+                assert_eq!(block["calls"][0]["status"], "0x1");
+                if hardfork == EthereumHardfork::Amsterdam {
+                    assert_eq!(block["blockAccessListHash"], json!(expected_hash));
+                } else {
+                    assert!(block.get("blockAccessListHash").is_none());
+                }
+                let header = serde_json::from_value::<Header>(block.clone()).unwrap();
+                assert_eq!(block["hash"], json!(header.hash_slow()));
+                assert_eq!(block["transactions"][0]["blockHash"], block["hash"]);
+            }
+            if hardfork == EthereumHardfork::Amsterdam {
+                assert!(blocks[2]["blockAccessListHash"].is_string());
+                assert_ne!(blocks[2]["blockAccessListHash"], json!(expected_hash));
+            }
+            for pair in blocks.windows(2) {
+                assert_eq!(pair[1]["parentHash"], pair[0]["hash"]);
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_includes_block_size_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{}]}, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert!(quantity(&response["result"][0]["size"]) > 0);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_simulate_native_transfers_rpc() {
     crate::init_tracing();
@@ -78,13 +198,13 @@ async fn test_fork_simulate_native_transfers_rpc() {
                 TransactionRequest {
                     from: Some(from),
                     to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000001"))),
-                    value: Some(U256::from(1)),
+                    value: Some(U256::ONE),
                     ..Default::default()
                 },
                 TransactionRequest {
                     from: Some(from),
                     to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000002"))),
-                    value: Some(U256::from(1)),
+                    value: Some(U256::ONE),
                     ..Default::default()
                 },
             ],
@@ -145,6 +265,42 @@ async fn test_fork_simulate_multiple_blocks_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_post_merge_block_context_rpc() {
+    let (source_api, source_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    source_api.anvil_set_next_block_prevrandao(B256::repeat_byte(0x42)).await.unwrap();
+    source_api.mine_one().await.unwrap();
+
+    let (_, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let contract = "0xc000000000000000000000000000000000000000";
+    let response = rpc_request(
+        &fork_handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    (contract): {"code": "0x445f5260205ff3"}
+                },
+                "calls": [{"to": contract}]
+            }]
+        }, "latest"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+
+    let block = &response["result"][0];
+    assert_eq!(block["difficulty"], "0x0");
+    assert_eq!(block["mixHash"], B256::ZERO.to_string());
+    assert_eq!(block["calls"][0]["returnData"], format!("0x{}", "00".repeat(32)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_v1_moves_precompiles_per_block_rpc() {
     let (_, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
@@ -201,32 +357,42 @@ async fn test_simulate_v1_preserves_precompile_warming_rpc() {
         &destination[2..],
     );
 
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{"blockStateCalls": [{
-            "stateOverrides": {
-                source: {"movePrecompileToAddress": destination},
-                helper: {"code": helper_code}
-            },
-            "calls": [{"to": helper}]
-        }]}, "latest"]),
-    )
-    .await;
-    assert!(response.get("error").is_none(), "{response}");
+    // A zero-priced blob call uses the simulation handler; an ordinary call uses transact.
+    for call in [
+        json!({"to": helper}),
+        json!({
+            "to": helper,
+            "blobVersionedHashes": [format!("0x01{}", "00".repeat(31))],
+            "maxFeePerBlobGas": "0x0"
+        }),
+    ] {
+        let response = rpc_request(
+            &handle.http_endpoint(),
+            "eth_simulateV1",
+            json!([{"blockStateCalls": [{
+                "stateOverrides": {
+                    source: {"movePrecompileToAddress": destination},
+                    helper: {"code": helper_code}
+                },
+                "calls": [call]
+            }]}, "latest"]),
+        )
+        .await;
+        assert!(response.get("error").is_none(), "{response}");
 
-    let return_data = response["result"][0]["calls"][0]["returnData"].as_str().unwrap();
-    let return_data = alloy_primitives::hex::decode(&return_data[2..]).unwrap();
-    let access_costs = return_data
-        .as_chunks::<32>()
-        .0
-        .iter()
-        .copied()
-        .map(U256::from_be_bytes)
-        .collect::<Vec<_>>();
+        let return_data = response["result"][0]["calls"][0]["returnData"].as_str().unwrap();
+        let return_data = alloy_primitives::hex::decode(&return_data[2..]).unwrap();
+        let access_costs = return_data
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .copied()
+            .map(U256::from_be_bytes)
+            .collect::<Vec<_>>();
 
-    // The measured delta includes PUSH20, POP, and the second GAS opcode (7 gas total).
-    assert_eq!(access_costs, [U256::from(107), U256::from(2_607), U256::from(107)]);
+        // The measured delta includes PUSH20, POP, and the second GAS opcode (7 gas total).
+        assert_eq!(access_costs, [U256::from(107), U256::from(2_607), U256::from(107)]);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1336,7 +1502,7 @@ async fn test_simulate_discards_candidate_after_post_block_failure_rpc() {
 async fn test_simulate_empty_state_override_preserves_root_rpc() {
     let (_, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
-    let account = address!("0000000000000000000000000000000000000042").to_string();
+    let account = Address::with_last_byte(0x42).to_string();
     let without_override =
         rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}])).await;
     let with_empty_override = rpc_request(
@@ -1380,8 +1546,8 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
     code.push(0xff);
 
     api.anvil_set_code(contract, code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
     api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
@@ -1434,7 +1600,7 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
         .send_transaction(WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(contract)),
-            value: Some(U256::from(1)),
+            value: Some(U256::ONE),
             gas: Some(21_000),
             gas_price: Some(0),
             ..Default::default()
@@ -1461,6 +1627,45 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_storage_written_after_selfdestruct_rpc() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let contract = Address::with_last_byte(0x42);
+    api.anvil_set_code(contract, Bytes::from_static(&[0x60, 0x00, 0xff])).await.unwrap();
+    handle
+        .http_provider()
+        .send_transaction(WithOtherFields::new(TransactionRequest {
+            from: Some(sender),
+            to: Some(TxKind::Call(contract)),
+            gas: Some(100_000),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.anvil_set_storage_at(contract, U256::ONE, B256::with_last_byte(5)).await.unwrap();
+
+    let transfer = json!({"calls": [{"from": sender, "to": contract, "value": "0x1"}]});
+    let single =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [transfer.clone()]}]))
+            .await;
+    let multiple =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}, transfer]}]))
+            .await;
+    assert!(single.get("error").is_none(), "{single}");
+    assert!(multiple.get("error").is_none(), "{multiple}");
+    assert_eq!(single["result"][0]["calls"][0]["status"], "0x1");
+    assert_eq!(multiple["result"][1]["calls"][0]["status"], "0x1");
+    // Shanghai has no block-level system writes: the empty block cannot affect state.
+    assert_eq!(single["result"][0]["stateRoot"], multiple["result"][1]["stateRoot"]);
+    assert_ne!(multiple["result"][0]["stateRoot"], multiple["result"][1]["stateRoot"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_state_override_preserves_selfdestructed_storage_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::London.into()))
@@ -1476,8 +1681,8 @@ async fn test_simulate_state_override_preserves_selfdestructed_storage_rpc() {
     selfdestruct_code.push(0xff);
 
     api.anvil_set_code(contract, selfdestruct_code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
     api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
@@ -1552,7 +1757,7 @@ async fn test_simulate_historical_tombstone_matches_latest_rpc() {
     code.push(0xff);
 
     api.anvil_set_code(contract, code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
     api.mine_one().await.unwrap();
     handle
         .http_provider()
@@ -1649,7 +1854,7 @@ async fn test_simulate_executes_on_pending_state_rpc() {
         .send_transaction(WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(receiver)),
-            value: Some(U256::from(1)),
+            value: Some(U256::ONE),
             ..Default::default()
         }))
         .await
@@ -1674,7 +1879,7 @@ async fn test_simulate_executes_on_pending_state_rpc() {
     assert!(response.get("error").is_none(), "{response}");
     assert_eq!(
         response["result"][0]["calls"][0]["returnData"],
-        B256::from(U256::from(1)).to_string()
+        B256::with_last_byte(1).to_string()
     );
 }
 

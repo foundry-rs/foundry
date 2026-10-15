@@ -32,7 +32,7 @@ impl<T> HashConsed<T> {
     /// for distinct nodes with the same hash; structurally equal values share one node.
     #[inline]
     pub(in crate::runtime::expr) fn identity_cmp(&self, other: &Self) -> Ordering {
-        self.inner.hash.cmp(&other.inner.hash).then_with(|| {
+        self.stable_hash_cmp(other).then_with(|| {
             let left = Arc::as_ptr(&self.inner);
             let right = Arc::as_ptr(&other.inner);
             left.cmp(&right)
@@ -42,17 +42,6 @@ impl<T> HashConsed<T> {
     #[inline]
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
-    }
-
-    #[inline]
-    pub(in crate::runtime) fn into_value(self) -> T
-    where
-        T: Clone,
-    {
-        match Arc::try_unwrap(self.inner) {
-            Ok(inner) => inner.value,
-            Err(inner) => inner.value.clone(),
-        }
     }
 }
 
@@ -99,17 +88,18 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     }
 }
 
-type HashConsHasher = FixedState;
+const MIN_GC_THRESHOLD: usize = 1024;
 
 /// Hash-consing table for sharing structurally equal immutable values.
 ///
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` removes dead entries encountered
-/// while looking up the new value, keeping short-lived rewrites from growing the
-/// table for the lifetime of the context.
+/// during lookup and periodically sweeps distinct dead values before they can
+/// grow the table without bound.
 pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
-    hash_builder: HashConsHasher,
+    hash_builder: FixedState,
+    gc_threshold: usize,
 }
 
 struct HashConsEntry<T> {
@@ -125,7 +115,11 @@ impl<T> HashConsEntry<T> {
 
 impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
-        Self { table: HashTable::new(), hash_builder: HashConsHasher::default() }
+        Self {
+            table: HashTable::new(),
+            hash_builder: FixedState::default(),
+            gc_threshold: MIN_GC_THRESHOLD,
+        }
     }
 
     fn hash<Q: Hash + ?Sized>(&self, value: &Q) -> u64 {
@@ -135,6 +129,11 @@ impl<T> HashCons<T> {
 
 impl<T: Eq + Hash> HashCons<T> {
     pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
+        if self.table.len() >= self.gc_threshold {
+            self.table.retain(|entry| entry.value.strong_count() != 0);
+            self.gc_threshold = self.table.len().saturating_mul(2).max(MIN_GC_THRESHOLD);
+        }
+
         let hash = self.hash(&value);
         loop {
             let mut found = None;
@@ -142,7 +141,7 @@ impl<T: Eq + Hash> HashCons<T> {
             match self.table.entry(
                 hash,
                 |entry| {
-                    if entry.hash != hash {
+                    if entry.hash() != hash {
                         return false;
                     }
                     match entry.value.upgrade() {
@@ -173,69 +172,5 @@ impl<T: Eq + Hash> HashCons<T> {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn make_reuses_existing_value() {
-        let mut table = HashCons::<String>::new();
-
-        let first = table.make("same".to_string());
-        let second = table.make("same".to_string());
-
-        assert_eq!(first, second);
-        assert_eq!(first.inner.hash, second.inner.hash);
-    }
-
-    #[test]
-    fn make_keeps_distinct_values_apart() {
-        let mut table = HashCons::<String>::new();
-
-        let first = table.make("first".to_string());
-        let second = table.make("second".to_string());
-
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn dropped_values_are_not_reused() {
-        let mut table = HashCons::<String>::new();
-
-        let first = table.make("same".to_string());
-        let weak = Arc::downgrade(&first.inner);
-        drop(first);
-        assert!(weak.upgrade().is_none());
-
-        let second = table.make("same".to_string());
-
-        assert_eq!(second.value().as_str(), "same");
-        assert!(weak.upgrade().is_none());
-    }
-
-    #[test]
-    fn make_reclaims_repeatedly_dropped_values() {
-        let mut table = HashCons::<String>::new();
-
-        for _ in 0..128 {
-            drop(table.make("same".to_string()));
-        }
-
-        assert_eq!(table.table.len(), 1);
-    }
-
-    #[test]
-    fn equality_is_pointer_only() {
-        let mut first_table = HashCons::<String>::new();
-        let mut second_table = HashCons::<String>::new();
-
-        let first = first_table.make("same".to_string());
-        let second = second_table.make("same".to_string());
-
-        assert_ne!(first, second);
-        assert_eq!(first.value(), second.value());
     }
 }

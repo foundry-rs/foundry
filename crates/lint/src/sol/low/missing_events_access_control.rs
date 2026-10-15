@@ -3,65 +3,96 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::primitives::{branch_always_exits, is_require_or_assert},
+        analysis::{
+            branch_always_exits, for_each_lhs_var, guard_vars, is_protected, is_sender_member,
+            is_zero_value, lhs_local_var, loop_stmts, referenced_item, underlying_var,
+        },
     },
 };
 use solar::{
-    ast::{ContractKind, DataLocation, LitKind, StateMutability, Visibility},
-    interface::{Span, kw, sym},
-    sema::hir::{self, EventId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
+    ast::{BinOpKind, ContractKind, DataLocation, StateMutability, Visibility},
+    interface::{Span, data_structures::Never},
+    sema::{
+        Gcx,
+        builtins::Builtin,
+        hir::{
+            self, EventId, Expr, ExprKind, FunctionId, ItemId, LoopSource, Stmt, StmtKind,
+            VariableId, Visit,
+        },
+    },
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    iter,
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     MISSING_EVENTS_ACCESS_CONTROL,
     Severity::Low,
     "missing-events-access-control",
-    "access control changes should emit events"
+    "access control changes without an event"
 );
 
-impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
+impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
             return;
         }
 
-        let access_control_vars = access_control_state_vars(hir, contract);
-        if access_control_vars.is_empty() {
+        // Every state variable some access check in the contract depends on.
+        let functions: Vec<_> = contract.all_functions().collect();
+        let targets: HashSet<_> = functions.iter().flat_map(|&id| guard_vars(gcx, id)).collect();
+        if targets.is_empty() {
             return;
         }
 
-        for func_id in contract.all_functions() {
-            let func = hir.function(func_id);
-            if !is_protected_entry_point(hir, func_id, func) {
+        for func_id in functions {
+            let func = gcx.hir.function(func_id);
+            let is_entry_point = func.kind.is_function()
+                && matches!(func.visibility, Visibility::Public | Visibility::External)
+                && !func.is_constructor()
+                && !func.is_special()
+                && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View);
+            if !is_entry_point || !is_protected(gcx, func_id) {
                 continue;
             }
 
-            let guard_vars = entry_point_access_guard_vars(hir, func_id, func);
-            let mut analyzer = WriteAnalyzer::new(hir, &access_control_vars, &guard_vars);
-            let writes = analyzer.analyze_entry_point(func_id);
+            let guard_targets = guard_vars(gcx, func_id);
+            let mut analyzer = WriteAnalyzer {
+                gcx,
+                targets: &targets,
+                guard_targets: &guard_targets,
+                state: State {
+                    taint: func
+                        .parameters
+                        .iter()
+                        .map(|&p| (p, Sources::from([Source::Var(p)])))
+                        .collect(),
+                    ..Default::default()
+                },
+                call_stack: Vec::new(),
+                return_states: Vec::new(),
+                terminal_states: Vec::new(),
+                next_write_id: 0,
+            };
+            analyzer.analyze_function(func_id);
+
             let mut emitted = HashSet::new();
-
-            for write in writes {
-                if write.evented {
+            for write in analyzer.state.writes {
+                if write.evented || !emitted.insert(write.var_id) {
                     continue;
                 }
-
-                if !emitted.insert(write.var_id) {
-                    continue;
-                }
-
-                let name = hir
+                let name = gcx
+                    .hir
                     .variable(write.var_id)
                     .name
-                    .map(|name| name.as_str().to_string())
-                    .unwrap_or_else(|| "state variable".to_string());
+                    .map_or_else(|| "state variable".to_string(), |name| name.to_string());
                 ctx.emit_with_msg(
                     &MISSING_EVENTS_ACCESS_CONTROL,
                     write.span,
@@ -72,1710 +103,555 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
     }
 }
 
-fn is_external_function(func: &hir::Function<'_>) -> bool {
-    func.kind.is_function()
-        && matches!(func.visibility, Visibility::Public | Visibility::External)
-        && !func.is_constructor()
-        && !func.is_special()
-}
-
-fn is_state_mutating_entry_point(func: &hir::Function<'_>) -> bool {
-    is_external_function(func)
-        && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-}
-
-fn is_protected_entry_point(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    func: &hir::Function<'_>,
-) -> bool {
-    is_state_mutating_entry_point(func) && is_protected(hir, func_id, func)
-}
-
-fn access_control_state_vars(
-    hir: &hir::Hir<'_>,
-    contract: &hir::Contract<'_>,
-) -> HashSet<VariableId> {
-    let mut out = HashSet::new();
-
-    for func_id in contract.all_functions() {
-        let func = hir.function(func_id);
-        for modifier in func.modifiers {
-            if let Some(modifier_id) = modifier.id.as_function() {
-                collect_access_control_state_vars_in_function(
-                    hir,
-                    modifier_id,
-                    &mut HashSet::new(),
-                    &mut HashSet::new(),
-                    &mut out,
-                    true,
-                );
-            }
-        }
-
-        collect_access_control_state_vars_in_function(
-            hir,
-            func_id,
-            &mut HashSet::new(),
-            &mut HashSet::new(),
-            &mut out,
-            false,
-        );
-    }
-
-    out.retain(|var_id| {
-        let var = hir.variable(*var_id);
-        var.kind.is_state() && !var.is_constant() && !var.is_immutable()
-    });
-    out
-}
-
-fn entry_point_access_guard_vars(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    func: &hir::Function<'_>,
-) -> HashSet<VariableId> {
-    let mut out = HashSet::new();
-
-    for modifier in func.modifiers {
-        if let Some(modifier_id) = modifier.id.as_function() {
-            collect_access_control_state_vars_in_function(
-                hir,
-                modifier_id,
-                &mut HashSet::new(),
-                &mut HashSet::new(),
-                &mut out,
-                true,
-            );
-        }
-    }
-
-    collect_access_control_state_vars_in_function(
-        hir,
-        func_id,
-        &mut HashSet::new(),
-        &mut HashSet::new(),
-        &mut out,
-        false,
-    );
-    out
-}
-
-fn collect_access_control_state_vars_in_function(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    seen: &mut HashSet<FunctionId>,
-    sender_aliases: &mut HashSet<VariableId>,
-    out: &mut HashSet<VariableId>,
-    stop_at_placeholder: bool,
-) {
-    if !seen.insert(func_id) {
-        return;
-    }
-
-    let func = hir.function(func_id);
-    let Some(body) = func.body else { return };
-
-    for stmt in body.stmts {
-        if stop_at_placeholder && matches!(stmt.kind, StmtKind::Placeholder) {
-            break;
-        }
-        collect_access_control_state_vars_in_stmt(hir, stmt, seen, sender_aliases, out);
-    }
-}
-
-fn collect_access_control_state_vars_in_stmt(
-    hir: &hir::Hir<'_>,
-    stmt: &hir::Stmt<'_>,
-    seen: &mut HashSet<FunctionId>,
-    sender_aliases: &mut HashSet<VariableId>,
-    out: &mut HashSet<VariableId>,
-) {
-    match stmt.kind {
-        StmtKind::If(cond, then_stmt, else_stmt) => {
-            if expr_looks_like_access_check(hir, cond, sender_aliases)
-                && (stmt_exits_or_reverts(then_stmt)
-                    || else_stmt.is_some_and(stmt_exits_or_reverts))
-            {
-                collect_access_check_state_vars(hir, cond, seen, out);
-            }
-            let mut then_aliases = sender_aliases.clone();
-            collect_access_control_state_vars_in_stmt(hir, then_stmt, seen, &mut then_aliases, out);
-            if let Some(else_stmt) = else_stmt {
-                let mut else_aliases = sender_aliases.clone();
-                collect_access_control_state_vars_in_stmt(
-                    hir,
-                    else_stmt,
-                    seen,
-                    &mut else_aliases,
-                    out,
-                );
-            }
-        }
-        StmtKind::Expr(expr) => {
-            collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
-            update_sender_aliases_from_assignment(hir, expr, seen, sender_aliases);
-        }
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            for stmt in block.stmts {
-                collect_access_control_state_vars_in_stmt(hir, stmt, seen, sender_aliases, out);
-            }
-        }
-        StmtKind::Try(try_stmt) => {
-            collect_access_control_state_vars_in_expr(
-                hir,
-                &try_stmt.expr,
-                seen,
-                sender_aliases,
-                out,
-            );
-            for clause in try_stmt.clauses {
-                for stmt in clause.block.stmts {
-                    collect_access_control_state_vars_in_stmt(hir, stmt, seen, sender_aliases, out);
-                }
-            }
-        }
-        StmtKind::Return(Some(expr)) | StmtKind::Emit(expr) | StmtKind::Revert(expr) => {
-            collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
-        }
-        StmtKind::DeclSingle(var_id) => {
-            if let Some(init) = hir.variable(var_id).initializer {
-                collect_access_control_state_vars_in_expr(hir, init, seen, sender_aliases, out);
-            }
-            update_sender_alias_from_decl(hir, var_id, seen, sender_aliases);
-        }
-        StmtKind::DeclMulti(_, expr) => {
-            collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
-        }
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::AssemblyBlock(_)
-        | StmtKind::Switch(_)
-        | StmtKind::Err(_) => {}
-    }
-}
-
-fn collect_access_control_state_vars_in_expr(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
-    sender_aliases: &HashSet<VariableId>,
-    out: &mut HashSet<VariableId>,
-) {
+/// Calls `f` on every index and slice bound along the spine of an lvalue.
+fn for_each_lhs_index<'gcx>(expr: &'gcx Expr<'gcx>, f: &mut impl FnMut(&'gcx Expr<'gcx>)) {
     match &expr.peel_parens().kind {
-        ExprKind::Call(callee, args, opts) if is_require_or_assert(callee) => {
-            if let Some(cond) = args.exprs().next()
-                && expr_looks_like_access_check(hir, cond, sender_aliases)
-            {
-                collect_access_check_state_vars(hir, cond, seen, out);
-            }
-            for arg in args.exprs() {
-                collect_access_control_state_vars_in_expr(hir, arg, seen, sender_aliases, out);
-            }
-            if let Some(opts) = opts {
-                for opt in opts.args {
-                    collect_access_control_state_vars_in_expr(
-                        hir,
-                        &opt.value,
-                        seen,
-                        sender_aliases,
-                        out,
-                    );
-                }
-            }
-        }
-        ExprKind::Call(callee, args, opts) => {
-            for callee_id in resolved_function_ids(callee) {
-                let callee_func = hir.function(callee_id);
-                if callee_func
-                    .name
-                    .is_some_and(|name| name_looks_like_access_control(name.as_str()))
-                    || function_has_access_guard(hir, callee_id, &mut HashSet::new())
-                {
-                    collect_state_vars_read_in_function(hir, callee_id, seen, out);
-                }
-            }
-
-            collect_access_control_state_vars_in_expr(hir, callee, seen, sender_aliases, out);
-            if let Some(opts) = opts {
-                for opt in opts.args {
-                    collect_access_control_state_vars_in_expr(
-                        hir,
-                        &opt.value,
-                        seen,
-                        sender_aliases,
-                        out,
-                    );
-                }
-            }
-            for arg in args.exprs() {
-                collect_access_control_state_vars_in_expr(hir, arg, seen, sender_aliases, out);
-            }
-        }
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            collect_access_control_state_vars_in_expr(hir, lhs, seen, sender_aliases, out);
-            collect_access_control_state_vars_in_expr(hir, rhs, seen, sender_aliases, out);
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => {
-            collect_access_control_state_vars_in_expr(hir, inner, seen, sender_aliases, out);
-        }
         ExprKind::Index(base, index) => {
-            collect_access_control_state_vars_in_expr(hir, base, seen, sender_aliases, out);
+            for_each_lhs_index(base, f);
             if let Some(index) = index {
-                collect_access_control_state_vars_in_expr(hir, index, seen, sender_aliases, out);
+                f(index);
             }
         }
         ExprKind::Slice(base, start, end) => {
-            collect_access_control_state_vars_in_expr(hir, base, seen, sender_aliases, out);
-            if let Some(start) = start {
-                collect_access_control_state_vars_in_expr(hir, start, seen, sender_aliases, out);
-            }
-            if let Some(end) = end {
-                collect_access_control_state_vars_in_expr(hir, end, seen, sender_aliases, out);
+            for_each_lhs_index(base, f);
+            for bound in start.iter().chain(end) {
+                f(bound);
             }
         }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            collect_access_control_state_vars_in_expr(hir, cond, seen, sender_aliases, out);
-            collect_access_control_state_vars_in_expr(hir, true_expr, seen, sender_aliases, out);
-            collect_access_control_state_vars_in_expr(hir, false_expr, seen, sender_aliases, out);
+        ExprKind::Member(base, _) | ExprKind::Payable(base) | ExprKind::Unary(_, base) => {
+            for_each_lhs_index(base, f)
         }
-        ExprKind::Array(exprs) => {
-            for expr in *exprs {
-                collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
-            }
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().copied().flatten() {
-                collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
-            }
-        }
-        ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
+        ExprKind::Tuple(exprs) => exprs.iter().flatten().for_each(|e| for_each_lhs_index(e, f)),
+        _ => {}
     }
 }
 
-fn collect_access_check_state_vars(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
-    out: &mut HashSet<VariableId>,
-) {
-    collect_state_vars_read_in_expr(hir, expr, seen, out);
+// --- Writes without events --------------------------------------------------------------------
 
-    for callee_id in called_function_ids(expr) {
-        collect_state_vars_read_in_function(hir, callee_id, seen, out);
-    }
+/// Where a written value may come from: an entry-point parameter or state variable, or the caller.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Source {
+    Var(VariableId),
+    Sender,
 }
 
-fn collect_state_vars_read_in_function(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    seen: &mut HashSet<FunctionId>,
-    out: &mut HashSet<VariableId>,
-) {
-    if !seen.insert(func_id) {
-        return;
-    }
+type Sources = HashSet<Source>;
 
-    let func = hir.function(func_id);
-    let Some(body) = func.body else { return };
-    for stmt in body.stmts {
-        collect_state_vars_read_in_stmt(hir, stmt, seen, out);
-    }
-}
-
-fn collect_state_vars_read_in_stmt(
-    hir: &hir::Hir<'_>,
-    stmt: &hir::Stmt<'_>,
-    seen: &mut HashSet<FunctionId>,
-    out: &mut HashSet<VariableId>,
-) {
-    match stmt.kind {
-        StmtKind::DeclSingle(var_id) => {
-            if let Some(init) = hir.variable(var_id).initializer {
-                collect_state_vars_read_in_expr(hir, init, seen, out);
-            }
-        }
-        StmtKind::DeclMulti(_, expr)
-        | StmtKind::Expr(expr)
-        | StmtKind::Emit(expr)
-        | StmtKind::Revert(expr)
-        | StmtKind::Return(Some(expr)) => collect_state_vars_read_in_expr(hir, expr, seen, out),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            for stmt in block.stmts {
-                collect_state_vars_read_in_stmt(hir, stmt, seen, out);
-            }
-        }
-        StmtKind::If(cond, then_stmt, else_stmt) => {
-            collect_state_vars_read_in_expr(hir, cond, seen, out);
-            collect_state_vars_read_in_stmt(hir, then_stmt, seen, out);
-            if let Some(else_stmt) = else_stmt {
-                collect_state_vars_read_in_stmt(hir, else_stmt, seen, out);
-            }
-        }
-        StmtKind::Try(try_stmt) => {
-            collect_state_vars_read_in_expr(hir, &try_stmt.expr, seen, out);
-            for clause in try_stmt.clauses {
-                for stmt in clause.block.stmts {
-                    collect_state_vars_read_in_stmt(hir, stmt, seen, out);
-                }
-            }
-        }
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::AssemblyBlock(_)
-        | StmtKind::Switch(_)
-        | StmtKind::Err(_) => {}
-    }
-}
-
-fn collect_state_vars_read_in_expr(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
-    out: &mut HashSet<VariableId>,
-) {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => {
-            for res in *reses {
-                if let Res::Item(ItemId::Variable(var_id)) = res
-                    && hir.variable(*var_id).kind.is_state()
-                {
-                    out.insert(*var_id);
-                }
-            }
-        }
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            collect_state_vars_read_in_expr(hir, lhs, seen, out);
-            collect_state_vars_read_in_expr(hir, rhs, seen, out);
-        }
-        ExprKind::Call(callee, args, opts) => {
-            for callee_id in resolved_function_ids(callee) {
-                collect_state_vars_read_in_function(hir, callee_id, seen, out);
-            }
-
-            collect_state_vars_read_in_expr(hir, callee, seen, out);
-            if let Some(opts) = opts {
-                for opt in opts.args {
-                    collect_state_vars_read_in_expr(hir, &opt.value, seen, out);
-                }
-            }
-            for arg in args.exprs() {
-                collect_state_vars_read_in_expr(hir, arg, seen, out);
-            }
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => collect_state_vars_read_in_expr(hir, inner, seen, out),
-        ExprKind::Index(base, index) => {
-            collect_state_vars_read_in_expr(hir, base, seen, out);
-            if let Some(index) = index {
-                collect_state_vars_read_in_expr(hir, index, seen, out);
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            collect_state_vars_read_in_expr(hir, base, seen, out);
-            if let Some(start) = start {
-                collect_state_vars_read_in_expr(hir, start, seen, out);
-            }
-            if let Some(end) = end {
-                collect_state_vars_read_in_expr(hir, end, seen, out);
-            }
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            collect_state_vars_read_in_expr(hir, cond, seen, out);
-            collect_state_vars_read_in_expr(hir, true_expr, seen, out);
-            collect_state_vars_read_in_expr(hir, false_expr, seen, out);
-        }
-        ExprKind::Array(exprs) => {
-            for expr in *exprs {
-                collect_state_vars_read_in_expr(hir, expr, seen, out);
-            }
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().copied().flatten() {
-                collect_state_vars_read_in_expr(hir, expr, seen, out);
-            }
-        }
-        ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-struct WriteSources {
-    inputs: HashSet<VariableId>,
-    states: HashSet<VariableId>,
-    reads_sender: bool,
-}
-
-impl WriteSources {
-    fn input(var_id: VariableId) -> Self {
-        Self { inputs: HashSet::from([var_id]), states: HashSet::new(), reads_sender: false }
-    }
-
-    fn state(var_id: VariableId) -> Self {
-        Self { inputs: HashSet::new(), states: HashSet::from([var_id]), reads_sender: false }
-    }
-
-    fn sender() -> Self {
-        Self { inputs: HashSet::new(), states: HashSet::new(), reads_sender: true }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.inputs.is_empty() && self.states.is_empty() && !self.reads_sender
-    }
-
-    fn extend(&mut self, other: Self) {
-        self.inputs.extend(other.inputs);
-        self.states.extend(other.states);
-        self.reads_sender |= other.reads_sender;
-    }
-
-    fn intersects(&self, other: &Self) -> bool {
-        self.reads_sender && other.reads_sender
-            || self.inputs.iter().any(|var_id| other.inputs.contains(var_id))
-            || self.states.iter().any(|var_id| other.states.contains(var_id))
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct StateWrite {
+    id: usize,
     var_id: VariableId,
     span: Span,
-    sources: WriteSources,
+    sources: Sources,
+    /// The written value is a literal zero/false, so no source is needed for an event to match.
     fixed_clear: bool,
     evented: bool,
 }
 
-#[derive(Clone)]
-struct AnalyzerState {
-    taint: HashMap<VariableId, WriteSources>,
+#[derive(Clone, Default)]
+struct State {
+    /// Sources each local may currently hold.
+    taint: HashMap<VariableId, Sources>,
+    /// Storage-pointer locals and the state variable they alias.
     storage_aliases: HashMap<VariableId, VariableId>,
     writes: Vec<StateWrite>,
+    /// Events emitted so far, not yet matched against every write reachable at this point.
+    emits: Vec<(EventId, Sources)>,
 }
 
-struct WriteAnalyzer<'a, 'hir> {
-    hir: &'hir hir::Hir<'hir>,
+/// Collects writes to `targets` reachable from an entry point and marks those an `emit` covers.
+struct WriteAnalyzer<'a, 'gcx> {
+    gcx: Gcx<'gcx>,
     targets: &'a HashSet<VariableId>,
+    /// Targets checked by this entry point's own guards; clearing one of them is reportable even
+    /// when the written value carries no source.
     guard_targets: &'a HashSet<VariableId>,
-    taint: HashMap<VariableId, WriteSources>,
-    storage_aliases: HashMap<VariableId, VariableId>,
-    writes: Vec<StateWrite>,
+    state: State,
     call_stack: Vec<FunctionId>,
+    /// State at each normal `return`, grouped by active inlined function call.
+    return_states: Vec<Vec<State>>,
+    /// State at each successful terminal exit, grouped by active inlined function call.
+    terminal_states: Vec<Vec<State>>,
+    next_write_id: usize,
 }
 
-impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
-    fn new(
-        hir: &'hir hir::Hir<'hir>,
-        targets: &'a HashSet<VariableId>,
-        guard_targets: &'a HashSet<VariableId>,
-    ) -> Self {
-        Self {
-            hir,
-            targets,
-            guard_targets,
-            taint: HashMap::new(),
-            storage_aliases: HashMap::new(),
-            writes: Vec::new(),
-            call_stack: Vec::new(),
-        }
-    }
-
-    fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
-        let func = self.hir.function(func_id);
-        self.taint.clear();
-        self.storage_aliases.clear();
-        for &param in func.parameters {
-            self.taint.insert(param, WriteSources::input(param));
-        }
-
-        self.analyze_function(func_id);
-        std::mem::take(&mut self.writes)
-    }
-
+impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     fn analyze_function(&mut self, func_id: FunctionId) {
         if self.call_stack.contains(&func_id) {
             return;
         }
-
-        let func = self.hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let Some(body) = func.body else { return };
-
         self.call_stack.push(func_id);
-        self.analyze_modifiers(func);
+        self.return_states.push(Vec::new());
+        self.terminal_states.push(Vec::new());
+        for modifier in func.modifiers {
+            if let Some(modifier_id) = modifier.id.as_function() {
+                let _ = self.visit_call_args(&modifier.args);
+                self.analyze_call(modifier_id, |index| modifier.args.exprs().nth(index));
+            }
+        }
         for stmt in body.stmts {
-            self.analyze_stmt(stmt);
+            let _ = self.visit_stmt(stmt);
+        }
+        self.correlate_pending();
+        let mut exits = self.return_states.pop().unwrap();
+        let terminal_exits = self.terminal_states.pop().unwrap();
+        if !exits.is_empty() || !terminal_exits.is_empty() {
+            if !body.stmts.iter().any(|stmt| branch_always_exits(self.gcx, stmt)) {
+                exits.push(self.state.clone());
+            }
+            for write in &mut self.state.writes {
+                // An exit before this write does not require an event for it.
+                let mut matching = exits
+                    .iter()
+                    .chain(&terminal_exits)
+                    .filter_map(|state| state.writes.iter().find(|other| other.id == write.id));
+                if let Some(first) = matching.next() {
+                    write.evented = first.evented && matching.all(|other| other.evented);
+                }
+            }
+            self.state.emits.retain(|event| exits.iter().all(|state| state.emits.contains(event)));
+        }
+        if let Some(parent) = self.terminal_states.last_mut() {
+            parent.extend(terminal_exits);
         }
         self.call_stack.pop();
     }
 
-    fn analyze_modifiers(&mut self, func: &'hir hir::Function<'hir>) {
-        for modifier in func.modifiers {
-            let Some(modifier_id) = modifier.id.as_function() else { continue };
-            if self.call_stack.contains(&modifier_id) {
-                continue;
+    /// Inlines `callee_id` with its parameters bound to argument sources; locals and storage
+    /// aliases are callee-private, pending writes flow back to the caller.
+    fn analyze_call(
+        &mut self,
+        callee_id: FunctionId,
+        mut argument: impl FnMut(usize) -> Option<&'gcx Expr<'gcx>>,
+    ) {
+        let params = self
+            .gcx
+            .hir
+            .function(callee_id)
+            .parameters
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &param)| {
+                let sources = self.value_sources(argument(index)?);
+                (!sources.is_empty()).then_some((param, sources))
+            })
+            .collect();
+        let saved_taint = std::mem::replace(&mut self.state.taint, params);
+        let saved_aliases = std::mem::take(&mut self.state.storage_aliases);
+        self.analyze_function(callee_id);
+        self.state.taint = saved_taint;
+        self.state.storage_aliases = saved_aliases;
+    }
+
+    /// Sources flowing into `expr`: `msg.sender`, state variables and tainted locals.
+    fn value_sources(&self, expr: &Expr<'_>) -> Sources {
+        let mut out = Sources::new();
+        let _ = expr.visit(&mut |e| {
+            if is_sender_member(self.gcx, e) {
+                out.insert(Source::Sender);
             }
-
-            for arg in modifier.args.exprs() {
-                self.analyze_expr(arg);
+            if let Some(var_id) = underlying_var(self.gcx, e) {
+                if self.gcx.hir.variable(var_id).kind.is_state() {
+                    out.insert(Source::Var(var_id));
+                }
+                if let Some(sources) = self.state.taint.get(&var_id) {
+                    out.extend(sources);
+                }
             }
+            ControlFlow::<()>::Continue(())
+        });
+        out
+    }
 
-            let modifier_func = self.hir.function(modifier_id);
-            let Some(body) = modifier_func.body else { continue };
-            let saved_taint = self.taint.clone();
-            let saved_storage_aliases = self.storage_aliases.clone();
-
-            for (param, arg) in modifier_func.parameters.iter().copied().zip(modifier.args.exprs())
+    /// State variables written through `lhs`, resolving storage pointers to their roots.
+    fn lhs_state_vars(&self, lhs: &Expr<'_>) -> Vec<VariableId> {
+        let mut vars = Vec::new();
+        for_each_lhs_var(self.gcx, lhs, &mut |var_id| {
+            let root = if self.gcx.hir.variable(var_id).kind.is_state() {
+                Some(var_id)
+            } else {
+                self.state.storage_aliases.get(&var_id).copied()
+            };
+            if let Some(root) = root
+                && !vars.contains(&root)
             {
-                self.set_local_taint(param, self.value_sources(arg));
+                vars.push(root);
             }
+        });
+        vars
+    }
 
-            self.call_stack.push(modifier_id);
-            for stmt in body.stmts {
-                self.analyze_stmt(stmt);
+    fn record_writes(&mut self, lhs: &Expr<'_>, sources: &Sources, fixed_clear: bool) {
+        for var_id in self.lhs_state_vars(lhs) {
+            if self.targets.contains(&var_id)
+                && (!sources.is_empty() || (fixed_clear && self.guard_targets.contains(&var_id)))
+            {
+                self.state.writes.push(StateWrite {
+                    id: self.next_write_id,
+                    var_id,
+                    span: lhs.span,
+                    sources: sources.clone(),
+                    fixed_clear,
+                    evented: false,
+                });
+                self.next_write_id += 1;
             }
-            self.call_stack.pop();
-
-            self.taint = saved_taint;
-            self.storage_aliases = saved_storage_aliases;
         }
     }
 
-    fn analyze_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) {
+    fn set_taint(&mut self, var_id: VariableId, sources: Sources) {
+        if sources.is_empty() {
+            self.state.taint.remove(&var_id);
+        } else {
+            self.state.taint.insert(var_id, sources);
+        }
+    }
+
+    /// Records `var_id = value`, tracking which state variable a storage pointer aliases.
+    fn set_local(&mut self, var_id: VariableId, sources: Sources, value: &Expr<'_>) {
+        self.set_taint(var_id, sources);
+        let root = (self.gcx.hir.variable(var_id).data_location == Some(DataLocation::Storage))
+            .then(|| self.lhs_state_vars(value).into_iter().next())
+            .flatten();
+        match root {
+            Some(root) => self.state.storage_aliases.insert(var_id, root),
+            None => self.state.storage_aliases.remove(&var_id),
+        };
+    }
+
+    /// Records an `emit` as pending, to be matched against writes by `correlate_pending`. Emits
+    /// are matched independent of statement order within the same straight-line scope, so an
+    /// `emit` written before the state change it documents is still recognized.
+    fn record_emit(&mut self, expr: &Expr<'_>) {
+        let Some(event_id) = emitted_event_id(self.gcx, expr) else { return };
+        let event_sources = self.value_sources(expr);
+        self.state.emits.push((event_id, event_sources));
+    }
+
+    /// Matches every pending emit against every not-yet-evented write reachable so far: the
+    /// event must mention the variable and share a source with the write (or the write must be
+    /// a fixed clear).
+    fn correlate_pending(&mut self) {
+        correlate_pending(self.gcx, &mut self.state);
+    }
+}
+
+impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                let var = self.hir.variable(var_id);
-                if let Some(init) = var.initializer
-                    && !var.kind.is_state()
-                {
-                    self.analyze_expr(init);
-                    self.set_local_taint(var_id, self.value_sources(init));
-                    self.set_storage_alias_from_initializer(var_id, init);
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
+                    self.visit_expr(init)?;
+                    let sources = self.value_sources(init);
+                    self.set_local(var_id, sources, init);
                 }
             }
             StmtKind::DeclMulti(vars, expr) => {
-                self.analyze_expr(expr);
+                self.visit_expr(expr)?;
                 let sources = self.value_sources(expr);
-                for var_id in vars.iter().flatten().copied() {
-                    if !self.hir.variable(var_id).kind.is_state() {
-                        self.set_local_taint(var_id, sources.clone());
-                    }
-                }
-            }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-                for stmt in block.stmts {
-                    self.analyze_stmt(stmt);
+                for var_id in vars.iter().flatten() {
+                    self.set_taint(*var_id, sources.clone());
                 }
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
-                self.analyze_expr(cond);
-                let base = self.capture_state();
-
-                self.analyze_stmt(then_stmt);
-                let then_state = self.capture_state();
-
-                self.restore_state(base.clone());
+                self.visit_expr(cond)?;
+                let base = self.state.clone();
+                self.visit_stmt(then_stmt)?;
+                self.correlate_pending();
+                let then_state = std::mem::replace(&mut self.state, base.clone());
                 if let Some(else_stmt) = else_stmt {
-                    self.analyze_stmt(else_stmt);
+                    self.visit_stmt(else_stmt)?;
+                    self.correlate_pending();
                 }
-                let else_state = self.capture_state();
-
-                let then_exits = stmt_exits_or_reverts(then_stmt);
-                let else_exits = else_stmt.is_some_and(stmt_exits_or_reverts);
-                self.restore_state(self.merge_branch_states(
+                let else_state = std::mem::take(&mut self.state);
+                self.state = merge_branches(
                     base,
                     then_state,
                     else_state,
-                    then_exits,
-                    else_exits,
-                    else_stmt.is_some(),
-                ));
-            }
-            StmtKind::Try(try_stmt) => {
-                self.analyze_expr(&try_stmt.expr);
-                for clause in try_stmt.clauses {
-                    for stmt in clause.block.stmts {
-                        self.analyze_stmt(stmt);
-                    }
-                }
-            }
-            StmtKind::Expr(expr) | StmtKind::Revert(expr) => {
-                self.analyze_expr(expr);
+                    branch_always_exits(self.gcx, then_stmt),
+                    else_stmt.is_some_and(|expr| branch_always_exits(self.gcx, expr)),
+                );
             }
             StmtKind::Emit(expr) => {
-                self.analyze_expr(expr);
-                self.mark_event(expr);
+                self.visit_expr(expr)?;
+                self.record_emit(expr);
             }
             StmtKind::Return(expr) => {
                 if let Some(expr) = expr {
-                    self.analyze_expr(expr);
+                    self.visit_expr(expr)?;
                 }
+                let mut state = self.state.clone();
+                correlate_pending(self.gcx, &mut state);
+                self.return_states.last_mut().unwrap().push(state);
             }
-            StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Placeholder
-            | StmtKind::AssemblyBlock(_)
-            | StmtKind::Switch(_)
-            | StmtKind::Err(_) => {}
+            StmtKind::Loop(block, source) => {
+                // A loop body may not run to completion on the iteration containing an emit — a
+                // `for`/`while` may run zero times, and even a `do-while` (which always starts
+                // its body) can `break`/`continue`/`revert` past the emit on that first pass — so
+                // an emit inside any loop must not survive to satisfy a write after the loop, and
+                // must not retroactively mark a write from BEFORE the loop as evented either.
+                let n = self.state.writes.len();
+                let evented_before: Vec<bool> =
+                    self.state.writes.iter().map(|w| w.evented).collect();
+                let emits_before = self.state.emits.clone();
+                if let LoopSource::For { update: Some(update) } = source
+                    && let [stmt] = block.stmts
+                    && let StmtKind::If(cond, body, Some(exit)) = stmt.kind
+                    && matches!(exit.kind, StmtKind::Break)
+                {
+                    // Solar lowers the loop condition to `if (cond) body else break`.
+                    // The update belongs to the continuing arm, so correlate its writes
+                    // with body events before discarding that arm's pending emits.
+                    self.visit_expr(cond)?;
+                    let base = self.state.clone();
+                    self.visit_stmt(body)?;
+                    self.visit_stmt(update)?;
+                    self.correlate_pending();
+                    let body_state = std::mem::take(&mut self.state);
+                    self.state = merge_branches(base.clone(), body_state, base, false, false);
+                } else {
+                    for stmt in loop_stmts(block, source) {
+                        self.visit_stmt(stmt)?;
+                    }
+                }
+                self.correlate_pending();
+                for (write, was_evented) in self.state.writes[..n].iter_mut().zip(evented_before) {
+                    write.evented = was_evented;
+                }
+                self.state.emits = emits_before;
+            }
+            StmtKind::Try(try_stmt) => {
+                self.visit_expr(&try_stmt.expr)?;
+                // Clauses are mutually exclusive: at most one runs. Each gets its own isolated
+                // copy of the pre-try state so one clause's emit can neither satisfy another
+                // clause's write nor a write from before the try; `merge_try_clauses` recombines
+                // them the same way `merge_branches` recombines an `if`'s two arms.
+                let base = self.state.clone();
+                let mut clause_states = Vec::with_capacity(try_stmt.clauses.len());
+                let mut continues = Vec::with_capacity(try_stmt.clauses.len());
+                for clause in try_stmt.clauses {
+                    self.state = base.clone();
+                    for stmt in clause.block.stmts {
+                        self.visit_stmt(stmt)?;
+                    }
+                    self.correlate_pending();
+                    clause_states.push(std::mem::take(&mut self.state));
+                    continues.push(
+                        !clause.block.stmts.iter().any(|stmt| branch_always_exits(self.gcx, stmt)),
+                    );
+                }
+                self.state = merge_try_clauses(base, clause_states, continues);
+            }
+            _ => return self.walk_stmt(stmt),
         }
+        ControlFlow::Continue(())
     }
 
-    fn analyze_expr(&mut self, expr: &'hir hir::Expr<'hir>) {
-        match &expr.peel_parens().kind {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
+        match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
-                self.analyze_expr(rhs);
-
-                let rhs_sources = self.value_sources(rhs);
-                let mut write_sources = rhs_sources.clone();
-                write_sources.extend(self.lhs_index_sources(lhs));
+                self.visit_expr(rhs)?;
+                self.visit_expr(lhs)?;
+                let mut sources = self.value_sources(rhs);
+                for_each_lhs_index(lhs, &mut |index| sources.extend(self.value_sources(index)));
                 if op.is_some() {
-                    write_sources.extend(self.value_sources(lhs));
+                    sources.extend(self.value_sources(lhs));
                 }
-
-                let fixed_clear = expr_is_zero_value(rhs);
-                for var_id in state_lhs_vars(self.hir, lhs, &self.storage_aliases) {
-                    if self.targets.contains(&var_id)
-                        && self.write_is_reportable(var_id, &write_sources, fixed_clear)
-                    {
-                        self.writes.push(StateWrite {
-                            var_id,
-                            span: lhs.span,
-                            sources: write_sources.clone(),
-                            fixed_clear,
-                            evented: false,
-                        });
-                    }
+                let local = lhs_local_var(self.gcx, lhs);
+                let rebinds_storage = op.is_none()
+                    && local.is_some_and(|var_id| {
+                        self.gcx.hir.variable(var_id).data_location == Some(DataLocation::Storage)
+                    })
+                    && self
+                        .gcx
+                        .type_of_expr(rhs.peel_parens().id)
+                        .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage));
+                if !rebinds_storage {
+                    self.record_writes(lhs, &sources, is_zero_value(rhs));
                 }
-
-                if let Some(local) = lhs_local_var(self.hir, lhs) {
-                    let mut local_sources = rhs_sources;
-                    if op.is_some() {
-                        local_sources.extend(self.value_sources(lhs));
-                    }
-                    self.set_local_taint(local, local_sources);
-                    self.set_storage_alias_from_initializer(local, rhs);
-                } else {
-                    self.analyze_lhs_indices(lhs);
+                if let Some(local) = local {
+                    self.set_local(local, sources, rhs);
                 }
+                ControlFlow::Continue(())
             }
             ExprKind::Delete(inner) => {
-                let sources = self.lhs_index_sources(inner);
-                for var_id in state_lhs_vars(self.hir, inner, &self.storage_aliases) {
-                    if self.targets.contains(&var_id)
-                        && self.write_is_reportable(var_id, &sources, true)
-                    {
-                        self.writes.push(StateWrite {
-                            var_id,
-                            span: inner.span,
-                            sources: sources.clone(),
-                            fixed_clear: true,
-                            evented: false,
-                        });
-                    }
-                }
-                self.analyze_lhs_indices(inner);
+                let mut sources = Sources::new();
+                for_each_lhs_index(inner, &mut |index| sources.extend(self.value_sources(index)));
+                self.record_writes(inner, &sources, true);
+                self.walk_expr(expr)
             }
-            ExprKind::Call(callee, args, opts) => {
-                self.analyze_expr(callee);
-                if let Some(opts) = opts {
-                    for opt in opts.args {
-                        self.analyze_expr(&opt.value);
-                    }
+            ExprKind::Call(callee, ..) => {
+                self.walk_expr(expr)?;
+                if matches!(callee.peel_parens().kind, ExprKind::Ident(_))
+                    && let Some(callee_id) = self.gcx.resolved_function(callee)
+                {
+                    let gcx = self.gcx;
+                    self.analyze_call(callee_id, |index| gcx.call_arg(expr, index));
                 }
-                for arg in args.exprs() {
-                    self.analyze_expr(arg);
+                if self.gcx.resolved_builtin(callee) == Some(Builtin::Selfdestruct) {
+                    let mut state = self.state.clone();
+                    correlate_pending(self.gcx, &mut state);
+                    self.terminal_states.last_mut().unwrap().push(state);
                 }
-
-                for callee_id in resolved_function_ids(callee) {
-                    self.analyze_internal_call(callee_id, args);
-                }
+                ControlFlow::Continue(())
             }
-            ExprKind::Binary(lhs, _, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+                self.visit_expr(lhs)?;
+                self.correlate_pending();
+                let base = self.state.clone();
+                self.visit_expr(rhs)?;
+                self.correlate_pending();
+                let rhs_state = std::mem::take(&mut self.state);
+                // The RHS may be skipped, so its events cannot cover writes on that path.
+                self.state = merge_branches(base.clone(), rhs_state, base, false, false);
+                ControlFlow::Continue(())
             }
-            ExprKind::Unary(_, inner) | ExprKind::Member(inner, _) | ExprKind::Payable(inner) => {
-                self.analyze_expr(inner);
+            ExprKind::Ternary(cond, then_expr, else_expr) => {
+                self.visit_expr(cond)?;
+                self.correlate_pending();
+                let base = self.state.clone();
+                self.visit_expr(then_expr)?;
+                self.correlate_pending();
+                let then_state = std::mem::replace(&mut self.state, base.clone());
+                self.visit_expr(else_expr)?;
+                self.correlate_pending();
+                let else_state = std::mem::take(&mut self.state);
+                self.state = merge_branches(base, then_state, else_state, false, false);
+                ControlFlow::Continue(())
             }
-            ExprKind::Index(base, index) => {
-                self.analyze_expr(base);
-                if let Some(index) = index {
-                    self.analyze_expr(index);
-                }
-            }
-            ExprKind::Slice(base, start, end) => {
-                self.analyze_expr(base);
-                if let Some(start) = start {
-                    self.analyze_expr(start);
-                }
-                if let Some(end) = end {
-                    self.analyze_expr(end);
-                }
-            }
-            ExprKind::Ternary(cond, true_expr, false_expr) => {
-                self.analyze_expr(cond);
-                self.analyze_expr(true_expr);
-                self.analyze_expr(false_expr);
-            }
-            ExprKind::Array(exprs) => {
-                for expr in *exprs {
-                    self.analyze_expr(expr);
-                }
-            }
-            ExprKind::Tuple(exprs) => {
-                for expr in exprs.iter().copied().flatten() {
-                    self.analyze_expr(expr);
-                }
-            }
-            ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
+            _ => self.walk_expr(expr),
         }
     }
+}
 
-    fn analyze_internal_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
-        if self.call_stack.contains(&callee_id) {
-            return;
-        }
+/// Joins the two arms of an `if`: a pending write stays covered only if both arms emitted for it,
+/// while taint and aliases come from whichever arms can continue past the `if`. Emits recorded
+/// inside either arm are dropped rather than carried past the merge: `correlate_pending` already
+/// resolved them against that arm's own writes before this runs, and code after the `if` executes
+/// whichever branch ran (or neither), so an emit conditional on one arm must not retroactively
+/// satisfy a write reachable only outside it.
+fn merge_branches(
+    base: State,
+    then_state: State,
+    else_state: State,
+    then_exits: bool,
+    else_exits: bool,
+) -> State {
+    let emits = base.emits.clone();
+    let mut writes = base.writes;
+    for (i, write) in writes.iter_mut().enumerate() {
+        write.evented = then_state.writes[i].evented && else_state.writes[i].evented;
+    }
+    let n = writes.len();
+    writes.extend_from_slice(&then_state.writes[n..]);
+    writes.extend_from_slice(&else_state.writes[n..]);
 
-        let callee = self.hir.function(callee_id);
-        let Some(_) = callee.body else { return };
-
-        let saved_taint = std::mem::take(&mut self.taint);
-        let saved_storage_aliases = std::mem::take(&mut self.storage_aliases);
-        for (param, arg) in callee.parameters.iter().copied().zip(args.exprs()) {
-            let sources = collect_value_sources(self.hir, &saved_taint, arg);
-            if !sources.is_empty() {
-                self.taint.insert(param, sources);
+    let (taint, storage_aliases) = match (then_exits, else_exits) {
+        (true, true) => (base.taint, base.storage_aliases),
+        (true, false) => (else_state.taint, else_state.storage_aliases),
+        (false, true) => (then_state.taint, then_state.storage_aliases),
+        (false, false) => {
+            let mut taint = then_state.taint;
+            for (var_id, sources) in else_state.taint {
+                taint.entry(var_id).or_default().extend(sources);
             }
+            let storage_aliases = then_state
+                .storage_aliases
+                .into_iter()
+                .filter(|(alias, root)| else_state.storage_aliases.get(alias) == Some(root))
+                .collect();
+            (taint, storage_aliases)
         }
+    };
+    State { taint, storage_aliases, writes, emits }
+}
 
-        self.analyze_function(callee_id);
-        self.taint = saved_taint;
-        self.storage_aliases = saved_storage_aliases;
+/// Joins mutually exclusive try/catch clauses. Pre-existing writes need an event in every
+/// clause, including exiting clauses: a `return` preserves writes, unlike a `revert`.
+/// Taint and aliases only merge from continuing clauses; clause-local emits are discarded.
+fn merge_try_clauses(base: State, clause_states: Vec<State>, continues: Vec<bool>) -> State {
+    let n = base.writes.len();
+    let mut writes = base.writes;
+    for (i, write) in writes.iter_mut().enumerate() {
+        write.evented = clause_states.iter().all(|state| state.writes[i].evented);
+    }
+    for state in &clause_states {
+        writes.extend_from_slice(&state.writes[n..]);
     }
 
-    fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>) {
-        match &expr.peel_parens().kind {
-            ExprKind::Index(base, index) => {
-                self.analyze_lhs_indices(base);
-                if let Some(index) = index {
-                    self.analyze_expr(index);
+    let continuing = || clause_states.iter().zip(&continues).filter(|&(_, &c)| c).map(|(s, _)| s);
+
+    let (taint, storage_aliases) = match continuing().next() {
+        None => (base.taint, base.storage_aliases),
+        Some(first) => {
+            let mut taint = HashMap::new();
+            for state in continuing() {
+                for (&var_id, sources) in &state.taint {
+                    taint
+                        .entry(var_id)
+                        .or_insert_with(Sources::new)
+                        .extend(sources.iter().copied());
                 }
             }
-            ExprKind::Slice(base, start, end) => {
-                self.analyze_lhs_indices(base);
-                if let Some(start) = start {
-                    self.analyze_expr(start);
-                }
-                if let Some(end) = end {
-                    self.analyze_expr(end);
-                }
+            let mut storage_aliases = first.storage_aliases.clone();
+            for state in continuing().skip(1) {
+                storage_aliases
+                    .retain(|alias, root| state.storage_aliases.get(alias) == Some(root));
             }
-            ExprKind::Member(base, _) | ExprKind::Payable(base) => self.analyze_lhs_indices(base),
-            ExprKind::Tuple(exprs) => {
-                for expr in exprs.iter().copied().flatten() {
-                    self.analyze_lhs_indices(expr);
-                }
-            }
-            _ => {}
+            (taint, storage_aliases)
         }
+    };
+
+    State { taint, storage_aliases, writes, emits: base.emits }
+}
+
+fn emitted_event_id(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<EventId> {
+    let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return None };
+    match referenced_item(gcx, callee)? {
+        ItemId::Event(event_id) => Some(event_id),
+        _ => None,
     }
+}
 
-    fn value_sources(&self, expr: &hir::Expr<'_>) -> WriteSources {
-        collect_value_sources(self.hir, &self.taint, expr)
-    }
+/// Whether the event name or one of its parameter names mentions the state variable: its
+/// normalized name, its singular form, or a role keyword it contains.
+fn event_mentions_state_var(gcx: Gcx<'_>, event_id: EventId, var_id: VariableId) -> bool {
+    let Some(var_name) = gcx.hir.variable(var_id).name else { return false };
+    let var_name = normalize(var_name.as_str());
+    let mut keywords = vec![var_name.as_str()];
+    keywords.extend(var_name.strip_suffix('s').filter(|singular| !singular.is_empty()));
+    let roles = ["owner", "admin", "guardian", "manager", "role"];
+    keywords.extend(roles.into_iter().filter(|role| var_name.contains(role)));
 
-    fn lhs_index_sources(&self, expr: &hir::Expr<'_>) -> WriteSources {
-        collect_lhs_index_sources(self.hir, &self.taint, expr)
-    }
+    let event = gcx.hir.event(event_id);
+    let param_names = event.parameters.iter().filter_map(|&p| gcx.hir.variable(p).name);
+    iter::once(event.name).chain(param_names).any(|name| {
+        let name = normalize(name.as_str());
+        keywords.iter().any(|keyword| !keyword.is_empty() && name.contains(keyword))
+    })
+}
 
-    fn set_local_taint(&mut self, var_id: VariableId, sources: WriteSources) {
-        if sources.is_empty() {
-            self.taint.remove(&var_id);
-        } else {
-            self.taint.insert(var_id, sources);
-        }
-    }
+fn normalize(name: &str) -> String {
+    name.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect()
+}
 
-    fn set_storage_alias_from_initializer(
-        &mut self,
-        var_id: VariableId,
-        init: &'hir hir::Expr<'hir>,
-    ) {
-        let var = self.hir.variable(var_id);
-        if var.kind.is_state() || var.data_location != Some(DataLocation::Storage) {
-            self.storage_aliases.remove(&var_id);
-            return;
-        }
-
-        if let Some(root) = state_lhs_vars(self.hir, init, &self.storage_aliases).into_iter().next()
-        {
-            self.storage_aliases.insert(var_id, root);
-        } else {
-            self.storage_aliases.remove(&var_id);
-        }
-    }
-
-    fn mark_event(&mut self, expr: &hir::Expr<'_>) {
-        let Some(event_id) = emitted_event_id(expr) else { return };
-        let event_sources = self.value_sources(expr);
-
-        for write in &mut self.writes {
+fn correlate_pending(gcx: Gcx<'_>, state: &mut State) {
+    for (event_id, event_sources) in &state.emits {
+        for write in &mut state.writes {
             if !write.evented
-                && (write.fixed_clear || write.sources.intersects(&event_sources))
-                && event_mentions_state_var(self.hir, event_id, write.var_id)
+                && (write.fixed_clear || !write.sources.is_disjoint(event_sources))
+                && event_mentions_state_var(gcx, *event_id, write.var_id)
             {
                 write.evented = true;
             }
         }
     }
-
-    fn capture_state(&self) -> AnalyzerState {
-        AnalyzerState {
-            taint: self.taint.clone(),
-            storage_aliases: self.storage_aliases.clone(),
-            writes: self.writes.clone(),
-        }
-    }
-
-    fn restore_state(&mut self, state: AnalyzerState) {
-        self.taint = state.taint;
-        self.storage_aliases = state.storage_aliases;
-        self.writes = state.writes;
-    }
-
-    fn merge_branch_states(
-        &self,
-        base: AnalyzerState,
-        then_state: AnalyzerState,
-        else_state: AnalyzerState,
-        then_exits: bool,
-        else_exits: bool,
-        has_else: bool,
-    ) -> AnalyzerState {
-        let mut writes = base.writes.clone();
-        let base_len = writes.len();
-        for (idx, write) in writes.iter_mut().enumerate().take(base_len) {
-            write.evented = then_state.writes[idx].evented && else_state.writes[idx].evented;
-        }
-        writes.extend_from_slice(&then_state.writes[base_len..]);
-        writes.extend_from_slice(&else_state.writes[base_len..]);
-
-        let (taint, storage_aliases) = match (then_exits, else_exits, has_else) {
-            (true, true, _) => (base.taint, base.storage_aliases),
-            (true, _, _) => (else_state.taint, else_state.storage_aliases),
-            (_, true, true) => (then_state.taint, then_state.storage_aliases),
-            _ => (
-                merge_source_maps(&then_state.taint, &else_state.taint),
-                merge_alias_maps(&then_state.storage_aliases, &else_state.storage_aliases),
-            ),
-        };
-
-        AnalyzerState { taint, storage_aliases, writes }
-    }
-
-    fn write_is_reportable(
-        &self,
-        var_id: VariableId,
-        sources: &WriteSources,
-        fixed_clear: bool,
-    ) -> bool {
-        self.targets.contains(&var_id)
-            && (!sources.is_empty() || (fixed_clear && self.guard_targets.contains(&var_id)))
-    }
-}
-
-fn merge_source_maps(
-    lhs: &HashMap<VariableId, WriteSources>,
-    rhs: &HashMap<VariableId, WriteSources>,
-) -> HashMap<VariableId, WriteSources> {
-    let mut out = lhs.clone();
-    for (var_id, sources) in rhs {
-        out.entry(*var_id).or_default().extend(sources.clone());
-    }
-    out.retain(|_, sources| !sources.is_empty());
-    out
-}
-
-fn merge_alias_maps(
-    lhs: &HashMap<VariableId, VariableId>,
-    rhs: &HashMap<VariableId, VariableId>,
-) -> HashMap<VariableId, VariableId> {
-    lhs.iter()
-        .filter_map(|(alias, lhs_root)| {
-            rhs.get(alias)
-                .is_some_and(|rhs_root| rhs_root == lhs_root)
-                .then_some((*alias, *lhs_root))
-        })
-        .collect()
-}
-
-fn collect_value_sources(
-    hir: &hir::Hir<'_>,
-    taint: &HashMap<VariableId, WriteSources>,
-    expr: &hir::Expr<'_>,
-) -> WriteSources {
-    let mut out = WriteSources::default();
-    collect_value_sources_into(hir, taint, expr, &mut out);
-    out
-}
-
-fn collect_value_sources_into(
-    hir: &hir::Hir<'_>,
-    taint: &HashMap<VariableId, WriteSources>,
-    expr: &hir::Expr<'_>,
-    out: &mut WriteSources,
-) {
-    if is_sender_member(expr) {
-        out.extend(WriteSources::sender());
-        return;
-    }
-
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => {
-            for res in *reses {
-                if let Res::Item(ItemId::Variable(var_id)) = res {
-                    if hir.variable(*var_id).kind.is_state() {
-                        out.extend(WriteSources::state(*var_id));
-                    }
-                    if let Some(sources) = taint.get(var_id) {
-                        out.extend(sources.clone());
-                    }
-                }
-            }
-        }
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            collect_value_sources_into(hir, taint, lhs, out);
-            collect_value_sources_into(hir, taint, rhs, out);
-        }
-        ExprKind::Call(callee, args, opts) => {
-            collect_value_sources_into(hir, taint, callee, out);
-            if let Some(opts) = opts {
-                for opt in opts.args {
-                    collect_value_sources_into(hir, taint, &opt.value, out);
-                }
-            }
-            for arg in args.exprs() {
-                collect_value_sources_into(hir, taint, arg, out);
-            }
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => collect_value_sources_into(hir, taint, inner, out),
-        ExprKind::Index(base, index) => {
-            collect_value_sources_into(hir, taint, base, out);
-            if let Some(index) = index {
-                collect_value_sources_into(hir, taint, index, out);
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            collect_value_sources_into(hir, taint, base, out);
-            if let Some(start) = start {
-                collect_value_sources_into(hir, taint, start, out);
-            }
-            if let Some(end) = end {
-                collect_value_sources_into(hir, taint, end, out);
-            }
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            collect_value_sources_into(hir, taint, cond, out);
-            collect_value_sources_into(hir, taint, true_expr, out);
-            collect_value_sources_into(hir, taint, false_expr, out);
-        }
-        ExprKind::Array(exprs) => {
-            for expr in *exprs {
-                collect_value_sources_into(hir, taint, expr, out);
-            }
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().copied().flatten() {
-                collect_value_sources_into(hir, taint, expr, out);
-            }
-        }
-        ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
-    }
-}
-
-fn collect_lhs_index_sources(
-    hir: &hir::Hir<'_>,
-    taint: &HashMap<VariableId, WriteSources>,
-    expr: &hir::Expr<'_>,
-) -> WriteSources {
-    let mut out = WriteSources::default();
-    collect_lhs_index_sources_into(hir, taint, expr, &mut out);
-    out
-}
-
-fn collect_lhs_index_sources_into(
-    hir: &hir::Hir<'_>,
-    taint: &HashMap<VariableId, WriteSources>,
-    expr: &hir::Expr<'_>,
-    out: &mut WriteSources,
-) {
-    match &expr.peel_parens().kind {
-        ExprKind::Index(base, index) => {
-            collect_lhs_index_sources_into(hir, taint, base, out);
-            if let Some(index) = index {
-                out.extend(collect_value_sources(hir, taint, index));
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            collect_lhs_index_sources_into(hir, taint, base, out);
-            if let Some(start) = start {
-                out.extend(collect_value_sources(hir, taint, start));
-            }
-            if let Some(end) = end {
-                out.extend(collect_value_sources(hir, taint, end));
-            }
-        }
-        ExprKind::Member(base, _) | ExprKind::Payable(base) | ExprKind::Unary(_, base) => {
-            collect_lhs_index_sources_into(hir, taint, base, out);
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().copied().flatten() {
-                collect_lhs_index_sources_into(hir, taint, expr, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn expr_is_zero_value(expr: &hir::Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Lit(lit) => match lit.kind {
-            LitKind::Number(value) => value.is_zero(),
-            LitKind::Address(value) => value.is_zero(),
-            LitKind::Bool(value) => !value,
-            _ => false,
-        },
-        ExprKind::Call(_, args, _) => {
-            let mut exprs = args.exprs();
-            let Some(arg) = exprs.next() else { return false };
-            exprs.next().is_none() && expr_is_zero_value(arg)
-        }
-        ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => expr_is_zero_value(inner),
-        _ => false,
-    }
-}
-
-fn lhs_local_var(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> Option<VariableId> {
-    if let ExprKind::Ident(reses) = &lhs.peel_parens().kind {
-        for res in *reses {
-            if let Res::Item(ItemId::Variable(var_id)) = res
-                && !hir.variable(*var_id).kind.is_state()
-            {
-                return Some(*var_id);
-            }
-        }
-    }
-    None
-}
-
-fn state_lhs_vars(
-    hir: &hir::Hir<'_>,
-    lhs: &hir::Expr<'_>,
-    storage_aliases: &HashMap<VariableId, VariableId>,
-) -> Vec<VariableId> {
-    let mut vars = Vec::new();
-    collect_state_lhs_vars(hir, lhs, storage_aliases, &mut vars);
-    vars
-}
-
-fn collect_state_lhs_vars(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    storage_aliases: &HashMap<VariableId, VariableId>,
-    vars: &mut Vec<VariableId>,
-) {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => {
-            for res in *reses {
-                if let Res::Item(ItemId::Variable(var_id)) = res {
-                    let root = if hir.variable(*var_id).kind.is_state() {
-                        Some(*var_id)
-                    } else {
-                        storage_aliases.get(var_id).copied()
-                    };
-                    if let Some(root) = root
-                        && !vars.contains(&root)
-                    {
-                        vars.push(root);
-                    }
-                }
-            }
-        }
-        ExprKind::Index(base, _) | ExprKind::Slice(base, ..) => {
-            collect_state_lhs_vars(hir, base, storage_aliases, vars);
-        }
-        ExprKind::Member(base, _)
-        | ExprKind::Payable(base)
-        | ExprKind::Unary(_, base)
-        | ExprKind::Delete(base) => collect_state_lhs_vars(hir, base, storage_aliases, vars),
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().copied().flatten() {
-                collect_state_lhs_vars(hir, expr, storage_aliases, vars);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn is_protected(hir: &hir::Hir<'_>, func_id: FunctionId, func: &hir::Function<'_>) -> bool {
-    for modifier in func.modifiers {
-        if let Some(modifier_id) = modifier.id.as_function()
-            && modifier_has_access_control(hir, modifier_id)
-        {
-            return true;
-        }
-    }
-
-    function_has_access_guard(hir, func_id, &mut HashSet::new())
-}
-
-fn update_sender_alias_from_decl(
-    hir: &hir::Hir<'_>,
-    var_id: VariableId,
-    seen: &HashSet<FunctionId>,
-    sender_aliases: &mut HashSet<VariableId>,
-) {
-    let var = hir.variable(var_id);
-    if var.kind.is_state() {
-        return;
-    }
-
-    let mut sender_seen = seen.clone();
-    if var
-        .initializer
-        .is_some_and(|init| expr_reads_sender(hir, init, &mut sender_seen, sender_aliases))
-    {
-        sender_aliases.insert(var_id);
-    } else {
-        sender_aliases.remove(&var_id);
-    }
-}
-
-fn update_sender_aliases_from_assignment(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    seen: &HashSet<FunctionId>,
-    sender_aliases: &mut HashSet<VariableId>,
-) {
-    let ExprKind::Assign(lhs, _, rhs) = &expr.peel_parens().kind else { return };
-    let Some(local) = lhs_local_var(hir, lhs) else { return };
-
-    let mut sender_seen = seen.clone();
-    if expr_reads_sender(hir, rhs, &mut sender_seen, sender_aliases) {
-        sender_aliases.insert(local);
-    } else {
-        sender_aliases.remove(&local);
-    }
-}
-
-fn modifier_has_access_control(hir: &hir::Hir<'_>, modifier_id: FunctionId) -> bool {
-    let modifier = hir.function(modifier_id);
-    if let Some(body) = modifier.body {
-        let mut sender_aliases = HashSet::new();
-        for stmt in body.stmts {
-            if matches!(stmt.kind, StmtKind::Placeholder) {
-                break;
-            }
-            if stmt_has_access_guard(hir, stmt, &mut HashSet::new(), &mut sender_aliases) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    modifier.name.is_some_and(|name| name_looks_like_access_control(name.as_str()))
-}
-
-fn function_has_access_guard(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    if !seen.insert(func_id) {
-        return false;
-    }
-
-    let func = hir.function(func_id);
-    let Some(body) = func.body else {
-        return func.name.is_some_and(|name| name_looks_like_access_control(name.as_str()));
-    };
-
-    let mut sender_aliases = HashSet::new();
-    for stmt in body.stmts {
-        if stmt_has_access_guard(hir, stmt, seen, &mut sender_aliases) {
-            return true;
-        }
-    }
-    false
-}
-
-fn stmt_has_access_guard(
-    hir: &hir::Hir<'_>,
-    stmt: &hir::Stmt<'_>,
-    seen: &mut HashSet<FunctionId>,
-    sender_aliases: &mut HashSet<VariableId>,
-) -> bool {
-    match stmt.kind {
-        StmtKind::If(cond, then_stmt, else_stmt) => {
-            (expr_looks_like_access_check(hir, cond, sender_aliases)
-                && (stmt_exits_or_reverts(then_stmt)
-                    || else_stmt.is_some_and(stmt_exits_or_reverts)))
-                || {
-                    let mut then_aliases = sender_aliases.clone();
-                    stmt_has_access_guard(hir, then_stmt, seen, &mut then_aliases)
-                }
-                || else_stmt.is_some_and(|stmt| {
-                    let mut else_aliases = sender_aliases.clone();
-                    stmt_has_access_guard(hir, stmt, seen, &mut else_aliases)
-                })
-        }
-        StmtKind::Expr(expr) => {
-            let has_guard = expr_has_access_guard(hir, expr, seen, sender_aliases);
-            update_sender_aliases_from_assignment(hir, expr, seen, sender_aliases);
-            has_guard
-        }
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            for stmt in block.stmts {
-                if stmt_has_access_guard(hir, stmt, seen, sender_aliases) {
-                    return true;
-                }
-            }
-            false
-        }
-        StmtKind::Try(try_stmt) => try_stmt.clauses.iter().any(|clause| {
-            let mut clause_aliases = sender_aliases.clone();
-            clause
-                .block
-                .stmts
-                .iter()
-                .any(|stmt| stmt_has_access_guard(hir, stmt, seen, &mut clause_aliases))
-        }),
-        StmtKind::Return(Some(expr)) | StmtKind::Emit(expr) | StmtKind::Revert(expr) => {
-            expr_has_access_guard(hir, expr, seen, sender_aliases)
-        }
-        StmtKind::DeclSingle(var_id) => {
-            let has_guard = hir
-                .variable(var_id)
-                .initializer
-                .is_some_and(|init| expr_has_access_guard(hir, init, seen, sender_aliases));
-            update_sender_alias_from_decl(hir, var_id, seen, sender_aliases);
-            has_guard
-        }
-        StmtKind::DeclMulti(_, expr) => expr_has_access_guard(hir, expr, seen, sender_aliases),
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::AssemblyBlock(_)
-        | StmtKind::Switch(_)
-        | StmtKind::Err(_) => false,
-    }
-}
-
-fn stmt_exits_or_reverts(stmt: &hir::Stmt<'_>) -> bool {
-    branch_always_exits(stmt)
-}
-
-fn expr_has_access_guard(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
-    sender_aliases: &HashSet<VariableId>,
-) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => args
-            .exprs()
-            .next()
-            .is_some_and(|cond| expr_looks_like_access_check(hir, cond, sender_aliases)),
-        ExprKind::Call(callee, args, opts) => {
-            for callee_id in resolved_function_ids(callee) {
-                let func = hir.function(callee_id);
-                if func.name.is_some_and(|name| name_looks_like_access_control(name.as_str()))
-                    || function_has_access_guard(hir, callee_id, seen)
-                {
-                    return true;
-                }
-            }
-
-            expr_has_access_guard(hir, callee, seen, sender_aliases)
-                || opts.is_some_and(|opts| {
-                    opts.args
-                        .iter()
-                        .any(|opt| expr_has_access_guard(hir, &opt.value, seen, sender_aliases))
-                })
-                || args.exprs().any(|arg| expr_has_access_guard(hir, arg, seen, sender_aliases))
-        }
-        ExprKind::Binary(lhs, _, rhs) => {
-            expr_has_access_guard(hir, lhs, seen, sender_aliases)
-                || expr_has_access_guard(hir, rhs, seen, sender_aliases)
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => expr_has_access_guard(hir, inner, seen, sender_aliases),
-        ExprKind::Index(base, index) => {
-            expr_has_access_guard(hir, base, seen, sender_aliases)
-                || index
-                    .is_some_and(|index| expr_has_access_guard(hir, index, seen, sender_aliases))
-        }
-        ExprKind::Slice(base, start, end) => {
-            expr_has_access_guard(hir, base, seen, sender_aliases)
-                || start
-                    .is_some_and(|start| expr_has_access_guard(hir, start, seen, sender_aliases))
-                || end.is_some_and(|end| expr_has_access_guard(hir, end, seen, sender_aliases))
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            expr_has_access_guard(hir, cond, seen, sender_aliases)
-                || expr_has_access_guard(hir, true_expr, seen, sender_aliases)
-                || expr_has_access_guard(hir, false_expr, seen, sender_aliases)
-        }
-        ExprKind::Array(exprs) => {
-            exprs.iter().any(|expr| expr_has_access_guard(hir, expr, seen, sender_aliases))
-        }
-        ExprKind::Tuple(exprs) => exprs
-            .iter()
-            .copied()
-            .flatten()
-            .any(|expr| expr_has_access_guard(hir, expr, seen, sender_aliases)),
-        ExprKind::Assign(_, _, rhs) => expr_has_access_guard(hir, rhs, seen, sender_aliases),
-        _ => false,
-    }
-}
-
-fn expr_looks_like_access_check(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    sender_aliases: &HashSet<VariableId>,
-) -> bool {
-    expr_reads_sender(hir, expr, &mut HashSet::new(), sender_aliases)
-        && expr_reads_state_variable_transitively(hir, expr)
-}
-
-fn expr_reads_state_variable_transitively(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    let mut vars = HashSet::new();
-    collect_state_vars_read_in_expr(hir, expr, &mut HashSet::new(), &mut vars);
-    !vars.is_empty()
-}
-
-fn expr_reads_sender(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
-    sender_aliases: &HashSet<VariableId>,
-) -> bool {
-    if is_sender_member(expr) {
-        return true;
-    }
-
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().any(|res| {
-            let Res::Item(ItemId::Variable(var_id)) = res else { return false };
-            sender_aliases.contains(var_id)
-        }),
-        ExprKind::Call(callee, args, opts) => {
-            for callee_id in resolved_function_ids(callee) {
-                if function_reads_sender(hir, callee_id, seen) {
-                    return true;
-                }
-            }
-
-            expr_reads_sender(hir, callee, seen, sender_aliases)
-                || opts.is_some_and(|opts| {
-                    opts.args
-                        .iter()
-                        .any(|opt| expr_reads_sender(hir, &opt.value, seen, sender_aliases))
-                })
-                || args.exprs().any(|arg| expr_reads_sender(hir, arg, seen, sender_aliases))
-        }
-        ExprKind::Binary(lhs, _, rhs) => {
-            expr_reads_sender(hir, lhs, seen, sender_aliases)
-                || expr_reads_sender(hir, rhs, seen, sender_aliases)
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => expr_reads_sender(hir, inner, seen, sender_aliases),
-        ExprKind::Index(base, index) => {
-            expr_reads_sender(hir, base, seen, sender_aliases)
-                || index.is_some_and(|index| expr_reads_sender(hir, index, seen, sender_aliases))
-        }
-        ExprKind::Slice(base, start, end) => {
-            expr_reads_sender(hir, base, seen, sender_aliases)
-                || start.is_some_and(|start| expr_reads_sender(hir, start, seen, sender_aliases))
-                || end.is_some_and(|end| expr_reads_sender(hir, end, seen, sender_aliases))
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            expr_reads_sender(hir, cond, seen, sender_aliases)
-                || expr_reads_sender(hir, true_expr, seen, sender_aliases)
-                || expr_reads_sender(hir, false_expr, seen, sender_aliases)
-        }
-        ExprKind::Array(exprs) => {
-            exprs.iter().any(|expr| expr_reads_sender(hir, expr, seen, sender_aliases))
-        }
-        ExprKind::Tuple(exprs) => exprs
-            .iter()
-            .copied()
-            .flatten()
-            .any(|expr| expr_reads_sender(hir, expr, seen, sender_aliases)),
-        ExprKind::Assign(_, _, rhs) => expr_reads_sender(hir, rhs, seen, sender_aliases),
-        _ => false,
-    }
-}
-
-fn function_reads_sender(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    if !seen.insert(func_id) {
-        return false;
-    }
-
-    let func = hir.function(func_id);
-    let Some(body) = func.body else { return false };
-    let mut sender_aliases = HashSet::new();
-    body.stmts.iter().any(|stmt| stmt_reads_sender(hir, stmt, seen, &mut sender_aliases))
-}
-
-fn stmt_reads_sender(
-    hir: &hir::Hir<'_>,
-    stmt: &hir::Stmt<'_>,
-    seen: &mut HashSet<FunctionId>,
-    sender_aliases: &mut HashSet<VariableId>,
-) -> bool {
-    match stmt.kind {
-        StmtKind::DeclSingle(var_id) => {
-            let reads = hir
-                .variable(var_id)
-                .initializer
-                .is_some_and(|init| expr_reads_sender(hir, init, seen, sender_aliases));
-            update_sender_alias_from_decl(hir, var_id, seen, sender_aliases);
-            reads
-        }
-        StmtKind::Expr(expr) => {
-            let reads = expr_reads_sender(hir, expr, seen, sender_aliases);
-            update_sender_aliases_from_assignment(hir, expr, seen, sender_aliases);
-            reads
-        }
-        StmtKind::DeclMulti(_, expr) | StmtKind::Emit(expr) | StmtKind::Revert(expr) => {
-            expr_reads_sender(hir, expr, seen, sender_aliases)
-        }
-        StmtKind::Return(Some(expr)) => expr_reads_sender(hir, expr, seen, sender_aliases),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            block.stmts.iter().any(|stmt| stmt_reads_sender(hir, stmt, seen, sender_aliases))
-        }
-        StmtKind::If(cond, then_stmt, else_stmt) => {
-            expr_reads_sender(hir, cond, seen, sender_aliases)
-                || {
-                    let mut then_aliases = sender_aliases.clone();
-                    stmt_reads_sender(hir, then_stmt, seen, &mut then_aliases)
-                }
-                || else_stmt.is_some_and(|stmt| {
-                    let mut else_aliases = sender_aliases.clone();
-                    stmt_reads_sender(hir, stmt, seen, &mut else_aliases)
-                })
-        }
-        StmtKind::Try(try_stmt) => {
-            expr_reads_sender(hir, &try_stmt.expr, seen, sender_aliases)
-                || try_stmt.clauses.iter().any(|clause| {
-                    let mut clause_aliases = sender_aliases.clone();
-                    clause
-                        .block
-                        .stmts
-                        .iter()
-                        .any(|stmt| stmt_reads_sender(hir, stmt, seen, &mut clause_aliases))
-                })
-        }
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::AssemblyBlock(_)
-        | StmtKind::Switch(_)
-        | StmtKind::Err(_) => false,
-    }
-}
-
-fn is_sender_member(expr: &hir::Expr<'_>) -> bool {
-    let ExprKind::Member(base, member) = &expr.peel_parens().kind else { return false };
-    let ExprKind::Ident(reses) = &base.peel_parens().kind else { return false };
-
-    reses.iter().any(|res| {
-        let Res::Builtin(builtin) = res else { return false };
-        matches!((builtin.name(), member.name), (sym::msg, sym::sender) | (sym::tx, kw::Origin))
-    })
-}
-
-fn name_looks_like_access_control(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower == "auth"
-        || lower == "requiresauth"
-        || lower == "restricted"
-        || lower.starts_with("onlyadmin")
-        || lower.starts_with("onlyguardian")
-        || lower.starts_with("onlymanager")
-        || lower.starts_with("onlyowner")
-        || lower.starts_with("onlyrole")
-        || lower.starts_with("checkadmin")
-        || lower.starts_with("_checkadmin")
-        || lower.starts_with("checkguardian")
-        || lower.starts_with("_checkguardian")
-        || lower.starts_with("checkmanager")
-        || lower.starts_with("_checkmanager")
-        || lower.starts_with("checkowner")
-        || lower.starts_with("_checkowner")
-        || lower.starts_with("checkrole")
-        || lower.starts_with("_checkrole")
-}
-
-fn emitted_event_id(expr: &hir::Expr<'_>) -> Option<EventId> {
-    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return None };
-    resolved_event_id(callee)
-}
-
-fn resolved_event_id(expr: &hir::Expr<'_>) -> Option<EventId> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
-            let Res::Item(ItemId::Event(event_id)) = res else { return None };
-            Some(*event_id)
-        }),
-        ExprKind::Member(base, _) => resolved_event_id(base),
-        _ => None,
-    }
-}
-
-fn event_mentions_state_var(hir: &hir::Hir<'_>, event_id: EventId, var_id: VariableId) -> bool {
-    let Some(var_name) = hir.variable(var_id).name else { return false };
-    let keywords = state_var_event_keywords(var_name.as_str());
-    let event = hir.event(event_id);
-
-    name_contains_event_keyword(event.name.as_str(), &keywords)
-        || event.parameters.iter().any(|param_id| {
-            hir.variable(*param_id)
-                .name
-                .is_some_and(|name| name_contains_event_keyword(name.as_str(), &keywords))
-        })
-}
-
-fn state_var_event_keywords(name: &str) -> Vec<String> {
-    let normalized = normalize_event_name_part(name);
-    let mut out = Vec::from([normalized.clone()]);
-
-    if let Some(singular) = normalized.strip_suffix('s')
-        && !singular.is_empty()
-    {
-        out.push(singular.to_string());
-    }
-
-    for keyword in ["owner", "admin", "guardian", "manager", "role"] {
-        if normalized.contains(keyword) {
-            out.push(keyword.to_string());
-        }
-    }
-
-    out
-}
-
-fn name_contains_event_keyword(name: &str, keywords: &[String]) -> bool {
-    let normalized = normalize_event_name_part(name);
-    keywords.iter().any(|keyword| !keyword.is_empty() && normalized.contains(keyword))
-}
-
-fn normalize_event_name_part(name: &str) -> String {
-    name.chars().filter(|ch| ch.is_ascii_alphanumeric()).map(|ch| ch.to_ascii_lowercase()).collect()
-}
-
-fn called_function_ids(expr: &hir::Expr<'_>) -> HashSet<FunctionId> {
-    let mut out = HashSet::new();
-    collect_called_function_ids(expr, &mut out);
-    out
-}
-
-fn collect_called_function_ids(expr: &hir::Expr<'_>, out: &mut HashSet<FunctionId>) {
-    match &expr.peel_parens().kind {
-        ExprKind::Call(callee, args, opts) => {
-            out.extend(resolved_function_ids(callee));
-            collect_called_function_ids(callee, out);
-            if let Some(opts) = opts {
-                for opt in opts.args {
-                    collect_called_function_ids(&opt.value, out);
-                }
-            }
-            for arg in args.exprs() {
-                collect_called_function_ids(arg, out);
-            }
-        }
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            collect_called_function_ids(lhs, out);
-            collect_called_function_ids(rhs, out);
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => collect_called_function_ids(inner, out),
-        ExprKind::Index(base, index) => {
-            collect_called_function_ids(base, out);
-            if let Some(index) = index {
-                collect_called_function_ids(index, out);
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            collect_called_function_ids(base, out);
-            if let Some(start) = start {
-                collect_called_function_ids(start, out);
-            }
-            if let Some(end) = end {
-                collect_called_function_ids(end, out);
-            }
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            collect_called_function_ids(cond, out);
-            collect_called_function_ids(true_expr, out);
-            collect_called_function_ids(false_expr, out);
-        }
-        ExprKind::Array(exprs) => {
-            for expr in *exprs {
-                collect_called_function_ids(expr, out);
-            }
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().copied().flatten() {
-                collect_called_function_ids(expr, out);
-            }
-        }
-        ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::YulMember(..)
-        | ExprKind::Err(_) => {}
-    }
-}
-
-fn resolved_function_ids<'hir>(
-    callee: &'hir hir::Expr<'hir>,
-) -> impl Iterator<Item = FunctionId> + 'hir {
-    let reses = match &callee.peel_parens().kind {
-        ExprKind::Ident(reses) => *reses,
-        _ => &[],
-    };
-    reses.iter().filter_map(|res| match res {
-        Res::Item(ItemId::Function(func_id)) => Some(*func_id),
-        _ => None,
-    })
 }

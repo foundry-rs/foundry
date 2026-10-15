@@ -1,4 +1,3 @@
-use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -20,8 +19,7 @@ use foundry_cli::{
     },
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
-    compile::{self},
+    FoundryTransactionBuilder, compile,
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
@@ -164,6 +162,24 @@ impl CreateArgs {
         }
         let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain.id()).await?;
 
+        // Never deploy from an account other than the one explicitly selected by the user. Unlocked
+        // and browser deployments do not use the resolved signer.
+        let deployer = signer
+            .as_ref()
+            .map(|signer| signer.address())
+            .or_else(|| tempo_access_key.as_ref().map(|ak| ak.account()));
+        if !self.unlocked
+            && !self.browser.browser
+            && let Some(from) = self.eth.wallet.from
+            && let Some(deployer) = deployer
+            && from != deployer
+        {
+            eyre::bail!(
+                "the sender specified via `--from`/`ETH_FROM` ({from}) does not match the \
+                 signer address ({deployer})"
+            );
+        }
+
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
@@ -186,11 +202,7 @@ impl CreateArgs {
         let resolve_unknown_fee_token_symbol = !config.eth_rpc_curl;
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            // need to re-configure here to also catch additional remappings
-            config = self.load_config()?;
-        }
+        self.install_missing_dependencies(&mut config)?;
 
         // Find Project & Compile
         let project = config.project()?;
@@ -201,7 +213,11 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
+        let compiler = compile::ProjectCompiler::new()
+            .external_compilers(&config)
+            .quiet(shell::is_json())
+            .target_files([target_path.clone()]);
+        let output = compiler.compile(&project)?;
 
         let (abi, bin, id) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
 
@@ -455,7 +471,7 @@ impl CreateArgs {
 
         let provider = Arc::new(provider);
         let factory =
-            ContractFactory::<N, _>::new(abi.clone(), bin.clone(), provider.clone(), timeout);
+            DeploymentTxFactory::<N, _>::new(abi.clone(), bin.clone(), provider.clone(), timeout);
 
         let is_args_empty = args.is_empty();
         let mut deployer =
@@ -550,7 +566,7 @@ impl CreateArgs {
         }
 
         if self.tx.gas_limit.is_none() {
-            let request = if browser_signer.is_some() && chain.is_tempo() {
+            let request = if browser_signer.is_some() {
                 deployer.tx.browser_wallet_gas_estimation_request()
             } else {
                 deployer.tx.clone()
@@ -611,7 +627,6 @@ impl CreateArgs {
             sponsor
                 .resolve_and_set_fee_token(
                     resolve_unknown_fee_token_symbol.then_some(&provider),
-                    Some(chain),
                     &mut deployer.tx,
                 )
                 .await?;
@@ -619,7 +634,6 @@ impl CreateArgs {
         } else {
             let fee_token = resolve_and_set_fee_token(
                 resolve_unknown_fee_token_symbol.then_some(&provider),
-                Some(chain),
                 &mut deployer.tx,
                 Some(deployer_address),
             )
@@ -757,13 +771,6 @@ impl figment::Provider for CreateArgs {
     }
 }
 
-/// `ContractFactory` is a [`DeploymentTxFactory`] object with an
-/// [`Arc`] middleware. This type alias exists to preserve backwards
-/// compatibility with less-abstract Contracts.
-///
-/// For full usage docs, see [`DeploymentTxFactory`].
-pub type ContractFactory<N, P> = DeploymentTxFactory<N, P>;
-
 /// Helper which manages the deployment transaction of a smart contract. It
 /// wraps a deployment transaction, and retrieves the contract address output
 /// by it.
@@ -829,7 +836,7 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
     }
 }
 
-/// To deploy a contract to the Ethereum network, a [`ContractFactory`] can be
+/// To deploy a contract to the Ethereum network, a [`DeploymentTxFactory`] can be
 /// created which manages the Contract bytecode and Application Binary Interface
 /// (ABI), usually generated from the Solidity compiler.
 #[derive(Clone, Debug)]
@@ -905,6 +912,7 @@ mod tests {
     use super::*;
     use alloy_json_abi::Constructor;
     use alloy_primitives::I256;
+    use foundry_cli::utils::parse_json;
 
     #[test]
     fn can_parse_create() {
@@ -982,7 +990,7 @@ mod tests {
             "--constructor-args",
             "Hello",
         ]);
-        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"string","internalType":"string"}],"stateMutability":"nonpayable"}"#).unwrap();
+        let constructor: Constructor = parse_json(r#"{"type":"constructor","inputs":[{"name":"_name","type":"string","internalType":"string"}],"stateMutability":"nonpayable"}"#).unwrap();
         let params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::String("Hello".to_string())]);
     }
@@ -995,7 +1003,7 @@ mod tests {
             "--constructor-args",
             "[(1,2), (2,3), (3,4)]",
         ]);
-        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
+        let constructor: Constructor = parse_json(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
         let _params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
     }
 
@@ -1007,7 +1015,7 @@ mod tests {
             "--constructor-args",
             "-5",
         ]);
-        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
+        let constructor: Constructor = parse_json(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
         let params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
     }

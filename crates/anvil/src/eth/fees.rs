@@ -1,3 +1,14 @@
+use crate::eth::{
+    backend::{info::StorageInfo, notifications::ChainNotifications},
+    error::BlockchainError,
+};
+use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_network::Network;
+use alloy_primitives::{B256, Bytes};
+use futures::StreamExt;
+use parking_lot::{Mutex, RwLock};
+use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -5,23 +16,26 @@ use std::{
     sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
-
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
-use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_network::Network;
-use alloy_primitives::B256;
-use futures::StreamExt;
-use parking_lot::{Mutex, RwLock};
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
-use crate::eth::{
-    backend::{info::StorageInfo, notifications::ChainNotifications},
-    error::BlockchainError,
-};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+
+#[cfg(feature = "optimism")]
+mod optimism;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
+
+/// Number of cached reward samples per percentile.
+pub(crate) const REWARD_PERCENTILE_RESOLUTION: f64 = 2.0;
+
+/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
+///
+/// Constant across blocks, so it is computed once instead of being rebuilt on every
+/// `create_fee_history_cache_item` call.
+static REWARD_PERCENTILES: LazyLock<Vec<f64>> =
+    LazyLock::new(|| (0..=200).map(|index| index as f64 / REWARD_PERCENTILE_RESOLUTION).collect());
 
 /// Initial base fee for EIP-1559 blocks.
 pub const INITIAL_BASE_FEE: u64 = 1_000_000_000;
@@ -47,9 +61,90 @@ pub struct FeeManager {
 #[derive(Clone, Copy, Debug)]
 struct FeeRules {
     spec_id: SpecId,
-    base_fee_params: BaseFeeParams,
+    base_fee: BaseFeeRules,
     /// The active Tempo hardfork, set only when running a Tempo chain.
     tempo_hardfork: Option<TempoHardfork>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BaseFeeRules {
+    Standard(BaseFeeParams),
+    #[cfg(feature = "optimism")]
+    Optimism {
+        inherited: Option<optimism::OptimismBaseFeeRules>,
+        fallback: BaseFeeParams,
+    },
+}
+
+impl BaseFeeRules {
+    const fn params(self) -> BaseFeeParams {
+        match self {
+            Self::Standard(params) => params,
+            #[cfg(feature = "optimism")]
+            Self::Optimism { inherited, fallback } => {
+                if let Some(rules) = inherited {
+                    rules.params()
+                } else {
+                    fallback
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::missing_const_for_fn)] // Optimism extra-data encoding is not const.
+    fn extra_data(self) -> Bytes {
+        match self {
+            Self::Standard(_) => Bytes::new(),
+            #[cfg(feature = "optimism")]
+            Self::Optimism { inherited, .. } => {
+                inherited.map_or_else(Bytes::new, optimism::OptimismBaseFeeRules::extra_data)
+            }
+        }
+    }
+
+    fn parent_header_fees<H: BlockHeader>(self, header: &H) -> ParentHeaderFees {
+        match self {
+            Self::Standard(params) => ParentHeaderFees {
+                base_fee: calc_next_block_base_fee(
+                    header.gas_used(),
+                    header.gas_limit(),
+                    header.base_fee_per_gas().unwrap_or_default(),
+                    params,
+                ),
+                ..Default::default()
+            },
+            #[cfg(feature = "optimism")]
+            Self::Optimism { fallback, .. } => {
+                let inherited = optimism::OptimismBaseFeeRules::decode(header.extra_data());
+                ParentHeaderFees {
+                    base_fee: inherited.map_or_else(
+                        || {
+                            calc_next_block_base_fee(
+                                header.gas_used(),
+                                header.gas_limit(),
+                                header.base_fee_per_gas().unwrap_or_default(),
+                                fallback,
+                            )
+                        },
+                        |rules| rules.next_block_base_fee(header),
+                    ),
+                    extra_data: inherited
+                        .map_or_else(Bytes::new, optimism::OptimismBaseFeeRules::extra_data),
+                    optimism_jovian: inherited.map(optimism::OptimismBaseFeeRules::is_jovian),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ParentHeaderFees {
+    /// Base fee inherited by the child block.
+    pub(crate) base_fee: u64,
+    /// Dynamic fee parameters inherited by the child block.
+    pub(crate) extra_data: Bytes,
+    /// Whether the decoded Optimism fee parameters activate Jovian.
+    pub(crate) optimism_jovian: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -62,6 +157,13 @@ struct FeeState {
     blob_excess_gas_and_price: BlobExcessGasAndPrice,
     /// Legacy gas price.
     gas_price: u128,
+}
+
+/// Chain-derived fee state for the next block.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeeSnapshot {
+    base_fee: u64,
+    blob_excess_gas_and_price: BlobExcessGasAndPrice,
 }
 
 impl FeeManager {
@@ -78,7 +180,11 @@ impl FeeManager {
     ) -> Self {
         Self {
             state: Arc::new(RwLock::new(FeeState {
-                rules: FeeRules { spec_id, base_fee_params, tempo_hardfork },
+                rules: FeeRules {
+                    spec_id,
+                    base_fee: BaseFeeRules::Standard(base_fee_params),
+                    tempo_hardfork,
+                },
                 blob_params,
                 base_fee,
                 blob_excess_gas_and_price,
@@ -90,22 +196,48 @@ impl FeeManager {
 
     /// Creates an independent copy suitable for staging a fork reset.
     pub(crate) fn detached(&self) -> Self {
-        let state = *self.state.read();
-        Self::new(
-            state.rules.spec_id,
-            state.base_fee,
-            self.is_min_priority_fee_enforced,
-            state.gas_price,
-            state.blob_excess_gas_and_price,
-            state.blob_params,
-            state.rules.base_fee_params,
-            state.rules.tempo_hardfork,
-        )
+        Self {
+            state: Arc::new(RwLock::new(*self.state.read())),
+            is_min_priority_fee_enforced: self.is_min_priority_fee_enforced,
+        }
     }
 
     /// Replaces all mutable fee state with a staged manager's values.
     pub(crate) fn replace_from(&self, other: &Self) {
         *self.state.write() = *other.state.read();
+    }
+
+    /// Captures the chain-derived fee state for the next block.
+    pub(crate) fn snapshot(&self) -> FeeSnapshot {
+        let state = self.state.read();
+        FeeSnapshot {
+            base_fee: state.base_fee,
+            blob_excess_gas_and_price: state.blob_excess_gas_and_price,
+        }
+    }
+
+    /// Restores the chain-derived fee state for the next block.
+    pub(crate) fn restore(&self, snapshot: FeeSnapshot) {
+        let mut state = self.state.write();
+        state.base_fee = snapshot.base_fee;
+        state.blob_excess_gas_and_price = snapshot.blob_excess_gas_and_price;
+    }
+
+    /// Atomically publishes the chain-derived fee state for the next block.
+    pub(crate) fn set_next_block_fees(
+        &self,
+        base_fee: u64,
+        blob_excess_gas_and_price: BlobExcessGasAndPrice,
+    ) {
+        trace!(
+            target: "backend::fees",
+            ?base_fee,
+            ?blob_excess_gas_and_price,
+            "updated next block fees"
+        );
+        let mut state = self.state.write();
+        state.base_fee = base_fee;
+        state.blob_excess_gas_and_price = blob_excess_gas_and_price;
     }
 
     /// Returns the active Tempo hardfork, if running a Tempo chain.
@@ -120,11 +252,43 @@ impl FeeManager {
         base_fee_params: BaseFeeParams,
         tempo_hardfork: Option<TempoHardfork>,
     ) {
-        self.state.write().rules = FeeRules { spec_id, base_fee_params, tempo_hardfork };
+        self.state.write().rules =
+            FeeRules { spec_id, base_fee: BaseFeeRules::Standard(base_fee_params), tempo_hardfork };
+    }
+
+    /// Applies the dynamic EIP-1559 parameters encoded in an Optimism-family parent header.
+    #[cfg(feature = "optimism")]
+    pub(crate) fn set_optimism_base_fee_rules(&self, extra_data: &[u8]) {
+        let mut state = self.state.write();
+        let fallback = match state.rules.base_fee {
+            BaseFeeRules::Standard(params) | BaseFeeRules::Optimism { fallback: params, .. } => {
+                params
+            }
+        };
+        state.rules.base_fee = BaseFeeRules::Optimism {
+            inherited: optimism::OptimismBaseFeeRules::decode(extra_data),
+            fallback,
+        };
+    }
+
+    /// Initializes Optimism-family fee rules for a node that is not inheriting a fork header.
+    #[cfg(feature = "optimism")]
+    pub(crate) fn set_optimism_hardfork(&self, hardfork: OpHardfork) {
+        let mut state = self.state.write();
+        let fallback = state.rules.base_fee.params();
+        state.rules.base_fee = BaseFeeRules::Optimism {
+            inherited: optimism::OptimismBaseFeeRules::for_hardfork(hardfork, fallback),
+            fallback,
+        };
+    }
+
+    /// Returns the Optimism-family EIP-1559 parameters inherited by locally built blocks.
+    pub(crate) fn base_fee_extra_data(&self) -> Bytes {
+        self.state.read().rules.base_fee.extra_data()
     }
 
     pub fn elasticity(&self) -> f64 {
-        1f64 / self.state.read().rules.base_fee_params.elasticity_multiplier as f64
+        1f64 / self.state.read().rules.base_fee.params().elasticity_multiplier as f64
     }
 
     /// Returns true for post London
@@ -211,6 +375,7 @@ impl FeeManager {
 
     /// Calculates the next block base fee from the parent block without applying the configured
     /// zero-fee sentinel.
+    #[cfg(test)]
     pub(crate) fn calculate_next_block_base_fee_per_gas(
         &self,
         gas_used: u64,
@@ -224,19 +389,57 @@ impl FeeManager {
         calculate_next_block_base_fee_per_gas(rules, gas_used, gas_limit, last_fee_per_gas)
     }
 
+    /// Calculates the next block base fee from a complete parent header.
+    pub(crate) fn get_next_block_base_fee_from_header<H: BlockHeader>(&self, header: &H) -> u64 {
+        let state = self.state.read();
+        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+            return 0;
+        }
+        calculate_parent_header_fees(state.rules, header).base_fee
+    }
+
+    /// Returns all fee metadata inherited from a parent header, honoring the configured zero-fee
+    /// sentinel.
+    pub(crate) fn get_parent_header_fees<H: BlockHeader>(&self, header: &H) -> ParentHeaderFees {
+        let state = self.state.read();
+        let mut fees = calculate_parent_header_fees(state.rules, header);
+        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+            fees.base_fee = 0;
+        }
+        fees
+    }
+
+    /// Calculates the next block base fee from a complete parent header without applying the
+    /// configured zero-fee sentinel.
+    pub(crate) fn calculate_next_block_base_fee_from_header<H: BlockHeader>(
+        &self,
+        header: &H,
+    ) -> u64 {
+        let rules = self.state.read().rules;
+        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+            return 0;
+        }
+        calculate_parent_header_fees(rules, header).base_fee
+    }
+
+    /// Returns all fee metadata inherited from a parent header without applying the configured
+    /// zero-fee sentinel.
+    pub(crate) fn calculate_parent_header_fees<H: BlockHeader>(
+        &self,
+        header: &H,
+    ) -> ParentHeaderFees {
+        let rules = self.state.read().rules;
+        let mut fees = calculate_parent_header_fees(rules, header);
+        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+            fees.base_fee = 0;
+        }
+        fees
+    }
+
     /// Calculates the next block blob base fee.
     pub fn get_next_block_blob_base_fee_per_gas(&self) -> u128 {
         let state = self.state.read();
         state.blob_params.calc_blob_fee(state.blob_excess_gas_and_price.excess_blob_gas)
-    }
-
-    /// Calculates the next block blob excess gas, using the provided parent blob excess gas and
-    /// parent blob gas used
-    pub fn get_next_block_blob_excess_gas(&self, blob_excess_gas: u64, blob_gas_used: u64) -> u64 {
-        let state = self.state.read();
-        let base_fee =
-            if (state.rules.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 };
-        state.blob_params.next_block_excess_blob_gas_osaka(blob_excess_gas, blob_gas_used, base_fee)
     }
 
     /// Configures the blob params
@@ -260,7 +463,21 @@ fn calculate_next_block_base_fee_per_gas(
     if let Some(hardfork) = rules.tempo_hardfork {
         return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
     }
-    calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, rules.base_fee_params)
+    calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, rules.base_fee.params())
+}
+
+fn calculate_parent_header_fees<H: BlockHeader>(rules: FeeRules, header: &H) -> ParentHeaderFees {
+    if let Some(hardfork) = rules.tempo_hardfork {
+        return ParentHeaderFees {
+            base_fee: tempo_next_block_base_fee(
+                hardfork,
+                header.gas_used(),
+                header.base_fee_per_gas().unwrap_or_default(),
+            ),
+            ..Default::default()
+        };
+    }
+    rules.base_fee.parent_header_fees(header)
 }
 
 /// Computes the next block's base fee for a Tempo chain.
@@ -361,21 +578,6 @@ pub(crate) fn insert_fee_history_cache_item(
     }
 }
 
-/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
-///
-/// Constant across blocks, so it is computed once instead of being rebuilt on every
-/// `create_fee_history_cache_item` call.
-static REWARD_PERCENTILES: LazyLock<Vec<f64>> = LazyLock::new(|| {
-    let mut percentile: f64 = 0.0;
-    (0..=200)
-        .map(|_| {
-            let val = percentile;
-            percentile += 0.5;
-            val
-        })
-        .collect()
-});
-
 /// Calculates percentile rewards from transactions sorted by effective reward.
 ///
 /// [`REWARD_PERCENTILES`] must remain ascending because the transaction cursor never rewinds.
@@ -438,7 +640,8 @@ where
 
         let gas_used = block.header.gas_used() as f64;
         let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
-        item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
+        let gas_limit = block.header.gas_limit() as f64;
+        item.gas_used_ratio = if gas_limit == 0.0 { 0.0 } else { gas_used / gas_limit };
         item.blob_gas_used_ratio = blob_gas_used
             .map(|g| {
                 let max = blob_params.max_blob_gas_per_block() as f64;
@@ -538,7 +741,6 @@ impl FeeDetails {
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
         let gas_price = if no_fees { Some(0) } else { gas_price };
         let max_fee_per_gas = if no_fees { Some(0) } else { max_fee_per_gas };
-        let max_fee_per_blob_gas = if no_fees { None } else { max_fee_per_blob_gas };
 
         Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas }
     }
@@ -558,13 +760,16 @@ impl FeeDetails {
         max_fee_per_blob_gas: Option<u128>,
     ) -> Result<Self, BlockchainError> {
         match (request_gas_price, request_max_fee, request_priority, max_fee_per_blob_gas) {
-            (gas_price, None, None, None) => {
-                // Legacy request, all default to gas price.
+            (Some(_), Some(_), _, _) | (Some(_), _, Some(_), _) => {
+                Err(BlockchainError::ConflictingFeeFields)
+            }
+            (gas_price, None, None, max_fee_per_blob_gas) => {
+                // Legacy request, all default to gas price. A blob fee cap is priced separately.
                 Ok(Self {
                     gas_price,
                     max_fee_per_gas: gas_price,
                     max_priority_fee_per_gas: gas_price,
-                    max_fee_per_blob_gas: None,
+                    max_fee_per_blob_gas,
                 })
             }
             (_, max_fee, max_priority, max_fee_per_blob_gas) => {
@@ -579,7 +784,8 @@ impl FeeDetails {
                 Ok(Self {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
-                    max_priority_fee_per_gas: max_priority,
+                    // A fee cap without a tip pays the base fee only.
+                    max_priority_fee_per_gas: max_priority.or(max_fee.map(|_| 0)),
                     max_fee_per_blob_gas,
                 })
             }
@@ -658,6 +864,26 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn pre_london_parent_fees_preserve_optimism_metadata() {
+        let fees = fee_manager(SpecId::BERLIN);
+        let jovian = [1, 0, 0, 0, 250, 0, 0, 0, 2, 0, 0, 0, 0, 0, 76, 75, 64];
+        fees.set_optimism_base_fee_rules(&jovian);
+        let header = alloy_consensus::Header { extra_data: jovian.into(), ..Default::default() };
+
+        let parent_fees = fees.get_parent_header_fees(&header);
+        assert_eq!(parent_fees.base_fee, 0);
+        assert_eq!(parent_fees.extra_data.as_ref(), jovian);
+        assert_eq!(parent_fees.optimism_jovian, Some(true));
+    }
+
+    #[test]
+    fn fee_details_default_missing_tip_to_zero() {
+        let fees = FeeDetails::new(None, Some(5), None, None).unwrap();
+        assert_eq!(fees.split(), (Some(5), Some(5), Some(0), None));
+    }
+
     #[test]
     fn reward_percentile_sweep_preserves_boundaries_and_empty_results() {
         assert_reward_percentiles_match(&mut [], 0);
@@ -700,5 +926,21 @@ mod tests {
     fn next_random(state: &mut u64) -> u64 {
         *state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         *state
+    }
+
+    #[test]
+    fn fee_details_reject_gas_price_with_dynamic_fees() {
+        for (max_fee, priority) in [(Some(2), None), (None, Some(1)), (Some(2), Some(1))] {
+            assert!(matches!(
+                FeeDetails::new(Some(2), max_fee, priority, None),
+                Err(BlockchainError::ConflictingFeeFields)
+            ));
+        }
+    }
+
+    #[test]
+    fn fee_details_price_legacy_blob_calls_by_gas_price() {
+        let fees = FeeDetails::new(Some(2), None, None, Some(1)).unwrap();
+        assert_eq!(fees.split(), (Some(2), Some(2), Some(2), Some(1)));
     }
 }

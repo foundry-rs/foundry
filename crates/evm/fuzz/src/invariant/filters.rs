@@ -70,4 +70,10 @@ impl SenderFilters {
         targeted.retain(|addr| !excluded.contains(addr));
         Self { targeted, excluded }
     }
+
+    /// Returns whether `sender` is permitted by the configured target and exclusion filters.
+    pub fn allows(&self, sender: Address) -> bool {
+        (self.targeted.is_empty() || self.targeted.contains(&sender))
+            && !self.excluded.contains(&sender)
+    }
 }

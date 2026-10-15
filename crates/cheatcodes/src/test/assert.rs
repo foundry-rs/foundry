@@ -1,5 +1,5 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{I256, U256, U512};
+use alloy_primitives::{I256, U256, U512, uint};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
@@ -11,7 +11,7 @@ use itertools::Itertools;
 use revm::context::{ContextTr, JournalTr};
 use std::{borrow::Cow, fmt};
 
-const EQ_REL_DELTA_RESOLUTION: U256 = U256::from_limbs([18, 0, 0, 0]);
+const EQ_REL_DELTA_RESOLUTION: U256 = uint!(18_U256);
 
 struct ComparisonAssertionError<'a, T> {
     kind: AssertionKind,
@@ -210,11 +210,11 @@ fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
     executor: &mut dyn CheatcodesExecutor<FEN>,
     msg: Cow<'_, str>,
 ) -> Result {
-    if ccx.state.config.assertions_revert {
+    if ccx.state.core.config.assertions_revert {
         Err(msg.into_owned().into())
     } else {
         executor.console_log(&msg);
-        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
+        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ONE)?;
         Ok(Default::default())
     }
 }

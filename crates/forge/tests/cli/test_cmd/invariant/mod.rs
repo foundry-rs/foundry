@@ -1,6 +1,11 @@
-use alloy_primitives::U256;
+use alloy_primitives::{U256, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
+};
+use std::{
+    process::Stdio,
+    thread,
+    time::{Duration, Instant},
 };
 
 mod common;
@@ -16,7 +21,8 @@ fn assert_invariant(cmd: &mut TestCommand) -> OutputAssert {
     ])
 }
 
-forgetest_init!(warns_for_ignored_bool_invariant_return, |prj, cmd| {
+#[forgetest_init]
+fn warns_for_ignored_bool_invariant_return(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
@@ -89,10 +95,11 @@ Warning: Invariant function `invariant_returnsFalse()` returns `bool`, but its r
         .args(["test", "--mc", "OptimizationInvariantTest"])
         .assert_success()
         .stderr_eq(str![""]);
-});
+}
 
 // Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
-forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {
+#[forgetest_init]
+fn should_not_fail_replay_assume(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.fail_on_revert = true;
         config.invariant.max_assume_rejects = 10;
@@ -152,11 +159,12 @@ contract AssumeTest is Test {
 [FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_assume() (runs: 0, calls: 0, reverts: 0)
 ...
 "#]]);
-});
+}
 
 // Test too many inputs rejected for `assumePrecompile`/`assumeForgeAddress`.
 // <https://github.com/foundry-rs/foundry/issues/9054>
-forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
+#[forgetest_init]
+fn should_revert_with_assume_code(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.fail_on_revert = true;
         config.invariant.max_assume_rejects = 10;
@@ -203,11 +211,12 @@ contract BalanceAssumeTest is Test {
 [FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: [..], calls: [..], reverts: 0)
 ...
 "#]]);
-});
+}
 
 // Test proper message displayed if `targetSelector`/`excludeSelector` called with empty selectors.
 // <https://github.com/foundry-rs/foundry/issues/9066>
-forgetest_init!(should_not_panic_if_no_selectors, |prj, cmd| {
+#[forgetest_init]
+fn should_not_panic_if_no_selectors(prj: _, cmd: _) {
     prj.add_test(
         "NoSelectorTest.t.sol",
         r#"
@@ -234,9 +243,10 @@ contract NoSelectorTest is Test {
 [FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(should_not_panic_if_selectors_are_targeted_and_excluded, |prj, cmd| {
+#[forgetest_init]
+fn should_not_panic_if_selectors_are_targeted_and_excluded(prj: _, cmd: _) {
     prj.add_test(
         "ContradictorySelectorTest.t.sol",
         r#"
@@ -267,10 +277,11 @@ contract ContradictorySelectorTest is Test {
 [FAIL: failed to set up invariant testing environment: No functions to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0)
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/3607>
-forgetest_init!(should_show_invariant_metrics, |prj, cmd| {
+#[forgetest_init]
+fn should_show_invariant_metrics(prj: _, cmd: _) {
     prj.add_test(
         "SelectorMetricsTest.t.sol",
         r#"
@@ -343,10 +354,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // Tests that invariant exists with success after configured timeout.
-forgetest_init!(should_apply_configured_timeout, |prj, cmd| {
+#[forgetest_init]
+fn should_apply_configured_timeout(prj: _, cmd: _) {
     // Add initial test that breaks invariant.
     prj.add_test(
         "TimeoutTest.t.sol",
@@ -399,11 +411,12 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
-forgetest_init!(invariant_selectors_weight, |prj, cmd| {
+#[forgetest_init]
+fn invariant_selectors_weight(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -472,12 +485,36 @@ contract InvariantSelectorsWeightTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
-});
+    cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantSelectorsWeightTest.t.sol:InvariantSelectorsWeightTest
+[PASS] invariant_selectors_weight() (runs: 1, calls: 10, reverts: 0)
+
+╭------------+-----------+-------+---------+----------╮
+| Contract   | Selector  | Calls | Reverts | Discards |
++=====================================================+
+| HandlerOne | selector1 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector2 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector3 | 3     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector4 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector5 | 1     | 0       | 0        |
+╰------------+-----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 // Tests original and new counterexample lengths are displayed on failure.
 // Tests switch from regular sequence output to solidity.
-forgetest_init!(invariant_sequence_len, |prj, cmd| {
+#[forgetest_init]
+fn invariant_sequence_len(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(10u32));
@@ -595,11 +632,12 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
 // Tests that persisted failure is discarded if test contract was modified.
 // <https://github.com/foundry-rs/foundry/issues/9965>
-forgetest_init!(invariant_replay_with_different_bytecode, |prj, cmd| {
+#[forgetest_init]
+fn invariant_replay_with_different_bytecode(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 5;
@@ -690,9 +728,10 @@ Warning: Failure from [FAILURE_PATH] file was ignored because invariant test set
 [PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(invariant_replay_preserves_fail_reason, |prj, cmd| {
+#[forgetest_init]
+fn invariant_replay_preserves_fail_reason(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 1;
@@ -728,9 +767,10 @@ contract InvariantReplayFailReason is Test {
 [FAIL: assertion failed] invariant_fail_reason() (runs: 1, calls: 1, reverts: 0)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(invariant_replay_preserves_custom_error_reason, |prj, cmd| {
+#[forgetest_init]
+fn invariant_replay_preserves_custom_error_reason(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 1;
@@ -788,9 +828,10 @@ contract InvariantReplayCustomError is Test {
 [FAIL: [..]custom[..]][..]
 ...
 "#]]);
-});
+}
 
-forgetest_init!(invariant_replay_preserves_invariant_custom_error_reason, |prj, cmd| {
+#[forgetest_init]
+fn invariant_replay_preserves_invariant_custom_error_reason(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 1;
@@ -830,10 +871,11 @@ contract InvariantReplayInvariantCustomError is Test {
 [FAIL: InvariantCustomError(222, "invariant custom")] invariant_custom_error_reason_from_invariant() (runs: 1, calls: 1, reverts: 0)
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10253>
-forgetest_init!(invariant_test_target, |prj, cmd| {
+#[forgetest_init]
+fn invariant_test_target(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 5;
@@ -894,11 +936,12 @@ contract InvariantTest is Test {
 ...
 "#]],
     );
-});
+}
 
 // Tests that reserved test functions are not fuzzed when test is set as target.
 // <https://github.com/foundry-rs/foundry/issues/10469>
-forgetest_init!(invariant_target_test_contract_selectors, |prj, cmd| {
+#[forgetest_init]
+fn invariant_target_test_contract_selectors(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 10;
         config.invariant.depth = 100;
@@ -985,12 +1028,13 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // Tests that `targetSelector` and `excludeSelector` applied on test contract selectors are
 // applied.
 // <https://github.com/foundry-rs/foundry/issues/11006>
-forgetest_init!(invariant_target_test_include_exclude_selectors, |prj, cmd| {
+#[forgetest_init]
+fn invariant_target_test_include_exclude_selectors(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 10;
         config.invariant.depth = 100;
@@ -1147,9 +1191,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
-forgetest_init!(invariant_selector_focus_worker_exercises_targeted_selector, |prj, cmd| {
+#[forgetest_init]
+fn invariant_selector_focus_worker_exercises_targeted_selector(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 1;
@@ -1195,15 +1240,16 @@ contract InvariantSelectorFocusTest is Test {
     assert!(stdout.contains("[FAIL: focused]"), "{stdout}");
     assert!(stdout.contains("invariant_focus()"), "{stdout}");
     assert!(stdout.contains("aaaBreak"), "{stdout}");
-});
+}
 
-forgetest_init!(invariant_selector_focus_workers_respect_user_filters, |prj, cmd| {
+#[forgetest_init]
+fn invariant_selector_focus_workers_respect_user_filters(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 4;
         config.invariant.workers =
             foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::from(1u32));
+        config.fuzz.seed = Some(U256::ONE);
     });
     prj.add_test(
         "InvariantSelectorFocusFiltersTest.t.sol",
@@ -1262,10 +1308,11 @@ contract InvariantSelectorFocusBlocklistTest is Test {
         cmd.forge_fuse().args(["test", "--mt", "invariant_blocklist_focus"]).assert_success();
     let stdout = output.get_output().stdout_lossy();
     assert!(!stdout.contains("aaaBreak"), "{stdout}");
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11453>
-forgetest_init!(corpus_dir, |prj, cmd| {
+#[forgetest_init]
+fn corpus_dir(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 10;
@@ -1345,12 +1392,167 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
     assert!(
         prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
     );
-});
+}
 
-forgetest_init!(contract_level_invariant_corpus_dir, |prj, cmd| {
+#[forgetest_init]
+fn invariant_corpus_retains_coverage_winning_reverts(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "RevertingCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RevertingCorpusHandler {
+    uint256 public credit;
+
+    function spend(uint256 amount) external {
+        require(amount <= credit, "over credit");
+        require(amount > credit, "under credit");
+        credit = amount;
+    }
+}
+
+contract RevertingCorpusTest is Test {
+    function setUp() public {
+        RevertingCorpusHandler handler = new RevertingCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "RevertingCorpusTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/RevertingCorpusTest/worker0/corpus");
+    let selector = &keccak256("spend(uint256)")[..4];
+    let retained = std::fs::read_dir(corpus_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .map(|contents| {
+            serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap()
+        })
+        .any(|sequence| {
+            sequence.len() == 1 && sequence[0].call_details.calldata.starts_with(selector)
+        });
+    assert!(retained, "coverage-winning reverted call was not retained in the corpus");
+}
+
+#[forgetest_init]
+fn invariant_corpus_ends_at_last_coverage_call(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "CoveragePrefixTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CoveragePrefixHandler {
+    function touch() external {}
+}
+
+contract CoveragePrefixTest is Test {
+    function setUp() public {
+        CoveragePrefixHandler handler = new CoveragePrefixHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "CoveragePrefixTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/CoveragePrefixTest/worker0/corpus");
+    let entry = std::fs::read_dir(corpus_dir).unwrap().next().unwrap().unwrap();
+    let contents = std::fs::read_to_string(entry.path()).unwrap();
+    let sequence =
+        serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap();
+    assert_eq!(sequence.len(), 1);
+}
+
+#[forgetest_init]
+fn invariant_corpus_reuses_comparison_hints(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "ComparisonCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ComparisonCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        if (value >= type(uint256).max - 100) reached = true;
+    }
+}
+
+contract ComparisonCorpusTest is Test {
+    ComparisonCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ComparisonCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_comparison_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn parallel_invariant_corpus_uses_worker_dirs(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
         config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
     });
     prj.add_test(
@@ -1387,9 +1589,199 @@ Ran 1 test for test/ContractCorpusTest.t.sol:ContractCorpusTest
     assert!(contract_dir.exists());
     assert!(!contract_dir.join("invariant_a").exists());
     assert!(!contract_dir.join("invariant_b").exists());
-});
+    for worker in ["worker0", "worker1"] {
+        let worker_corpus = contract_dir.join(worker).join("corpus");
+        assert!(
+            std::fs::read_dir(&worker_corpus).is_ok_and(|mut entries| entries.next().is_some()),
+            "expected {worker} to persist corpus entries during the campaign"
+        );
+    }
+}
 
-forgetest_init!(optimization_invariants_use_function_level_corpus_dir, |prj, cmd| {
+#[forgetest_init]
+fn parallel_invariant_corpus_survives_external_termination(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.depth = 64;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "InterruptedCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InterruptedCorpusHandler {
+    uint256 public value;
+
+    function set(uint256 next) external {
+        value = next;
+    }
+}
+
+contract InterruptedCorpusTest is Test {
+    InterruptedCorpusHandler handler;
+
+    function setUp() public {
+        handler = new InterruptedCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    // Finish compilation before starting the process that will be terminated.
+    cmd.args(["build", "-q"]).assert_success();
+    cmd.forge_fuse().args([
+        "test",
+        "--mc",
+        "InterruptedCorpusTest",
+        "--mt",
+        "invariant_ok",
+        "--fuzz-seed",
+        "0x574",
+        "-q",
+    ]);
+    cmd.cmd().stdout(Stdio::null()).stderr(Stdio::null());
+    let mut child = cmd.cmd().spawn().unwrap();
+
+    let contract_dir = prj.root().join("invariant_corpus").join("InterruptedCorpusTest");
+    let worker_dirs =
+        [contract_dir.join("worker0").join("corpus"), contract_dir.join("worker1").join("corpus")];
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut persisted = false;
+    while Instant::now() < deadline {
+        persisted = worker_dirs.iter().any(|dir| {
+            std::fs::read_dir(dir).is_ok_and(|mut entries| {
+                entries.any(|entry| {
+                    entry.is_ok_and(|entry| {
+                        entry.path().extension().is_some_and(|ext| ext == "json")
+                    })
+                })
+            })
+        });
+        if persisted {
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(persisted, "parallel invariant campaign did not persist corpus before termination");
+
+    let entries = worker_dirs
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<_>>();
+    assert!(!entries.is_empty());
+    for entry in entries {
+        let contents = std::fs::read_to_string(&entry).unwrap();
+        serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap();
+    }
+
+    // Exercise normal startup discovery and EVM replay against the corpus retained by the killed
+    // campaign, rather than only checking that the files contain valid JSON.
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "InterruptedCorpusTest",
+            "--mt",
+            "invariant_ok",
+            "--fuzz-seed",
+            "0x574",
+        ])
+        .assert_success();
+    let stdout = replay.get_output().stdout_lossy();
+    assert!(!stdout.contains("failed corpus replays"), "{stdout}");
+}
+
+#[forgetest_init]
+fn parallel_invariant_worker_error_stops_campaign(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = u32::MAX;
+        config.invariant.depth = 64;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "CorpusSetupFailureTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CorpusSetupFailureHandler {
+    uint256 public value;
+
+    function set(uint256 next) external {
+        value = next;
+    }
+}
+
+contract CorpusSetupFailureTest is Test {
+    CorpusSetupFailureHandler handler;
+
+    function setUp() public {
+        handler = new CorpusSetupFailureHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    // Finish compilation before timing how promptly a worker setup error stops its sibling.
+    cmd.args(["build", "-q"]).assert_success();
+    let worker1 =
+        prj.root().join("invariant_corpus").join("CorpusSetupFailureTest").join("worker1");
+    std::fs::create_dir_all(worker1.parent().unwrap()).unwrap();
+    std::fs::write(&worker1, b"not a directory").unwrap();
+
+    cmd.forge_fuse().args([
+        "test",
+        "--mc",
+        "CorpusSetupFailureTest",
+        "--mt",
+        "invariant_ok",
+        "--fuzz-seed",
+        "0x574",
+        "-q",
+    ]);
+    cmd.cmd().stdout(Stdio::null()).stderr(Stdio::null());
+    let mut child = cmd.cmd().spawn().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break None;
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+
+    let status = status.expect("worker corpus setup error did not stop the parallel campaign");
+    assert!(!status.success(), "worker corpus setup error unexpectedly succeeded");
+}
+
+#[forgetest_init]
+fn optimization_invariants_use_function_level_corpus_dir(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 2;
@@ -1437,9 +1829,10 @@ Ran 2 tests for test/OptimizationCorpusTest.t.sol:OptimizationCorpusTest
     assert!(contract_dir.join("invariant_optimize_a").join("optimization_best.json").exists());
     assert!(contract_dir.join("invariant_optimize_b").join("optimization_best.json").exists());
     assert!(!contract_dir.join("optimization_best.json").exists());
-});
+}
 
-forgetest_init!(json_reports_invariant_predicate_results, |prj, cmd| {
+#[forgetest_init]
+fn json_reports_invariant_predicate_results(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 4;
         config.invariant.depth = 2;
@@ -1509,9 +1902,10 @@ contract JsonInvariantReportTest is Test {
     let safe = predicates.iter().find(|predicate| predicate["name"] == "invariant_safe").unwrap();
     assert_eq!(safe["status"], "Success");
     assert!(safe.get("reason").is_none());
-});
+}
 
-forgetest_init!(forge_test_defaults_invariant_workers_to_auto, |prj, cmd| {
+#[forgetest_init]
+fn forge_test_defaults_invariant_workers_to_auto(prj: _, cmd: _) {
     prj.add_test(
         "AutoInvariantWorkers.t.sol",
         r#"
@@ -1552,9 +1946,10 @@ contract AutoInvariantWorkersTest is Test {
     let suite = json.as_object().unwrap().values().next().unwrap();
     let result = suite["test_results"].as_object().unwrap().values().next().unwrap();
     assert_eq!(result["kind"]["Invariant"]["workers"], 2, "{json}");
-});
+}
 
-forgetest_init!(invariant_campaign_reports_secondary_skip, |prj, cmd| {
+#[forgetest_init]
+fn invariant_campaign_reports_secondary_skip(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 2;
@@ -1610,9 +2005,38 @@ contract SkipPredicateReportTest is Test {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("SkipPredicateReportTest invariants"), "{stdout}");
     assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
-});
 
-forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
+    cmd.forge_fuse().args(["test", "--mt", "invariant_", "--summary"]).assert_success().stdout_eq(
+        str![[r#"
+...
+╭-------------------------+--------+--------+---------╮
+| Test Suite              | Passed | Failed | Skipped |
++=====================================================+
+| SkipPredicateReportTest | 1      | 0      | 1       |
+╰-------------------------+--------+--------+---------╯
+
+
+"#]],
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_", "--summary", "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "results": [
+    {
+      "suite": "SkipPredicateReportTest",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 1
+    }
+  ]
+}
+"#]]);
+}
+
+#[forgetest_init]
+fn junit_reports_invariant_predicates_and_handler_failures(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 2;
@@ -1658,9 +2082,10 @@ contract JunitInvariantReportTest is Test {
     assert!(stdout.contains("[Sequence] (original: 1, shrunk: 1)"), "{stdout}");
     assert!(stdout.contains("calldata=alwaysAssert() args=[]"), "{stdout}");
     assert!(stdout.contains("Suite result: FAILED. 0 passed; 1 failed; 0 skipped;"), "{stdout}");
-});
+}
 
-forgetest_init!(junit_reports_invariant_predicate_counterexamples, |prj, cmd| {
+#[forgetest_init]
+fn junit_reports_invariant_predicate_counterexamples(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 3;
@@ -1701,10 +2126,11 @@ contract JunitInvariantCounterexampleTest is Test {
     assert!(stdout.contains("[FAIL: broken]"), "{stdout}");
     assert!(!stdout.contains(r#"<testcase name="invariant_safe()"#), "{stdout}");
     assert!(stdout.contains("[Sequence] (original:"), "{stdout}");
-});
+}
 
 // Tests that check_interval=0 only asserts on the last call of each run.
-forgetest_init!(check_interval_zero_only_checks_last_call, |prj, cmd| {
+#[forgetest_init]
+fn check_interval_zero_only_checks_last_call(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 10;
@@ -1747,10 +2173,11 @@ contract CheckIntervalTest is Test {
 [PASS] invariant_counter_multiple_of_depth() (runs: 5, calls: 50, reverts: 0)
 ...
 "#]]);
-});
+}
 
 // Tests that check_interval=1 (default) asserts after every call.
-forgetest_init!(check_interval_one_checks_every_call, |prj, cmd| {
+#[forgetest_init]
+fn check_interval_one_checks_every_call(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -1794,10 +2221,11 @@ contract CheckIntervalTest is Test {
 ...
 "#
     ]]);
-});
+}
 
 // Tests that check_interval=N checks every N calls AND always on the last call.
-forgetest_init!(check_interval_n_checks_every_n_calls, |prj, cmd| {
+#[forgetest_init]
+fn check_interval_n_checks_every_n_calls(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 20;
@@ -1838,10 +2266,11 @@ contract CheckIntervalTest is Test {
 [PASS] invariant_counter_multiple_of_five() (runs: 1, calls: 20, reverts: 0)
 ...
 "#]]);
-});
+}
 
 // Tests check_interval via inline config annotation.
-forgetest_init!(check_interval_inline_config, |prj, cmd| {
+#[forgetest_init]
+fn check_interval_inline_config(prj: _, cmd: _) {
     prj.add_test(
         "CheckIntervalInlineTest.t.sol",
         r#"
@@ -1881,9 +2310,10 @@ contract CheckIntervalInlineTest is Test {
 ...
 "#
     ]]);
-});
+}
 
-forgetest_init!(invariant_campaign_merges_selected_predicates, |prj, cmd| {
+#[forgetest_init]
+fn invariant_campaign_merges_selected_predicates(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 10;
         config.invariant.depth = 100;
@@ -1981,9 +2411,10 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 ...
 "#
     ]]);
-});
+}
 
-forgetest_init!(invariant_campaign_keeps_contract_boundary_with_no_match_test, |prj, cmd| {
+#[forgetest_init]
+fn invariant_campaign_keeps_contract_boundary_with_no_match_test(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 20;
@@ -2039,11 +2470,12 @@ contract FilteredInvariantTest is Test {
     assert!(stdout.contains("[FAIL: b broken] invariant_b_checked"), "{stdout}");
     assert!(stdout.contains("[FAIL: c broken] invariant_c_checked"), "{stdout}");
     assert!(!stdout.contains("invariant_a_excluded_by_filter"), "{stdout}");
-});
+}
 
 // Verifies that a single selected predicate keeps the output compact: no secondary failure
 // blocks and no persisted-failures footer.
-forgetest_init!(invariant_campaign_single_predicate_stays_clean, |prj, cmd| {
+#[forgetest_init]
+fn invariant_campaign_single_predicate_stays_clean(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 50;
@@ -2109,12 +2541,13 @@ contract CounterTest is Test {
     assert!(!stdout.contains("Invariant/Property Tests:"), "{stdout}");
     assert!(!stdout.contains("invariant_breakable"), "{stdout}");
     assert!(!stdout.contains("invariant_safe"), "{stdout}");
-});
+}
 
 // A handler `assert(false)` is routed to the dedicated `Assertion Tests:` section instead of
 // being attributed to every live invariant. The live invariants stay green; the campaign keeps
 // running for its full budget. See also `handler::handler_assertion_routed_to_handler_section`.
-forgetest_init!(handler_assertion_is_reported_separately, |prj, cmd| {
+#[forgetest_init]
+fn handler_assertion_is_reported_separately(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -2167,12 +2600,13 @@ contract AssertAllAssertTest is Test {
     assert!(stdout.contains(" invariant_a() (runs: 1, calls: 10, reverts: 10)"), "{stdout}");
     assert!(!stdout.contains("Invariant/Property Tests:"), "{stdout}");
     assert!(!stdout.contains("invariant_b"), "{stdout}");
-});
+}
 
 // Verifies an explicitly selected optimization invariant runs as its own campaign. Boolean
 // predicates in the same contract are not mixed into optimization mode; when unfiltered they run
 // as a separate boolean campaign (covered below).
-forgetest_init!(selected_optimization_runs_separately, |prj, cmd| {
+#[forgetest_init]
+fn selected_optimization_runs_separately(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 5;
@@ -2220,9 +2654,10 @@ contract OptTest is Test {
  invariant_maximize() (best: [..], runs: 1, calls: 5)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(optimization_does_not_suppress_boolean_invariants, |prj, cmd| {
+#[forgetest_init]
+fn optimization_does_not_suppress_boolean_invariants(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 2;
@@ -2275,11 +2710,12 @@ Ran 2 tests for test/MixedInvariantTest.t.sol:MixedInvariantTest
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
 // Verifies that the `afterInvariant` hook keeps running on later runs even after an earlier
 // invariant has already broken.
-forgetest_init!(after_invariant_runs_after_earlier_failure, |prj, cmd| {
+#[forgetest_init]
+fn after_invariant_runs_after_earlier_failure(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 20;
@@ -2333,11 +2769,12 @@ contract AfterInvariantTest is Test {
 [FAIL: after_invariant_marker] invariant_first
 ...
 "#]]);
-});
+}
 
 // Verifies a stale persisted secondary failure (settings have changed since it was written) is
 // not silently dropped from the campaign — the secondary is re-evaluated instead.
-forgetest_init!(secondary_persisted_revalidates_on_settings_change, |prj, cmd| {
+#[forgetest_init]
+fn secondary_persisted_revalidates_on_settings_change(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 50;
@@ -2450,12 +2887,432 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
+
+// Verifies that a persisted secondary failure does not suppress the current predicate after its
+// implementation changes.
+#[forgetest_init]
+fn secondary_persisted_revalidates_after_code_change(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    let test = r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract PersistedSecondaryTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_anchor() public pure {
+        require(true);
+    }
+
+    function invariant_secondary() public view {
+        require(counter.cond() < 2, "old secondary");
+    }
+}
+   "#;
+    prj.add_test("PersistedSecondaryTest.t.sol", test);
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj
+        .root()
+        .join("cache/invariant/failures/PersistedSecondaryTest/invariants/invariant_secondary");
+    let persisted_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    assert_eq!(persisted_json["call_sequence"].as_array().unwrap().len(), 2);
+
+    prj.add_test(
+        "PersistedSecondaryTest.t.sol",
+        &test.replace(
+            "counter.cond() < 2, \"old secondary\"",
+            "counter.cond() != 3, \"new secondary\"",
+        ),
+    );
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: new secondary] invariant_secondary
+...
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    let persisted_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(persisted).unwrap()).unwrap();
+    assert_eq!(persisted_json["call_sequence"].as_array().unwrap().len(), 3);
+}
+
+// Verifies that a compatible persisted secondary failure is replayed even when the fresh
+// campaign has no budget to rediscover it.
+#[forgetest_init]
+fn secondary_persisted_replays_without_fresh_runs(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    let test = r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ReplayCounter {
+    uint256 public value;
+
+    function inc() public {
+        value++;
+    }
+}
+
+contract PersistedSecondaryReplayTest is Test {
+    ReplayCounter public counter;
+
+    function setUp() public {
+        counter = new ReplayCounter();
+        targetContract(address(counter));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_secondary() public view {
+        require(counter.value() < 2, "secondary still broken");
+    }
+}
+   "#;
+    prj.add_test("PersistedSecondaryReplayTest.t.sol", test);
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: secondary still broken] invariant_secondary
+...
+PersistedSecondaryReplayTest invariants: 1/2 invariants broken
+...
+ PersistedSecondaryReplayTest invariants (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+
+    // The same sequence now asserts in the handler while the predicate passes. It is stale as a
+    // predicate failure and must not be attributed to `invariant_secondary`.
+    prj.add_test(
+        "PersistedSecondaryReplayTest.t.sol",
+        &test.replace("value++;", "assert(false);").replace(
+            "require(counter.value() < 2, \"secondary still broken\");",
+            "require(true, \"secondary still broken\");",
+        ),
+    );
+    let output = cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(!stdout.contains("[FAIL: secondary still broken] invariant_secondary"), "{stdout}");
+}
+
+// Verifies that a cached secondary sequence-call revert is attributed to that predicate when
+// fail-on-revert is enabled and the fresh campaign has no budget.
+#[forgetest_init]
+fn secondary_persisted_replays_fail_on_revert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "PersistedSecondaryRevertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RevertingTarget {
+    uint256 public calls;
+
+    function fail() public {
+        calls++;
+        revert("secondary revert");
+    }
+}
+
+contract PersistedSecondaryRevertTest is Test {
+    RevertingTarget public target;
+
+    function setUp() public {
+        target = new RevertingTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_anchor() public pure {}
+
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_secondary() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj.root().join(
+        "cache/invariant/failures/PersistedSecondaryRevertTest/invariants/invariant_secondary",
+    );
+    assert!(persisted.is_file());
+    std::fs::remove_file(persisted.with_file_name("invariant_anchor")).unwrap();
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: secondary revert] invariant_secondary
+...
+PersistedSecondaryRevertTest invariants: 1/2 invariants broken
+...
+ PersistedSecondaryRevertTest invariants (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+}
+
+// A nested callee can be recorded as the reverter for a terminal predicate failure. The
+// predicate selector, rather than the reverter address, identifies the cached secondary.
+#[forgetest_init]
+fn secondary_persisted_replays_nested_revert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "PersistedSecondaryNestedRevertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract NestedReverter {
+    function fail() external pure {
+        revert("nested predicate revert");
+    }
+}
+
+contract NestedRevertTarget {
+    bool public broken;
+
+    function breakInvariant() external {
+        broken = true;
+    }
+}
+
+contract PersistedSecondaryNestedRevertTest is Test {
+    NestedReverter public reverter;
+    NestedRevertTarget public target;
+
+    function setUp() public {
+        reverter = new NestedReverter();
+        target = new NestedRevertTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_secondary() public view {
+        if (target.broken()) reverter.fail();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj.root().join(
+        "cache/invariant/failures/PersistedSecondaryNestedRevertTest/invariants/invariant_secondary",
+    );
+    assert!(persisted.is_file());
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: nested predicate revert] invariant_secondary
+...
+PersistedSecondaryNestedRevertTest invariants: 1/2 invariants broken
+...
+ PersistedSecondaryNestedRevertTest invariants (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+}
+
+// Cached secondaries have already been validated against their persisted failure site. A generic
+// re-shrink must not replace that predicate failure with a handler assertion.
+#[forgetest_init]
+fn secondary_persisted_skips_generic_reshrink(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::ONE);
+        config.invariant.runs = 100;
+        config.invariant.depth = 10;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "PersistedSecondaryShrinkTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SiteChangingTarget {
+    bool public armed;
+    bool public broken;
+
+    function arm() external {
+        armed = true;
+    }
+
+    function trigger() external {
+        assert(armed);
+        broken = true;
+    }
+}
+
+contract PersistedSecondaryShrinkTest is Test {
+    SiteChangingTarget public target;
+
+    function setUp() public {
+        target = new SiteChangingTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public pure {}
+
+    function invariant_secondary() public view {
+        require(!target.broken(), "secondary predicate");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let failure_root = prj.root().join("cache/invariant/failures/PersistedSecondaryShrinkTest");
+    let persisted = failure_root.join("invariants/invariant_secondary");
+    let mut persisted_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    let calls = persisted_json["call_sequence"].as_array().unwrap();
+    let arm = calls.iter().find(|call| call["func_name"] == "arm").unwrap().clone();
+    let trigger = calls.iter().find(|call| call["func_name"] == "trigger").unwrap().clone();
+    persisted_json["call_sequence"] = serde_json::json!([arm, trigger]);
+    // Legacy persisted entries did not identify their failure site. Their confirmed replay must
+    // still bypass generic shrinking so the predicate reason, trace, and sequence stay aligned.
+    persisted_json.as_object_mut().unwrap().remove("failure_site");
+    std::fs::write(&persisted, serde_json::to_vec_pretty(&persisted_json).unwrap()).unwrap();
+    let _ = std::fs::remove_file(persisted.with_file_name("invariant_anchor"));
+    let _ = std::fs::remove_dir_all(failure_root.join("handlers"));
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.invariant.shrink_run_limit = 100;
+    });
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--mt", "invariant_"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("[FAIL: secondary predicate] invariant_secondary"), "{stdout}");
+    assert!(stdout.contains("[Sequence] (original: 2, shrunk: 2)"), "{stdout}");
+    assert!(stdout.contains("calldata=arm()"), "{stdout}");
+    assert!(stdout.contains("calldata=trigger()"), "{stdout}");
+}
+
+// Verifies that a compatible persisted secondary remains in the report while the campaign
+// continues to discover another predicate failure.
+#[forgetest_init]
+fn secondary_persisted_continues_campaign(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 3;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.show_metrics = false;
+    });
+    let test = r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+
+contract PersistedSecondaryContinuationTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_anchor() public pure {
+        require(true);
+    }
+
+    function invariant_secondary() public view {
+        require(counter.cond() < 2, "secondary broken");
+    }
+
+    function invariant_later() public view {
+        require(counter.cond() < 100, "later broken");
+    }
+}
+   "#;
+    prj.add_test("PersistedSecondaryContinuationTest.t.sol", test);
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let persisted = prj.root().join(
+        "cache/invariant/failures/PersistedSecondaryContinuationTest/invariants/invariant_secondary",
+    );
+    assert!(persisted.is_file());
+
+    prj.add_test(
+        "PersistedSecondaryContinuationTest.t.sol",
+        &test.replace(
+            "counter.cond() < 100, \"later broken\"",
+            "counter.cond() != 3, \"later broken\"",
+        ),
+    );
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: secondary broken] invariant_secondary
+...
+[FAIL: later broken] invariant_later
+...
+PersistedSecondaryContinuationTest invariants: 2/3 invariants broken
+...
+"#]]);
+}
 
 // Verifies that when the campaign anchor passes but another selected predicate fails, the report
 // doesn't render a hollow `[FAIL]` header for the primary and the suite roll-up counts only the
 // actually-broken invariants.
-forgetest_init!(secondary_only_failure_no_hollow_fail, |prj, cmd| {
+#[forgetest_init]
+fn secondary_only_failure_no_hollow_fail(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 50;
@@ -2522,12 +3379,13 @@ contract SecondaryOnlyTest is Test {
     );
     assert!(!stdout.contains(" invariant_anchor_safe() (runs:"), "{stdout}");
     assert!(!stdout.contains("[FAIL: safe broken] invariant_anchor_safe"), "{stdout}");
-});
+}
 
 // Verifies `forge test --rerun` records the predicate that actually failed inside a merged
 // campaign, not just the campaign anchor. Otherwise a secondary-only failure would be rerun as
 // the passing anchor and incorrectly succeed.
-forgetest_init!(rerun_replays_non_anchor_invariant_failure, |prj, cmd| {
+#[forgetest_init]
+fn rerun_replays_non_anchor_invariant_failure(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 50;
@@ -2580,11 +3438,12 @@ contract RerunSecondaryOnlyTest is Test {
     assert!(stdout.contains("[FAIL: breakable broken]"), "{stdout}");
     assert!(stdout.contains(" invariant_secondary_breakable() (runs:"), "{stdout}");
     assert!(!stdout.contains("invariant_anchor_safe"), "{stdout}");
-});
+}
 
 // Verifies the structured JSON failure event emitted at campaign end attributes the broken
 // invariant in declaration order (deterministic) instead of using arbitrary HashMap iteration.
-forgetest_init!(failure_event_uses_declaration_order, |prj, cmd| {
+#[forgetest_init]
+fn failure_event_uses_declaration_order(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 5;
@@ -2638,4 +3497,144 @@ contract FailureEventTest is Test {
 {"timestamp":[..],"event":"failure","invariant":"invariant_a","target":"test/FailureEventTest.t.sol:FailureEventTest","reason":"a broken"}
 ...
 "#]]);
-});
+}
+
+// Persisted corpus entries must not replay calls the current invariant settings no longer allow.
+#[forgetest_init]
+fn invariant_corpus_respects_current_senders_and_selectors(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 32;
+        config.invariant.depth = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    let add_test = |sender: &str, selector: &str| {
+        let touch_targeted = selector == "touch";
+        prj.add_test(
+            "CorpusPolicyTest.t.sol",
+            &format!(
+                r#"
+import {{Test}} from "forge-std/Test.sol";
+
+contract CorpusPolicyTarget {{
+    address public unexpected;
+
+    function touch() external {{
+        if (msg.sender != {sender} || !{touch_targeted}) unexpected = msg.sender;
+    }}
+
+    function other() external {{
+        if (msg.sender != {sender} || {touch_targeted}) unexpected = msg.sender;
+    }}
+}}
+
+contract CorpusPolicyTest is Test {{
+    CorpusPolicyTarget target;
+
+    function setUp() public {{
+        target = new CorpusPolicyTarget();
+        targetSender({sender});
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = CorpusPolicyTarget.{selector}.selector;
+        targetSelector(FuzzSelector({{addr: address(target), selectors: selectors}}));
+    }}
+
+    function invariant_only_current_policy() public view {{
+        require(target.unexpected() == address(0), "stale corpus call");
+    }}
+}}
+   "#
+            ),
+        );
+    };
+
+    add_test("address(0xA11CE)", "touch");
+    cmd.args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+
+    // Changing only the sender must not replay calls from the previous sender.
+    add_test("address(0xB0B)", "touch");
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+
+    // Changing only the selector must not replay calls to the previous selector.
+    add_test("address(0xB0B)", "other");
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/CorpusPolicyTest.t.sol:CorpusPolicyTest
+[PASS] invariant_only_current_policy() (runs: 32, calls: 640, reverts: 0, failed corpus replays: 2)
+
+╭--------------------+----------+-------+---------+----------╮
+| Contract           | Selector | Calls | Reverts | Discards |
++============================================================+
+| CorpusPolicyTarget | other    | 640   | 0       | 0        |
+╰--------------------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}
+
+// Calls hoisted from handler sub-calls must respect `targetSenders`.
+#[forgetest_init]
+fn invariant_corpus_hoisting_respects_target_senders(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 32;
+        config.invariant.depth = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "HoistSenderTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract HoistSenderToken {
+    address public unexpected;
+
+    function touch() external {
+        if (tx.origin != address(0xA11CE)) unexpected = tx.origin;
+    }
+}
+
+contract HoistSenderHandler {
+    HoistSenderToken token;
+
+    constructor(HoistSenderToken _token) {
+        token = _token;
+    }
+
+    function poke() external {
+        token.touch();
+    }
+}
+
+contract HoistSenderTest is Test {
+    HoistSenderToken token;
+
+    function setUp() public {
+        token = new HoistSenderToken();
+        targetContract(address(token));
+        targetContract(address(new HoistSenderHandler(token)));
+        targetSender(address(0xA11CE));
+    }
+
+    function invariant_only_target_sender() public view {
+        require(token.unexpected() == address(0), "unexpected sender");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "HoistSenderTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/HoistSenderTest.t.sol:HoistSenderTest
+[PASS] invariant_only_target_sender() (runs: 32, calls: 640, reverts: 0)
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

@@ -3,11 +3,6 @@
 **Severity**: `Gas`
 **ID**: `costly-loop`
 
-Flags storage variable writes inside loops. Each SSTORE costs at least 2,900 gas (warm) or 20,000
-gas (cold), so writing to storage on every loop iteration can be extremely expensive. Accumulating
-the result in a local memory variable and writing to storage once after the loop is the standard
-optimization.
-
 ## What it does
 
 Reports assignments, compound assignments, increments/decrements, and `delete` expressions that
@@ -16,13 +11,11 @@ writes through storage array indices and mapping keys.
 
 ## Why is this bad?
 
-SSTORE is one of the most expensive EVM opcodes. Writing to storage in a loop multiplies that cost
-by the number of iterations and can easily cause transactions to run out of gas or become
-economically impractical.
+Repeated storage writes can be expensive; their cost depends on slot access history and the
+original, current, and new values. Accumulating the result in a local variable and writing to
+storage once after the loop can reduce that work.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract C {
@@ -36,7 +29,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {
@@ -51,7 +44,3 @@ contract C {
     }
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.

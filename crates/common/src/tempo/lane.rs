@@ -4,23 +4,6 @@ use alloy_eips::eip2718::Decodable2718;
 use serde::{Deserialize, Serialize};
 use tempo_primitives::TempoTxEnvelope;
 
-/// Classifies a raw EIP-2718 encoded transaction with Tempo's T5 payment-lane classifier.
-///
-/// Bytes that do not decode as a Tempo envelope (e.g. EIP-4844 or Optimism deposit
-/// transactions) classify as [`PaymentLaneReason::UnsupportedTransactionType`]; callers that
-/// need to reject invalid transactions should validate the bytes beforehand.
-pub fn classify_payment_lane(mut raw: &[u8]) -> PaymentLaneClassification {
-    let Ok(tx) = TempoTxEnvelope::decode_2718(&mut raw) else {
-        return PaymentLaneClassification::general(PaymentLaneReason::UnsupportedTransactionType);
-    };
-
-    if tx.is_payment_v2() {
-        PaymentLaneClassification::payment()
-    } else {
-        PaymentLaneClassification::general(PaymentLaneReason::NotPaymentLane)
-    }
-}
-
 /// Structured T5 payment-lane classification for Foundry-facing APIs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +51,23 @@ pub enum PaymentLaneReason {
     NotPaymentLane,
 }
 
+/// Classifies a raw EIP-2718 encoded transaction with Tempo's T5 payment-lane classifier.
+///
+/// Bytes that do not decode as a Tempo envelope (e.g. EIP-4844 or Optimism deposit
+/// transactions) classify as [`PaymentLaneReason::UnsupportedTransactionType`]; callers that
+/// need to reject invalid transactions should validate the bytes beforehand.
+pub fn classify_payment_lane(mut raw: &[u8]) -> PaymentLaneClassification {
+    let Ok(tx) = TempoTxEnvelope::decode_2718(&mut raw) else {
+        return PaymentLaneClassification::general(PaymentLaneReason::UnsupportedTransactionType);
+    };
+
+    if tx.is_payment_v2() {
+        PaymentLaneClassification::payment()
+    } else {
+        PaymentLaneClassification::general(PaymentLaneReason::NotPaymentLane)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn classifies_tip20_transfer_as_payment() {
-        let input = ITIP20::transferCall { to: Address::ZERO, amount: U256::from(1) }.abi_encode();
+        let input = ITIP20::transferCall { to: Address::ZERO, amount: U256::ONE }.abi_encode();
         let raw = encode_eip1559(PAYMENT_TOKEN, input);
 
         assert_eq!(classify_payment_lane(&raw), PaymentLaneClassification::payment());

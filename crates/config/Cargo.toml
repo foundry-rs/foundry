@@ -47,6 +47,7 @@ toml = { workspace = true, features = ["preserve_order"] }
 toml_edit.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
+which.workspace = true
 yansi.workspace = true
 clap = { version = "4", features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
@@ -62,3 +63,4 @@ tempfile.workspace = true
 
 [features]
 monad = ["foundry-evm-hardforks/monad", "foundry-evm-networks/monad"]
+base = ["foundry-evm-hardforks/base", "foundry-evm-networks/base"]

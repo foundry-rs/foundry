@@ -28,12 +28,12 @@ impl fmt::Debug for Comments {
 impl Comments {
     pub fn new(
         sf: &SourceFile,
-        sm: &SourceMap,
+        _sm: &SourceMap,
         normalize_cmnts: bool,
         group_cmnts: bool,
         tab_width: Option<usize>,
     ) -> Self {
-        let gatherer = CommentGatherer::new(sf, sm, normalize_cmnts, tab_width).gather();
+        let gatherer = CommentGatherer::new(sf, normalize_cmnts, tab_width).gather();
 
         Self {
             comments: if group_cmnts { gatherer.group().into() } else { gatherer.comments.into() },
@@ -74,10 +74,36 @@ impl Comments {
         span_pos: BytePos,
         next_pos: Option<BytePos>,
     ) -> Option<(&Comment, usize)> {
-        let span_line = sm.lookup_char_pos(span_pos).line;
+        self.peek_trailing_with(span_pos, next_pos, |pos| {
+            sm.lookup_line(pos).ok().map(|line| line.line)
+        })
+    }
+
+    /// Finds a trailing comment as in [`Self::peek_trailing`], using a known source file.
+    ///
+    /// All comment positions and `span_pos` must belong to `file`.
+    pub fn peek_trailing_in_file(
+        &self,
+        file: &SourceFile,
+        span_pos: BytePos,
+        next_pos: Option<BytePos>,
+    ) -> Option<(&Comment, usize)> {
+        self.peek_trailing_with(span_pos, next_pos, |pos| {
+            file.lookup_line(file.relative_position(pos))
+        })
+    }
+
+    fn peek_trailing_with(
+        &self,
+        span_pos: BytePos,
+        next_pos: Option<BytePos>,
+        line_at: impl Fn(BytePos) -> Option<usize>,
+    ) -> Option<(&Comment, usize)> {
+        self.comments.front()?;
+        let span_line = line_at(span_pos);
         for (i, cmnt) in self.iter().enumerate() {
             // If we have moved to the next line, we can stop.
-            let comment_line = sm.lookup_char_pos(cmnt.pos()).line;
+            let comment_line = line_at(cmnt.pos());
             if comment_line != span_line {
                 break;
             }
@@ -105,7 +131,6 @@ impl Comments {
 
 struct CommentGatherer<'ast> {
     sf: &'ast SourceFile,
-    sm: &'ast SourceMap,
     text: &'ast str,
     start_bpos: BytePos,
     pos: usize,
@@ -116,15 +141,9 @@ struct CommentGatherer<'ast> {
 }
 
 impl<'ast> CommentGatherer<'ast> {
-    fn new(
-        sf: &'ast SourceFile,
-        sm: &'ast SourceMap,
-        normalize_cmnts: bool,
-        tab_width: Option<usize>,
-    ) -> Self {
+    fn new(sf: &'ast SourceFile, normalize_cmnts: bool, tab_width: Option<usize>) -> Self {
         Self {
             sf,
-            sm,
             text: sf.src.as_str(),
             start_bpos: sf.start_pos,
             pos: 0,
@@ -155,11 +174,16 @@ impl<'ast> CommentGatherer<'ast> {
             if current.kind == CommentKind::Line
                 && (current.style.is_trailing() || current.style.is_isolated())
             {
-                let mut ref_line = self.sm.lookup_char_pos(current.span.hi()).line;
+                let mut ref_line =
+                    self.sf.lookup_line(self.sf.relative_position(current.span.hi())).unwrap();
                 while let Some(next_comment) = cursor.peek() {
                     if !next_comment.style.is_isolated()
                         || next_comment.kind != CommentKind::Line
-                        || ref_line + 1 != self.sm.lookup_char_pos(next_comment.span.lo()).line
+                        || ref_line + 1
+                            != self
+                                .sf
+                                .lookup_line(self.sf.relative_position(next_comment.span.lo()))
+                                .unwrap()
                     {
                         break;
                     }
@@ -230,11 +254,13 @@ impl<'ast> CommentGatherer<'ast> {
                 };
                 let kind = CommentKind::Block;
 
-                // Count the number of chars since the start of the line by rescanning.
+                // Measure the opening column, expanding tabs for non-doc comments.
                 let pos_in_file = self.start_bpos + BytePos(self.pos as u32);
                 let line_begin_in_file = line_begin_pos(self.sf, pos_in_file);
                 let line_begin_pos = (line_begin_in_file - self.start_bpos).to_usize();
-                let mut col = CharPos(self.text[line_begin_pos..self.pos].chars().count());
+                let tab_width = if is_doc { 1 } else { self.tab_width.unwrap_or(1) };
+                let mut col =
+                    CharPos(estimate_line_width(&self.text[line_begin_pos..self.pos], tab_width));
 
                 // To preserve alignment in multi-line non-doc comments, normalize the block based
                 // on its least-indented line.
@@ -244,7 +270,10 @@ impl<'ast> CommentGatherer<'ast> {
                             return min;
                         }
                         std::cmp::min(
-                            CharPos(line.chars().count() - line.trim_start().chars().count()),
+                            CharPos(estimate_line_width(
+                                &line[..line.len() - line.trim_start().len()],
+                                tab_width,
+                            )),
                             min,
                         )
                     })
@@ -312,6 +341,22 @@ impl<'ast> CommentGatherer<'ast> {
         }
 
         for (pos, line) in lines.delimited() {
+            let indent_end = line.len() - line.trim_start().len();
+            let mut expanded = String::new();
+            let line = if !is_doc
+                && let Some(tab_width) = self.tab_width
+                && line[..indent_end].contains('\t')
+            {
+                // Trim tab indentation in the same display columns used by the printer.
+                expanded.extend(std::iter::repeat_n(
+                    ' ',
+                    estimate_line_width(&line[..indent_end], tab_width),
+                ));
+                expanded.push_str(&line[indent_end..]);
+                expanded.as_str()
+            } else {
+                line
+            };
             let line = normalize_block_comment_ws(line, col).trim_end().to_string();
             if !is_doc {
                 res.push(line);

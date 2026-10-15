@@ -1,4 +1,4 @@
-note[pragma-inconsistent]: 3 different Solidity pragma version requirements are used: >=0.8.0, ^0.8.0, ~0.8.0
+note[pragma-inconsistent]: 3 different Solidity pragma version requirements are used: `>=0.8.0`, `^0.8.0`, `~0.8.0`
    ╭▸ ROOT/testdata/PragmaInconsistentThreeDistinct.sol:LL:CC
    │
 LL │ pragma solidity >=0.8.0;

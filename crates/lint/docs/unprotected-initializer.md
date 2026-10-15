@@ -3,9 +3,6 @@
 **Severity**: `High`
 **ID**: `unprotected-initializer`
 
-Flags upgradeable contracts whose public or external initializer can still be called directly on an
-implementation contract that exposes a destructive entry point.
-
 ## What it does
 
 Reports initializer-like functions that:
@@ -19,13 +16,13 @@ Reports initializer-like functions that:
 
 ## Why is this bad?
 
-An attacker can initialize the implementation directly, take ownership, and invoke its destructive
-entry point. Destroying or corrupting an implementation can disable every proxy that delegates to
-it.
+An attacker may initialize the implementation directly and gain authority over implementation
+state or its privileged entry points. Consequences depend on the reachable operations and the
+target chain's fork rules: `selfdestruct` does not universally delete an already deployed
+contract. Review the implementation's access controls and initialization separately from the
+proxy's state.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract Vault is Initializable {
@@ -42,7 +39,11 @@ contract Vault is Initializable {
 }
 ```
 
-### Good
+Use instead:
+
+Disable direct implementation initialization in the constructor. This example also removes the
+unnecessary public delegatecall entry point; adding `_disableInitializers()` alone would not
+protect that unrestricted function.
 
 ```solidity
 contract Vault is Initializable {
@@ -60,8 +61,7 @@ contract Vault is Initializable {
 
 ## Notes
 
-The lint is intentionally local: it does not inspect deployment scripts to prove whether a proxy is
-initialized atomically. It focuses on implementation contracts that remain directly initializable
-and can reach code paths that may destroy or replace implementation state.
-
-The `onlyProxy` exemption is a name-based heuristic for common UUPS implementations.
+This rule concerns direct initialization of the implementation. Separately ensure the
+proxy is initialized atomically during deployment.
+The `onlyProxy` exemption recognizes the modifier's name; it does not verify a custom
+modifier's implementation.

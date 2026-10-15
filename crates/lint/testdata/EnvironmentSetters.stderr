@@ -1,0 +1,615 @@
+warning[environment-read-across-mutation]: `block.chainid` may be reused across `vm.chainId`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.chainid;
+   │                         ━━━━━━━━━━━━━
+LL │         vm.chainId(2);
+   │         ───────────── `vm.chainId` changes this environment here
+   │
+   ├ help: capture it with `vm.getChainId()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.coinbase` may be reused across `vm.coinbase`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         address saved = block.coinbase;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.coinbase(address(2));
+   │         ─────────────────────── `vm.coinbase` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.difficulty` may be reused across `vm.difficulty`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.difficulty;
+   │                         ━━━━━━━━━━━━━━━━
+LL │         vm.difficulty(2);
+   │         ──────────────── `vm.difficulty` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across `vm.prevrandao`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.prevrandao;
+   │                         ━━━━━━━━━━━━━━━━
+LL │         vm.prevrandao(bytes32(uint256(2)));
+   │         ────────────────────────────────── `vm.prevrandao` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across `vm.prevrandao`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.prevrandao;
+   │                         ━━━━━━━━━━━━━━━━
+LL │         vm.prevrandao(uint256(2));
+   │         ───────────────────────── `vm.prevrandao` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across `vm.fee`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.basefee;
+   │                         ━━━━━━━━━━━━━
+LL │         vm.fee(2);
+   │         ───────── `vm.fee` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.blobbasefee` may be reused across `vm.blobBaseFee`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.blobbasefee;
+   │                         ━━━━━━━━━━━━━━━━━
+LL │         vm.blobBaseFee(2);
+   │         ───────────────── `vm.blobBaseFee` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlobBaseFee()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `tx.gasprice` may be reused across `vm.txGasPrice`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = tx.gasprice;
+   │                         ━━━━━━━━━━━
+LL │         vm.txGasPrice(2);
+   │         ──────────────── `vm.txGasPrice` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across `vm.setBlockhash`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 saved = blockhash(1);
+   │                         ━━━━━━━━━━━━
+LL │         vm.setBlockhash(1, bytes32(uint256(2)));
+   │         ─────────────────────────────────────── `vm.setBlockhash` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across `vm.blobhashes`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 saved = blobhash(0);
+   │                         ━━━━━━━━━━━
+LL │         vm.blobhashes(new bytes32[](1));
+   │         ─────────────────────────────── `vm.blobhashes` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlobhashes()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.createSelectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.createSelectFork("rpc");
+   │         ────────────────────────── `vm.createSelectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.createSelectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.createSelectFork("rpc", uint256(2));
+   │         ────────────────────────────────────── `vm.createSelectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.createSelectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.createSelectFork("rpc", bytes32(uint256(2)));
+   │         ─────────────────────────────────────────────── `vm.createSelectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.rollFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.rollFork(uint256(2));
+   │         ─────────────────────── `vm.rollFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.rollFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.rollFork(bytes32(uint256(2)));
+   │         ──────────────────────────────── `vm.rollFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.rollFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.rollFork(1, uint256(2));
+   │         ────────────────────────── `vm.rollFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.rollFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.rollFork(1, bytes32(uint256(2)));
+   │         ─────────────────────────────────── `vm.rollFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.revertTo`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.revertTo(1);
+   │         ────────────── `vm.revertTo` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.revertToAndDelete`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.revertToAndDelete(1);
+   │         ─────────────────────── `vm.revertToAndDelete` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.revertToStateAndDelete`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         vm.revertToStateAndDelete(1);
+   │         ──────────────────────────── `vm.revertToStateAndDelete` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 height = block.number;
+   │                          ━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 time = block.timestamp;
+   │                        ━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.chainid` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 chain = block.chainid;
+   │                         ━━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it with `vm.getChainId()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.coinbase` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         address beneficiary = block.coinbase;
+   │                               ━━━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.difficulty` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 difficulty = block.difficulty;
+   │                              ━━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 random = block.prevrandao;
+   │                          ━━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 base = block.basefee;
+   │                        ━━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.blobbasefee` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 blobBase = block.blobbasefee;
+   │                            ━━━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlobBaseFee()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 limit = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         bytes32 hash = blockhash(1);
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 hash = blockhash(1);
+   │                        ━━━━━━━━━━━━
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.number` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 height = block.number;
+   │                          ━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockNumber()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 time = block.timestamp;
+   │                        ━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.chainid` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 chain = block.chainid;
+   │                         ━━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it with `vm.getChainId()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.coinbase` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         address beneficiary = block.coinbase;
+   │                               ━━━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.difficulty` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 difficulty = block.difficulty;
+   │                              ━━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.prevrandao` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 random = block.prevrandao;
+   │                          ━━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 base = block.basefee;
+   │                        ━━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.blobbasefee` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 blobBase = block.blobbasefee;
+   │                            ━━━━━━━━━━━━━━━━━
+   ‡
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlobBaseFee()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.gaslimit` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 limit = block.gaslimit;
+   │                         ━━━━━━━━━━━━━━
+LL │         bytes32 hash = blockhash(1);
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 hash = blockhash(1);
+   │                        ━━━━━━━━━━━━
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.slotnum` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint64 slot = block.slotnum;
+   │                       ━━━━━━━━━━━━━
+LL │         vm.selectFork(1);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.slotnum` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint64 slot = block.slotnum;
+   │                       ━━━━━━━━━━━━━
+LL │         vm.revertToState(1);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across `vm.roll`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 saved = blockhash(1);
+   │                         ━━━━━━━━━━━━
+LL │         vm.roll(300);
+   │         ──────────── `vm.roll` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.chainid` may be reused across `vm.chainId`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 saved = blobhash(block.chainid);
+   │                                  ━━━━━━━━━━━━━
+LL │         vm.chainId(2);
+   │         ───────────── `vm.chainId` changes this environment here
+   │
+   ├ help: capture it with `vm.getChainId()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `tx.gasprice` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 price = tx.gasprice;
+   │                         ━━━━━━━━━━━
+LL │         bytes32 hash = blobhash(0);
+LL │         vm.selectFork(2);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across `vm.selectFork`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 hash = blobhash(0);
+   │                        ━━━━━━━━━━━
+LL │         vm.selectFork(2);
+   │         ──────────────── `vm.selectFork` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlobhashes()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `tx.gasprice` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 price = tx.gasprice;
+   │                         ━━━━━━━━━━━
+LL │         bytes32 hash = blobhash(0);
+LL │         vm.revertToState(2);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across `vm.revertToState`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 hash = blobhash(0);
+   │                        ━━━━━━━━━━━
+LL │         vm.revertToState(2);
+   │         ─────────────────── `vm.revertToState` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlobhashes()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.basefee` may be reused across `vm.fee`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         block.basefee;
+   │         ━━━━━━━━━━━━━
+LL │         vm.fee(2);
+   │         ───────── `vm.fee` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blobhash(...)` may be reused across `vm.blobhashes`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         blobhash(0);
+   │         ━━━━━━━━━━━
+LL │         vm.blobhashes(new bytes32[](1));
+   │         ─────────────────────────────── `vm.blobhashes` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlobhashes()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `blockhash(...)` may be reused across `vm.setBlockhash`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         bytes32 saved = blockhash(1);
+   │                         ━━━━━━━━━━━━
+LL │         alias_.setBlockhash({value: bytes32(uint256(2)), height: 1});
+   │         ──────────────────────────────────────────────────────────── `vm.setBlockhash` changes this environment here
+   │
+   ├ help: capture it through an external helper call instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+
+warning[environment-read-across-mutation]: `block.timestamp` may be reused across `vm.warp`
+   ╭▸ ROOT/testdata/EnvironmentSetters.sol:LL:CC
+   │
+LL │         uint256 saved = block.timestamp;
+   │                         ━━━━━━━━━━━━━━━
+LL │         vm.roll(100); // Does not change the timestamp.
+LL │         vm.warp(200); // This is the secondary span, not the later matching call.
+   │         ──────────── `vm.warp` changes this environment here
+   │
+   ├ help: capture it with `vm.getBlockTimestamp()` instead
+   ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
+

@@ -86,11 +86,9 @@ impl FuzzCampaign {
             let last_call = current_depth == run_depth - 1;
             let (mut result, block_snapshot) = {
                 let (executor, tx) = parts(state);
-                let has_delay = tx.warp.is_some_and(|delay| !delay.is_zero())
-                    || tx.roll.is_some_and(|delay| !delay.is_zero());
-                let snapshot = (matches!(self.mode, FuzzCampaignMode::Invariant { .. })
-                    && has_delay)
-                    .then(|| BlockSnapshot::new(executor));
+                let snapshot = matches!(self.mode, FuzzCampaignMode::Invariant { .. })
+                    .then(|| BlockSnapshot::for_delayed_call(executor, tx))
+                    .flatten();
                 let result = match self.mode {
                     FuzzCampaignMode::Stateless => executor.call_raw(
                         tx.sender,
@@ -110,20 +108,20 @@ impl FuzzCampaign {
                 return Ok(CampaignSequenceOutcome::Cancelled);
             }
             on_event(state, CampaignEvent::Feedback(&mut result))?;
-            let discarded = result.result.as_ref() == MAGIC_ASSUME;
-            let kind = if discarded {
-                if let Some(snapshot) = block_snapshot {
+            let kind = match self.mode {
+                FuzzCampaignMode::Invariant { .. } => {
                     let (executor, _) = parts(state);
-                    snapshot.restore(executor);
+                    transition_invariant_call(executor, &mut result, block_snapshot)
                 }
-                CampaignCallKind::AssumptionRejected
-            } else {
-                if matches!(self.mode, FuzzCampaignMode::Invariant { .. }) {
-                    let (executor, _) = parts(state);
-                    executor.commit(&mut result);
+                FuzzCampaignMode::Stateless => {
+                    if result.result.as_ref() == MAGIC_ASSUME {
+                        CampaignCallKind::AssumptionRejected
+                    } else {
+                        CampaignCallKind::Accepted
+                    }
                 }
-                CampaignCallKind::Accepted
             };
+            let discarded = kind == CampaignCallKind::AssumptionRejected;
             let should_check = match self.mode {
                 FuzzCampaignMode::Stateless => true,
                 FuzzCampaignMode::Invariant { optimization: true, .. } => true,
@@ -157,6 +155,12 @@ struct BlockSnapshot<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> BlockSnapshot<FEN> {
+    fn for_delayed_call(executor: &Executor<FEN>, tx: &BasicTxDetails) -> Option<Self> {
+        let has_delay = tx.warp.is_some_and(|delay| !delay.is_zero())
+            || tx.roll.is_some_and(|delay| !delay.is_zero());
+        has_delay.then(|| Self::new(executor))
+    }
+
     fn new(executor: &Executor<FEN>) -> Self {
         Self {
             env: executor.evm_env().block_env.clone(),
@@ -172,33 +176,44 @@ impl<FEN: FoundryEvmNetwork> BlockSnapshot<FEN> {
     }
 }
 
+fn transition_invariant_call<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    result: &mut RawCallResult<FEN>,
+    block_snapshot: Option<BlockSnapshot<FEN>>,
+) -> CampaignCallKind {
+    if result.result.as_ref() == MAGIC_ASSUME {
+        if let Some(snapshot) = block_snapshot {
+            snapshot.restore(executor);
+        }
+        CampaignCallKind::AssumptionRejected
+    } else {
+        executor.commit(result);
+        CampaignCallKind::Accepted
+    }
+}
+
+/// Executes and commits one invariant replay call with live campaign semantics.
+pub(super) fn execute_invariant_replay_tx<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+) -> Result<(CampaignCallKind, RawCallResult<FEN>)> {
+    let block_snapshot = BlockSnapshot::for_delayed_call(executor, tx);
+    let mut result = execute_invariant_tx(executor, &mut tx.clone())?;
+    if result.execution_cancelled {
+        if let Some(snapshot) = block_snapshot {
+            snapshot.restore(executor);
+        }
+        return Err(eyre!("invariant replay call was cancelled"));
+    }
+    let kind = transition_invariant_call(executor, &mut result, block_snapshot);
+    Ok((kind, result))
+}
+
 pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     tx: &mut BasicTxDetails,
 ) -> Result<RawCallResult<FEN>> {
-    let warp = tx.warp.unwrap_or_default();
-    let roll = tx.roll.unwrap_or_default();
-    if warp > 0 || roll > 0 {
-        let needs_cheatcode_block = executor
-            .inspector()
-            .cheatcodes
-            .as_ref()
-            .is_some_and(|cheatcodes| cheatcodes.block.is_none());
-        let block_env = {
-            let block_env = &mut executor.evm_env_mut().block_env;
-            block_env.set_timestamp(block_env.timestamp() + warp);
-            block_env.set_number(block_env.number() + roll);
-            needs_cheatcode_block.then(|| block_env.clone())
-        };
-        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
-            if let Some(block) = cheatcodes.block.as_mut() {
-                block.set_timestamp(block.timestamp() + warp);
-                block.set_number(block.number() + roll);
-            } else {
-                cheatcodes.block = Some(block_env.unwrap());
-            }
-        }
-    }
+    apply_block_delay(executor, tx.warp.unwrap_or_default(), tx.roll.unwrap_or_default());
     let value = match tx.call_details.value {
         Some(requested) if !requested.is_zero() => requested.min(executor.get_balance(tx.sender)?),
         _ => U256::ZERO,
@@ -209,4 +224,35 @@ pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     executor
         .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
         .map_err(|error| eyre!("Could not make raw evm call: {error}"))
+}
+
+/// Advances the execution block environment and the cheatcode block override by an invariant
+/// call's warp and roll delays.
+pub(super) fn apply_block_delay<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    warp: U256,
+    roll: U256,
+) {
+    if warp.is_zero() && roll.is_zero() {
+        return;
+    }
+    let needs_cheatcode_block = executor
+        .inspector()
+        .cheatcodes
+        .as_ref()
+        .is_some_and(|cheatcodes| cheatcodes.block.is_none());
+    let block_env = {
+        let block_env = &mut executor.evm_env_mut().block_env;
+        block_env.set_timestamp(block_env.timestamp() + warp);
+        block_env.set_number(block_env.number() + roll);
+        needs_cheatcode_block.then(|| block_env.clone())
+    };
+    if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
+        if let Some(block) = cheatcodes.block.as_mut() {
+            block.set_timestamp(block.timestamp() + warp);
+            block.set_number(block.number() + roll);
+        } else {
+            cheatcodes.block = Some(block_env.unwrap());
+        }
+    }
 }

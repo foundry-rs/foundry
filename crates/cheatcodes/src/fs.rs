@@ -2,7 +2,8 @@
 
 use super::string::parse;
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*, inspector::exec_create,
+    Cheatcode, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, Result, Vm::*,
+    inspector::exec_create,
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
@@ -13,12 +14,9 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::evm::FoundryEvmNetwork;
-use revm::{
-    context::{Cfg, ContextTr, CreateScheme, JournalTr},
-    interpreter::CreateInputs,
-};
-use revm_inspectors::tracing::types::CallKind;
+use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
+use foundry_evm_traces::CallKind;
+use revm::{context::CreateScheme, interpreter::CreateInputs};
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
@@ -52,7 +50,16 @@ struct ParsedArtifactPath<'a> {
 /// - `ContractName:0.8.23`
 /// - `ContractName:profile`
 fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>, String> {
-    let mut parts = path.split(':');
+    // A Windows drive separator belongs to the file, not the artifact's suffix fields.
+    // Recognize it on every host so parsing does not depend on the current platform.
+    let unprefixed = path.strip_prefix(r"\\?\").unwrap_or(path);
+    let drive_prefix_len = match unprefixed.as_bytes() {
+        [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic() => {
+            path.len() - unprefixed.len() + 2
+        }
+        _ => 0,
+    };
+    let mut parts = path[drive_prefix_len..].split(':');
 
     let mut file = None;
     let mut contract_name = None;
@@ -60,6 +67,7 @@ fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>
     let mut profile = None;
 
     let path_or_name = parts.next().unwrap();
+    let path_or_name = &path[..drive_prefix_len + path_or_name.len()];
     if path_or_name.contains('.') {
         file = Some(PathBuf::from(path_or_name));
         if let Some(name_or_version_or_profile) = parts.next() {
@@ -101,7 +109,7 @@ fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>
 }
 
 impl Cheatcode for existsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.exists().abi_encode())
@@ -109,7 +117,7 @@ impl Cheatcode for existsCall {
 }
 
 impl Cheatcode for fsMetadataCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -135,7 +143,7 @@ impl Cheatcode for fsMetadataCall {
 }
 
 impl Cheatcode for isDirCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.is_dir().abi_encode())
@@ -143,7 +151,7 @@ impl Cheatcode for isDirCall {
 }
 
 impl Cheatcode for isFileCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.is_file().abi_encode())
@@ -151,14 +159,14 @@ impl Cheatcode for isFileCall {
 }
 
 impl Cheatcode for projectRootCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         Ok(state.config.root.display().to_string().abi_encode())
     }
 }
 
 impl Cheatcode for currentFilePathCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         let artifact = state
             .config
@@ -171,7 +179,7 @@ impl Cheatcode for currentFilePathCall {
 }
 
 impl Cheatcode for unixTimeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self {} = self;
         let difference = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -181,7 +189,7 @@ impl Cheatcode for unixTimeCall {
 }
 
 impl Cheatcode for closeFileCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -192,7 +200,7 @@ impl Cheatcode for closeFileCall {
 }
 
 impl Cheatcode for copyFileCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { from, to } = self;
         let from = state.config.ensure_path_allowed(from, FsAccessKind::Read)?;
         let to = state.config.ensure_path_allowed(to, FsAccessKind::Write)?;
@@ -204,7 +212,7 @@ impl Cheatcode for copyFileCall {
 }
 
 impl Cheatcode for createDirCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         if *recursive { fs::create_dir_all(path) } else { fs::create_dir(path) }?;
@@ -213,28 +221,28 @@ impl Cheatcode for createDirCall {
 }
 
 impl Cheatcode for readDir_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         read_dir(state, path.as_ref(), 1, false)
     }
 }
 
 impl Cheatcode for readDir_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path, maxDepth } = self;
         read_dir(state, path.as_ref(), *maxDepth, false)
     }
 }
 
 impl Cheatcode for readDir_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path, maxDepth, followLinks } = self;
         read_dir(state, path.as_ref(), *maxDepth, *followLinks)
     }
 }
 
 impl Cheatcode for readFileCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(fs::locked_read_to_string(path)?.abi_encode())
@@ -242,7 +250,7 @@ impl Cheatcode for readFileCall {
 }
 
 impl Cheatcode for readFileBinaryCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(fs::locked_read(path)?.abi_encode())
@@ -250,7 +258,7 @@ impl Cheatcode for readFileBinaryCall {
 }
 
 impl Cheatcode for readLineCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -276,25 +284,27 @@ impl Cheatcode for readLineCall {
 }
 
 impl Cheatcode for readLinkCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { linkPath: path } = self;
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let target = fs::read_link(path)?;
+        // Validate the resolved target, but keep the link itself for read_link.
+        state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let target = fs::read_link(state.config.root.join(path))?;
         Ok(target.display().to_string().abi_encode())
     }
 }
 
 impl Cheatcode for removeDirCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+        state.config.ensure_not_foundry_toml(&path)?;
         if *recursive { fs::remove_dir_all(path) } else { fs::remove_dir(path) }?;
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for removeFileCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         state.config.ensure_not_foundry_toml(&path)?;
@@ -311,21 +321,21 @@ impl Cheatcode for removeFileCall {
 }
 
 impl Cheatcode for writeFileCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data.as_bytes())
     }
 }
 
 impl Cheatcode for writeFileBinaryCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data)
     }
 }
 
 impl Cheatcode for writeLineCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { path, data: line } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         state.config.ensure_not_foundry_toml(&path)?;
@@ -339,7 +349,7 @@ impl Cheatcode for writeLineCall {
 }
 
 impl Cheatcode for getArtifactPathByCodeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { code } = self;
         let (artifact_id, _) = state
             .config
@@ -353,7 +363,7 @@ impl Cheatcode for getArtifactPathByCodeCall {
 }
 
 impl Cheatcode for getArtifactPathByDeployedCodeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { deployedCode } = self;
         let (artifact_id, _) = state
             .config
@@ -367,21 +377,21 @@ impl Cheatcode for getArtifactPathByDeployedCodeCall {
 }
 
 impl Cheatcode for getCodeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, false)?.abi_encode())
     }
 }
 
 impl Cheatcode for getDeployedCodeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, true)?.abi_encode())
     }
 }
 
 impl Cheatcode for getSelectorsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { artifactPath: path } = self;
         let selectors: Vec<FixedBytes<4>> = match get_artifact_source(state, path)? {
             ArtifactSource::InMemory(data) => data.abi.functions().map(|f| f.selector()).collect(),
@@ -499,10 +509,21 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     value: Option<U256>,
     salt: Option<U256>,
 ) -> Result {
-    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    // Synthetic creation bypasses the CREATE opcode's static-context check.
+    if ccx.is_static {
+        return Err(crate::Error::from(Bytes::new()));
+    }
 
-    // If active broadcast then set flag to deploy from code.
-    if let Some(broadcast) = &mut ccx.state.broadcast {
+    let mut bytecode = get_artifact_code(&ccx.state.core, path, false)?.to_vec();
+
+    let depth = ccx.depth();
+
+    // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
+    // depth, as for native creates.
+    if let Some(broadcast) = &mut ccx.state.broadcast
+        && depth == broadcast.depth
+        && ccx.caller == broadcast.original_caller
+    {
         broadcast.deploy_from_code = true;
     }
 
@@ -513,10 +534,24 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     let scheme =
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
-    // If prank active at current depth, then use it as caller for create input.
-    let caller =
-        ccx.state.get_prank(ccx.ecx.journal().depth()).map_or(ccx.caller, |prank| prank.new_caller);
+    // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
+    // original depth just as the native create inspector would.
+    let mut caller = ccx.caller;
+    if let Some(prank) = ccx.state.get_prank(depth)
+        && let Some(changes) = prank.changes_for(depth, caller)
+    {
+        if let Some(new_caller) = changes.caller {
+            caller = new_caller;
+        }
+        if let Some(new_origin) = changes.origin {
+            ccx.ecx.tx_mut().set_caller(new_origin);
+        }
+        if let Some(used) = changes.used {
+            ccx.state.pranks.insert(depth, used);
+        }
+    }
 
+    ccx.state.deploy_code_depth = Some(depth);
     let outcome = exec_create(
         executor,
         CreateInputs::new(
@@ -528,7 +563,30 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
             0,
         ),
         ccx,
-    )?;
+    );
+    ccx.state.deploy_code_depth = None;
+
+    // Clear the flag in case the synthetic create was not broadcast, and end a single-call
+    // broadcast at the original depth as native create cleanup would.
+    if let Some(broadcast) = &mut ccx.state.broadcast {
+        broadcast.deploy_from_code = false;
+        if broadcast.single_call && depth == broadcast.depth {
+            ccx.ecx.tx_mut().set_caller(broadcast.original_origin);
+            ccx.state.broadcast = None;
+        }
+    }
+
+    // Restore the prank state at the original depth as native create cleanup would.
+    if let Some(prank) = ccx.state.get_prank(depth).copied()
+        && depth == prank.depth
+    {
+        ccx.ecx.tx_mut().set_caller(prank.prank_origin);
+        if prank.single_call {
+            ccx.state.pranks.remove(&depth);
+        }
+    }
+
+    let outcome = outcome?;
 
     if !outcome.result.result.is_ok() {
         return Err(crate::Error::from(outcome.result.output));
@@ -560,19 +618,15 @@ enum ArtifactSource<'a> {
 /// - `ContractName`
 /// - `ContractName:0.8.23`
 /// - `ContractName:profile`
-fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
-    state: &'a Cheatcodes<FEN>,
-    path: &str,
-) -> Result<ArtifactSource<'a>> {
+fn get_artifact_source<'a>(state: &'a CheatcodesCore, path: &str) -> Result<ArtifactSource<'a>> {
     if path.ends_with(".json") {
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         return Ok(ArtifactSource::Disk(path));
     }
 
-    let parsed =
-        parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
-    let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
-    let file = file.map(|file| {
+    let artifacts =
+        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref());
+    let resolve_source = |file: PathBuf| {
         let cwd = state
             .config
             .running_artifact
@@ -592,16 +646,40 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
         } else {
             file
         }
-    });
+    };
+    let exact_identifier = path
+        .rsplit_once(':')
+        .map(|(source, contract)| (resolve_source(PathBuf::from(source)), contract))
+        .filter(|(source, contract)| {
+            artifacts.into_iter().flat_map(|artifacts| artifacts.iter()).any(|(id, _)| {
+                id.source == *source
+                    && id.name.split('.').next().is_some_and(|name| name == *contract)
+            })
+        });
 
-    // Use available artifacts list if present
-    if let Some(artifacts) = &state.config.available_artifacts {
+    let parsed = match parse_artifact_path(path) {
+        Ok(parsed) => parsed,
+        Err(_) if exact_identifier.is_some() => {
+            ParsedArtifactPath { file: None, contract_name: None, version: None, profile: None }
+        }
+        Err(error) => return Err(fmt_err!("failed to parse artifact path: {error}")),
+    };
+    let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
+    let file = file.map(resolve_source);
+
+    // Use the artifact lookup if present.
+    if let Some(artifacts) = artifacts {
         let ambiguous_file_profile =
             file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
         let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
             artifacts
                 .iter()
                 .filter(|(id, _)| {
+                    if let Some((source, contract)) = &exact_identifier {
+                        return id.source == *source
+                            && id.name.split('.').next().is_some_and(|name| name == *contract);
+                    }
+
                     // name might be in the form of "Counter.0.8.23"
                     let id_name = id.name.split('.').next().unwrap();
 
@@ -653,7 +731,7 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
                         .as_ref()
                         .and_then(|running| {
                             // Only filter by running version if user did NOT specify a version
-                            if version.is_none() {
+                            if exact_identifier.is_some() || version.is_none() {
                                 filtered.retain(|(id, _)| id.version == running.version);
 
                                 // Return artifact if only one matched
@@ -663,7 +741,7 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
                             }
 
                             // Only filter by running profile if user did NOT specify a profile
-                            if profile.is_none() {
+                            if exact_identifier.is_some() || profile.is_none() {
                                 filtered.retain(|(id, _)| id.profile == running.profile);
 
                                 return (filtered.len() == 1).then(|| filtered[0]);
@@ -701,10 +779,7 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
 
 /// Reads an artifact JSON file, mapping I/O errors to a helpful message when the
 /// lookup fell through the in-memory artifacts list.
-fn read_artifact_file<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
-    path: &Path,
-) -> Result<String> {
+fn read_artifact_file(state: &CheatcodesCore, path: &Path) -> Result<String> {
     fs::read_to_string(path).map_err(|e| {
         if state.config.available_artifacts.is_some() {
             fmt_err!("no matching artifact found")
@@ -721,11 +796,7 @@ fn read_artifact_file<FEN: FoundryEvmNetwork>(
 /// This function is safe to use with contracts that have library dependencies.
 /// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
 /// reject artifacts with unlinked library placeholders.
-fn get_artifact_code<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
-    path: &str,
-    deployed: bool,
-) -> Result<Bytes> {
+fn get_artifact_code(state: &CheatcodesCore, path: &str, deployed: bool) -> Result<Bytes> {
     let maybe_bytecode = match get_artifact_source(state, path)? {
         ArtifactSource::InMemory(data) => {
             if deployed { data.deployed_bytecode() } else { data.bytecode() }.cloned()
@@ -740,80 +811,80 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
 }
 
 impl Cheatcode for ffiCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(decode_ffi_stdout(&stdout).abi_encode())
+    }
+}
 
-        let output = ffi(state, input)?;
+impl Cheatcode for ffiUintCall {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { commandInput: input } = self;
+        parse(&ffi_stdout(state, input)?, &DynSolType::Uint(256))
+    }
+}
 
-        // Check the exit code of the command.
-        if output.exitCode != 0 {
-            // If the command failed, return an error with the exit code and stderr.
-            return Err(fmt_err!(
-                "ffi command {:?} exited with code {}. stderr: {}",
-                input,
-                output.exitCode,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+impl Cheatcode for ffiStringCall {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { commandInput: input } = self;
+        Ok(ffi_stdout(state, input)?.abi_encode())
+    }
+}
 
-        // If the command succeeded but still wrote to stderr, log it as a warning.
-        if !output.stderr.is_empty() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
-        }
-
-        // We already hex-decoded the stdout in the `ffi` helper function.
-        Ok(output.stdout.abi_encode())
+impl Cheatcode for ffiBytesCall {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(hex::decode(&stdout)
+            .map_err(|err| fmt_err!("failed parsing ffi stdout as bytes: {err}"))?
+            .abi_encode())
     }
 }
 
 impl Cheatcode for tryFfiCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { commandInput: input } = self;
         ffi(state, input).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_input).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptSecretCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_password).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptSecretUintCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for promptAddressCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for promptUintCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Uint(256))
     }
 }
 
-pub(super) fn write_file<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
-    path: &Path,
-    contents: &[u8],
-) -> Result {
+pub(super) fn write_file(state: &CheatcodesCore, path: &Path, contents: &[u8]) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
     // write access to foundry.toml is not allowed
     state.config.ensure_not_foundry_toml(&path)?;
@@ -825,12 +896,7 @@ pub(super) fn write_file<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
-fn read_dir<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
-    path: &Path,
-    max_depth: u64,
-    follow_links: bool,
-) -> Result {
+fn read_dir(state: &CheatcodesCore, path: &Path, max_depth: u64, follow_links: bool) -> Result {
     let root = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
     let paths: Vec<DirEntry> = WalkDir::new(root)
         .min_depth(1)
@@ -860,7 +926,41 @@ fn read_dir<FEN: FoundryEvmNetwork>(
     Ok(paths.abi_encode())
 }
 
-fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<FfiResult> {
+fn ffi(state: &CheatcodesCore, input: &[String]) -> Result<FfiResult> {
+    let output = ffi_command(state, input)?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = stdout.trim();
+    Ok(FfiResult {
+        exitCode: output.status.code().unwrap_or(69),
+        stdout: decode_ffi_stdout(stdout),
+        stderr: output.stderr.into(),
+    })
+}
+
+fn ffi_stdout(state: &CheatcodesCore, input: &[String]) -> Result<String> {
+    let output = ffi_command(state, input)?;
+    let stdout = String::from_utf8(output.stdout)?;
+    if !output.status.success() {
+        return Err(fmt_err!(
+            "ffi command {:?} exited with code {}. stderr: {}",
+            input,
+            output.status.code().unwrap_or(69),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
+    }
+    Ok(stdout.trim().to_string())
+}
+
+fn decode_ffi_stdout(stdout: &str) -> Bytes {
+    hex::decode(stdout).unwrap_or_else(|_| stdout.as_bytes().to_vec()).into()
+}
+
+fn ffi_command(state: &CheatcodesCore, input: &[String]) -> Result<std::process::Output> {
     ensure!(
         state.config.ffi,
         "FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
@@ -871,25 +971,9 @@ fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Res
 
     debug!(target: "cheatcodes", ?cmd, "invoking ffi");
 
-    let output = cmd
-        .current_dir(&state.config.root)
+    cmd.current_dir(&state.config.root)
         .output()
-        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))?;
-
-    // The stdout might be encoded on valid hex, or it might just be a string,
-    // so we need to determine which it is to avoid improperly encoding later.
-    let trimmed_stdout = String::from_utf8(output.stdout)?;
-    let trimmed_stdout = trimmed_stdout.trim();
-    let encoded_stdout = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        hex
-    } else {
-        trimmed_stdout.as_bytes().to_vec()
-    };
-    Ok(FfiResult {
-        exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout.into(),
-        stderr: output.stderr.into(),
-    })
+        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))
 }
 
 fn prompt_input(prompt_text: &str) -> Result<String, dialoguer::Error> {
@@ -900,8 +984,8 @@ fn prompt_password(prompt_text: &str) -> Result<String, dialoguer::Error> {
     Password::new().with_prompt(prompt_text).interact()
 }
 
-fn prompt<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
+fn prompt(
+    state: &CheatcodesCore,
     prompt_text: &str,
     input: fn(&str) -> Result<String, dialoguer::Error>,
 ) -> Result<String> {
@@ -926,13 +1010,13 @@ fn prompt<FEN: FoundryEvmNetwork>(
 }
 
 impl Cheatcode for getBroadcastCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
-            &state.config.broadcast,
+            &ccx.state.core.config.broadcast,
             vec![map_broadcast_tx_type(*txType)],
         )?;
 
@@ -941,11 +1025,12 @@ impl Cheatcode for getBroadcastCall {
 }
 
 impl Cheatcode for getBroadcasts_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
-            .with_tx_type(map_broadcast_tx_type(*txType));
+        let reader =
+            BroadcastReader::new(contractName.clone(), *chainId, &ccx.state.core.config.broadcast)?
+                .with_tx_type(map_broadcast_tx_type(*txType));
 
         let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
@@ -962,10 +1047,11 @@ impl Cheatcode for getBroadcasts_0Call {
 }
 
 impl Cheatcode for getBroadcasts_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
+        let reader =
+            BroadcastReader::new(contractName.clone(), *chainId, &ccx.state.core.config.broadcast)?;
 
         let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
@@ -984,12 +1070,12 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.cfg().chain_id();
+        let chain_id = ccx.chain_id();
 
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             chain_id,
-            &ccx.state.config.broadcast,
+            &ccx.state.core.config.broadcast,
             vec![CallKind::Create, CallKind::Create2],
         )?;
 
@@ -998,13 +1084,13 @@ impl Cheatcode for getDeployment_0Call {
 }
 
 impl Cheatcode for getDeployment_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
-            &state.config.broadcast,
+            &ccx.state.core.config.broadcast,
             vec![CallKind::Create, CallKind::Create2],
         )?;
 
@@ -1013,12 +1099,13 @@ impl Cheatcode for getDeployment_1Call {
 }
 
 impl Cheatcode for getDeploymentsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
-            .with_tx_type(CallKind::Create)
-            .with_tx_type(CallKind::Create2);
+        let reader =
+            BroadcastReader::new(contractName.clone(), *chainId, &ccx.state.core.config.broadcast)?
+                .with_tx_type(CallKind::Create)
+                .with_tx_type(CallKind::Create2);
 
         let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
@@ -1097,7 +1184,7 @@ where
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{Bloom, address, b256};
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
         ArtifactId,
@@ -1105,17 +1192,17 @@ mod tests {
             BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
         },
     };
-    use foundry_evm_core::evm::TempoEvmNetwork;
     use std::{env, fs as stdfs, str::FromStr, sync::Arc};
     use tempfile::TempDir;
+    use tempo_alloy::TempoNetwork;
 
-    fn cheats() -> Cheatcodes {
+    fn cheats() -> CheatcodesCore {
         let config = CheatsConfig {
             ffi: true,
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        Cheatcodes::new(Arc::new(config))
+        CheatcodesCore::new(Arc::new(config))
     }
 
     #[test]
@@ -1146,7 +1233,7 @@ mod tests {
         #[cfg(windows)]
         let args = vec!["cmd".to_string(), "/c".to_string(), "exit 1".to_string()];
 
-        let result = Cheatcode::apply(&ffiCall { commandInput: args }, &mut cheats);
+        let result = Cheatcode::apply_context(&ffiCall { commandInput: args }, &mut cheats);
 
         // Assert that the cheatcode returned an error.
         assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");
@@ -1189,6 +1276,40 @@ mod tests {
         assert_eq!(parsed.contract_name, None);
         assert_eq!(parsed.version, None);
         assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_windows_drive() {
+        for file in [
+            "C:/project/src/Contract.sol",
+            r"C:\project\src\Contract.sol",
+            r"\\?\C:\project\src\Contract.sol",
+            r"\\server\share\Contract.sol",
+        ] {
+            for (suffix, contract_name, version, profile) in [
+                ("", None, None, None),
+                (":MyContract", Some("MyContract"), None, None),
+                (":0.8.23", None, Some(Version::new(0, 8, 23)), None),
+                (":MyContract:0.8.23", Some("MyContract"), Some(Version::new(0, 8, 23)), None),
+                (":MyContract:optimized", Some("MyContract"), None, Some("optimized")),
+            ] {
+                let input = format!("{file}{suffix}");
+                assert_eq!(
+                    parse_artifact_path(&input).unwrap(),
+                    ParsedArtifactPath {
+                        file: Some(PathBuf::from(file)),
+                        contract_name,
+                        version,
+                        profile,
+                    },
+                    "{input}"
+                );
+            }
+        }
+
+        // A one-letter contract name must still allow version and profile suffixes.
+        assert_eq!(parse_artifact_path("C:0.8.23").unwrap().version, Some(Version::new(0, 8, 23)));
+        assert_eq!(parse_artifact_path("C:optimized").unwrap().profile, Some("optimized"));
     }
 
     #[test]
@@ -1280,12 +1401,51 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+        let cheats = CheatcodesCore::new(Arc::new(config));
 
         let bytecode =
             super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
 
         assert_eq!(bytecode, paris_bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_exact_colon_path_uses_running_profile() {
+        let default_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let optimized_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let versioned_bytecode = Bytes::from_static(&[0x60, 0x03]);
+        let source = "src/Colon:Path.sol";
+        let default = test_artifact(source, "Target", "default", default_bytecode);
+        let optimized =
+            test_artifact(source, "Target.optimized", "optimized", optimized_bytecode.clone());
+        let mut versioned = test_artifact(
+            source,
+            "Target.0.8.29.optimized",
+            "optimized",
+            versioned_bytecode.clone(),
+        );
+        versioned.0.version = Version::new(0, 8, 29);
+        let artifacts = ContractsByArtifact::new([default, optimized, versioned]);
+        for (patch, expected) in [(30, optimized_bytecode), (29, versioned_bytecode)] {
+            let running_artifact = ArtifactId {
+                source: PathBuf::from("test/Runner.t.sol"),
+                name: "Runner".to_owned(),
+                path: PathBuf::from("test/Runner.t.sol/Runner.json"),
+                version: Version::new(0, 8, patch),
+                build_id: String::new(),
+                profile: "optimized".to_owned(),
+            };
+            let config = CheatsConfig {
+                available_artifacts: Some(artifacts.clone()),
+                running_artifact: Some(running_artifact),
+                root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
+                ..Default::default()
+            };
+            let cheats = CheatcodesCore::new(Arc::new(config));
+            let bytecode =
+                super::get_artifact_code(&cheats, "src/Colon:Path.sol:Target", false).unwrap();
+            assert_eq!(bytecode, expected);
+        }
     }
 
     #[test]
@@ -1302,7 +1462,7 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+        let cheats = CheatcodesCore::new(Arc::new(config));
 
         let bytecode =
             super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
@@ -1329,12 +1489,53 @@ mod tests {
             paths,
             ..Default::default()
         };
-        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+        let cheats = CheatcodesCore::new(Arc::new(config));
 
         let resolved =
             super::get_artifact_code(&cheats, "@example/Something.sol:Something", false).unwrap();
 
         assert_eq!(resolved, bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_remaps_exact_paths_before_profile_selection() {
+        for file in ["Target.sol", "Colon:Path.sol"] {
+            let source = format!("src/{file}");
+            let remapped = format!("lib/alternate/{file}");
+            let default_bytecode = Bytes::from_static(&[0x60, 0x02]);
+            let optimized_bytecode = Bytes::from_static(&[0x60, 0x03]);
+            let artifacts = ContractsByArtifact::new([
+                test_artifact(&source, "Target", "default", Bytes::from_static(&[0x60, 0x01])),
+                test_artifact(&remapped, "Target", "default", default_bytecode.clone()),
+                test_artifact(
+                    &remapped,
+                    "Target.optimized",
+                    "optimized",
+                    optimized_bytecode.clone(),
+                ),
+            ]);
+            for (profile, expected) in
+                [("default", default_bytecode), ("optimized", optimized_bytecode)]
+            {
+                let root = PathBuf::from(&env!("CARGO_MANIFEST_DIR"));
+                let paths = foundry_compilers::ProjectPathsConfig::builder()
+                    .remapping(Remapping::from_str("src/=lib/alternate/").unwrap())
+                    .build_with_root(&root);
+                let config = CheatsConfig {
+                    available_artifacts: Some(artifacts.clone()),
+                    running_artifact: Some(
+                        test_artifact("test/Runner.t.sol", "Runner", profile, Bytes::new()).0,
+                    ),
+                    root,
+                    paths,
+                    ..Default::default()
+                };
+                let cheats = CheatcodesCore::new(Arc::new(config));
+                let resolved =
+                    super::get_artifact_code(&cheats, &format!("{source}:Target"), false).unwrap();
+                assert_eq!(resolved, expected, "{source} in {profile} profile");
+            }
+        }
     }
 
     #[test]
@@ -1359,7 +1560,7 @@ mod tests {
             paths,
             ..Default::default()
         };
-        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+        let cheats = CheatcodesCore::new(Arc::new(config));
 
         let resolved = super::get_artifact_code(&cheats, "src/Thing.sol:RootThing", false).unwrap();
 
@@ -1432,7 +1633,7 @@ mod tests {
         let block_hash = "0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66";
         let from = "0xa70ab0448e66cd77995bfbba5c5b64b41a85f3fd";
         let contract_address = "0x20c0000000000000000000000000000000000000";
-        let zero_bloom = format!("0x{}", "0".repeat(512));
+        let zero_bloom = format!("{:#x}", Bloom::ZERO);
 
         let sequence = serde_json::json!({
             "transactions": [{
@@ -1489,7 +1690,7 @@ mod tests {
 
         fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
 
-        let latest = latest_broadcast::<<TempoEvmNetwork as FoundryEvmNetwork>::Network>(
+        let latest = latest_broadcast::<TempoNetwork>(
             &"Counter".to_owned(),
             31337,
             &broadcast_path,

@@ -138,6 +138,15 @@ contract ExpectCallFailureTest is DSTest {
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
         this.exposed_callTargetNTimes(target, 5, 5, 1);
     }
+
+    /// Ensure that a test frame that halts reports the unmet expectation as a revert.
+    function testShouldFailExpectCallWhenTestHalts() public {
+        Contract target = new Contract();
+        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        assembly {
+            invalid()
+        }
+    }
 }
 
 contract ExpectCallCountFailureTest is DSTest {

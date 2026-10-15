@@ -8,10 +8,10 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::{DocCommentStyle, IndentStyle};
+use foundry_config::fmt::{DocCommentStyle, IndentStyle, IntTypes};
 use solar::parse::{
     ast::{self, Span},
-    interface::{BytePos, SourceMap},
+    interface::{BytePos, source_map::SourceFile},
     token,
 };
 use std::{borrow::Cow, ops::Deref, sync::Arc};
@@ -107,7 +107,7 @@ pub(super) struct State<'sess, 'ast> {
     pub(super) s: pp::Printer,
     ind: isize,
 
-    sm: &'sess SourceMap,
+    file: &'sess SourceFile,
     pub(super) comments: Comments,
     config: Arc<FormatterConfig>,
     inline_config: InlineConfig<()>,
@@ -163,13 +163,19 @@ struct SourcePos {
 }
 
 impl SourcePos {
+    /// While `enabled`, the position is a loose lower bound that is resynced by `advance_to`.
+    /// While disabled, it is the exact start of the not-yet-printed source of a disabled region.
     pub(super) fn advance(&mut self, bytes: u32) {
         self.pos += BytePos(bytes);
     }
 
     pub(super) fn advance_to(&mut self, pos: BytePos, enabled: bool) {
-        self.pos = std::cmp::max(pos, self.pos);
-        self.enabled = enabled;
+        // Ignore stale updates while disabled, as the exact position must be preserved until the
+        // remainder of the disabled region has been printed.
+        if self.enabled || pos >= self.pos {
+            self.pos = std::cmp::max(pos, self.pos);
+            self.enabled = enabled;
+        }
     }
 
     pub(super) fn next_line(&mut self, is_at_crlf: bool) {
@@ -189,22 +195,20 @@ pub(super) enum Separator {
 }
 
 impl Separator {
-    fn print(&self, p: &mut pp::Printer, cursor: &mut SourcePos, is_at_crlf: bool) {
+    fn print(&self, p: &mut pp::Printer) {
         match self {
             Self::Nbsp => p.nbsp(),
             Self::Space => p.space(),
             Self::Hardbreak => p.hardbreak(),
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
-
-        cursor.next_line(is_at_crlf);
     }
 }
 
 /// Generic methods
 impl<'sess> State<'sess, '_> {
     pub(super) fn new(
-        sm: &'sess SourceMap,
+        file: &'sess SourceFile,
         config: Arc<FormatterConfig>,
         inline_config: InlineConfig<()>,
         comments: Comments,
@@ -215,11 +219,11 @@ impl<'sess> State<'sess, '_> {
                 matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
             ),
             ind: config.tab_width as isize,
-            sm,
+            file,
             comments,
             config,
             inline_config,
-            cursor: SourcePos { pos: BytePos::from_u32(0), enabled: true },
+            cursor: SourcePos { pos: file.start_pos, enabled: true },
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
@@ -241,7 +245,7 @@ impl<'sess> State<'sess, '_> {
     /// If a `\r` is found, `self.has_crlf` is set to `true`. This is intended to be
     /// called once at the beginning of the formatting process for efficiency.
     fn check_crlf(&mut self, span: Span) {
-        if let Ok(snip) = self.sm.span_to_snippet(span)
+        if let Some(snip) = self.snippet(span)
             && snip.contains('\r')
         {
             self.has_crlf = true;
@@ -252,6 +256,17 @@ impl<'sess> State<'sess, '_> {
     /// The check is only meaningful if `self.has_crlf` is true.
     fn is_at_crlf(&self) -> bool {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
+    }
+
+    /// Advances the cursor past the line break assumed to be represented by a printed separator.
+    ///
+    /// While the cursor is disabled it marks the exact start of not-yet-printed source, so it may
+    /// only advance if it actually sits at a line break; otherwise the separator does not consume
+    /// any source (e.g. it was already printed verbatim by a disabled trailing comment).
+    fn cursor_next_line(&mut self) {
+        if self.cursor.enabled || matches!(self.char_at(self.cursor.pos), Some('\n' | '\r')) {
+            self.cursor.next_line(self.is_at_crlf());
+        }
     }
 
     /// Computes the space left, bounded by the max space left.
@@ -303,20 +318,55 @@ impl<'sess> State<'sess, '_> {
 }
 
 /// Span to source.
-impl State<'_, '_> {
+impl<'sess> State<'sess, '_> {
+    fn snippet(&self, span: Span) -> Option<&'sess str> {
+        let start = span.lo().0.checked_sub(self.file.start_pos.0)? as usize;
+        let end = span.hi().0.checked_sub(self.file.start_pos.0)? as usize;
+        self.file.src.get(start..end)
+    }
+
+    fn source_line(&self, pos: BytePos) -> usize {
+        self.file.lookup_line(self.file.relative_position(pos)).map_or(0, |line| line + 1)
+    }
+
     fn char_at(&self, pos: BytePos) -> Option<char> {
-        let res = self.sm.lookup_byte_offset(pos);
-        res.sf.src.get(res.pos.to_usize()..)?.chars().next()
+        let offset = pos.0.checked_sub(self.file.start_pos.0)? as usize;
+        self.file.src.get(offset..)?.chars().next()
+    }
+
+    /// Returns the position of the first `{` within the span, ignoring the ones inside comments.
+    fn find_opening_brace(&self, span: Span) -> Option<BytePos> {
+        self.find_uncommented_char(span, '{')
+    }
+
+    /// Returns the position of the first matching character within the span, ignoring comments.
+    fn find_uncommented_char(&self, span: Span, needle: char) -> Option<BytePos> {
+        let snip = self.snippet(span)?;
+        let mut idx = 0;
+        while idx < snip.len() {
+            let rest = &snip[idx..];
+            if rest.starts_with(needle) {
+                return Some(span.lo() + idx as u32);
+            }
+            idx += if let Some(line) = rest.strip_prefix("//") {
+                2 + line.find('\n').unwrap_or(line.len())
+            } else if let Some(block) = rest.strip_prefix("/*") {
+                2 + block.find("*/").map_or(block.len(), |end| end + 2)
+            } else {
+                rest.chars().next().map_or(1, char::len_utf8)
+            };
+        }
+        None
     }
 
     fn print_span(&mut self, span: Span) {
-        match self.sm.span_to_snippet(span) {
-            Ok(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
-                snippet_with_tabs(s, self.config.tab_width)
+        match self.snippet(span) {
+            Some(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
+                snippet_with_tabs(s.to_owned(), self.config.tab_width)
             } else {
-                s
+                s.to_owned()
             }),
-            Err(e) => panic!("failed to print {span:?}: {e:#?}"),
+            None => panic!("failed to print {span:?}: invalid source span"),
         }
         // Drop comments that are included in the span.
         while let Some(cmnt) = self.peek_comment() {
@@ -383,8 +433,8 @@ impl State<'_, '_> {
     }
 
     fn print_sep_unhandled(&mut self, sep: Separator) {
-        let is_at_crlf = self.is_at_crlf();
-        sep.print(&mut self.s, &mut self.cursor, is_at_crlf);
+        sep.print(&mut self.s);
+        self.cursor_next_line();
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
@@ -405,9 +455,126 @@ impl State<'_, '_> {
         self.print_word(")");
     }
 
+    /// Account for brace spacing, ignoring literal and comment text.
+    fn brace_spacing_delta(
+        &self,
+        line: &str,
+        in_block_comment: &mut bool,
+        quote: &mut Option<u8>,
+    ) -> isize {
+        let bytes = line.as_bytes();
+        let mut delta = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            if let Some(delimiter) = *quote {
+                match bytes[i] {
+                    b'\\' => i = (i + 2).min(bytes.len()),
+                    c if c == delimiter => {
+                        *quote = None;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+                continue;
+            }
+            if *in_block_comment {
+                if bytes.get(i..i + 2) == Some(b"*/") {
+                    *in_block_comment = false;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            match bytes[i] {
+                b'/' if bytes.get(i + 1) == Some(&b'/') => break,
+                b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                    *in_block_comment = true;
+                    i += 2;
+                }
+                delimiter @ (b'\'' | b'"') => {
+                    *quote = Some(delimiter);
+                    i += 1;
+                }
+                b'{' | b'}' => {
+                    let inner = if bytes[i] == b'{' {
+                        bytes.get(i + 1)
+                    } else {
+                        i.checked_sub(1).and_then(|j| bytes.get(j))
+                    };
+                    if let Some(&inner) = inner
+                        && !matches!(inner, b'{' | b'}')
+                    {
+                        delta += match (matches!(inner, b' ' | b'\t'), self.config.bracket_spacing)
+                        {
+                            (true, false) => -1,
+                            (false, true) => 1,
+                            _ => 0,
+                        };
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        delta
+    }
+
+    /// Measure integer type spelling from parsed types so identifiers and literal text do not
+    /// affect the estimate.
+    fn int_type_delta(&self, ty: &ast::Type<'_>) -> isize {
+        match &ty.kind {
+            ast::TypeKind::Elementary(
+                ast::ElementaryType::Int(size) | ast::ElementaryType::UInt(size),
+            ) => match (self.config.int_types, size.bits_raw()) {
+                (IntTypes::Long, 0) => 3,
+                (IntTypes::Short, 256) => -3,
+                _ => 0,
+            },
+            ast::TypeKind::Array(array) => self.int_type_delta(&array.element),
+            ast::TypeKind::Mapping(mapping) => {
+                self.int_type_delta(&mapping.key) + self.int_type_delta(&mapping.value)
+            }
+            ast::TypeKind::Function(function) => {
+                let params: isize = function
+                    .parameters
+                    .vars
+                    .iter()
+                    .map(|param| self.int_type_delta(&param.ty))
+                    .sum();
+                let returns: isize = function.returns.as_ref().map_or(0, |returns| {
+                    returns.vars.iter().map(|ret| self.int_type_delta(&ret.ty)).sum()
+                });
+                params + returns
+            }
+            _ => 0,
+        }
+    }
+
+    fn estimate_type_size(&self, ty: &ast::Type<'_>) -> usize {
+        self.estimate_size(ty.span).saturating_add_signed(self.int_type_delta(ty))
+    }
+
     fn estimate_size(&self, span: Span) -> usize {
-        if let Ok(snip) = self.sm.span_to_snippet(span) {
+        self.estimate_size_inner(span, false)
+    }
+
+    /// Call argument layout needs printed delimiter widths. Keep other layout decisions on their
+    /// existing estimate so already stable source does not change formatting.
+    fn estimate_call_args_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, true)
+    }
+
+    /// Parentheses and index brackets have no inner padding in the printed assignment.
+    /// Keep comment-bearing expressions on their existing estimate.
+    fn estimate_assignment_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, !self.has_comment_between(span.lo(), span.hi()))
+    }
+
+    fn estimate_size_inner(&self, span: Span, normalize_delimiters: bool) -> usize {
+        if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
+            let (mut in_block_comment, mut quote) = (false, None);
 
             for line in snip.lines() {
                 let line = line.trim();
@@ -422,7 +589,13 @@ impl State<'_, '_> {
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
+                        ')' | ']'
+                            if self.config.bracket_spacing
+                                && (!normalize_delimiters || quote.is_some()) =>
+                        {
+                            size += 1
+                        }
+                        '}' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
                 }
@@ -442,14 +615,23 @@ impl State<'_, '_> {
                         break;
                     }
                 }
+                let brace_delta = self.brace_spacing_delta(line, &mut in_block_comment, &mut quote);
+                size = size.saturating_add_signed(brace_delta);
 
                 // Next line requires a line break if this one:
                 // - ends with a bracket and fmt config forces bracket spacing.
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
+                // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some('{') => self.config.bracket_spacing,
+                    Some('[' | '(') => {
+                        self.config.bracket_spacing && (!normalize_delimiters || quote.is_some())
+                    }
                     Some(',' | ';') => true,
+                    Some(
+                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',
+                    ) => !line.ends_with("*/"),
                     _ => false,
                 };
             }
@@ -460,7 +642,7 @@ impl State<'_, '_> {
     }
 
     fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
-        self.sm.lookup_char_pos(a).line == self.sm.lookup_char_pos(b).line
+        self.source_line(a) == self.source_line(b)
     }
 }
 
@@ -471,7 +653,12 @@ impl<'sess> State<'sess, '_> {
     fn handle_comment(&mut self, cmnt: Comment, skip_break: bool) -> Option<Comment> {
         if self.cursor.enabled {
             if self.inline_config.is_disabled(cmnt.span) {
-                if cmnt.style.is_trailing() && !self.last_token_is_space() {
+                // The comment is copied verbatim below, which appends it to whatever was printed
+                // last. An isolated comment had a line of its own in the source, so give it that
+                // line back rather than gluing it to the previous statement.
+                if cmnt.style.is_isolated() {
+                    self.hardbreak_if_not_bol();
+                } else if cmnt.style.is_trailing() && !self.last_token_is_space() {
                     self.nbsp();
                 }
                 self.print_span_cold(cmnt.span);
@@ -507,6 +694,7 @@ impl<'sess> State<'sess, '_> {
         let mut is_leading = true;
         let config_cache = config;
         let mut buffered_blank = None;
+        let mut previous_mixed_at_bol = false;
         while self.peek_comment().is_some_and(|c| c.pos() < pos) {
             let mut cmnt = self.next_comment().unwrap();
             let style_cache = cmnt.style;
@@ -516,11 +704,11 @@ impl<'sess> State<'sess, '_> {
                 && cmnt.is_doc
                 && cmnt.kind == ast::CommentKind::Line
             {
-                let mut ref_line = self.sm.lookup_char_pos(cmnt.span.hi()).line;
+                let mut ref_line = self.source_line(cmnt.span.hi());
                 while let Some(next_cmnt) = self.peek_comment() {
                     if !next_cmnt.is_doc
                         || next_cmnt.kind != ast::CommentKind::Line
-                        || ref_line + 1 != self.sm.lookup_char_pos(next_cmnt.span.lo()).line
+                        || ref_line + 1 != self.source_line(next_cmnt.span.lo())
                     {
                         break;
                     }
@@ -539,7 +727,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             // Handle disabled comments
-            let Some(cmnt) = self.handle_comment(
+            let Some(mut cmnt) = self.handle_comment(
                 cmnt,
                 if style_cache.is_isolated() {
                     config.iso_no_break
@@ -571,12 +759,31 @@ impl<'sess> State<'sess, '_> {
                 self.print_comment(blank, config);
             }
 
+            if previous_mixed_at_bol
+                && cmnt.style.is_trailing()
+                && matches!(cmnt.kind, ast::CommentKind::Line)
+            {
+                self.hardbreak_if_not_bol();
+            }
+
+            // A trailing comment moved onto its own line is isolated on the next run.
+            // Use that style now so following comments receive the same indentation.
+            if cmnt.style.is_trailing() && self.is_bol_or_only_ind() {
+                cmnt.style = CommentStyle::Isolated;
+            }
+
             // Handle mixed with follow-up comment
             if cmnt.style.is_mixed() {
                 if let Some(cmnt) = self.peek_comment_before(pos) {
                     config.mixed_no_break_prev = true;
                     config.mixed_no_break_post = true;
-                    config.mixed_post_nbsp = cmnt.style.is_mixed();
+                    config.mixed_post_nbsp = false;
+                    // The separator within a run of mixed comments must never break, even with
+                    // `wrap_comments`: a breakable space inside a broken consistent box always
+                    // breaks, which splits the run and reclassifies its comments on the next run.
+                    if cmnt.style.is_mixed() {
+                        config = config.mixed_post_glued();
+                    }
                 }
 
                 // Ensure consecutive mixed comments don't have a double-space
@@ -593,6 +800,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             last_style = Some(cmnt.style);
+            previous_mixed_at_bol = cmnt.style.is_mixed() && self.is_bol_or_only_ind();
             self.print_comment(cmnt, config);
             config = config_cache;
         }
@@ -760,6 +968,7 @@ impl<'sess> State<'sess, '_> {
             CommentStyle::Mixed => {
                 let Some(prefix) = cmnt.prefix() else { return };
                 let never_break = self.last_token_is_neverbreak();
+                let starts_line = self.is_bol_or_only_ind() || self.last_token_is_break();
                 if !self.is_bol_or_only_ind() {
                     match (never_break || config.mixed_no_break_prev, config.mixed_prev_space) {
                         (false, true) => config.space(&mut self.s),
@@ -770,6 +979,9 @@ impl<'sess> State<'sess, '_> {
                 }
                 if self.config.wrap_comments {
                     // Merge and wrap comments
+                    if starts_line {
+                        self.ibox(config.offset);
+                    }
                     let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
                     for (pos, line) in merged_lines.into_iter().delimited() {
                         self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
@@ -777,17 +989,28 @@ impl<'sess> State<'sess, '_> {
                             self.hardbreak();
                         }
                     }
+                    if starts_line {
+                        self.end();
+                    }
                 } else {
-                    // No wrapping, print as-is
+                    // Match the opening-column normalization of continuation lines.
+                    self.visual_align();
                     for (pos, line) in cmnt.lines.into_iter().delimited() {
-                        self.word(line);
+                        if !line.is_empty() {
+                            self.word(line);
+                        }
                         if !pos.is_last {
                             self.hardbreak();
                         }
                     }
+                    self.end();
                 }
                 if config.mixed_post_nbsp {
-                    config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
+                    if config.mixed_post_glued {
+                        self.nbsp();
+                    } else {
+                        config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
+                    }
                     self.cursor.advance(1);
                 } else if !config.mixed_no_break_post {
                     config.space(&mut self.s);
@@ -950,6 +1173,14 @@ impl<'sess> State<'sess, '_> {
         self.comments.iter().take_while(|c| c.pos() < pos).find(|c| !c.style.is_blank())
     }
 
+    /// Returns `true` if the next comment is a mixed comment that starts before the given
+    /// position.
+    fn peek_mixed_comment_before(&self, pos: Option<BytePos>) -> bool {
+        pos.is_some_and(|pos| {
+            self.peek_comment().is_some_and(|cmnt| cmnt.pos() < pos && cmnt.style.is_mixed())
+        })
+    }
+
     fn has_comment_before_with<F>(&self, pos: BytePos, f: F) -> bool
     where
         F: FnMut(&Comment) -> bool,
@@ -991,7 +1222,7 @@ impl<'sess> State<'sess, '_> {
     where
         'sess: 'b,
     {
-        self.comments.peek_trailing(self.sm, span_pos, next_pos).map(|(cmnt, _)| cmnt)
+        self.comments.peek_trailing_in_file(self.file, span_pos, next_pos).map(|(cmnt, _)| cmnt)
     }
 
     fn print_trailing_comment_inner(
@@ -1001,7 +1232,7 @@ impl<'sess> State<'sess, '_> {
         config: Option<CommentConfig>,
     ) -> bool {
         let mut printed = 0;
-        if let Some((_, n)) = self.comments.peek_trailing(self.sm, span_pos, next_pos) {
+        if let Some((_, n)) = self.comments.peek_trailing_in_file(self.file, span_pos, next_pos) {
             let config =
                 config.unwrap_or(CommentConfig::skip_ws().mixed_no_break().mixed_prev_space());
             while printed <= n {
@@ -1071,6 +1302,10 @@ pub(crate) struct CommentConfig {
     // Config: mixed comments
     mixed_prev_space: bool,
     mixed_post_nbsp: bool,
+    /// Makes `mixed_post_nbsp` emit a hard space even with `wrap_comments`, which would
+    /// otherwise use a breakable one. Required when the comment is glued to a closing token, as
+    /// a break in between detaches it and reclassifies the comment on the next run.
+    mixed_post_glued: bool,
     mixed_no_break_prev: bool,
     mixed_no_break_post: bool,
 }
@@ -1078,6 +1313,12 @@ pub(crate) struct CommentConfig {
 impl CommentConfig {
     pub(crate) fn skip_ws() -> Self {
         Self { skip_blanks: Some(Skip::All), ..Default::default() }
+    }
+
+    /// Config for comments that are the sole content of an otherwise empty block, so that they
+    /// are surrounded by spaces: `{ /* comment */ }`.
+    pub(crate) fn empty_block() -> Self {
+        Self::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_glued()
     }
 
     pub(crate) fn skip_leading_ws(resettable: bool) -> Self {
@@ -1127,6 +1368,12 @@ impl CommentConfig {
         self
     }
 
+    pub(crate) const fn mixed_post_glued(mut self) -> Self {
+        self.mixed_post_nbsp = true;
+        self.mixed_post_glued = true;
+        self
+    }
+
     pub(crate) fn hardbreak_if_not_bol(&self, is_bol: bool, p: &mut pp::Printer) {
         if self.offset != 0 && !is_bol {
             self.hardbreak(p);
@@ -1157,15 +1404,13 @@ impl CommentConfig {
 }
 
 fn snippet_with_tabs(s: String, tab_width: usize) -> String {
-    // process leading breaks
-    let trimmed = s.trim_start_matches('\n');
-    let num_breaks = s.len() - trimmed.len();
-    let mut formatted = std::iter::repeat_n('\n', num_breaks).collect::<String>();
-
-    // process lines
-    for (pos, line) in trimmed.lines().delimited() {
+    let mut formatted = String::with_capacity(s.len());
+    for line in s.split_inclusive('\n') {
+        let (line, has_newline) =
+            line.strip_suffix('\n').map_or((line, false), |line| (line, true));
+        let line = line.strip_suffix('\r').unwrap_or(line);
         line_with_tabs(&mut formatted, line, tab_width, None);
-        if !pos.is_last {
+        if has_newline {
             formatted.push('\n');
         }
     }

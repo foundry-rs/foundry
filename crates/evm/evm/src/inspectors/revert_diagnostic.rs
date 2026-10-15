@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, map::HashMap};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use foundry_evm_traces::RevertDiagnostic as DetailedRevertReason;
 use revm::{
@@ -9,11 +9,6 @@ use revm::{
 };
 
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
-
-/// Checks if the call scheme corresponds to any sort of delegate call
-pub const fn is_delegatecall(scheme: CallScheme) -> bool {
-    matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
-}
 
 /// An inspector that tracks call context to enhances revert diagnostics.
 /// Useful for understanding reverts that are not linked to custom errors or revert strings.
@@ -153,7 +148,7 @@ impl RevertDiagnostic {
     #[cold]
     fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
         if let Ok(size) = interp.stack.peek(0)
-            && size != U256::ZERO
+            && !size.is_zero()
         {
             self.non_contract_size_check = None;
         }
@@ -174,7 +169,7 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
         let target = if is_delegatecall(inputs.scheme) {
             inputs.bytecode_address
         } else {
-            inputs.target_address
+            inputs.transfer_to()
         };
 
         if IGNORE.contains(&target) || ctx.journal_ref().precompile_addresses().contains(&target) {
@@ -203,4 +198,9 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
             self.handle_extcodesize_output(interp);
         }
     }
+}
+
+/// Checks if the call scheme corresponds to any sort of delegate call
+pub const fn is_delegatecall(scheme: CallScheme) -> bool {
+    matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
 }

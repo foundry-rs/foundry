@@ -198,7 +198,9 @@ impl ScriptProgress {
         provider: &RootProvider<N>,
         timeout: u64,
         confirmations: u64,
+        submission_hashes: (&[B256], &[B256]),
     ) -> Result<()> {
+        let (durable_hashes, replayable_hashes) = submission_hashes;
         if deployment_sequence.pending.is_empty() {
             return Ok(());
         }
@@ -227,8 +229,14 @@ impl ScriptProgress {
                     if err.downcast_ref::<PendingReceiptError>().is_some() {
                         // We've already retried several times with sleep, but the receipt is still
                         // pending
-                        discarded_transactions = true;
-                        deployment_sequence.remove_pending(tx_hash);
+                        if durable_hashes.contains(&tx_hash) {
+                            errors.push(format!(
+                                "Durable submission {tx_hash:?} is still pending; refusing to discard its recovery identity"
+                            ));
+                        } else {
+                            discarded_transactions = true;
+                            deployment_sequence.remove_pending(tx_hash);
+                        }
                         seq_progress
                             .inner
                             .write()
@@ -241,12 +249,21 @@ impl ScriptProgress {
                     }
                 }
                 Ok(TxStatus::Dropped) => {
-                    // We want to remove it from pending so it will be re-broadcast.
-                    deployment_sequence.remove_pending(tx_hash);
-                    discarded_transactions = true;
+                    if replayable_hashes.contains(&tx_hash) {
+                        deployment_sequence.remove_pending(tx_hash);
+                        discarded_transactions = true;
+                    } else if durable_hashes.contains(&tx_hash) {
+                        errors.push(format!(
+                            "Durable submission {tx_hash:?} is not currently visible; refusing to discard its recovery identity"
+                        ));
+                    } else {
+                        // We want to remove it from pending so it will be re-broadcast.
+                        deployment_sequence.remove_pending(tx_hash);
+                        discarded_transactions = true;
+                    }
 
                     let msg = format!(
-                        "Transaction {tx_hash:?} dropped from the mempool. It will be retried when using --resume."
+                        "Transaction {tx_hash:?} is not currently visible to the RPC endpoint."
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
                 }

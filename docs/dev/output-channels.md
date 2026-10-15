@@ -97,6 +97,8 @@ Each row's status is one of:
 | ---------------------- | ---------------------------------------------------- | -------------------------------------------------------------- | ------ |
 | `cast call`            | Return value (hex / decoded)                         | JSON of return value                                           | migrated |
 | `cast send`            | Receipt (or tx hash with `--async`)                  | JSON receipt (or hex tx hash with `--async`)                   | migrated |
+| `cast tempo zone deposit/withdraw` | Source-chain transaction hash (also when waiting for L1) | Source-chain receipt | migrated |
+| `cast tempo zone earn encode-deposit/encode-redeem` | Callback bytes | Success envelope containing callback bytes | migrated |
 | `cast estimate`        | Gas estimate (decimal)                               | JSON `{ "gas": "…" }`                                          | migrated |
 | `cast rpc`             | RPC result (JSON)                                    | JSON                                                           | migrated |
 | `cast storage`         | Single slot value                                    | JSON of layout                                                 | migrated |
@@ -150,7 +152,6 @@ Each row's status is one of:
 | `forge clean`          | (empty)                                              | n/a                                        | migrated |
 | `forge completions`    | Generated shell completion script                    | n/a                                        | migrated |
 | `forge doc`            | (empty)                                              | n/a                                        | migrated |
-| `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | Passthrough to `soldeer` crate; foundry adds no wrapper prose | n/a                               | migrated |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | migrated |

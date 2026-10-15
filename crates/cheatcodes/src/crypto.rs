@@ -1,10 +1,10 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{Cheatcode, CheatcodesCore, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
-    LocalSigner, MnemonicBuilder, PrivateKeySigner,
+    MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
@@ -12,7 +12,6 @@ use alloy_signer_local::{
 };
 use alloy_sol_types::SolValue;
 use foundry_common::wallet::{derive_private_key, derive_private_key_with_language};
-use foundry_evm_core::evm::FoundryEvmNetwork;
 use k256::{
     AffinePoint, EncodedPoint, FieldBytes, FieldElement, ProjectivePoint, Scalar,
     ecdsa::{SigningKey, hazmat},
@@ -39,28 +38,28 @@ const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 const PRIVATE_KEY_SIGNER_CACHE_LIMIT: usize = 64;
 
 impl Cheatcode for createWallet_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { walletLabel } = self;
-        create_wallet(&U256::from_be_bytes(keccak256(walletLabel).0), Some(walletLabel), state)
+        create_wallet(&keccak256(walletLabel).into(), Some(walletLabel), state)
     }
 }
 
 impl Cheatcode for createWallet_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey } = self;
         create_wallet(privateKey, None, state)
     }
 }
 
 impl Cheatcode for createWallet_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, walletLabel } = self;
         create_wallet(privateKey, Some(walletLabel), state)
     }
 }
 
 impl Cheatcode for sign_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
         Ok(encode_full_sig(sig))
@@ -68,7 +67,7 @@ impl Cheatcode for sign_0Call {
 }
 
 impl Cheatcode for signWithNonceUnsafeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let pk: U256 = self.privateKey;
         let digest: B256 = self.digest;
         let nonce: U256 = self.nonce;
@@ -78,21 +77,21 @@ impl Cheatcode for signWithNonceUnsafeCall {
 }
 
 impl Cheatcode for signKeychainCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, account, digest } = self;
         sign_keychain(state, privateKey, account, digest)
     }
 }
 
 impl Cheatcode for signKeychainAdminCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, account, digest } = self;
         sign_keychain(state, privateKey, account, digest)
     }
 }
 
 impl Cheatcode for signCompact_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
         Ok(encode_compact_sig(sig))
@@ -100,35 +99,35 @@ impl Cheatcode for signCompact_0Call {
 }
 
 impl Cheatcode for deriveKey_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { mnemonic, index } = self;
         derive_key::<English>(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index)
     }
 }
 
 impl Cheatcode for deriveKey_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { mnemonic, derivationPath, index } = self;
         derive_key::<English>(mnemonic, derivationPath, *index)
     }
 }
 
 impl Cheatcode for deriveKey_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { mnemonic, index, language } = self;
         derive_key_str(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index, language)
     }
 }
 
 impl Cheatcode for deriveKey_3Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { mnemonic, derivationPath, index, language } = self;
         derive_key_str(mnemonic, derivationPath, *index, language)
     }
 }
 
 impl Cheatcode for rememberKeyCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey } = self;
         let wallet = with_private_key_signer(state, privateKey, |wallet| Ok(wallet.clone()))?;
         let address = inject_wallet(state, wallet);
@@ -137,7 +136,7 @@ impl Cheatcode for rememberKeyCall {
 }
 
 impl Cheatcode for rememberKeys_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
@@ -151,7 +150,7 @@ impl Cheatcode for rememberKeys_0Call {
 }
 
 impl Cheatcode for rememberKeys_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { mnemonic, derivationPath, language, count } = self;
         let wallets = derive_wallets_str(mnemonic, derivationPath, language, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
@@ -164,17 +163,14 @@ impl Cheatcode for rememberKeys_1Call {
     }
 }
 
-fn inject_wallet<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
-    wallet: LocalSigner<SigningKey>,
-) -> Address {
+fn inject_wallet(state: &mut CheatcodesCore, wallet: PrivateKeySigner) -> Address {
     let address = wallet.address();
     state.wallets().add_local_signer(wallet);
     address
 }
 
 impl Cheatcode for sign_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign_cached(state, privateKey, digest)?;
         Ok(encode_full_sig(sig))
@@ -182,7 +178,7 @@ impl Cheatcode for sign_1Call {
 }
 
 impl Cheatcode for signCompact_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign_cached(state, privateKey, digest)?;
         Ok(encode_compact_sig(sig))
@@ -190,7 +186,7 @@ impl Cheatcode for signCompact_1Call {
 }
 
 impl Cheatcode for sign_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
         Ok(encode_full_sig(sig))
@@ -198,7 +194,7 @@ impl Cheatcode for sign_2Call {
 }
 
 impl Cheatcode for signCompact_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
         Ok(encode_compact_sig(sig))
@@ -206,7 +202,7 @@ impl Cheatcode for signCompact_2Call {
 }
 
 impl Cheatcode for sign_3Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
         Ok(encode_full_sig(sig))
@@ -214,7 +210,7 @@ impl Cheatcode for sign_3Call {
 }
 
 impl Cheatcode for signCompact_3Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
         Ok(encode_compact_sig(sig))
@@ -222,14 +218,14 @@ impl Cheatcode for signCompact_3Call {
 }
 
 impl Cheatcode for signP256Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { privateKey, digest } = self;
         sign_p256(privateKey, digest)
     }
 }
 
 impl Cheatcode for publicKeyP256Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { privateKey } = self;
         let pub_key =
             parse_private_key_p256(privateKey)?.verifying_key().as_affine().to_encoded_point(false);
@@ -240,8 +236,24 @@ impl Cheatcode for publicKeyP256Call {
     }
 }
 
+impl Cheatcode for ecAffineToProjectiveCall {
+    fn apply_context_free(&self) -> Result {
+        let Self { pointX, pointY } = self;
+        let point = parse_affine_point(pointX, pointY, "point")?;
+        encode_projective_point(ProjectivePoint::from(point))
+    }
+}
+
+impl Cheatcode for ecProjectiveToAffineCall {
+    fn apply_context_free(&self) -> Result {
+        let Self { pointX, pointY, pointZ } = self;
+        let point = parse_projective_point(pointX, pointY, pointZ, "point")?;
+        encode_affine_point(point)
+    }
+}
+
 impl Cheatcode for ecAddAffineCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { pointX1, pointY1, pointX2, pointY2 } = self;
         let lhs = parse_affine_point(pointX1, pointY1, "first point")?;
         let rhs = parse_affine_point(pointX2, pointY2, "second point")?;
@@ -250,7 +262,7 @@ impl Cheatcode for ecAddAffineCall {
 }
 
 impl Cheatcode for ecAddProjectiveCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { pointX1, pointY1, pointZ1, pointX2, pointY2, pointZ2 } = self;
         let lhs = parse_projective_point(pointX1, pointY1, pointZ1, "first point")?;
         let rhs = parse_projective_point(pointX2, pointY2, pointZ2, "second point")?;
@@ -259,7 +271,7 @@ impl Cheatcode for ecAddProjectiveCall {
 }
 
 impl Cheatcode for ecMulAffineCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { pointX, pointY, scalar } = self;
         let point = parse_affine_point(pointX, pointY, "point")?;
         let scalar = reduce_ec_scalar(scalar);
@@ -268,7 +280,7 @@ impl Cheatcode for ecMulAffineCall {
 }
 
 impl Cheatcode for ecMulProjectiveCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { pointX, pointY, pointZ, scalar } = self;
         let point = parse_projective_point(pointX, pointY, pointZ, "point")?;
         let scalar = reduce_ec_scalar(scalar);
@@ -277,28 +289,28 @@ impl Cheatcode for ecMulProjectiveCall {
 }
 
 impl Cheatcode for createEd25519KeyCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { salt } = self;
         create_ed25519_key(salt)
     }
 }
 
 impl Cheatcode for publicKeyEd25519Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { privateKey } = self;
         public_key_ed25519(privateKey)
     }
 }
 
 impl Cheatcode for signEd25519Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { namespace, message, privateKey } = self;
         sign_ed25519(namespace, message, privateKey)
     }
 }
 
 impl Cheatcode for verifyEd25519Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { signature, namespace, message, publicKey } = self;
         verify_ed25519(signature, namespace, message, publicKey)
     }
@@ -308,11 +320,7 @@ impl Cheatcode for verifyEd25519Call {
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
-fn create_wallet<FEN: FoundryEvmNetwork>(
-    private_key: &U256,
-    label: Option<&str>,
-    state: &mut Cheatcodes<FEN>,
-) -> Result {
+fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut CheatcodesCore) -> Result {
     let (addr, pub_key_x, pub_key_y) = with_private_key_signer(state, private_key, |wallet| {
         let addr = wallet.address();
         let pub_key = wallet.credential().verifying_key().as_affine().to_encoded_point(false);
@@ -353,8 +361,8 @@ fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature
     Ok(sig)
 }
 
-fn sign_cached<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn sign_cached(
+    state: &mut CheatcodesCore,
     private_key: &U256,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
@@ -365,8 +373,8 @@ fn sign_cached<FEN: FoundryEvmNetwork>(
     })
 }
 
-fn sign_keychain<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn sign_keychain(
+    state: &mut CheatcodesCore,
     private_key: &U256,
     account: &Address,
     digest: &B256,
@@ -460,18 +468,17 @@ fn sign_with_nonce(
     Ok(alloy_primitives::Signature::new(r_u256, s_u256, y_parity))
 }
 
-fn sign_with_wallet<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn sign_with_wallet(
+    state: &mut CheatcodesCore,
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
-    if state.wallets().is_empty() {
-        bail!("no wallets available");
-    }
-
     let mut wallets = state.wallets().inner.lock();
     let maybe_provided_sender = wallets.provided_sender;
     let signers = wallets.multi_wallet.signers()?;
+    if signers.is_empty() {
+        bail!("no wallets available");
+    }
 
     let signer = if let Some(signer) = signer {
         signer
@@ -563,18 +570,18 @@ fn encode_affine_point(point: ProjectivePoint) -> Result {
 
 fn encode_projective_point(point: ProjectivePoint) -> Result {
     if bool::from(point.is_identity()) {
-        return Ok((U256::ZERO, U256::from(1), U256::ZERO).abi_encode());
+        return Ok((U256::ZERO, U256::ONE, U256::ZERO).abi_encode());
     }
 
     let encoded = point.to_affine().to_encoded_point(false);
     let x = U256::from_be_slice(encoded.x().expect("non-identity point has x coordinate"));
     let y = U256::from_be_slice(encoded.y().expect("non-identity point has y coordinate"));
 
-    Ok((x, y, U256::from(1)).abi_encode())
+    Ok((x, y, U256::ONE).abi_encode())
 }
 
 fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> {
-    ensure!(*private_key != U256::ZERO, "private key cannot be 0");
+    ensure!(!private_key.is_zero(), "private key cannot be 0");
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
         *private_key < order,
@@ -640,8 +647,8 @@ pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
     parse_private_key(private_key).map(PrivateKeySigner::from)
 }
 
-pub(super) fn with_private_key_signer<FEN: FoundryEvmNetwork, R>(
-    state: &mut Cheatcodes<FEN>,
+pub(super) fn with_private_key_signer<R>(
+    state: &mut CheatcodesCore,
     private_key: &U256,
     f: impl FnOnce(&PrivateKeySigner) -> Result<R>,
 ) -> Result<R> {
@@ -677,7 +684,7 @@ fn derive_wallets_str(
     path: &str,
     language: &str,
     count: u32,
-) -> Result<Vec<LocalSigner<SigningKey>>> {
+) -> Result<Vec<PrivateKeySigner>> {
     match language {
         "chinese_simplified" => derive_wallets::<ChineseSimplified>(mnemonic, path, count),
         "chinese_traditional" => derive_wallets::<ChineseTraditional>(mnemonic, path, count),
@@ -697,19 +704,15 @@ fn derive_wallets<W: Wordlist>(
     mnemonic: &str,
     path: &str,
     count: u32,
-) -> Result<Vec<LocalSigner<SigningKey>>> {
-    let mut out = path.to_string();
-
-    if !out.ends_with('/') {
-        out.push('/');
-    }
+) -> Result<Vec<PrivateKeySigner>> {
+    foundry_common::wallet::validate_bip32_path(path).map_err(|e| fmt_err!("{e}"))?;
 
     let mut wallets = Vec::with_capacity(count as usize);
     for idx in 0..count {
-        let wallet = MnemonicBuilder::<W>::default()
-            .phrase(mnemonic)
-            .derivation_path(format!("{out}{idx}"))?
-            .build()?;
+        let full_path = foundry_common::wallet::derive_key_path_checked(path, idx)
+            .map_err(|e| fmt_err!("{e}"))?;
+        let wallet =
+            MnemonicBuilder::<W>::default().phrase(mnemonic).derivation_path(full_path)?.build()?;
         wallets.push(wallet);
     }
 
@@ -779,7 +782,7 @@ mod tests {
     #[test]
     fn test_sign_with_nonce_varies_and_recovers() {
         // Given a fixed private key and digest
-        let pk_u256: U256 = U256::from(1u64);
+        let pk_u256: U256 = U256::ONE;
         let digest = FixedBytes::from_hex(
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         )
@@ -810,7 +813,7 @@ mod tests {
     #[test]
     fn test_sign_with_nonce_zero_nonce_errors() {
         // nonce = 0 should be rejected
-        let pk_u256: U256 = U256::from(1u64);
+        let pk_u256: U256 = U256::ONE;
         let digest = FixedBytes::from_hex(
             "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         )
@@ -829,7 +832,7 @@ mod tests {
         // Curve order n as U256
         let n_u256 = U256::from_be_slice(&Secp256k1::ORDER.to_be_byte_array());
 
-        let pk_u256: U256 = U256::from(1u64);
+        let pk_u256: U256 = U256::ONE;
         let digest = FixedBytes::from_hex(
             "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         )
@@ -845,8 +848,8 @@ mod tests {
     fn test_sign_keychain_encodes_v2_signature_for_account() {
         let private_key = U256::from(0xB0Bu64);
         let account = Address::repeat_byte(0x11);
-        let digest = B256::from([0x22; 32]);
-        let mut state = Cheatcodes::default();
+        let digest = B256::repeat_byte(0x22);
+        let mut state = CheatcodesCore::default();
 
         let result = sign_keychain(&mut state, &private_key, &account, &digest).unwrap();
         let signature = Vec::<u8>::abi_decode(&result).unwrap();
@@ -867,7 +870,7 @@ mod tests {
     #[test]
     fn private_key_signers_are_cached_for_repeated_lookup() {
         let private_key = U256::from(0xB0Bu64);
-        let mut state = Cheatcodes::default();
+        let mut state = CheatcodesCore::default();
 
         let first =
             with_private_key_signer(&mut state, &private_key, |wallet| Ok(wallet.address()))
@@ -896,8 +899,8 @@ mod tests {
         let revoked_key = parse_wallet(&revoked_pk).unwrap().address();
         let expired_key = parse_wallet(&expired_pk).unwrap().address();
 
-        let hash = B256::from([0x44; 32]);
-        let admin_hash = B256::from([0x66; 32]);
+        let hash = B256::repeat_byte(0x44);
+        let admin_hash = B256::repeat_byte(0x66);
 
         let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T6);
         storage.set_timestamp(U256::from(1_000u64));
@@ -977,7 +980,7 @@ mod tests {
     }
 
     fn keychain_signature(private_key: &U256, account: Address, hash: B256) -> Vec<u8> {
-        let mut state = Cheatcodes::default();
+        let mut state = CheatcodesCore::default();
         Vec::<u8>::abi_decode(&sign_keychain(&mut state, private_key, &account, &hash).unwrap())
             .unwrap()
     }
@@ -1016,7 +1019,7 @@ mod tests {
 
     #[test]
     fn test_create_ed25519_key_determinism() {
-        let salt = B256::from([1u8; 32]);
+        let salt = B256::repeat_byte(1u8);
         let result1 = create_ed25519_key(&salt).unwrap();
         let result2 = create_ed25519_key(&salt).unwrap();
         assert_eq!(result1, result2, "same salt should produce same keys");
@@ -1024,8 +1027,8 @@ mod tests {
 
     #[test]
     fn test_create_ed25519_key_different_salts() {
-        let salt1 = B256::from([1u8; 32]);
-        let salt2 = B256::from([2u8; 32]);
+        let salt1 = B256::repeat_byte(1u8);
+        let salt2 = B256::repeat_byte(2u8);
         let result1 = create_ed25519_key(&salt1).unwrap();
         let result2 = create_ed25519_key(&salt2).unwrap();
         assert_ne!(result1, result2, "different salts should produce different keys");
@@ -1033,7 +1036,7 @@ mod tests {
 
     #[test]
     fn test_public_key_ed25519_consistency() {
-        let salt = B256::from([42u8; 32]);
+        let salt = B256::repeat_byte(42u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (expected_public, private): (B256, B256) =
             <(B256, B256)>::abi_decode(&create_result).unwrap();
@@ -1046,7 +1049,7 @@ mod tests {
 
     #[test]
     fn test_sign_and_verify_ed25519_valid() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, private_key): (B256, B256) =
             <(B256, B256)>::abi_decode(&create_result).unwrap();
@@ -1064,7 +1067,7 @@ mod tests {
 
     #[test]
     fn test_verify_ed25519_invalid_signature() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, _): (B256, B256) = <(B256, B256)>::abi_decode(&create_result).unwrap();
 
@@ -1080,7 +1083,7 @@ mod tests {
 
     #[test]
     fn test_verify_ed25519_namespace_separation() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, private_key): (B256, B256) =
             <(B256, B256)>::abi_decode(&create_result).unwrap();
@@ -1102,7 +1105,7 @@ mod tests {
 
     #[test]
     fn test_verify_ed25519_invalid_signature_length() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, _): (B256, B256) = <(B256, B256)>::abi_decode(&create_result).unwrap();
 
@@ -1113,5 +1116,45 @@ mod tests {
         let verify_result = verify_ed25519(&invalid_sig, namespace, message, &public_key).unwrap();
         let valid = bool::abi_decode(&verify_result).unwrap();
         assert!(!valid, "signature with wrong length should not verify");
+    }
+
+    const MNEMONIC: &str = "test test test test test test test test test test test junk";
+
+    #[test]
+    fn derive_key_rejects_harden_bit_overflow() {
+        let err = derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0/2147483648'", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+
+        let err = derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0/2147483648h", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+
+        let err =
+            derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0", foundry_common::wallet::BIP32_HARDEN)
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+
+        assert!(derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0", 0).is_ok());
+        assert!(
+            derive_key::<English>(
+                MNEMONIC,
+                &format!("m/44'/60'/0'/0/{}", foundry_common::wallet::BIP32_HARDEN - 1),
+                0
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn remember_keys_rejects_harden_bit_overflow() {
+        let err = derive_wallets::<English>(MNEMONIC, "m/44'/60'/0'/0/2147483648'", 1)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+        assert!(derive_wallets::<English>(MNEMONIC, "m/44'/60'/0'/0", 1).is_ok());
     }
 }

@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "editors: build forge",
+      "type": "process",
+      "command": "cargo",
+      "args": ["build", "--locked", "-p", "forge", "--bin", "forge"],
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "editors: install vscode dependencies",
+      "type": "process",
+      "command": "npm",
+      "args": ["ci"],
+      "options": {"cwd": "${workspaceFolder}/editors/vscode"},
+      "problemMatcher": []
+    },
+    {
+      "label": "editors: compile vscode",
+      "type": "process",
+      "command": "npm",
+      "args": ["run", "compile"],
+      "options": {"cwd": "${workspaceFolder}/editors/vscode"},
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "editors: prepare development host",
+      "type": "process",
+      "command": "node",
+      "args": ["${workspaceFolder}/editors/prepare-vscode.mjs"],
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "editors: build forge",
+        "editors: install vscode dependencies",
+        "editors: compile vscode"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

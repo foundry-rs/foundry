@@ -131,6 +131,21 @@ and uses the generic symbolic command for other repositories.
 Use `--symbolic-sidecar-output <FILE>` with exactly one `--versions` value to capture the
 versioned per-run results. Like `--json-output`, the sidecar path is relative to `--output-dir`.
 
+For filtered test discovery, use `--benchmarks forge_test_filtered` with test filters
+in the repository's extra arguments or `foundry.toml`. This keeps the project's
+dynamic-linking configuration and warms the selected tests twice. The first warmup
+forces cleanup using the same root and configuration as the tests, then populates
+normal artifacts. The second populates ABI discovery for that cache. Timed runs
+retain that warm cache.
+The result is labeled `Forge Test (Warm Cache)` because without effective filters
+it measures ordinary unfiltered tests; it does not guarantee ABI-discovery coverage.
+No unfiltered build runs during setup. For example:
+
+```bash
+foundry-bench --versions local --benchmarks forge_test_filtered \
+  --repos "aave/aave-v4:1e8de8630dfeb26ad309d986eaec44c1ceb48a6d --match-contract EngineFlagsTest --match-test test_toBool_zero_returnsFalse --threads 1"
+```
+
 ## Branch vs master PR-body workflow
 
 Use this workflow when preparing performance numbers for a PR body. It keeps the

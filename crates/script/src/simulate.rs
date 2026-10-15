@@ -1,6 +1,9 @@
 use super::{
-    multi_sequence::MultiChainSequence, providers::ProvidersManager, runner::ScriptRunner,
-    sequence::ScriptSequenceKind, transaction::ScriptTransactionBuilder,
+    multi_sequence::MultiChainSequence,
+    providers::{ProviderInfo, ProvidersManager},
+    runner::ScriptRunner,
+    sequence::ScriptSequenceKind,
+    transaction::ScriptTransactionBuilder,
 };
 use crate::{
     ScriptArgs, ScriptConfig, ScriptResult,
@@ -26,18 +29,18 @@ use foundry_common::{
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
     traces::{
-        CallTraceDecoder, debug::ContractSources, decode_trace_arena, prune_trace_depth,
+        CallTraceDecoder, Traces, debug::ContractSources, decode_trace_arena, prune_trace_depth,
         render_trace_arena_inner,
     },
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
-use futures::future::join_all;
-use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, VecDeque},
     mem,
-    sync::Arc,
 };
+
+#[cfg(feature = "monad")]
+mod monad;
 
 /// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
 /// which are obtained from [ScriptResult].
@@ -55,30 +58,11 @@ pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub execution_artifacts: ExecutionArtifacts,
 }
 
+type SimulationOutcome<N> = (String, Option<TransactionWithMetadata<N>>, bool, Traces);
+
 struct RpcSimulationContext<R> {
-    runner: RwLock<R>,
+    runner: R,
     decoder: CallTraceDecoder,
-}
-
-enum RpcContexts<R> {
-    Simulation(Arc<HashMap<String, RpcSimulationContext<R>>>),
-    Decoding(HashMap<String, CallTraceDecoder>),
-}
-
-impl<R> RpcContexts<R> {
-    fn decoder(&self, rpc: &str) -> &CallTraceDecoder {
-        match self {
-            Self::Simulation(contexts) => &context_for_rpc(contexts, rpc).decoder,
-            Self::Decoding(decoders) => decoders.get(rpc).expect("invalid rpc url"),
-        }
-    }
-}
-
-fn context_for_rpc<'a, R>(
-    contexts: &'a HashMap<String, RpcSimulationContext<R>>,
-    rpc: &str,
-) -> &'a RpcSimulationContext<R> {
-    contexts.get(rpc).expect("invalid rpc url")
 }
 
 async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
@@ -90,9 +74,8 @@ async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
 ) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
     let mut script_config = script_config.clone();
-    script_config.set_fork_url(rpc.clone());
-    let mut runner = script_config._get_runner(None, false, false).await?;
-    runner.executor.enable_block_context_progression()?;
+    script_config.select_rpc(rpc.clone()).await?;
+    let runner = script_config._get_runner(None, false, false).await?;
     let decoder = build_trace_decoder_for_context(
         args,
         &script_config,
@@ -101,7 +84,7 @@ async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
         execution_result,
         script_config.source_chain_id.map(Chain::from),
     )?;
-    Ok((rpc, RpcSimulationContext { runner: RwLock::new(runner), decoder }))
+    Ok((rpc, RpcSimulationContext { runner, decoder }))
 }
 
 async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
@@ -113,8 +96,7 @@ async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
 ) -> Result<(String, CallTraceDecoder)> {
     let mut script_config = script_config.clone();
-    script_config.set_fork_url(rpc.clone());
-    let _ = script_config.resolve_execution_env().await?;
+    script_config.resolve_rpc_execution_spec(rpc.clone()).await?;
     let decoder = build_trace_decoder_for_context(
         args,
         &script_config,
@@ -127,22 +109,38 @@ async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
 }
 
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
-    /// If simulation is enabled, simulates transactions against the fork and fills gas estimation
-    /// and execution metadata. Otherwise, fills metadata that can be derived without transaction
-    /// simulation using each RPC's resolved execution context.
+    /// Simulates ordinary transactions against the fork and fills gas estimation and execution
+    /// metadata.
     ///
-    /// Both modes will panic if any of the transactions have None for the `rpc` field.
-    pub async fn fill_metadata(self) -> Result<FilledTransactionsState<FEN>> {
-        let address_to_abi = self.build_address_to_abi_map();
-        let contexts = if self.args.skip_simulation {
-            RpcContexts::Decoding(self.build_rpc_decoders().await?)
-        } else {
-            RpcContexts::Simulation(Arc::new(
-                self.build_runners().await?.into_iter().collect::<HashMap<_, _>>(),
-            ))
-        };
+    /// Panics if any transaction has no `rpc` field. Monad simulation has a concrete owner and
+    /// must not use this entry point.
+    pub(crate) async fn fill_ordinary_metadata(self) -> Result<FilledTransactionsState<FEN>> {
+        if self.args.skip_simulation {
+            return self.fill_without_simulation().await;
+        }
 
-        let mut transactions = self
+        let contexts = self.build_runners().await?.into_iter().collect::<HashMap<_, _>>();
+        let transactions =
+            self.transaction_metadata(|rpc| &contexts.get(rpc).expect("invalid rpc url").decoder)?;
+        let transactions = self.simulate_and_fill_with_contexts(transactions, contexts).await?;
+        Ok(self.into_filled(transactions))
+    }
+
+    /// Fills metadata derived without transaction simulation using each RPC's resolved context.
+    pub(crate) async fn fill_without_simulation(self) -> Result<FilledTransactionsState<FEN>> {
+        let decoders = self.build_rpc_decoders().await?;
+        let transactions =
+            self.transaction_metadata(|rpc| decoders.get(rpc).expect("invalid rpc url"))?;
+        sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
+        Ok(self.into_filled(transactions))
+    }
+
+    fn transaction_metadata<'a>(
+        &self,
+        decoder_for_rpc: impl Fn(&str) -> &'a CallTraceDecoder,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
+        let address_to_abi = self.build_address_to_abi_map();
+        let transactions = self
             .execution_result
             .transactions
             .clone()
@@ -153,7 +151,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 let sender = tx.transaction.from().expect("all transactions should have a sender");
                 let nonce = tx.transaction.nonce().expect("all transactions should have a nonce");
                 let to = tx.transaction.to();
-                let decoder = contexts.decoder(&rpc);
+                let decoder = decoder_for_rpc(&rpc);
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
@@ -164,21 +162,25 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         self.script_config.evm_opts.create2_deployer,
                     )?;
                 } else {
-                    builder.set_create(false, sender.create(nonce), &address_to_abi)?;
+                    builder.set_create(
+                        false,
+                        tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
+                        &address_to_abi,
+                    )?;
                 }
 
                 Ok(builder.build())
             })
             .collect::<Result<VecDeque<_>>>()?;
 
-        match contexts {
-            RpcContexts::Simulation(contexts) => {
-                transactions = self.simulate_and_fill_with_contexts(transactions, contexts).await?;
-            }
-            RpcContexts::Decoding(_) => sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?,
-        }
+        Ok(transactions)
+    }
 
-        Ok(FilledTransactionsState {
+    fn into_filled(
+        self,
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> FilledTransactionsState<FEN> {
+        FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
@@ -186,7 +188,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             build_data: self.build_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
-        })
+        }
     }
 
     /// Executes every transaction in its RPC-specific simulation context and collects gas usage
@@ -194,31 +196,22 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     async fn simulate_and_fill_with_contexts(
         &self,
         transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
-        contexts: Arc<HashMap<String, RpcSimulationContext<ScriptRunner<FEN>>>>,
+        mut contexts: HashMap<String, RpcSimulationContext<ScriptRunner<FEN>>>,
     ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         trace!(target: "script", "executing onchain simulation");
 
-        let mut final_txs = VecDeque::new();
-
-        // Executes all transactions from the different forks concurrently.
-        let futs = transactions
+        // Execute in transaction order, retaining all outcomes before reporting failures.
+        self.show_simulation_header()?;
+        let results = transactions
             .into_iter()
-            .map(|mut transaction| async {
+            .map(|transaction| {
                 let rpc = transaction.rpc.clone();
-                let context = context_for_rpc(&contexts, &rpc);
-                let mut runner = context.runner.write();
-                let tx = transaction.tx_mut();
+                let runner = &mut contexts.get_mut(&rpc).expect("invalid rpc url").runner;
 
+                let tx = transaction.tx();
                 let to = tx.to();
                 let result = runner
-                    .simulate(
-                        tx.from()
-                            .expect("transaction doesn't have a `from` address at execution time"),
-                        to,
-                        tx.input().cloned(),
-                        tx.value(),
-                        tx.authorization_list(),
-                    )
+                    .simulate(tx, transaction.is_fixed_gas_limit)
                     .wrap_err("Internal EVM error during simulation")?;
 
                 if !result.success {
@@ -227,8 +220,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.advance_block_context();
-                    let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
+                    let block_number = runner.executor.evm_env().block_env.number() + U256::ONE;
                     runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
 
@@ -250,19 +242,32 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             })
             .collect::<Vec<_>>();
 
-        let tracing = &self.script_config.config.tracing;
-        if !shell::is_json() && tracing.verbosity > 3 {
+        self.collect_simulation_results(results, &contexts).await
+    }
+
+    fn show_simulation_header(&self) -> Result<()> {
+        if !shell::is_json() && self.script_config.config.tracing.verbosity > 3 {
             sh_println!("==========================")?;
             sh_println!("Simulated On-chain Traces:\n")?;
         }
+        Ok(())
+    }
+
+    async fn collect_simulation_results<R>(
+        &self,
+        results: Vec<Result<SimulationOutcome<FEN::Network>>>,
+        contexts: &HashMap<String, RpcSimulationContext<R>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
+        let mut final_txs = VecDeque::new();
+        let tracing = &self.script_config.config.tracing;
 
         let mut abort = false;
-        for res in join_all(futs).await {
+        for res in results {
             let (rpc, tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
-                let decoder = &context_for_rpc(&contexts, &rpc).decoder;
+                let decoder = &contexts.get(&rpc).expect("invalid rpc url").decoder;
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, decoder).await;
                     if let Some(trace_depth) = tracing.trace_depth {
@@ -384,6 +389,7 @@ mod tests {
     use foundry_config::Config;
     use foundry_evm::{
         core::{evm::MonadEvmNetwork, opts::EvmOpts},
+        executors::ExecutorBuilder,
         hardforks::MonadHardfork,
     };
     use foundry_evm_networks::NetworkConfigs;
@@ -419,6 +425,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -454,8 +461,8 @@ mod tests {
         .into_iter()
         .collect::<HashMap<_, _>>();
 
-        let monad_eight = context_for_rpc(&contexts, &monad_eight_rpc);
-        let monad_eight_runner = monad_eight.runner.read();
+        let monad_eight = contexts.get(&monad_eight_rpc).unwrap();
+        let monad_eight_runner = &monad_eight.runner;
         assert_eq!(monad_eight_runner.executor.evm_env().cfg_env.chain_id, 42);
         assert_eq!(monad_eight_runner.executor.evm_env().block_env.number(), U256::ZERO);
         assert_eq!(monad_eight_runner.evm_opts.fork_block_number, Some(0));
@@ -463,11 +470,11 @@ mod tests {
         assert_eq!(monad_eight_runner.evm_opts.networks, NetworkConfigs::with_monad());
         assert!(!monad_eight_runner.evm_opts.fork_network_is_inferred);
         assert_eq!(monad_eight.decoder.chain_id, Some(NamedChain::Monad as u64));
-        assert_eq!(monad_eight.decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert_eq!(monad_eight.decoder.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(!monad_eight.decoder.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
 
-        let monad_nine = context_for_rpc(&contexts, &monad_nine_rpc);
-        let monad_nine_runner = monad_nine.runner.read();
+        let monad_nine = contexts.get(&monad_nine_rpc).unwrap();
+        let monad_nine_runner = &monad_nine.runner;
         assert_eq!(monad_nine_runner.executor.evm_env().cfg_env.chain_id, 42);
         assert_eq!(monad_nine_runner.executor.evm_env().block_env.number(), U256::ZERO);
         assert_eq!(monad_nine_runner.evm_opts.fork_block_number, Some(0));
@@ -475,7 +482,7 @@ mod tests {
         assert_eq!(monad_nine_runner.evm_opts.networks, NetworkConfigs::with_monad());
         assert!(!monad_nine_runner.evm_opts.fork_network_is_inferred);
         assert_eq!(monad_nine.decoder.chain_id, Some(NamedChain::Monad as u64));
-        assert_eq!(monad_nine.decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(monad_nine.decoder.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             monad_nine.decoder.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
@@ -509,6 +516,7 @@ mod tests {
                 networks: NetworkConfigs::with_monad(),
                 ..Default::default()
             },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -545,11 +553,11 @@ mod tests {
         .collect::<HashMap<_, _>>();
 
         let monad_eight = decoders.get(&monad_eight_rpc).unwrap();
-        assert_eq!(monad_eight.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert_eq!(monad_eight.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(!monad_eight.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
 
         let monad_nine = decoders.get(&monad_nine_rpc).unwrap();
-        assert_eq!(monad_nine.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(monad_nine.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             monad_nine.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
@@ -564,6 +572,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             EvmOpts { fork_url: Some(monad.http_endpoint()), ..Default::default() },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -655,6 +664,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
                     self.args.legacy,
                     self.script_config.config.eip1559_fee_estimate,
+                    &self.script_config.config,
                 )
                 .await?;
 
@@ -664,9 +674,13 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             }
 
             if !self.args.skip_simulation {
+                let is_fixed_gas_limit = tx.is_fixed_gas_limit;
                 let tx = tx.tx_mut();
 
-                if has_different_gas_calc(provider_info.chain) {
+                if !is_fixed_gas_limit
+                    && (has_different_gas_calc(provider_info.chain)
+                        || self.script_config.evm_opts.networks.is_tempo())
+                {
                     // only estimate gas for unsigned transactions
                     if let Some(tx) = tx.as_unsigned_mut() {
                         trace!("estimating with different gas calculation");
@@ -725,126 +739,26 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
 
-                let token_symbol = if self.script_config.evm_opts.networks.is_tempo() {
-                    self.args.tempo.fee_token.map_or_else(
-                        || "TIP-20".to_string(),
-                        |fee_token| {
-                            known_fee_token_symbol(fee_token)
-                                .map(str::to_string)
-                                .unwrap_or_else(|| fee_token.to_string())
-                        },
-                    )
-                } else {
-                    NamedChain::try_from(provider_info.chain)
-                        .unwrap_or_default()
-                        .native_currency_symbol()
-                        .unwrap_or("ETH")
-                        .to_string()
-                };
-
-                // We don't store it in the transactions, since we want the most updated value.
-                // Right before broadcasting.
-                //
-                // Resolve the fees with the same overrides as the broadcast path so the
-                // displayed values match what is sent. Skipped when `--with-gas-price` pins
-                // the max fee directly.
-                let resolved_eip1559_fees = if self.args.with_gas_price.is_none() {
-                    if let Some(fees) = provider_info.eip1559_fees().copied() {
-                        // `--batch` broadcasts via `broadcast_batch`, which applies no
-                        // browser tip, so skip it here too. Best-effort.
-                        let browser_suggested_tip =
-                            if !self.args.batch && self.browser_wallet.is_some() {
-                                provider_info.provider.get_max_priority_fee_per_gas().await.ok()
-                            } else {
-                                None
-                            };
-                        Some(resolve_broadcast_eip1559_fees(
-                            fees,
-                            None,
-                            self.args.priority_gas_price.map(|p| p.to()),
-                            browser_suggested_tip,
-                        )?)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // `per_gas` is the legacy gas price or, for EIP-1559, the `maxFeePerGas`
-                // (a base-fee buffer plus the priority fee), which is what the transaction
-                // can pay at most -- not the spot base fee shown by block explorers.
-                let per_gas = if let Some(gas_price) = self.args.with_gas_price {
-                    gas_price.to()
-                } else if let Some(fees) = &resolved_eip1559_fees {
-                    fees.max_fee_per_gas
-                } else {
-                    provider_info.gas_price()?
-                };
-
-                // Format a wei value as a trimmed gwei string.
-                let fmt_gwei = |wei: u128| {
-                    let raw = format_units(wei, 9)
-                        .unwrap_or_else(|_| "[Could not calculate]".to_string());
-                    raw.trim_end_matches('0').trim_end_matches('.').to_string()
-                };
-
-                let estimated_gas_price = fmt_gwei(per_gas);
-
-                // (base fee, max priority fee) for the EIP-1559 breakdown.
-                let fee_breakdown = resolved_eip1559_fees.as_ref().map(|fees| {
-                    (fmt_gwei(fees.base_fee_per_gas), fmt_gwei(fees.max_priority_fee_per_gas))
-                });
-
-                let estimated_amount_raw = format_units(total_gas.saturating_mul(per_gas), 18)
-                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
-                let estimated_amount = estimated_amount_raw.trim_end_matches('0');
-
-                if shell::is_json() {
-                    let mut json = serde_json::json!({
-                        "chain": provider_info.chain,
-                        "estimated_gas_price": estimated_gas_price,
-                        "estimated_total_gas_used": total_gas,
-                        "estimated_amount_required": estimated_amount,
-                        "token_symbol": token_symbol,
-                    });
-                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
-                        json["estimated_max_fee_per_gas"] =
-                            serde_json::Value::from(estimated_gas_price.clone());
-                        json["estimated_base_fee_per_gas"] =
-                            serde_json::Value::from(base_fee.clone());
-                        json["estimated_max_priority_fee_per_gas"] =
-                            serde_json::Value::from(priority_fee.clone());
-                    }
-                    sh_println!("{}", json)?;
-                } else {
-                    sh_println!("\n==========================")?;
-                    sh_println!("\nChain {}", provider_info.chain)?;
-
-                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
-                        sh_println!("\nEstimated max fee per gas: {estimated_gas_price} gwei")?;
-                        sh_println!("Estimated base fee per gas: {base_fee} gwei")?;
-                        sh_println!("Estimated max priority fee per gas: {priority_fee} gwei")?;
-                    } else {
-                        sh_println!("\nEstimated gas price: {estimated_gas_price} gwei")?;
-                    }
-                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
-                    sh_println!("\n==========================")?;
-                }
+                self.print_gas_estimate(provider_info, total_gas).await?;
             }
         }
 
         let sequence = if sequences.len() == 1 {
-            ScriptSequenceKind::Single(sequences.pop().expect("empty sequences"))
+            ScriptSequenceKind::new_single(
+                sequences.pop().expect("empty sequences"),
+                self.args.batch,
+            )?
         } else {
-            ScriptSequenceKind::Multi(MultiChainSequence::new(
-                sequences,
-                &self.args.sig,
-                &self.build_data.build_data.target,
-                &self.script_config.config,
-                !self.args.broadcast,
-            )?)
+            ScriptSequenceKind::new_multi(
+                MultiChainSequence::new(
+                    sequences,
+                    &self.args.sig,
+                    &self.build_data.build_data.target,
+                    &self.script_config.config,
+                    !self.args.broadcast,
+                )?,
+                self.args.batch,
+            )?
         };
 
         Ok(BundledState {
@@ -910,7 +824,119 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             libraries,
             chain,
             commit,
+            recovery_generation: None,
         };
         Ok(sequence)
+    }
+
+    /// Prints a gas estimate without changing the fees used for broadcasting.
+    async fn print_gas_estimate(
+        &self,
+        provider_info: &ProviderInfo<FEN::Network>,
+        total_gas: u128,
+    ) -> Result<()> {
+        let token_symbol = if self.script_config.evm_opts.networks.is_tempo() {
+            self.args.tempo.fee_token.map_or_else(
+                || "TIP-20".to_string(),
+                |fee_token| {
+                    known_fee_token_symbol(fee_token)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| fee_token.to_string())
+                },
+            )
+        } else {
+            NamedChain::try_from(provider_info.chain)
+                .unwrap_or_default()
+                .native_currency_symbol()
+                .unwrap_or("ETH")
+                .to_string()
+        };
+
+        // We don't store it in the transactions, since we want the most updated value.
+        // Right before broadcasting.
+        //
+        // Resolve the fees with the same overrides as the broadcast path so the
+        // displayed values match what is sent. Skipped when `--with-gas-price` pins
+        // the max fee directly.
+        let resolved_eip1559_fees = if self.args.with_gas_price.is_none() {
+            if let Some(fees) = provider_info.eip1559_fees().copied() {
+                // `--batch` broadcasts via `broadcast_batch`, which applies no
+                // browser tip, so skip it here too. Best-effort.
+                let browser_suggested_tip = if !self.args.batch && self.browser_wallet.is_some() {
+                    provider_info.provider.get_max_priority_fee_per_gas().await.ok()
+                } else {
+                    None
+                };
+                Some(resolve_broadcast_eip1559_fees(
+                    fees,
+                    None,
+                    self.args.priority_gas_price.map(|p| p.to()),
+                    browser_suggested_tip,
+                )?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // `per_gas` is the legacy gas price or, for EIP-1559, the `maxFeePerGas`
+        // (a base-fee buffer plus the priority fee), which is what the transaction
+        // can pay at most -- not the spot base fee shown by block explorers.
+        let per_gas = if let Some(gas_price) = self.args.with_gas_price {
+            gas_price.to()
+        } else if let Some(fees) = &resolved_eip1559_fees {
+            fees.max_fee_per_gas
+        } else {
+            provider_info.gas_price()?
+        };
+
+        // Format a wei value as a trimmed gwei string.
+        let fmt_gwei = |wei: u128| {
+            let raw = format_units(wei, 9).unwrap_or_else(|_| "[Could not calculate]".to_string());
+            raw.trim_end_matches('0').trim_end_matches('.').to_string()
+        };
+
+        let estimated_gas_price = fmt_gwei(per_gas);
+
+        // (base fee, max priority fee) for the EIP-1559 breakdown.
+        let fee_breakdown = resolved_eip1559_fees
+            .map(|fees| (fmt_gwei(fees.base_fee_per_gas), fmt_gwei(fees.max_priority_fee_per_gas)));
+
+        let estimated_amount_raw = format_units(total_gas.saturating_mul(per_gas), 18)
+            .unwrap_or_else(|_| "[Could not calculate]".to_string());
+        let estimated_amount = estimated_amount_raw.trim_end_matches('0');
+
+        if shell::is_json() {
+            let mut json = serde_json::json!({
+                "chain": provider_info.chain,
+                "estimated_gas_price": estimated_gas_price,
+                "estimated_total_gas_used": total_gas,
+                "estimated_amount_required": estimated_amount,
+                "token_symbol": token_symbol,
+            });
+            if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                json["estimated_max_fee_per_gas"] = serde_json::Value::from(estimated_gas_price);
+                json["estimated_base_fee_per_gas"] = serde_json::Value::from(base_fee.clone());
+                json["estimated_max_priority_fee_per_gas"] =
+                    serde_json::Value::from(priority_fee.clone());
+            }
+            sh_println!("{}", json)?;
+        } else {
+            sh_println!("\n==========================")?;
+            sh_println!("\nChain {}", provider_info.chain)?;
+
+            if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                sh_println!("\nEstimated max fee per gas: {estimated_gas_price} gwei")?;
+                sh_println!("Estimated base fee per gas: {base_fee} gwei")?;
+                sh_println!("Estimated max priority fee per gas: {priority_fee} gwei")?;
+            } else {
+                sh_println!("\nEstimated gas price: {estimated_gas_price} gwei")?;
+            }
+            sh_println!("\nEstimated total gas used for script: {total_gas}")?;
+            sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
+            sh_println!("\n==========================")?;
+        }
+        Ok(())
     }
 }

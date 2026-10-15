@@ -16,7 +16,14 @@ pub fn override_call_strat(
     dictionary_weight: u32,
     payable_value_weight: u32,
 ) -> impl Strategy<Value = CallDetails> + Send + Sync + 'static {
-    let contracts = Arc::new(contracts);
+    // Each generated call owns its function-selection strategy. Share the functions so
+    // constructing that strategy does not clone the entire target ABI on every call.
+    let contracts = Arc::new(
+        contracts
+            .into_iter()
+            .map(|(address, functions)| (address, Arc::new(functions)))
+            .collect::<Vec<_>>(),
+    );
     let contracts_ref = contracts.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),

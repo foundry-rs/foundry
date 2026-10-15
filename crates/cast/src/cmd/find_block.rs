@@ -1,12 +1,8 @@
-use crate::Cast;
+use crate::cmd::rpc_provider;
 use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{
-    json::print_scalar,
-    opts::RpcOpts,
-    utils::{self, LoadConfig},
-};
+use foundry_cli::{json::print_scalar, opts::RpcOpts};
 use futures::join;
 
 /// CLI arguments for `cast find-block`.
@@ -41,18 +37,14 @@ fn interpolate_block(
 
 impl FindBlockArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { timestamp, rpc } = self;
-
-        let ts_target = timestamp;
-        let config = rpc.load_config()?;
-        let provider = utils::get_provider(&config)?;
+        let Self { timestamp: ts_target, rpc } = self;
+        let provider = rpc_provider(&rpc)?;
 
         let last_block_num = provider.get_block_number().await?;
-        let cast_provider = Cast::new(provider);
-
-        let res = join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
-        let ts_block_latest: u64 = res.0?.to();
-        let ts_block_1: u64 = res.1?.to();
+        let (ts_block_latest, ts_block_1) =
+            join!(timestamp(&provider, last_block_num), timestamp(&provider, 1));
+        let ts_block_latest = ts_block_latest?;
+        let ts_block_1 = ts_block_1?;
 
         let block_num = if ts_block_latest < ts_target {
             // If the most recent block's timestamp is below the target, return it
@@ -95,7 +87,7 @@ impl FindBlockArgs {
                         ts_target,
                     )
                 };
-                let next_timestamp = cast_provider.timestamp(next_block).await?.to::<u64>();
+                let next_timestamp = timestamp(&provider, next_block).await?;
 
                 if next_timestamp == ts_target {
                     break next_block;
@@ -115,6 +107,18 @@ impl FindBlockArgs {
     }
 }
 
+async fn timestamp(
+    provider: &impl Provider<alloy_network::AnyNetwork>,
+    number: u64,
+) -> Result<u64> {
+    Ok(provider
+        .get_block_by_number(number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("block {number} not found"))?
+        .header
+        .timestamp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::interpolate_block;
@@ -122,21 +126,12 @@ mod tests {
     #[test]
     fn interpolates_block_from_timestamps() {
         assert_eq!(interpolate_block(1, 100, 11, 200, 150), 6);
-    }
-
-    #[test]
-    fn keeps_interpolation_inside_search_bounds() {
+        // Stays inside the search bounds.
         assert_eq!(interpolate_block(1, 100, 11, 200, 100), 2);
         assert_eq!(interpolate_block(1, 100, 11, 200, 200), 10);
-    }
-
-    #[test]
-    fn interpolates_without_overflow() {
+        // Does not overflow.
         assert_eq!(interpolate_block(0, 0, u64::MAX, u64::MAX, u64::MAX / 2), u64::MAX / 2);
-    }
-
-    #[test]
-    fn uses_midpoint_for_equal_timestamps() {
+        // Falls back to the midpoint for equal timestamps.
         assert_eq!(interpolate_block(1, 100, 10, 100, 100), 6);
     }
 }

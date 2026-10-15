@@ -10,10 +10,14 @@ use std::{
 
 use alloy_primitives::keccak256;
 use eyre::Result;
+use foundry_common::fs::{canonicalize_path, normalize_path};
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use foundry_config::{
     Config, fs_permissions::FsAccessKind, providers::relative_remapping_preserving_context_boundary,
 };
+
+#[cfg(windows)]
+use std::os::windows::fs::FileTypeExt;
 
 /// Check if a path is safe for use as a relative path within a workspace.
 /// Rejects absolute paths, parent directory components (..), and other unsafe patterns.
@@ -43,27 +47,15 @@ fn resolve_against_root(root: &Path, path: &Path) -> PathBuf {
     normalize_existing_ancestor(&path)
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
-}
-
 /// Build a config for a copied temp workspace from an already materialized config.
 ///
 /// This preserves CLI/env overrides and runtime normalization while rebasing
 /// project-local paths from the original root to `temp_path`.
 pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
+    // Use the same root spelling as the compiler before materializing remappings. Temp paths
+    // can contain symlinks on macOS or short directory names on Windows.
+    let temp_root = normalize_existing_ancestor(temp_path);
+    let temp_path = temp_root.as_path();
     let mut temp_config = config.clone();
     temp_config.root = temp_path.to_path_buf();
     temp_config.src = rebase_project_path(&config.root, temp_path, &config.src);
@@ -179,7 +171,7 @@ fn is_covered_by_symlinked_project_root(config: &Config, rel: &Path) -> bool {
 
 fn normalize_existing_ancestor(path: &Path) -> PathBuf {
     if path.exists() {
-        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        return canonicalize_path(path).unwrap_or_else(|_| path.to_path_buf());
     }
 
     let mut ancestor = path;
@@ -192,7 +184,7 @@ fn normalize_existing_ancestor(path: &Path) -> PathBuf {
         ancestor = parent;
     }
 
-    let mut normalized = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    let mut normalized = canonicalize_path(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
     for component in missing.iter().rev() {
         normalized.push(component);
     }
@@ -741,6 +733,91 @@ fn copy_dir_recursive_inner(
     result
 }
 
+/// Makes `root/rel` writable without changing the files that `copy_project` links into `root`.
+///
+/// Copies linked directory trees so aliases in nested directories see the writable target.
+/// Rebases project-local symlinks and preserves external targets and dangling links.
+/// Removes a symlink at `rel` so the caller can write the mutant without changing its source.
+pub fn unshare_path(project_root: &Path, root: &Path, rel: &Path) -> Result<()> {
+    let root = canonicalize_path(root)?;
+    let mut current = root.clone();
+    let mut components = rel.components().peekable();
+    while let Some(component) = components.next() {
+        current.push(component);
+        let Ok(metadata) = fs::symlink_metadata(&current) else { return Ok(()) };
+        if !metadata.file_type().is_symlink() {
+            continue;
+        }
+        if components.peek().is_none() {
+            fs::remove_file(&current)?;
+            return Ok(());
+        }
+        let source = canonicalize_path(&current)?;
+        // A workspace inside the linked tree, for example with `TMPDIR` under `lib/`, would copy
+        // into itself.
+        eyre::ensure!(
+            !root.starts_with(&source),
+            "mutation workspace {} is inside linked dependency {}",
+            root.display(),
+            source.display()
+        );
+        #[cfg(unix)]
+        fs::remove_file(&current)?;
+        #[cfg(windows)]
+        fs::remove_dir(&current)?;
+        copy_unshared_dir(project_root, &root, &current, &source, &current)?;
+    }
+    Ok(())
+}
+
+fn copy_unshared_dir(
+    project_root: &Path,
+    root: &Path,
+    isolated_root: &Path,
+    src: &Path,
+    dst: &Path,
+) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let destination = dst.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            // Resolve against the original parent before moving the link into the workspace.
+            let target = resolve_against_root(src, &fs::read_link(entry.path())?);
+            let rebased = rebase_project_path(project_root, root, &target);
+            // Rebase references into this tree and into copied files. An existing directory
+            // elsewhere in the workspace can be a partial copy, so keep its original target.
+            let target = if rebased.starts_with(isolated_root) || rebased.is_file() {
+                rebased
+            } else {
+                target
+            };
+            symlink_entry(&target, &destination, file_type)?;
+        } else if file_type.is_dir() {
+            copy_unshared_dir(project_root, root, isolated_root, &entry.path(), &destination)?;
+        } else {
+            fs::copy(entry.path(), &destination)?;
+        }
+    }
+    Ok(())
+}
+
+/// Creates a symlink at `dst`, preserving the original type even if the target is missing.
+fn symlink_entry(target: &Path, dst: &Path, _file_type: fs::FileType) -> Result<()> {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, dst)?;
+    #[cfg(windows)]
+    {
+        if _file_type.is_symlink_dir() {
+            std::os::windows::fs::symlink_dir(target, dst)?;
+        } else {
+            std::os::windows::fs::symlink_file(target, dst)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,6 +826,11 @@ mod tests {
     use foundry_compilers::artifacts::ModelCheckerSettings;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as symlink_file;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file;
 
     fn create_test_dir_structure(base: &Path, structure: &[&str]) {
         for path in structure {
@@ -765,6 +847,126 @@ mod tests {
     }
 
     #[test]
+    fn test_unshare_path_preserves_nested_aliases_and_external_links() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("deeper/workspace");
+        let dependency = root.join("lib/bucket");
+        create_test_dir_structure(
+            &root,
+            &[
+                "lib/bucket/Arithmetic.sol",
+                "lib/bucket/nested/",
+                "src/Local.sol",
+                "uncopied/Local.sol",
+            ],
+        );
+        create_test_dir_structure(temp.path(), &["shared/Helper.sol"]);
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::copy(root.join("src/Local.sol"), workspace.join("src/Local.sol")).unwrap();
+        symlink_dir(&root.join("lib"), &workspace.join("lib")).unwrap();
+        symlink_file("Arithmetic.sol", dependency.join("Alias.sol")).unwrap();
+        symlink_file("../Arithmetic.sol", dependency.join("nested/Alias.sol")).unwrap();
+        symlink_file(dependency.join("Arithmetic.sol"), dependency.join("Absolute.sol")).unwrap();
+        symlink_file("../../../shared/Helper.sol", dependency.join("Helper.sol")).unwrap();
+        symlink_file("../../src/Local.sol", dependency.join("Local.sol")).unwrap();
+        symlink_file("../../uncopied/Local.sol", dependency.join("Uncopied.sol")).unwrap();
+        symlink_file("nonexistent", dependency.join("unused")).unwrap();
+        symlink_dir(Path::new("nested"), &dependency.join("a_alias")).unwrap();
+        symlink_dir(Path::new("missing-directory"), &dependency.join("unused_dir")).unwrap();
+
+        unshare_path(&root, &workspace, Path::new("lib/bucket/Arithmetic.sol")).unwrap();
+        fs::write(workspace.join("lib/bucket/Arithmetic.sol"), "mutant").unwrap();
+        fs::write(workspace.join("src/Local.sol"), "workspace local").unwrap();
+
+        for alias in ["Alias.sol", "nested/Alias.sol", "Absolute.sol", "a_alias/Alias.sol"] {
+            assert_eq!(
+                fs::read_to_string(workspace.join("lib/bucket").join(alias)).unwrap(),
+                "mutant",
+                "{alias}",
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(dependency.join("Arithmetic.sol")).unwrap(),
+            "// lib/bucket/Arithmetic.sol",
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/Helper.sol")).unwrap(),
+            "// shared/Helper.sol",
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/Local.sol")).unwrap(),
+            "workspace local",
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/Uncopied.sol")).unwrap(),
+            "// uncopied/Local.sol",
+        );
+        for link in ["unused", "unused_dir"] {
+            let path = workspace.join("lib/bucket").join(link);
+            assert!(fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+            assert!(!path.exists());
+        }
+        #[cfg(windows)]
+        assert!(
+            fs::symlink_metadata(workspace.join("lib/bucket/unused_dir"))
+                .unwrap()
+                .file_type()
+                .is_symlink_dir()
+        );
+    }
+
+    #[test]
+    fn test_unshare_path_keeps_links_to_partially_copied_dirs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &["lib/bucket/Arithmetic.sol", "shared/visible/V.sol", "shared/hidden/H.sol"],
+        );
+        // A remapping copied only `shared/visible/` into the workspace.
+        create_test_dir_structure(&workspace, &["shared/visible/V.sol"]);
+        symlink_dir(&root.join("lib"), &workspace.join("lib")).unwrap();
+        symlink_dir(Path::new("../../shared"), &root.join("lib/bucket/helpers")).unwrap();
+
+        unshare_path(&root, &workspace, Path::new("lib/bucket/Arithmetic.sol")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(workspace.join("lib/bucket/helpers/hidden/H.sol")).unwrap(),
+            "// shared/hidden/H.sol",
+        );
+    }
+
+    #[test]
+    fn test_unshare_path_rejects_workspace_inside_linked_tree() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = root.join("lib/.tmp/workspace");
+        create_test_dir_structure(&root, &["lib/bucket/Arithmetic.sol", "lib/.tmp/workspace/"]);
+        symlink_dir(&root.join("lib"), &workspace.join("lib")).unwrap();
+
+        let err = unshare_path(&root, &workspace, Path::new("lib/bucket/Arithmetic.sol"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("is inside linked dependency"), "{err}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_symlink_entry_preserves_directory_type_before_target_exists() {
+        let temp = TempDir::new().unwrap();
+        let original = temp.path().join("original");
+        symlink_dir(Path::new("z_real"), &original).unwrap();
+        let file_type = fs::symlink_metadata(original).unwrap().file_type();
+        let alias = temp.path().join("a_alias");
+        symlink_entry(Path::new("z_real"), &alias, file_type).unwrap();
+        assert!(fs::symlink_metadata(&alias).unwrap().file_type().is_symlink_dir());
+        fs::create_dir(temp.path().join("z_real")).unwrap();
+        assert!(alias.is_dir());
+    }
+
+    #[test]
     fn test_rebase_remapping_preserves_context_directory_boundary() {
         let remapping = RelativeRemapping::from(Remapping {
             context: Some(format!("lib{MAIN_SEPARATOR}outer{MAIN_SEPARATOR}")),
@@ -776,11 +978,39 @@ mod tests {
         assert!(remapping.context.unwrap().ends_with(MAIN_SEPARATOR));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_rebase_config_paths_canonicalizes_workspace_alias() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        let alias = temp.path().join("alias");
+        create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
+        fs::create_dir(&workspace).unwrap();
+        symlink_dir(&workspace, &alias).unwrap();
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            remappings: vec![Remapping::from_str("@src/=src/").unwrap().into()],
+            ..Default::default()
+        };
+        copy_project(&config, &alias).unwrap();
+        let config = rebase_config_paths(&config, &alias).sanitized();
+        let canonical_root = canonicalize_path(&workspace).unwrap();
+        assert_eq!(config.root, canonical_root);
+        assert_eq!(config.src, canonical_root.join("src"));
+        assert_eq!(config.test, canonical_root.join("test"));
+        let remapping = Remapping::from(config.remappings[0].clone());
+        assert_eq!(Path::new(&remapping.path), canonical_root.join("src"));
+    }
+
     #[test]
     fn test_rebase_config_paths_rebases_materialized_project_paths() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         let external = temp.path().join("external");
 
         let mut contracts = BTreeMap::new();
@@ -936,7 +1166,7 @@ mod tests {
     fn test_copy_project_preserves_external_read_only_paths() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         let external = temp.path().join("shared-solidity");
         create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
         create_test_dir_structure(&external, &["Shared.sol"]);
@@ -968,7 +1198,7 @@ mod tests {
     fn test_copy_project_copies_project_local_corpus_and_frontier_paths() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         create_test_dir_structure(
             &root,
             &[
@@ -1027,7 +1257,7 @@ mod tests {
     fn test_copy_project_isolates_external_corpus_and_frontier_paths() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         let corpus = temp.path().join("shared-corpus");
         let frontier = temp.path().join("shared-frontier");
         create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
@@ -1064,7 +1294,7 @@ mod tests {
     fn test_copy_project_merges_overlapping_mutable_paths() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         create_test_dir_structure(
             &root,
             &[
@@ -1100,7 +1330,7 @@ mod tests {
     fn test_copy_project_isolates_external_failure_persist_dirs() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         let fuzz_failures = temp.path().join("shared-fuzz-failures");
         let invariant_failures = temp.path().join("shared-invariant-failures");
         create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
@@ -1146,7 +1376,7 @@ mod tests {
     fn test_copy_project_isolates_corpus_under_symlinked_lib_root() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         create_test_dir_structure(
             &root,
             &[
@@ -1187,7 +1417,7 @@ mod tests {
     fn test_rebase_config_paths_preserves_symlink_parent_semantics() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         let external = temp.path().join("external");
         create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
         create_test_dir_structure(
@@ -1236,7 +1466,7 @@ mod tests {
     fn test_copy_project_copies_project_local_remapping_targets() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         create_test_dir_structure(
             &root,
             &["src/Target.sol", "test/Target.t.sol", "packages/shared/src/Shared.sol"],
@@ -1266,7 +1496,7 @@ mod tests {
     fn test_copy_project_preserves_external_libs() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         let external = temp.path().join("shared-lib");
         create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol", "lib/Local.sol"]);
         create_test_dir_structure(&external, &["External.sol"]);
@@ -1292,7 +1522,7 @@ mod tests {
     fn test_rebase_config_paths_rebases_relative_fs_permissions() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
-        let workspace = temp.path().join("workspace");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
         fs::create_dir_all(root.join("writes")).unwrap();
         fs::create_dir_all(workspace.join("writes")).unwrap();
         fs::create_dir_all(workspace.join("logs/sub")).unwrap();
@@ -1311,11 +1541,11 @@ mod tests {
         assert_eq!(temp_config.root, workspace);
         assert_eq!(
             temp_config.fs_permissions.permissions[0].path,
-            dunce::canonicalize(workspace.join("writes")).unwrap()
+            canonicalize_path(workspace.join("writes")).unwrap()
         );
         assert_eq!(
             temp_config.fs_permissions.permissions[1].path,
-            dunce::canonicalize(workspace.join("logs/sub")).unwrap().join("a.txt")
+            canonicalize_path(workspace.join("logs/sub")).unwrap().join("a.txt")
         );
     }
 

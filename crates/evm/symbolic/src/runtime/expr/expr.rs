@@ -1,168 +1,10 @@
 use super::{hashcons::HashConsed, *};
+use foundry_evm::revm::interpreter::instructions::i256::{i256_div, i256_mod};
 
+// Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
+// unique nodes so adversarial expression trees cannot make construction unbounded.
 const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
-
-pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
-    let len = bytes.len();
-    let len = SymExpr::constant(cx, U256::from(len));
-    keccak_word_with_len(cx, bytes, len)
-}
-
-pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr {
-    if let Some(len) = len.as_const()
-        && let Ok(len) = usize::try_from(len)
-        && len <= bytes.len()
-        && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
-    {
-        let hash = U256::from_be_bytes(keccak256(concrete).0);
-        if len == 64 {
-            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
-        }
-        return SymExpr::constant(cx, hash);
-    }
-
-    let exprs = bytes;
-    let name = stable_symbol(cx, "keccak", format!("{len:?}:{exprs:?}").as_bytes());
-    SymExpr::keccak_symbol(cx, name, len, exprs)
-}
-
-pub(crate) fn symbolic_hash_word_with_len(
-    cx: &mut SymCx,
-    algorithm: &'static str,
-    bytes: Vec<SymExpr>,
-    len: SymExpr,
-) -> SymExpr {
-    let exprs = bytes;
-    let name = stable_symbol(cx, algorithm, format!("{len:?}:{exprs:?}").as_bytes());
-    let mut identity = Vec::with_capacity(exprs.len() + 1);
-    identity.push(len);
-    identity.extend(exprs);
-    SymExpr::hash_symbol(cx, name, algorithm, identity)
-}
-
-pub(crate) fn create2_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    creator: Address,
-    salt: SymExpr,
-    initcode: &SymCode,
-) -> Result<(SymExpr, Address), SymbolicError> {
-    match (salt.as_const(), initcode.concrete_bytes(cx, "symbolic CREATE2 initcode")) {
-        (Some(salt), Ok(initcode)) => {
-            let address = creator.create2_from_code(salt.to_be_bytes::<32>(), &initcode);
-            Ok((SymExpr::constant(cx, address_word(address)), address))
-        }
-        (None, Ok(initcode)) => {
-            let initcode_hash = keccak256(&initcode);
-            let word = symbolic_create2_address_word(
-                cx,
-                state,
-                format!("{creator:?}"),
-                salt,
-                format!("{initcode_hash:?}"),
-            );
-            let address = state.world.symbolic_address_slot(word.clone());
-            Ok((word, address))
-        }
-        (_, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
-            let initcode_bytes = initcode.read_byte_exprs(cx, 0, initcode.len());
-            let word = symbolic_create2_address_word(
-                cx,
-                state,
-                format!("{creator:?}"),
-                salt,
-                format!("{initcode_bytes:?}"),
-            );
-            let address = state.world.symbolic_address_slot(word.clone());
-            Ok((word, address))
-        }
-        (_, Err(err)) => Err(err),
-    }
-}
-
-pub(crate) fn compute_create2_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    deployer: SymExpr,
-    salt: SymExpr,
-    init_code_hash: SymExpr,
-) -> Result<SymExpr, SymbolicError> {
-    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
-    let salt_concrete = state.constrained_word(cx, &salt);
-    let init_code_hash_concrete = state.constrained_word(cx, &init_code_hash);
-
-    if let (Some(deployer), Some(salt), Some(init_code_hash)) =
-        (deployer_concrete, salt_concrete, init_code_hash_concrete)
-    {
-        let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
-        let address = deployer.create2(B256::from(salt.to_be_bytes::<32>()), init_code_hash);
-        return Ok(SymExpr::constant(cx, address_word(address)));
-    }
-
-    let deployer_identity = deployer_concrete
-        .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{deployer:?}"));
-    let init_code_hash_identity = init_code_hash_concrete
-        .map(|init_code_hash| {
-            let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
-            format!("{init_code_hash:?}")
-        })
-        .unwrap_or_else(|| format!("{init_code_hash:?}"));
-
-    Ok(symbolic_create2_address_word(cx, state, deployer_identity, salt, init_code_hash_identity))
-}
-
-pub(crate) fn compute_create_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    deployer: SymExpr,
-    nonce: SymExpr,
-) -> Result<SymExpr, SymbolicError> {
-    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
-    let nonce_concrete = state.constrained_word(cx, &nonce);
-
-    if let (Some(deployer), Some(nonce)) = (deployer_concrete, nonce_concrete) {
-        let Ok(nonce) = u64::try_from(nonce) else {
-            return Err(SymbolicError::Unsupported("symbolic vm.computeCreateAddress nonce"));
-        };
-        return Ok(SymExpr::constant(cx, address_word(deployer.create(nonce))));
-    }
-
-    let deployer_identity = deployer_concrete
-        .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{deployer:?}"));
-    Ok(symbolic_create_address_word(cx, state, deployer_identity, nonce))
-}
-
-pub(crate) fn symbolic_create_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    creator_identity: String,
-    nonce: SymExpr,
-) -> SymExpr {
-    let name =
-        stable_symbol(cx, "create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
-    let word = SymExpr::get_var(cx, name);
-    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
-    word
-}
-
-pub(crate) fn symbolic_create2_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    creator_identity: String,
-    salt: SymExpr,
-    initcode_identity: String,
-) -> SymExpr {
-    let name = stable_symbol(
-        cx,
-        "create2_address",
-        format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
-    );
-    let word = SymExpr::get_var(cx, name);
-    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
-    word
-}
+const MAX_CONSTANT_DIFFERENCE_VISITS: usize = 256;
 
 impl SymExpr {
     pub(crate) fn select_storage_write(
@@ -219,8 +61,9 @@ impl SymExpr {
     pub(crate) fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<StorageMappingKey> {
         let bytes = self.storage_mapping_key_bytes(cx)?;
         let key_bytes = &bytes[..32];
-        let preserve_key_bytes =
-            (!storage_mapping_key_bytes_form_compact_word(key_bytes)).then(|| key_bytes.to_vec());
+        let preserve_key_bytes = (!key_bytes.iter().all(|byte| byte.as_const().is_some())
+            && word_from_extracted_bytes(key_bytes).is_none())
+        .then(|| key_bytes.to_vec());
         let key = Self::from_bytes(cx, key_bytes.iter().cloned());
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         Some(StorageMappingKey { key, key_bytes: preserve_key_bytes, slot })
@@ -355,10 +198,6 @@ fn storage_mapping_key_eq(
     }
 }
 
-fn storage_mapping_key_bytes_form_compact_word(bytes: &[SymExpr]) -> bool {
-    bytes.iter().all(|byte| byte.as_const().is_some()) || word_from_extracted_bytes(bytes).is_some()
-}
-
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {
     match candidate {
         SymExprKind::BinOp(SymBinOp::And, left, right) if left == target => right.eval(),
@@ -465,7 +304,7 @@ impl fmt::Debug for SymExpr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(in crate::runtime) enum SymExprKind {
     Const(U256),
     Var(Symbol),
@@ -476,6 +315,41 @@ pub(in crate::runtime) enum SymExprKind {
     BinOp(SymBinOp, SymExpr, SymExpr),
     TernOp(SymTernOp, SymExpr, SymExpr, SymExpr),
     Ite(SymBoolExpr, SymExpr, SymExpr),
+}
+
+/// Formats an expression as a tree.
+///
+/// A hash node prints only its name, because the name is a digest of the preimage. Printing the
+/// preimage again would repeat every nested preimage, so a chain of hashes over the previous hash
+/// would grow exponentially.
+impl fmt::Debug for SymExprKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Const(value) => f.debug_tuple("Const").field(value).finish(),
+            Self::Var(symbol) => f.debug_tuple("Var").field(symbol).finish(),
+            Self::GasLeft(symbol) => f.debug_tuple("GasLeft").field(symbol).finish(),
+            Self::Keccak { name, len, .. } => f
+                .debug_struct("Keccak")
+                .field("name", name)
+                .field("len", len)
+                .finish_non_exhaustive(),
+            Self::Hash { name, algorithm, .. } => f
+                .debug_struct("Hash")
+                .field("name", name)
+                .field("algorithm", algorithm)
+                .finish_non_exhaustive(),
+            Self::Not(expr) => f.debug_tuple("Not").field(expr).finish(),
+            Self::BinOp(op, left, right) => {
+                f.debug_tuple("BinOp").field(op).field(left).field(right).finish()
+            }
+            Self::TernOp(op, first, second, third) => {
+                f.debug_tuple("TernOp").field(op).field(first).field(second).field(third).finish()
+            }
+            Self::Ite(condition, then, otherwise) => {
+                f.debug_tuple("Ite").field(condition).field(then).field(otherwise).finish()
+            }
+        }
+    }
 }
 
 impl SymExprKind {
@@ -502,36 +376,6 @@ impl SymExprKind {
 impl SymExpr {
     pub(in crate::runtime) fn kind(&self) -> &SymExprKind {
         self.kind.value()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn get_var_name<'a>(&self, cx: &'a SymCx) -> Option<&'a str> {
-        self.kind().get_var().map(|symbol| cx.symbol_name(symbol))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_keccak(&self) -> bool {
-        matches!(self.kind(), SymExprKind::Keccak { .. })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn keccak_len_and_byte_count(&self) -> Option<(&Self, usize)> {
-        match self.kind() {
-            SymExprKind::Keccak { len, bytes, .. } => Some((len, bytes.len())),
-            _ => None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn hash_algorithm(&self) -> Option<&'static str> {
-        match self.kind() {
-            SymExprKind::Hash { algorithm, .. } => Some(algorithm),
-            _ => None,
-        }
-    }
-
-    pub(in crate::runtime) fn into_kind(self) -> SymExprKind {
-        self.kind.into_value()
     }
 
     pub(in crate::runtime) fn from_kind(cx: &mut SymCx, kind: SymExprKind) -> Self {
@@ -602,7 +446,31 @@ impl SymExpr {
                     let max = Self::constant(cx, U256::MAX);
                     Self::ite(cx, condition, zero, max)
                 }
-                _ => Self::commutative_binop(cx, binop, left, right),
+                // `one_bit_word(c) + k => ite(c, k + 1, k)`.
+                (SymExprKind::Const(value), _)
+                    if let Some(condition) = right.bitwise_bool_word_condition(cx) =>
+                {
+                    let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, incremented, value)
+                }
+                (_, SymExprKind::Const(value))
+                    if let Some(condition) = left.bitwise_bool_word_condition(cx) =>
+                {
+                    let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, incremented, value)
+                }
+                _ => {
+                    let (left, right) = Self::ordered_commutative_operands(left, right);
+                    if let Some(value) = Self::add_with_const_ite(cx, &left, &right) {
+                        value
+                    } else if let Some(value) = Self::add_with_const_ite(cx, &right, &left) {
+                        value
+                    } else {
+                        Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
+                    }
+                }
             },
             SymBinOp::Sub => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
@@ -622,6 +490,14 @@ impl SymExpr {
                     let max = Self::constant(cx, U256::MAX);
                     Self::ite(cx, condition, zero, max)
                 }
+                // `k - bool_word(c) => ite(c, k - 1, k)`.
+                (SymExprKind::Const(value), _)
+                    if let Some(condition) = right.bitwise_bool_word_condition(cx) =>
+                {
+                    let decremented = Self::constant(cx, value.wrapping_sub(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, decremented, value)
+                }
                 _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
             SymBinOp::Mul => match (left.kind(), right.kind()) {
@@ -639,17 +515,24 @@ impl SymExpr {
                 (SymExprKind::Const(value), _) if *value == U256::ONE => right,
                 // `a * 1 => a`.
                 (_, SymExprKind::Const(value)) if *value == U256::ONE => left,
-                // `2**n * a => a << n`.
-                (SymExprKind::Const(value), _) if let Some(shift) = power_of_two_shift(*value) => {
-                    let shift = Self::constant(cx, U256::from(shift));
-                    Self::binop(cx, SymBinOp::Shl, right, shift)
+                _ => {
+                    let (left, right) = Self::ordered_commutative_operands(left, right);
+                    if let Some(condition) = left.direct_bool_word_condition(cx) {
+                        // `bool_word(c) * a => ite(c, a, 0)`.
+                        let zero = Self::zero(cx);
+                        Self::ite(cx, condition, right, zero)
+                    } else if let Some(condition) = right.direct_bool_word_condition(cx) {
+                        // `a * bool_word(c) => ite(c, a, 0)`.
+                        let zero = Self::zero(cx);
+                        Self::ite(cx, condition, left, zero)
+                    } else if let Some(shift) = right.as_const().and_then(power_of_two_shift) {
+                        // `a * 2**n => a << n`.
+                        let shift = Self::constant(cx, U256::from(shift));
+                        Self::binop(cx, SymBinOp::Shl, left, shift)
+                    } else {
+                        Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
+                    }
                 }
-                // `a * 2**n => a << n`.
-                (_, SymExprKind::Const(value)) if let Some(shift) = power_of_two_shift(*value) => {
-                    let shift = Self::constant(cx, U256::from(shift));
-                    Self::binop(cx, SymBinOp::Shl, left, shift)
-                }
-                _ => Self::commutative_binop(cx, binop, left, right),
             },
             SymBinOp::UDiv | SymBinOp::SDiv => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
@@ -750,7 +633,27 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a ^ a => 0`.
                 _ if left == right => Self::zero(cx),
-                _ => Self::commutative_binop(cx, binop, left, right),
+                _ => {
+                    let (left, right) = Self::ordered_commutative_operands(left, right);
+                    // `a ^ (a ^ b) => b`.
+                    if let Some(value) = Self::xor_with_shared_operand(&left, &right)
+                        .or_else(|| Self::xor_with_shared_operand(&right, &left))
+                    {
+                        value
+                    // `a ^ ((a ^ b) * bool_word(c)) => ite(c, b, a)`.
+                    } else if let Some(value) = Self::xor_with_bool_select(cx, &left, &right) {
+                        value
+                    } else if let Some(value) = Self::xor_with_bool_select(cx, &right, &left) {
+                        value
+                    // `a ^ ite(c, b, 0) => ite(c, a ^ b, a)`.
+                    } else if let Some(value) = Self::xor_with_zero_ite(cx, &left, &right) {
+                        value
+                    } else if let Some(value) = Self::xor_with_zero_ite(cx, &right, &left) {
+                        value
+                    } else {
+                        Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
+                    }
+                }
             },
             SymBinOp::Shl => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
@@ -908,6 +811,105 @@ impl SymExpr {
             return Some(Self::ite(cx, condition.clone(), then_expr.clone(), other));
         }
         None
+    }
+
+    fn add_with_const_ite(cx: &mut SymCx, other: &Self, conditional: &Self) -> Option<Self> {
+        if other.as_const().is_some() {
+            return None;
+        }
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_none() || else_expr.as_const().is_none() {
+            return None;
+        }
+        if !Self::duplicating_branchless_rewrite_fits(other, conditional) {
+            return None;
+        }
+        let then_expr = Self::binop(cx, SymBinOp::Add, other.clone(), then_expr.clone());
+        let else_expr = Self::binop(cx, SymBinOp::Add, other.clone(), else_expr.clone());
+        Some(Self::ite(cx, condition.clone(), then_expr, else_expr))
+    }
+
+    fn xor_with_bool_select(cx: &mut SymCx, base: &Self, selector: &Self) -> Option<Self> {
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = selector.kind() else { return None };
+        let (condition_word, selected) = match left.kind() {
+            SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right) if delta_left == base => {
+                (right, delta_right.clone())
+            }
+            SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right) if delta_right == base => {
+                (right, delta_left.clone())
+            }
+            _ => match right.kind() {
+                SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right)
+                    if delta_left == base =>
+                {
+                    (left, delta_right.clone())
+                }
+                SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right)
+                    if delta_right == base =>
+                {
+                    (left, delta_left.clone())
+                }
+                _ => return None,
+            },
+        };
+        let condition = condition_word.bitwise_bool_word_condition(cx)?;
+        Some(Self::ite(cx, condition, selected, base.clone()))
+    }
+
+    fn xor_with_shared_operand(base: &Self, nested: &Self) -> Option<Self> {
+        let SymExprKind::BinOp(SymBinOp::Xor, left, right) = nested.kind() else { return None };
+        if left == base {
+            Some(right.clone())
+        } else if right == base {
+            Some(left.clone())
+        } else {
+            None
+        }
+    }
+
+    fn xor_with_zero_ite(cx: &mut SymCx, base: &Self, conditional: &Self) -> Option<Self> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_some_and(|value| value.is_zero()) {
+            if !Self::duplicating_branchless_rewrite_fits(base, conditional) {
+                return None;
+            }
+            let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), else_expr.clone());
+            return Some(Self::ite(cx, condition.clone(), base.clone(), selected));
+        }
+        if else_expr.as_const().is_some_and(|value| value.is_zero()) {
+            if !Self::duplicating_branchless_rewrite_fits(base, conditional) {
+                return None;
+            }
+            let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), then_expr.clone());
+            return Some(Self::ite(cx, condition.clone(), selected, base.clone()));
+        }
+        None
+    }
+
+    /// Checks the occurrence cost of a rewrite that places one operand in both ITE arms.
+    ///
+    /// Hash-consing keeps the stored DAG compact, but the rewrite still places a shared operand in
+    /// both arms for downstream consumers. Count that unfolded result before constructing it so a
+    /// linear series of branchless operations cannot become exponential.
+    fn duplicating_branchless_rewrite_fits(operand: &Self, conditional: &Self) -> bool {
+        let mut counter = UnfoldedNodeCounter::new();
+        let Some(operand_nodes) = counter.expr_nodes(operand) else {
+            return false;
+        };
+        let Some(conditional_nodes) = counter.expr_nodes(conditional) else {
+            return false;
+        };
+
+        operand_nodes
+            .checked_mul(2)
+            .and_then(|duplicated| conditional_nodes.checked_add(duplicated))
+            // The rewritten ITE adds at most two operation wrappers around the original arms.
+            .and_then(|nodes| nodes.checked_add(2))
+            .is_some_and(|nodes| nodes <= MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES)
     }
 
     fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
@@ -1229,52 +1231,7 @@ impl SymExpr {
         &self,
         model: &M,
     ) -> Result<U256, SymbolicError> {
-        let kind = self.kind();
-        if let Some(var) = kind.get_eval_var() {
-            return Ok(model.value(var).unwrap_or_default());
-        }
-        Ok(match kind {
-            SymExprKind::Const(value) => *value,
-            SymExprKind::Var(_) | SymExprKind::GasLeft(_) | SymExprKind::Hash { .. } => {
-                unreachable!("symbolic eval leaf handled above")
-            }
-            SymExprKind::Keccak { len, bytes, .. } => {
-                let len = len.eval_model(model)?;
-                let Ok(len) = usize::try_from(len) else {
-                    return Err(SymbolicError::Solver(
-                        "solver model uses an invalid keccak length".to_string(),
-                    ));
-                };
-                if len > bytes.len() {
-                    return Err(SymbolicError::Solver(
-                        "solver model uses an invalid keccak length".to_string(),
-                    ));
-                }
-
-                let mut input = Vec::with_capacity(len);
-                for byte in bytes.iter().take(len) {
-                    input.push((byte.eval_model(model)? & U256::from(0xff)).to::<u8>());
-                }
-
-                U256::from_be_bytes(keccak256(input).0)
-            }
-            SymExprKind::Not(value) => !value.eval_model(model)?,
-            SymExprKind::BinOp(op, left, right) => {
-                op.eval(left.eval_model(model)?, right.eval_model(model)?)
-            }
-            SymExprKind::TernOp(op, left, right, modulus) => op.eval(
-                left.eval_model(model)?,
-                right.eval_model(model)?,
-                modulus.eval_model(model)?,
-            ),
-            SymExprKind::Ite(cond, then_expr, else_expr) => {
-                if cond.eval_model(model)? {
-                    then_expr.eval_model(model)?
-                } else {
-                    else_expr.eval_model(model)?
-                }
-            }
-        })
+        ModelEvaluator::new(model).eval_word(self)
     }
 
     pub(crate) fn eval_model_if_complete<M: SymbolicModelLookup + ?Sized>(
@@ -1324,36 +1281,66 @@ impl SymExpr {
         &self,
         cx: &mut SymCx,
     ) -> Option<SymBoolExpr> {
-        let mut visited = HashSet::default();
-        let mut conditions = Vec::new();
-        let mut remaining_visits = MAX_BITWISE_BOOL_WORD_VISITS;
-        self.collect_bitwise_bool_word_conditions(
-            &mut visited,
-            &mut remaining_visits,
-            &mut conditions,
-        )?;
-        Some(SymBoolExpr::or(cx, conditions))
-    }
+        let mut pending = vec![self.clone()];
+        let mut seen_words = HashSet::<Self>::default();
+        let mut leaf_conditions = IndexSet::<SymBoolExpr>::default();
+        let mut bit_widths = HashMap::default();
+        let mut remaining = MAX_BITWISE_BOOL_WORD_VISITS;
+        while let Some(word) = pending.pop() {
+            if !seen_words.insert(word.clone()) {
+                continue;
+            }
+            if remaining == 0 {
+                return None;
+            }
+            remaining -= 1;
 
-    fn collect_bitwise_bool_word_conditions(
-        &self,
-        visited: &mut HashSet<Self>,
-        remaining_visits: &mut usize,
-        conditions: &mut Vec<SymBoolExpr>,
-    ) -> Option<()> {
-        if !visited.insert(self.clone()) {
-            return Some(());
-        }
-        *remaining_visits = remaining_visits.checked_sub(1)?;
-        if let Some(condition) = self.bool_word_condition() {
-            conditions.push(condition);
-        } else if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
-            left.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
-            right.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
-        } else {
+            if let Some(condition) = word.direct_bool_word_condition(cx) {
+                leaf_conditions.insert(condition);
+                continue;
+            }
+            if let SymExprKind::BinOp(SymBinOp::Or, left, right) = word.kind() {
+                pending.push(right.clone());
+                pending.push(left.clone());
+                continue;
+            }
+
+            if word.unsigned_bits_cached(&mut bit_widths, &mut remaining) == Some(1) {
+                let zero = Self::zero(cx);
+                let (word, zero) = Self::ordered_commutative_operands(word, zero);
+                let zero_check =
+                    SymBoolExpr::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, word, zero));
+                leaf_conditions.insert(zero_check.not(cx));
+                continue;
+            }
             return None;
         }
-        Some(())
+
+        Some(SymBoolExpr::or(cx, leaf_conditions.into_iter().collect()))
+    }
+
+    /// Returns the condition represented by a direct `0`/`1` ITE, preserving its polarity.
+    ///
+    /// Unlike [`Self::bitwise_bool_word_condition`], this deliberately does not infer a boolean
+    /// word from arbitrary one-bit expressions. Callers that run during expression construction
+    /// use this bounded structural check to avoid recursively sizing a shared expression DAG.
+    fn direct_bool_word_condition(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() else {
+            return None;
+        };
+        match (then_expr.as_const(), else_expr.as_const()) {
+            (Some(then_value), Some(else_value))
+                if then_value == U256::ONE && else_value.is_zero() =>
+            {
+                Some(condition.clone())
+            }
+            (Some(then_value), Some(else_value))
+                if then_value.is_zero() && else_value == U256::ONE =>
+            {
+                Some(condition.clone().not(cx))
+            }
+            _ => None,
+        }
     }
 
     fn bool_word_condition_from_parts(
@@ -1374,10 +1361,6 @@ impl SymExpr {
             }
             _ => None,
         }
-    }
-
-    pub(crate) fn truth(&self) -> Option<bool> {
-        self.as_const().map(|value| !value.is_zero())
     }
 
     pub(crate) fn into_zero_bool(self, cx: &mut SymCx) -> SymBoolExpr {
@@ -1418,7 +1401,7 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::GasLeft(_)))
+        self.visit_bool(|expr| expr.is_raw_gasleft())
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
@@ -1426,7 +1409,42 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_ite(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Ite(_, _, _)))
+        let mut visited = HashSet::<&Self>::default();
+        self.contains_ite_cached(&mut visited, false)
+    }
+
+    fn contains_ite_cached<'a>(&'a self, visited: &mut HashSet<&'a Self>, memoize: bool) -> bool {
+        match self.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => return false,
+            SymExprKind::Ite(_, _, _) => return true,
+            _ => {}
+        }
+        if memoize && !visited.insert(self) {
+            return false;
+        }
+
+        match self.kind() {
+            SymExprKind::Keccak { len, bytes, .. } => {
+                len.contains_ite_cached(visited, true)
+                    || bytes.iter().any(|byte| byte.contains_ite_cached(visited, true))
+            }
+            SymExprKind::Hash { bytes, .. } => {
+                bytes.iter().any(|byte| byte.contains_ite_cached(visited, true))
+            }
+            SymExprKind::Not(value) => value.contains_ite_cached(visited, true),
+            SymExprKind::BinOp(_, left, right) => {
+                left.contains_ite_cached(visited, true) || right.contains_ite_cached(visited, true)
+            }
+            SymExprKind::TernOp(_, left, right, modulus) => {
+                left.contains_ite_cached(visited, true)
+                    || right.contains_ite_cached(visited, true)
+                    || modulus.contains_ite_cached(visited, true)
+            }
+            SymExprKind::Const(_)
+            | SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Ite(_, _, _) => unreachable!("leaf expression handled before descent"),
+        }
     }
 
     pub(in crate::runtime) fn udiv_operands(&self) -> Option<(&Self, &Self)> {
@@ -1439,11 +1457,9 @@ impl SymExpr {
     }
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit(&mut |expr| {
-            if let Some(var) = expr.kind().get_eval_var() {
-                vars.insert(var);
-            }
-            ControlFlow::<()>::Continue(())
+        let _ = self.visit::<()>(&mut |expr| {
+            vars.extend(expr.kind().get_eval_var());
+            ControlFlow::Continue(())
         });
     }
 
@@ -1515,42 +1531,92 @@ impl SymExpr {
     }
 
     pub(crate) fn unsigned_bits(&self) -> usize {
-        match self.kind() {
-            SymExprKind::Const(value) => value.bit_len().max(1),
-            SymExprKind::BinOp(SymBinOp::And, left, right) => {
-                if let Some(mask) = right.as_const() {
-                    left.unsigned_bits().min(mask.bit_len())
-                } else {
-                    256
-                }
-            }
-            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                left.unsigned_bits().max(right.unsigned_bits()).saturating_add(1).min(256)
-            }
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                left.unsigned_bits().saturating_add(right.unsigned_bits()).min(256)
-            }
-            SymExprKind::BinOp(SymBinOp::Shl, left, right) => {
-                if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
-                {
-                    left.unsigned_bits().saturating_add(shift).min(256)
-                } else {
-                    256
-                }
-            }
-            SymExprKind::BinOp(SymBinOp::Shr, left, right) => {
-                if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
-                {
-                    left.unsigned_bits().saturating_sub(shift).max(1)
-                } else {
-                    256
-                }
-            }
-            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => left.unsigned_bits(),
-            SymExprKind::TernOp(_, _, _, modulus) => modulus.unsigned_bits(),
-            SymExprKind::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
-            _ => 256,
+        let mut bit_widths = HashMap::default();
+        let mut remaining = usize::MAX;
+        self.unsigned_bits_cached(&mut bit_widths, &mut remaining).unwrap_or(256)
+    }
+
+    fn unsigned_bits_cached(
+        &self,
+        bit_widths: &mut HashMap<Self, usize>,
+        remaining: &mut usize,
+    ) -> Option<usize> {
+        if let Some(bits) = bit_widths.get(self) {
+            return Some(*bits);
         }
+
+        let mut pending = vec![(self.clone(), false)];
+        while let Some((expr, children_visited)) = pending.pop() {
+            if bit_widths.contains_key(&expr) {
+                continue;
+            }
+            if !children_visited {
+                if *remaining == 0 {
+                    return None;
+                }
+                *remaining -= 1;
+                pending.push((expr.clone(), true));
+                match expr.kind() {
+                    SymExprKind::BinOp(SymBinOp::And, left, right)
+                        if right.as_const().is_some() =>
+                    {
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Mul, left, right)
+                    | SymExprKind::Ite(_, left, right) => {
+                        pending.push((right.clone(), false));
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::BinOp(SymBinOp::Shl | SymBinOp::Shr, left, right)
+                        if right
+                            .as_const()
+                            .and_then(|shift| usize::try_from(shift).ok())
+                            .is_some() =>
+                    {
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::TernOp(_, _, _, modulus) => {
+                        pending.push((modulus.clone(), false));
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            let bits = match expr.kind() {
+                SymExprKind::Const(value) => value.bit_len().max(1),
+                SymExprKind::BinOp(SymBinOp::And, left, right) => {
+                    if let Some(mask) = right.as_const() {
+                        bit_widths[left].min(mask.bit_len())
+                    } else {
+                        256
+                    }
+                }
+                SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                    bit_widths[left].max(bit_widths[right]).saturating_add(1).min(256)
+                }
+                SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                    bit_widths[left].saturating_add(bit_widths[right]).min(256)
+                }
+                SymExprKind::BinOp(SymBinOp::Shl, left, right) => right
+                    .as_const()
+                    .and_then(|shift| usize::try_from(shift).ok())
+                    .map_or(256, |shift| bit_widths[left].saturating_add(shift).min(256)),
+                SymExprKind::BinOp(SymBinOp::Shr, left, right) => right
+                    .as_const()
+                    .and_then(|shift| usize::try_from(shift).ok())
+                    .map_or(256, |shift| bit_widths[left].saturating_sub(shift).max(1)),
+                SymExprKind::BinOp(SymBinOp::UDiv, left, _) => bit_widths[left],
+                SymExprKind::TernOp(_, _, _, modulus) => bit_widths[modulus],
+                SymExprKind::Ite(_, left, right) => bit_widths[left].max(bit_widths[right]),
+                _ => 256,
+            };
+            bit_widths.insert(expr, bits);
+        }
+        bit_widths.get(self).copied()
     }
 
     pub(crate) fn extracted_byte(&self, cx: &mut SymCx, index: usize) -> Self {
@@ -1686,17 +1752,16 @@ impl SymExpr {
     ) -> Option<Self> {
         let left = left.byte_term(cx, index)?;
         let right = right.byte_term(cx, index)?;
-        match (left.byte_const(), right.byte_const()) {
+        match (
+            left.as_const().map(|value| value.to::<u8>()),
+            right.as_const().map(|value| value.to::<u8>()),
+        ) {
             (Some(left), _) if absorbing(left) => Some(Self::constant(cx, U256::from(left))),
             (_, Some(right)) if absorbing(right) => Some(Self::constant(cx, U256::from(right))),
             (Some(left), _) if identity(left) => Some(right),
             (_, Some(right)) if identity(right) => Some(left),
             _ => Some(Self::binop(cx, op, left, right)),
         }
-    }
-
-    pub(crate) fn byte_const(&self) -> Option<u8> {
-        self.as_const().map(|value| value.to::<u8>())
     }
 
     pub(crate) fn equality_forces_const(
@@ -1718,7 +1783,7 @@ impl SymExpr {
         context: &[SymBoolExpr],
     ) -> Option<U256> {
         let mask = masked_expr_matches(self.kind(), expr)?;
-        if value & !mask != U256::ZERO || !context_forces_masked_expr(context, expr, mask) {
+        if !(value & !mask).is_zero() || !context_forces_masked_expr(context, expr, mask) {
             return None;
         }
         Some(value)
@@ -1790,44 +1855,84 @@ impl SymExpr {
         }
     }
 
-    /// Visits this expression and all child expressions.
+    /// Returns a constant `self - other` modulo the EVM word size when it follows from the
+    /// expression structure on every branch.
+    pub(crate) fn constant_difference(&self, other: &Self) -> Option<U256> {
+        let mut differences = HashMap::default();
+        let mut remaining = MAX_CONSTANT_DIFFERENCE_VISITS;
+        self.constant_difference_cached(other, &mut differences, &mut remaining)
+    }
+
+    fn constant_difference_cached(
+        &self,
+        other: &Self,
+        differences: &mut HashMap<(Self, Self), Option<U256>>,
+        remaining: &mut usize,
+    ) -> Option<U256> {
+        if self == other {
+            return Some(U256::ZERO);
+        }
+        let key = (self.clone(), other.clone());
+        if let Some(difference) = differences.get(&key) {
+            return *difference;
+        }
+        *remaining = remaining.checked_sub(1)?;
+
+        let difference = match (self.kind(), other.kind()) {
+            (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                Some(left.wrapping_sub(*right))
+            }
+            (
+                SymExprKind::Ite(left_condition, left_then, left_else),
+                SymExprKind::Ite(right_condition, right_then, right_else),
+            ) if left_condition == right_condition => {
+                let then_difference =
+                    left_then.constant_difference_cached(right_then, differences, remaining)?;
+                let else_difference =
+                    left_else.constant_difference_cached(right_else, differences, remaining)?;
+                (then_difference == else_difference).then_some(then_difference)
+            }
+            (SymExprKind::BinOp(SymBinOp::Add, value, constant), _)
+                if let Some(constant) = constant.as_const() =>
+            {
+                value
+                    .constant_difference_cached(other, differences, remaining)
+                    .map(|difference| difference.wrapping_add(constant))
+            }
+            (SymExprKind::BinOp(SymBinOp::Sub, value, constant), _)
+                if let Some(constant) = constant.as_const() =>
+            {
+                value
+                    .constant_difference_cached(other, differences, remaining)
+                    .map(|difference| difference.wrapping_sub(constant))
+            }
+            (_, SymExprKind::BinOp(SymBinOp::Add, value, constant))
+                if let Some(constant) = constant.as_const() =>
+            {
+                self.constant_difference_cached(value, differences, remaining)
+                    .map(|difference| difference.wrapping_sub(constant))
+            }
+            (_, SymExprKind::BinOp(SymBinOp::Sub, value, constant))
+                if let Some(constant) = constant.as_const() =>
+            {
+                self.constant_difference_cached(value, differences, remaining)
+                    .map(|difference| difference.wrapping_add(constant))
+            }
+            _ => None,
+        };
+        differences.insert(key, difference);
+        difference
+    }
+
+    /// Visits each distinct word expression once, in depth-first, left-to-right order.
     pub(crate) fn visit<B>(
         &self,
         visitor: &mut impl FnMut(&Self) -> ControlFlow<B>,
     ) -> ControlFlow<B> {
-        visitor(self)?;
-        match self.kind() {
-            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {}
-            SymExprKind::Keccak { len, bytes, .. } => {
-                len.visit(visitor)?;
-                for byte in bytes.iter() {
-                    byte.visit(visitor)?;
-                }
-            }
-            SymExprKind::Hash { bytes, .. } => {
-                for byte in bytes.iter() {
-                    byte.visit(visitor)?;
-                }
-            }
-            SymExprKind::Not(value) => value.visit(visitor)?,
-            SymExprKind::BinOp(_, left, right) => {
-                left.visit(visitor)?;
-                right.visit(visitor)?;
-            }
-            SymExprKind::TernOp(_, left, right, modulus) => {
-                left.visit(visitor)?;
-                right.visit(visitor)?;
-                modulus.visit(visitor)?;
-            }
-            SymExprKind::Ite(cond, left, right) => {
-                cond.visit_exprs(visitor)?;
-                left.visit(visitor)?;
-                right.visit(visitor)?;
-            }
-        }
-        ControlFlow::Continue(())
+        visit_unique(Some(self), None, visitor)
     }
 
+    /// Returns whether any node satisfies `visitor`, visiting each distinct node once.
     pub(crate) fn visit_bool(&self, mut visitor: impl FnMut(&Self) -> bool) -> bool {
         self.visit(&mut |expr| {
             if visitor(expr) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
@@ -1835,61 +1940,64 @@ impl SymExpr {
         .is_break()
     }
 
+    /// Rewrites each distinct word or nested Boolean node once in bottom-up order.
+    ///
+    /// The folder must return the same result for every occurrence of one hash-consed node.
     pub(crate) fn fold(
-        self,
+        &self,
         cx: &mut SymCx,
         folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
     ) -> Self {
-        if matches!(
-            self.kind(),
-            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_)
-        ) {
-            return folder(cx, self);
+        let mut folded = ExpressionFoldCache::default();
+        self.fold_cached(cx, folder, &mut folded)
+    }
+
+    pub(in crate::runtime::expr) fn fold_cached<'a>(
+        &'a self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
+        folded: &mut ExpressionFoldCache<'a>,
+    ) -> Self {
+        if let Some(expr) = folded.words.get(self) {
+            return expr.clone();
         }
 
-        let expr = match self.into_kind() {
+        let expr = match self.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => self.clone(),
             SymExprKind::Keccak { name, len, bytes } => {
-                let len = len.fold(cx, folder);
-                let bytes = bytes.iter().cloned().map(|byte| byte.fold(cx, folder)).collect();
-                Self::keccak_symbol(cx, name, len, bytes)
+                let len = len.fold_cached(cx, folder, folded);
+                let bytes = bytes.iter().map(|byte| byte.fold_cached(cx, folder, folded)).collect();
+                Self::keccak_symbol(cx, *name, len, bytes)
             }
             SymExprKind::Hash { name, algorithm, bytes } => {
-                let bytes = bytes.iter().cloned().map(|byte| byte.fold(cx, folder)).collect();
-                Self::hash_symbol(cx, name, algorithm, bytes)
+                let bytes = bytes.iter().map(|byte| byte.fold_cached(cx, folder, folded)).collect();
+                Self::hash_symbol(cx, *name, algorithm, bytes)
             }
             SymExprKind::Not(value) => {
-                let value = value.fold(cx, folder);
+                let value = value.fold_cached(cx, folder, folded);
                 Self::not(cx, value)
             }
             SymExprKind::BinOp(op, left, right) => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                Self::binop(cx, op, left, right)
+                let left = left.fold_cached(cx, folder, folded);
+                let right = right.fold_cached(cx, folder, folded);
+                Self::binop(cx, *op, left, right)
             }
             SymExprKind::TernOp(op, left, right, modulus) => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                let modulus = modulus.fold(cx, folder);
-                Self::ternop(cx, op, left, right, modulus)
+                let left = left.fold_cached(cx, folder, folded);
+                let right = right.fold_cached(cx, folder, folded);
+                let modulus = modulus.fold_cached(cx, folder, folded);
+                Self::ternop(cx, *op, left, right, modulus)
             }
             SymExprKind::Ite(condition, then_expr, else_expr) => {
-                let condition = condition.fold_exprs(cx, folder);
-                let then_expr = then_expr.fold(cx, folder);
-                let else_expr = else_expr.fold(cx, folder);
+                let condition = condition.fold_exprs_cached(cx, folder, folded);
+                let then_expr = then_expr.fold_cached(cx, folder, folded);
+                let else_expr = else_expr.fold_cached(cx, folder, folded);
                 Self::ite(cx, condition, then_expr, else_expr)
             }
-            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {
-                unreachable!("leaf expression returned before folding children")
-            }
         };
-        folder(cx, expr)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn smt(&self, cx: &SymCx) -> String {
-        let mut smt = String::new();
-        self.write_smt(cx, &mut smt);
-        smt
+        let expr = folder(cx, expr);
+        folded.words.insert(self, expr.clone());
+        expr
     }
 
     pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
@@ -1926,6 +2034,104 @@ impl SymExpr {
                 out.push(')');
             }
         }
+    }
+}
+
+// Branchless expression rewrites are optional. Bound both the distinct DAG nodes inspected while
+// deciding whether to rewrite and the unfolded size of the expression they could produce.
+const MAX_BRANCHLESS_REWRITE_NODES: usize = 256;
+const MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES: usize = 8 * 1024;
+
+struct UnfoldedNodeCounter {
+    expr_nodes: HashMap<SymExpr, usize>,
+    bool_nodes: HashMap<SymBoolExpr, usize>,
+    remaining_unique_nodes: usize,
+}
+
+impl UnfoldedNodeCounter {
+    fn new() -> Self {
+        Self {
+            expr_nodes: HashMap::default(),
+            bool_nodes: HashMap::default(),
+            remaining_unique_nodes: MAX_BRANCHLESS_REWRITE_NODES,
+        }
+    }
+
+    /// Counts unfolded occurrences while memoizing the cost of each distinct expression node.
+    /// Reusing a cached cost still adds every occurrence, which exposes exponential shared DAGs.
+    fn expr_nodes(&mut self, expr: &SymExpr) -> Option<usize> {
+        if let Some(nodes) = self.expr_nodes.get(expr) {
+            return Some(*nodes);
+        }
+        if self.remaining_unique_nodes == 0 {
+            return None;
+        }
+        self.remaining_unique_nodes -= 1;
+
+        let nodes = match expr.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => 1,
+            SymExprKind::Keccak { len, bytes, .. } => {
+                let mut nodes = 1usize.checked_add(self.expr_nodes(len)?)?;
+                for byte in bytes.iter() {
+                    nodes = nodes.checked_add(self.expr_nodes(byte)?)?;
+                }
+                nodes
+            }
+            SymExprKind::Hash { bytes, .. } => {
+                let mut nodes = 1usize;
+                for byte in bytes.iter() {
+                    nodes = nodes.checked_add(self.expr_nodes(byte)?)?;
+                }
+                nodes
+            }
+            SymExprKind::Not(value) => 1usize.checked_add(self.expr_nodes(value)?)?,
+            SymExprKind::BinOp(_, left, right) => {
+                1usize.checked_add(self.expr_nodes(left)?)?.checked_add(self.expr_nodes(right)?)?
+            }
+            SymExprKind::TernOp(_, left, right, modulus) => 1usize
+                .checked_add(self.expr_nodes(left)?)?
+                .checked_add(self.expr_nodes(right)?)?
+                .checked_add(self.expr_nodes(modulus)?)?,
+            SymExprKind::Ite(condition, then_expr, else_expr) => 1usize
+                .checked_add(self.bool_nodes(condition)?)?
+                .checked_add(self.expr_nodes(then_expr)?)?
+                .checked_add(self.expr_nodes(else_expr)?)?,
+        };
+        if nodes > MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES {
+            return None;
+        }
+        self.expr_nodes.insert(expr.clone(), nodes);
+        Some(nodes)
+    }
+
+    fn bool_nodes(&mut self, expr: &SymBoolExpr) -> Option<usize> {
+        if let Some(nodes) = self.bool_nodes.get(expr) {
+            return Some(*nodes);
+        }
+        if self.remaining_unique_nodes == 0 {
+            return None;
+        }
+        self.remaining_unique_nodes -= 1;
+
+        let nodes = match expr.kind() {
+            SymBoolExprKind::Const(_) => 1,
+            SymBoolExprKind::Not(value) => 1usize.checked_add(self.bool_nodes(value)?)?,
+            SymBoolExprKind::And(values) => {
+                let mut nodes = 1usize;
+                for value in values.iter() {
+                    nodes = nodes.checked_add(self.bool_nodes(value)?)?;
+                }
+                nodes
+            }
+            SymBoolExprKind::Cmp(_, left, right) => {
+                1usize.checked_add(self.expr_nodes(left)?)?.checked_add(self.expr_nodes(right)?)?
+            }
+        };
+        if nodes > MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES {
+            return None;
+        }
+        self.bool_nodes.insert(expr.clone(), nodes);
+        Some(nodes)
     }
 }
 
@@ -2034,8 +2240,8 @@ impl SymBinOp {
                     left % right
                 }
             }
-            Self::SDiv => sdiv(left, right),
-            Self::SRem => smod(left, right),
+            Self::SDiv => i256_div(left, right),
+            Self::SRem => i256_mod(left, right),
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -2055,111 +2261,231 @@ impl SymBinOp {
             }
             Self::Sar => {
                 if right >= U256::from(256) {
-                    sar(left, 256)
+                    left.arithmetic_shr(256)
                 } else {
-                    sar(left, usize::try_from(right).expect("checked word shift"))
+                    left.arithmetic_shr(usize::try_from(right).expect("checked word shift"))
                 }
             }
         }
     }
 }
 
+pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
+    let len = bytes.len();
+    let len = SymExpr::constant(cx, U256::from(len));
+    keccak_word_with_len(cx, bytes, len)
+}
+
+pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr {
+    if let Some(len) = len.as_const()
+        && let Ok(len) = usize::try_from(len)
+        && len <= bytes.len()
+        && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
+    {
+        let hash = Into::<U256>::into(keccak256(concrete));
+        if len == 64 {
+            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
+        }
+        return SymExpr::constant(cx, hash);
+    }
+
+    let exprs = bytes;
+    let identity = ExpressionDigests::identity(std::iter::once(&len).chain(&exprs));
+    let name = stable_symbol(cx, "keccak", identity.as_slice());
+    SymExpr::keccak_symbol(cx, name, len, exprs)
+}
+
+pub(crate) fn symbolic_hash_word_with_len(
+    cx: &mut SymCx,
+    algorithm: &'static str,
+    bytes: Vec<SymExpr>,
+    len: SymExpr,
+) -> SymExpr {
+    let exprs = bytes;
+    let identity = ExpressionDigests::identity(std::iter::once(&len).chain(&exprs));
+    let name = stable_symbol(cx, algorithm, identity.as_slice());
+    let mut identity = Vec::with_capacity(exprs.len() + 1);
+    identity.push(len);
+    identity.extend(exprs);
+    SymExpr::hash_symbol(cx, name, algorithm, identity)
+}
+
+pub(crate) fn create2_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    creator: Address,
+    salt: SymExpr,
+    initcode: &SymCode,
+) -> Result<(SymExpr, Address), SymbolicError> {
+    match (salt.as_const(), initcode.concrete_bytes(cx, "symbolic CREATE2 initcode")) {
+        (Some(salt), Ok(initcode)) => {
+            let address = creator.create2_from_code(salt.to_be_bytes::<32>(), &initcode);
+            Ok((SymExpr::constant(cx, address_word(address)), address))
+        }
+        (None, Ok(initcode)) => {
+            let initcode_hash = keccak256(&initcode);
+            let word = symbolic_create2_address_word(
+                cx,
+                state,
+                format!("address:{creator:?}"),
+                salt,
+                format!("hash:{initcode_hash:?}"),
+            );
+            let address = state.world.symbolic_address_slot(word.clone());
+            Ok((word, address))
+        }
+        (_, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
+            let initcode_bytes = initcode.read_byte_exprs(cx, 0, initcode.len());
+            let word = symbolic_create2_address_word(
+                cx,
+                state,
+                format!("address:{creator:?}"),
+                salt,
+                format!("initcode:{:?}", ExpressionDigests::identity(&initcode_bytes)),
+            );
+            let address = state.world.symbolic_address_slot(word.clone());
+            Ok((word, address))
+        }
+        (_, Err(err)) => Err(err),
+    }
+}
+
+pub(crate) fn compute_create2_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    deployer: SymExpr,
+    salt: SymExpr,
+    init_code_hash: SymExpr,
+) -> Result<SymExpr, SymbolicError> {
+    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
+    let salt_concrete = state.constrained_word(cx, &salt);
+    let init_code_hash_concrete = state.constrained_word(cx, &init_code_hash);
+
+    if let (Some(deployer), Some(salt), Some(init_code_hash)) =
+        (deployer_concrete, salt_concrete, init_code_hash_concrete)
+    {
+        let init_code_hash = B256::from(init_code_hash);
+        let address = deployer.create2(B256::from(salt), init_code_hash);
+        return Ok(SymExpr::constant(cx, address_word(address)));
+    }
+
+    let deployer_identity = deployer_identity(deployer_concrete, &deployer);
+    let init_code_hash_identity = init_code_hash_concrete
+        .map(|init_code_hash| {
+            let init_code_hash = B256::from(init_code_hash);
+            format!("hash:{init_code_hash:?}")
+        })
+        .unwrap_or_else(|| {
+            format!("hash_expr:{:?}", ExpressionDigests::identity([&init_code_hash]))
+        });
+
+    Ok(symbolic_create2_address_word(cx, state, deployer_identity, salt, init_code_hash_identity))
+}
+
+pub(crate) fn compute_create_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    deployer: SymExpr,
+    nonce: SymExpr,
+) -> Result<SymExpr, SymbolicError> {
+    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
+    let nonce_concrete = state.constrained_word(cx, &nonce);
+
+    if let (Some(deployer), Some(nonce)) = (deployer_concrete, nonce_concrete) {
+        let Ok(nonce) = u64::try_from(nonce) else {
+            return Err(SymbolicError::Unsupported("symbolic vm.computeCreateAddress nonce"));
+        };
+        return Ok(SymExpr::constant(cx, address_word(deployer.create(nonce))));
+    }
+
+    let deployer_identity = deployer_identity(deployer_concrete, &deployer);
+    Ok(symbolic_create_address_word(cx, state, deployer_identity, nonce))
+}
+
+pub(crate) fn symbolic_create_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    creator_identity: String,
+    nonce: SymExpr,
+) -> SymExpr {
+    let nonce = ExpressionDigests::identity([&nonce]);
+    let name =
+        stable_symbol(cx, "create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
+    let word = SymExpr::get_var(cx, name);
+    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
+    word
+}
+
+pub(crate) fn symbolic_create2_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    creator_identity: String,
+    salt: SymExpr,
+    initcode_identity: String,
+) -> SymExpr {
+    let name = stable_symbol(
+        cx,
+        "create2_address",
+        format!(
+            "{creator_identity}:{:?}:{initcode_identity}",
+            ExpressionDigests::identity([&salt])
+        )
+        .as_bytes(),
+    );
+    let word = SymExpr::get_var(cx, name);
+    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
+    word
+}
+
+/// Identifies a deployer in a stable address symbol name.
+///
+/// The prefixes keep a concrete address apart from the digest of a symbolic deployer.
+fn deployer_identity(concrete: Option<Address>, deployer: &SymExpr) -> String {
+    concrete
+        .map(|deployer| format!("address:{deployer:?}"))
+        .unwrap_or_else(|| format!("address_expr:{:?}", ExpressionDigests::identity([deployer])))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn indexed_bool_word(cx: &mut SymCx, source: &SymExpr, index: usize) -> SymExpr {
-        let value = SymExpr::constant(cx, U256::from(index));
-        let condition = SymBoolExpr::eq(cx, source.clone(), value);
-        SymExpr::bool_word(cx, condition)
-    }
-
+    // Each level reuses the previous node twice, so a walk without memoization visits 2^64 nodes.
     #[test]
-    fn bitwise_bool_word_condition_visits_shared_or_dag_once() {
-        let mut cx = SymCx::new();
-        let source = SymExpr::var(&mut cx, "source");
-        let mut word = indexed_bool_word(&mut cx, &source, 0);
-        for index in 1..=26 {
-            let next_word = indexed_bool_word(&mut cx, &source, index);
-            let nested_word = SymExpr::binop(&mut cx, SymBinOp::Or, word.clone(), next_word);
-            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, nested_word);
-        }
-
-        assert!(word.bitwise_bool_word_condition(&mut cx).is_some());
-    }
-
-    #[test]
-    fn bitwise_bool_word_condition_stops_at_shared_visit_budget() {
-        let mut cx = SymCx::new();
-        let source = SymExpr::var(&mut cx, "source");
-        let mut word = indexed_bool_word(&mut cx, &source, 0);
-        for index in 1..=MAX_BITWISE_BOOL_WORD_VISITS {
-            let next_word = indexed_bool_word(&mut cx, &source, index);
-            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, next_word);
-        }
-
-        assert!(word.bitwise_bool_word_condition(&mut cx).is_none());
-        let one = SymExpr::one(&mut cx);
-        let mask = SymExpr::binop(&mut cx, SymBinOp::Sub, word, one);
-        assert!(matches!(mask.kind(), SymExprKind::BinOp(SymBinOp::Sub, _, _)));
-    }
-
-    #[test]
-    fn saturating_mul_rewrite_preserves_boundary_values() {
+    fn collect_vars_visits_shared_nodes_once() {
         let mut cx = SymCx::new();
         let x = SymExpr::var(&mut cx, "x");
         let y = SymExpr::var(&mut cx, "y");
-        let x_symbol = match x.kind() {
-            SymExprKind::Var(symbol) => *symbol,
-            _ => unreachable!("constructed symbolic variable"),
-        };
-        let y_symbol = match y.kind() {
-            SymExprKind::Var(symbol) => *symbol,
-            _ => unreachable!("constructed symbolic variable"),
-        };
+        let mut expr = x.clone();
+        for _ in 0..64 {
+            let product = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Mul, expr.clone(), y.clone()),
+            );
+            expr = SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Add, expr, product));
+        }
+        let condition = SymBoolExpr::eq_word_const(&mut cx, &expr, U256::from(7));
 
-        let zero = SymExpr::zero(&mut cx);
-        let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
-        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), x);
-        let product_is_exact = SymBoolExpr::eq(&mut cx, quotient, y);
-        let safe = SymBoolExpr::or(&mut cx, vec![product_is_exact.clone(), x_is_zero.clone()]);
-        let x_is_zero_word = SymExpr::bool_word(&mut cx, x_is_zero);
-        let product_is_exact_word = SymExpr::bool_word(&mut cx, product_is_exact);
-        let guard = SymExpr::binop(&mut cx, SymBinOp::Or, x_is_zero_word, product_is_exact_word);
-        let one = SymExpr::one(&mut cx);
-        let raw_mask =
-            SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Sub, guard.clone(), one));
-        let original = SymExpr::from_kind(
-            &mut cx,
-            SymExprKind::BinOp(SymBinOp::Or, raw_mask, product.clone()),
+        let mut vars = SymbolicVars::default();
+        expr.collect_eval_vars(&mut vars);
+        condition.collect_vars(&mut vars);
+        assert_eq!(
+            vars.iter().copied().collect::<Vec<_>>(),
+            [x.kind().get_var().unwrap(), y.kind().get_var().unwrap(),]
         );
 
-        let one = SymExpr::one(&mut cx);
-        let simplified_mask = SymExpr::binop(&mut cx, SymBinOp::Sub, guard, one);
-        let simplified = SymExpr::binop(&mut cx, SymBinOp::Or, simplified_mask, product.clone());
-        let max = SymExpr::constant(&mut cx, U256::MAX);
-        let expected = SymExpr::ite(&mut cx, safe, product, max);
-        assert_eq!(simplified, expected);
-
-        let half_range = U256::ONE << 255;
-        let boundaries = [
-            (U256::ZERO, U256::MAX),
-            (U256::MAX, U256::ZERO),
-            (U256::MAX, U256::ONE),
-            (U256::ONE, U256::MAX),
-            (U256::MAX, U256::from(2)),
-            (U256::from(2), U256::MAX),
-            (half_range, U256::from(2)),
-            (U256::from(2), half_range),
-        ];
-        for (x_value, y_value) in boundaries {
-            let mut model = SymbolicModel::default();
-            model.insert(x_symbol, x_value);
-            model.insert(y_symbol, y_value);
-            let expected_value = x_value.checked_mul(y_value).unwrap_or(U256::MAX);
-            assert_eq!(original.eval_model(&model).unwrap(), expected_value);
-            assert_eq!(simplified.eval_model(&model).unwrap(), expected_value);
-        }
+        let mut visited = HashSet::<SymExpr>::default();
+        let result = condition.visit_exprs::<()>(&mut |node| {
+            assert!(visited.insert(node.clone()), "shared node visited twice");
+            ControlFlow::Continue(())
+        });
+        assert!(result.is_continue());
+        let mut visits = 0;
+        let result = expr.visit(&mut |_| {
+            visits += 1;
+            if visits == 2 { ControlFlow::Break(42) } else { ControlFlow::Continue(()) }
+        });
+        assert_eq!(result, ControlFlow::Break(42));
+        assert_eq!(visits, 2);
     }
 }

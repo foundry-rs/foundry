@@ -1,5 +1,5 @@
 use alloy_evm::{Evm, EvmEnv, FromRecoveredTx};
-use alloy_primitives::{Address, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
@@ -8,7 +8,12 @@ use foundry_evm_core::{
     evm::{FoundryEvmFactory, TempoEvmNetwork},
     fork::MultiFork,
 };
-use revm::{Inspector, inspector::NoOpInspector, state::AccountInfo};
+use revm::{
+    Inspector,
+    context::result::{ExecutionResult, HaltReason},
+    inspector::NoOpInspector,
+    state::{AccountInfo, Bytecode},
+};
 use tempo_alloy::primitives::TempoTxEnvelope;
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory};
 use tempo_hardfork::TempoHardfork;
@@ -23,7 +28,7 @@ use tempo_precompiles::{
     tip20::{ITIP20, TIP20Token},
 };
 use tempo_primitives::{
-    AASigned, TempoSignature, TempoTransaction,
+    TempoSignature, TempoTransaction,
     transaction::{Call, KeychainSignature, PrimitiveSignature, calc_gas_balance_spending},
 };
 use tempo_revm::{TempoTxEnv, gas_params::tempo_gas_params};
@@ -31,6 +36,49 @@ use tempo_revm::{TempoTxEnv, gas_params::tempo_gas_params};
 const GAS_LIMIT: u64 = 500_000;
 const GAS_PRICE: u128 = 1_000_000_000_000;
 const TRANSFER_AMOUNT: u64 = 1_234;
+
+#[tokio::test]
+async fn nested_tempo_execution_preserves_halt_reason() {
+    let account = PrivateKeySigner::random();
+    let target = Address::repeat_byte(0xee);
+
+    for (opcode, expected) in
+        [(0x0c, HaltReason::OpcodeNotFound), (0x50, HaltReason::StackUnderflow)]
+    {
+        let mut db = in_memory_tempo_backend();
+        seed_fee_token_balances(&mut db, account.address(), target);
+        db.insert_account_info(
+            target,
+            AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from(vec![opcode]))),
+        );
+        let evm_env = EvmEnv::new(
+            revm::context::CfgEnv::<TempoHardfork>::default()
+                .with_spec_and_gas_params(TempoHardfork::T11, tempo_gas_params(TempoHardfork::T11)),
+            TempoBlockEnv::default(),
+        );
+        let mut evm = TempoEvmFactory::default().create_nested_evm(&mut db, evm_env);
+        let tx = primitive_tx(
+            &account,
+            TempoTransaction {
+                chain_id: 1,
+                fee_token: Some(DEFAULT_FEE_TOKEN),
+                gas_limit: GAS_LIMIT,
+                calls: vec![Call {
+                    to: TxKind::Call(target),
+                    value: U256::ZERO,
+                    input: Bytes::new(),
+                }],
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let result = evm.transact_raw(tx).expect("nested transaction executes");
+        assert!(
+            matches!(result.result, ExecutionResult::Halt { reason, .. } if reason == expected)
+        );
+    }
+}
 
 fn in_memory_tempo_backend() -> Backend<TempoEvmNetwork> {
     let (forks, _fork_handler) = MultiFork::new();
@@ -73,10 +121,7 @@ where
 
 async fn primitive_tx(account: &PrivateKeySigner, tx: TempoTransaction) -> TempoTxEnv {
     let signature = account.sign_hash(&tx.signature_hash()).await.unwrap();
-    let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-        tx,
-        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-    ));
+    let envelope = TempoTxEnvelope::AA(tx.into_signed(signature.into()));
     TempoTxEnv::from_recovered_tx(&envelope, account.address())
 }
 
@@ -151,13 +196,9 @@ async fn keychain_spend_setup() -> (Address, Address, TempoTxEnv, TempoTxEnv) {
     };
     let keychain_hash = KeychainSignature::signing_hash(spend_tx.signature_hash(), root.address());
     let access_signature = access_key.sign_hash(&keychain_hash).await.unwrap();
-    let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-        spend_tx,
-        TempoSignature::Keychain(KeychainSignature::new(
-            root.address(),
-            PrimitiveSignature::Secp256k1(access_signature),
-        )),
-    ));
+    let envelope = TempoTxEnvelope::AA(spend_tx.into_signed(TempoSignature::Keychain(
+        KeychainSignature::new(root.address(), PrimitiveSignature::Secp256k1(access_signature)),
+    )));
     let spend_env = TempoTxEnv::from_recovered_tx(&envelope, root.address());
     (spend_env.inner.caller, recipient, auth_tx, spend_env)
 }
@@ -176,7 +217,6 @@ async fn foundry_factory_keychain_limit_refund_does_not_leak_storage_credit() {
     let mut evm = TempoEvmFactory::default().create_foundry_evm_with_inspector(
         &mut db,
         evm_env,
-        (),
         NoOpInspector,
     );
 

@@ -16,10 +16,12 @@ use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
-    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
     validator_config,
 };
+
+use crate::constants::SYSTEM_PRECOMPILE_STUB;
 
 pub use foundry_common::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
@@ -45,29 +47,6 @@ pub use tempo_precompiles::{
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
-
-/// Initialize Tempo precompiles and contracts using a storage provider.
-///
-/// This is the core initialization logic that sets up Tempo-specific precompiles,
-/// fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD), and standard contracts.
-///
-/// This function should be called during genesis setup when running in Tempo mode.
-/// It uses the `StorageCtx` pattern to work with any storage backend that implements
-/// `PrecompileStorageProvider`.
-///
-/// # Arguments
-/// * `storage` - A mutable reference to a storage provider implementing `PrecompileStorageProvider`
-/// * `admin` - The admin address that will have control over tokens and config
-/// * `recipient` - The address that will receive minted tokens
-///
-/// Ref: <https://github.com/tempoxyz/tempo/blob/main/xtask/src/genesis_args.rs>
-pub fn initialize_tempo_genesis(
-    storage: &mut impl PrecompileStorageProvider,
-    admin: Address,
-    recipient: Address,
-) -> Result<(), TempoPrecompileError> {
-    initialize_tempo_genesis_at_hardfork(storage, admin, recipient, TempoHardfork::default())
-}
 
 /// Initialize Tempo precompiles and contracts for a specific active hardfork.
 pub fn initialize_tempo_genesis_at_hardfork(
@@ -122,7 +101,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
     for precompile in precompiles {
         ctx.set_code(precompile, sentinel.clone())?;
     }
@@ -227,7 +206,7 @@ fn create_and_mint_token(
     )?;
 
     let mut token = TIP20Token::from_address(token_address)?;
-    token.grant_role_internal(admin, *ISSUER_ROLE)?;
+    token.grant_role_internal(admin, TIP20Token::issuer_role())?;
     token.mint(admin, ITIP20::mintCall { to: recipient, amount: mint_amount })?;
     if admin != recipient {
         token.mint(admin, ITIP20::mintCall { to: admin, amount: mint_amount })?;

@@ -3,28 +3,23 @@
 **Severity**: `CodeSize`
 **ID**: `unwrapped-modifier-logic`
 
-Flags modifiers whose body contains non-trivial logic that should be moved into a helper function
-to reduce contract code size.
-
 ## What it does
 
-Reports modifiers whose body contains statements other than a single placeholder, simple builtin
-calls (`require`/`assert`), or a single library function call. Logic on either side of the
-placeholder is considered independently; a side containing inline assembly is not extracted, but
-complex logic on the other side can still be flagged.
-
-The lint only emits a machine-applicable rewrite when the modifier has exactly one top-level
-placeholder and extracting the logic preserves local-variable and parameter behavior.
+Reports modifier logic that can be extracted around a single top-level `_` placeholder,
+including `require` and `assert` checks. A single ordinary function or library call on
+either side is left inline. A side containing inline assembly is not extracted.
 
 ## Why is this bad?
 
-Solidity inlines a modifier's body at every call site, so any non-trivial logic is duplicated
-across all functions that use the modifier. Wrapping the logic in an internal function and calling
-it from the modifier keeps the bytecode small while preserving behavior.
+Modifier logic can be duplicated across functions that use it. Extracting shared logic into an
+internal helper can reduce that duplication, but the optimizer may inline the helper again.
+Treat extraction as a code-size optimization candidate and measure the compiled output with the
+project's compiler settings while preserving modifier behavior.
+
+Suggested helper names can collide with existing declarations, and extraction can affect
+virtual dispatch or reference aliasing. Review the replacement rather than applying it automatically.
 
 ## Example
-
-### Bad
 
 ```solidity
 modifier onlyAuth() {
@@ -35,7 +30,7 @@ modifier onlyAuth() {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 modifier onlyAuth() {
@@ -49,7 +44,3 @@ function _checkAuth() internal {
     seenNonce[nonce] = true;
 }
 ```
-
-## Notes
-
-This is a `CodeSize`-severity lint and is **not** applied to test or script files.

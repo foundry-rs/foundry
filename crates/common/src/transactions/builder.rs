@@ -1,20 +1,26 @@
-use std::num::NonZeroU64;
-
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
+use alloy_rpc_types::{TransactionRequest, serde_helpers::WithOtherFields};
 use eyre::Result;
 use foundry_wallets::TempoAccountsWallet;
+use std::num::NonZeroU64;
+use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
+use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
+
+#[cfg(feature = "base")]
+use base_common_network::Base;
+#[cfg(feature = "base")]
+use base_common_rpc_types::BaseTransactionRequest;
+
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionRequest;
-use tempo_alloy::TempoNetwork;
-use tempo_primitives::{SignatureType, TempoTxType, transaction::Call};
 
 /// Composite transaction builder trait for Foundry transactions.
 ///
@@ -161,6 +167,11 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         false
     }
 
+    /// Returns true when this request type can pay fees in a Tempo fee token.
+    fn supports_fee_token(&self) -> bool {
+        false
+    }
+
     /// Set the fee token for a Tempo transaction.
     fn set_fee_token(&mut self, _fee_token: Address) {}
 
@@ -303,7 +314,7 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     }
 }
 
-impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionRequest {
+impl FoundryTransactionBuilder<Ethereum> for TransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
     }
@@ -342,7 +353,7 @@ impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionR
     }
 }
 
-impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::TransactionRequest {
+impl FoundryTransactionBuilder<AnyNetwork> for WithOtherFields<TransactionRequest> {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
     }
@@ -378,6 +389,21 @@ impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::Transact
 
     fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
         self.authorization_list = Some(authorization_list);
+    }
+}
+
+#[cfg(feature = "base")]
+impl FoundryTransactionBuilder<Base> for BaseTransactionRequest {
+    fn reset_gas_limit(&mut self) {
+        self.as_mut().gas = None;
+    }
+
+    fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
+        self.as_ref().authorization_list.as_ref()
+    }
+
+    fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
+        self.as_mut().authorization_list = Some(authorization_list);
     }
 }
 
@@ -402,7 +428,7 @@ impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
 /// See <https://github.com/wevm/viem/blob/61a40ec943652a09ee6622e2349c5fedca97ed5e/src/tempo/Formatters.ts#L148-L159>.
 const TEMPO_BROWSER_WEBAUTHN_DATA_SIZE: u16 = 1_400;
 
-impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::TransactionRequest {
+impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
     }
@@ -437,6 +463,10 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         NetworkTransactionBuilder::<TempoNetwork>::output_tx_type(self) == TempoTxType::AA
     }
 
+    fn supports_fee_token(&self) -> bool {
+        true
+    }
+
     fn set_fee_token(&mut self, fee_token: Address) {
         self.fee_token = Some(fee_token);
     }
@@ -453,13 +483,11 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         let mut request = self.clone();
         if request.key_type.is_none() {
             request.key_type = Some(SignatureType::WebAuthn);
-            request.key_data =
-                Some(Bytes::copy_from_slice(&TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes()));
+            request.key_data = Some(TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes().into());
         } else if matches!(request.key_type, Some(SignatureType::WebAuthn))
             && request.key_data.is_none()
         {
-            request.key_data =
-                Some(Bytes::copy_from_slice(&TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes()));
+            request.key_data = Some(TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes().into());
         }
         request.convert_create_to_call();
         request

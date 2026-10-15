@@ -1,0 +1,10 @@
+[profile.default]
+solc = "0.8.19"
+evm_version = "paris"
+optimizer = true
+optimizer_runs = 200
+dynamic_test_linking = false
+isolate = false
+gas_limit = 1000000000
+[lint]
+lint_on_build = false

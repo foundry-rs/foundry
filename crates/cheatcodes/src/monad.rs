@@ -3,10 +3,7 @@
 use crate::{CheatsCtxt, Result};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolInterface;
-use foundry_evm_core::{
-    constants::MONAD_CHEATCODE_ADDRESS,
-    evm::{FoundryEvmFactory, FoundryEvmNetwork},
-};
+use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
 use monad_revm::{
     api::block::{
         syscall_on_epoch_change_calldata, syscall_reward_calldata, syscall_snapshot_calldata,
@@ -53,9 +50,11 @@ alloy_sol_types::sol! {
     }
 }
 
-pub(crate) fn is_monad_cheatcode_call<FEN: FoundryEvmNetwork>(target: Address) -> bool {
-    target == MONAD_CHEATCODE_ADDRESS
-        && FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.contains(&target)
+pub(crate) fn is_monad_cheatcode_call(
+    extra_cheatcode_addresses: &[Address],
+    target: Address,
+) -> bool {
+    target == MONAD_CHEATCODE_ADDRESS && extra_cheatcode_addresses.contains(&target)
 }
 
 pub(crate) fn apply_monad_cheatcode<FEN: FoundryEvmNetwork>(

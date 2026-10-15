@@ -4,7 +4,8 @@ use foundry_test_utils::{forgetest_init, str};
 
 // Scribble/Harvey-style instrumented property: the annotation is represented
 // as an inserted assert, which is what the engine ultimately has to prove.
-forgetest_init!(scribble_instrumented_erc20_supply_property, |prj, cmd| {
+#[forgetest_init]
+fn scribble_instrumented_erc20_supply_property(prj: _, cmd: _) {
     skip_unless_z3!("scribble_instrumented_erc20_supply_property");
 
     prj.add_test(
@@ -39,11 +40,11 @@ contract ScribbleInstrumentedSupply {
 ...
 Failing tests:
 Encountered 1 failing test in test/ScribbleInstrumentedSupply.t.sol:ScribbleInstrumentedSupply
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkSupplyAnnotation(address,uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSupplyAnnotation(address,uint8) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}

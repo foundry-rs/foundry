@@ -8,10 +8,8 @@ use alloy_primitives::{Address, TxHash, hex};
 use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{
-    RetryArgs, VerifierArgs, VerifyArgs,
-    provider::{ExternalVerificationContext, VerificationProviderType},
-    sourcify::SOURCIFY_URL,
-    verify::sourcify_api_url,
+    RetryArgs, VerifierArgs, VerifyArgs, provider::ExternalVerificationContext,
+    sourcify::SOURCIFY_URL, verify::sourcify_api_url,
 };
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
@@ -25,13 +23,6 @@ mod external;
 use external::{ExternalResolver, MAX_PROVENANCE_ADDRESSES, MatchResult, match_candidates};
 
 const MAX_EXTERNAL_JOBS: usize = 32;
-
-fn same_endpoint(left: &str, right: &str) -> bool {
-    let (Ok(left), Ok(right)) = (reqwest::Url::parse(left), reqwest::Url::parse(right)) else {
-        return false;
-    };
-    left == right
-}
 
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
@@ -193,12 +184,13 @@ impl VerifyBundle {
         libraries: &[String],
         evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
+        let init_code = data.get(create2_offset..)?;
         for (artifact, contract) in self.known_contracts.iter() {
             let Some(bytecode) = contract.bytecode() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
             // of the transaction
-            if data.split_at(create2_offset).1.starts_with(bytecode) {
-                let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
+            if init_code.starts_with(bytecode) {
+                let constructor_args = init_code[bytecode.len()..].to_vec();
 
                 if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
@@ -434,9 +426,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
     verify.set_chain(config, sequence.chain.into())?;
 
-    if verify.etherscan.has_key()
-        || verify.verifier.effective_type() != VerificationProviderType::Etherscan
-    {
+    if verify.etherscan.has_key() || !verify.verifier.effective_type().is_etherscan() {
         trace!(target: "script", "prepare future verifications");
 
         let mut verification_jobs = Vec::with_capacity(sequence.receipts.len());
@@ -463,8 +453,18 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                 continue;
             };
             let receipt = &mut sequence.receipts[receipt_index];
+            let malformed_create2 =
+                tx.is_create2() && tx.tx().input().is_none_or(|data| data.len() < 32);
+            if malformed_create2 {
+                let input_len = tx.tx().input().map_or(0, |data| data.len());
+                let _ = sh_warn!(
+                    "Skipping verification for CREATE2 transaction {tx_hash}: input length {input_len} is shorter than the 32-byte salt prefix."
+                );
+            }
+
             // create2 hash offset
-            let offset = if tx.is_create2()
+            let offset = if !malformed_create2
+                && tx.is_create2()
                 && let Some(contract_address) = tx.contract_address
             {
                 receipt.set_contract_address(contract_address);
@@ -474,7 +474,9 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
             };
 
             // Verify contract created directly from the transaction
-            if let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input()) {
+            if !malformed_create2
+                && let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input())
+            {
                 match verify.get_verify_args(
                     address,
                     offset,
@@ -627,15 +629,22 @@ fn check_unverified<N: Network>(
     }
 }
 
+fn same_endpoint(left: &str, right: &str) -> bool {
+    let (Ok(left), Ok(right)) = (reqwest::Url::parse(left), reqwest::Url::parse(right)) else {
+        return false;
+    };
+    left == right
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{
-        ContractsByArtifact, RetryArgs, SOURCIFY_URL, VerificationProviderType, VerifierArgs,
-        VerifyBundle, concise, ensure_verification_complete, same_endpoint, source_api_key,
-        sourcify_api_url, take_matching_index,
+    use super::*;
+    use alloy_primitives::Bytes;
+    use forge_verify::provider::VerificationProviderType;
+    use foundry_compilers::{
+        ArtifactId,
+        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
     };
-    use alloy_chains::Chain;
-    use foundry_config::Config;
 
     fn bundle(config: &Config, verifier: VerifierArgs) -> VerifyBundle {
         let project = config.project().unwrap();
@@ -647,6 +656,70 @@ mod tests {
             verifier,
             true,
         )
+    }
+
+    fn bundle_with_bytecode(bytecode: Bytes) -> VerifyBundle {
+        let config = Config::default();
+        let mut verify = bundle(&config, VerifierArgs::default());
+        verify.known_contracts = ContractsByArtifact::new([(
+            ArtifactId {
+                path: "out/Test.json".into(),
+                name: "Test".into(),
+                source: "src/Test.sol".into(),
+                version: Version::new(0, 8, 30),
+                build_id: String::new(),
+                profile: "default".into(),
+            },
+            CompactContractBytecode {
+                abi: Some(Default::default()),
+                bytecode: Some(CompactBytecode {
+                    object: BytecodeObject::Bytecode(bytecode),
+                    source_map: None,
+                    link_references: Default::default(),
+                }),
+                deployed_bytecode: None,
+            },
+        )]);
+        verify
+    }
+
+    #[test]
+    fn truncated_create2_data_is_unverifiable() {
+        let bytecode = Bytes::from_static(&[0x60, 0x00]);
+        let verify = bundle_with_bytecode(bytecode);
+        let address = Address::ZERO;
+
+        for data in [Bytes::new(), Bytes::from(vec![0; 31])] {
+            assert!(
+                verify.get_verify_args(address, 32, &data, &[], EvmVersion::London).is_none(),
+                "truncated data should not produce verification args"
+            );
+        }
+    }
+
+    #[test]
+    fn salt_only_create2_data_is_unverifiable() {
+        let verify = bundle_with_bytecode(Bytes::from_static(&[0x60, 0x00]));
+        let address = Address::ZERO;
+        let salt_only = Bytes::from(vec![0; 32]);
+        assert!(
+            verify.get_verify_args(address, 32, &salt_only, &[], EvmVersion::London).is_none(),
+            "valid salt-only data should not match non-empty bytecode"
+        );
+    }
+
+    #[test]
+    fn valid_create2_data_produces_verification_args() {
+        let bytecode = Bytes::from_static(&[0x60, 0x00]);
+        let verify = bundle_with_bytecode(bytecode.clone());
+        let address = Address::ZERO;
+        let mut data = vec![0; 32];
+        data.extend_from_slice(&bytecode);
+        data.extend_from_slice(&[0xaa, 0xbb]);
+        let args = verify
+            .get_verify_args(address, 32, &data, &[], EvmVersion::London)
+            .expect("valid CREATE2 data should produce verification args");
+        assert_eq!(args.constructor_args.as_deref(), Some("aabb"));
     }
 
     #[test]

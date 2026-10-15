@@ -3,25 +3,15 @@
 **Severity**: `High`
 **ID**: `reentrancy-balance`
 
-Flags reentrant external calls between saving `address(this).balance` and checking the current
-contract balance against that saved value.
-
 ## What it does
 
-Warns when a public or external entry point saves `address(this).balance` in a local value, performs
-an external call that can forward enough gas to re-enter, and then compares the saved value with a
-fresh contract-balance read in a `require`, `assert`, or exiting branch. Casts, tuple assignments,
-derived locals, fresh post-call balance locals, internal helper parameters and returns, and
-modifiers are tracked when their bodies are available.
+Reports public or external functions that save `address(this).balance`, make an external
+call that permits reentry, and then check the current balance against the saved value.
 
-This detector intentionally covers native ETH held by the current contract. It is not the later
-token `balanceOf(address)` detector with a similar name. It does not report token balances,
-balances of other addresses, mutable state or storage baselines, view or static calls, calls capped
-at a total callee budget of 2,300 gas or less after accounting for the value-transfer stipend,
-checks on directly mutually exclusive branches, baselines overwritten after the call, or
-expressions that do not compare a fresh contract-balance read with the stale local value. It also
-recognizes standard state-lock `nonReentrant` modifiers when the same lock guards every mutable
-entry point on each concrete deployment of the function.
+This rule concerns the contract's own ETH balance, not token balances or other addresses.
+View and static calls and calls where the callee receives at most 2,300 gas in total
+(including any value-transfer stipend) are excluded.
+A standard `nonReentrant` lock covering every mutable entry point can suppress the warning.
 
 ## Why is this bad?
 
@@ -32,8 +22,6 @@ saved baseline, rather than the comparison operator, is stale.
 
 ## Example
 
-### Bad
-
 ```solidity
 function mint(IPayer payer, uint256 amount) external {
     uint256 balanceBefore = address(this).balance;
@@ -43,7 +31,7 @@ function mint(IPayer payer, uint256 amount) external {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function mint(uint256 amount) external payable nonReentrant {

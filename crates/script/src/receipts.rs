@@ -48,16 +48,11 @@ pub async fn check_tx_status<N: Network>(
                 .await
             {
                 Ok(receipt) => {
-                    // Check if the receipt is pending (missing block information)
-                    let is_pending = receipt.block_number().is_none()
-                        || receipt.block_hash().is_none()
-                        || receipt.transaction_index().is_none();
-
-                    if !is_pending {
+                    if is_mined_receipt_for(&receipt, hash) {
                         return Ok(receipt.into());
                     }
 
-                    // Receipt is pending, try to sleep and retry a few times
+                    // Receipt is pending or foreign, try to sleep and retry a few times
                     match provider.get_transaction_by_hash(hash).await {
                         Ok(Some(_)) => {
                             // Sleep for a short time to allow the transaction to be mined
@@ -93,6 +88,14 @@ pub async fn check_tx_status<N: Network>(
         .await;
 
     (hash, result)
+}
+
+/// Returns true if `receipt` is a mined receipt for `hash`.
+pub(crate) fn is_mined_receipt_for<R: ReceiptResponse>(receipt: &R, hash: TxHash) -> bool {
+    receipt.transaction_hash() == hash
+        && receipt.block_number().is_some()
+        && receipt.block_hash().is_some()
+        && receipt.transaction_index().is_some()
 }
 
 /// Prints parts of the receipt to stdout
@@ -190,7 +193,7 @@ pub fn format_receipt<N: Network>(
 mod tests {
     use super::*;
     use alloy_network::{Ethereum, TransactionBuilder};
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, Bloom};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
     use std::collections::VecDeque;
@@ -199,7 +202,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "type": "0x02", "status": if success { "0x1" } else { "0x0" },
             "cumulativeGasUsed": "0x5208", "logs": [], "transactionHash": tx_hash,
-            "logsBloom": format!("0x{}", "0".repeat(512)),
+            "logsBloom": format!("{:#x}", Bloom::ZERO),
             "transactionIndex": "0x0", "blockHash": B256::ZERO, "blockNumber": "0x3039",
             "gasUsed": "0x5208", "effectiveGasPrice": "0x4a817c800",
             "from": "0x0000000000000000000000000000000000000000",
@@ -343,6 +346,24 @@ mod tests {
         assert!(err.contains("lookup unavailable"));
     }
 
+    #[tokio::test]
+    async fn check_tx_status_rejects_foreign_receipt() {
+        let hash = B256::repeat_byte(0x42);
+        let foreign = mock_receipt(B256::repeat_byte(0x99), true);
+        let asserter = Asserter::new();
+        let provider: RootProvider<Ethereum> =
+            ProviderBuilder::default().connect_mocked_client(asserter.clone());
+
+        // Receipt lookups while registering and polling, then the transaction lookup.
+        asserter.push_success(&foreign);
+        asserter.push_success(&foreign);
+        asserter.push_success(&None::<()>);
+
+        let (_, status) = check_tx_status(&provider, hash, 0, 1).await;
+
+        assert!(matches!(status.unwrap(), TxStatus::Dropped));
+    }
+
     /// Upper bound for the anvil-based `check_tx_status` tests, so a hang fails fast
     /// instead of stalling the suite.
     const CHECK_TX_TIMEOUT: Duration = Duration::from_secs(15);
@@ -393,8 +414,7 @@ mod tests {
         let mut wallets = handle.dev_wallets();
         let from = wallets.next().unwrap().address();
         let to = wallets.next().unwrap().address();
-        let tx =
-            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
 
         let pending = signer_provider.send_transaction(tx).await.unwrap();
         let tx_hash = *pending.tx_hash();
@@ -437,8 +457,7 @@ mod tests {
         let mut wallets = handle.dev_wallets();
         let from = wallets.next().unwrap().address();
         let to = wallets.next().unwrap().address();
-        let tx =
-            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
 
         // Send and mine the tx so a receipt is immediately available.
         let pending = signer_provider.send_transaction(tx).await.unwrap();
@@ -470,8 +489,7 @@ mod tests {
         let mut wallets = handle.dev_wallets();
         let from = wallets.next().unwrap().address();
         let to = wallets.next().unwrap().address();
-        let tx =
-            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
 
         let pending = signer_provider.send_transaction(tx).await.unwrap();
         let tx_hash = *pending.tx_hash();

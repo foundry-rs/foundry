@@ -336,6 +336,19 @@ contract ParseJsonTest is Test {
         assertEq(bytesArray[1], hex"02");
     }
 
+    function test_parseJsonDefaults() public {
+        assertEq(vm.parseJsonUint("{}", ".missing", 42), 42);
+        assertEq(vm.parseJsonUint('{"value":7}', ".value", 42), 7);
+
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        assertEq(abi.encode(vm.parseJsonUintArray("{}", ".missing", defaultValue)), abi.encode(defaultValue));
+
+        bytes[] memory dynamicDefault = new bytes[](1);
+        dynamicDefault[0] = hex"deadbeef";
+        assertEq(abi.encode(vm.parseJsonBytesArray("{}", ".missing", dynamicDefault)), abi.encode(dynamicDefault));
+    }
+
     struct Nested {
         uint256 number;
         string str;
@@ -542,7 +555,7 @@ contract WriteJsonTest is Test {
 
     function test_serializeNotSimpleJson() public {
         string memory json3 = "json3";
-        string memory path = "fixtures/Json/write_complex_test.json";
+        string memory path = "fixtures/Json/write_complex_test_serialize.json";
         vm.serializeUint(json3, "a", uint256(123));
         string memory semiFinal = vm.serializeString(json3, "b", "test");
         string memory finalJson = vm.serializeString(json3, "c", semiFinal);
@@ -551,6 +564,7 @@ contract WriteJsonTest is Test {
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        vm.removeFile(path);
     }
 
     function test_retrieveEntireJson() public {
@@ -586,7 +600,7 @@ contract WriteJsonTest is Test {
 
     function test_writeJson() public {
         string memory json3 = "json3";
-        string memory path = "fixtures/Json/write_test.json";
+        string memory path = "fixtures/Json/write_test_overwrite.json";
         vm.serializeUint(json3, "a", uint256(123));
         string memory finalJson = vm.serializeString(json3, "b", "test");
         vm.writeJson(finalJson, path);
@@ -613,10 +627,12 @@ contract WriteJsonTest is Test {
         data = vm.parseJson(json, ".b");
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
+        vm.removeFile(path);
     }
 
     function test_writeJson_createKeys() public {
-        string memory path = "fixtures/Json/write_test.json";
+        string memory path = "fixtures/Json/write_test_create_keys.json";
+        vm.copyFile("fixtures/Json/write_test.json", path);
         string memory json = vm.readFile(path);
 
         bool exists = vm.keyExistsJson(json, ".parent");
@@ -634,9 +650,7 @@ contract WriteJsonTest is Test {
         uint256 value = abi.decode(vm.parseJson(json, ".parent.child.value"), (uint256));
         assertEq(value, 42);
 
-        // Clean up the test file by removing the parent key we added
         vm.removeFile(path);
-        vm.writeJson("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
     }
 
     function test_writeJson_createFile() public {

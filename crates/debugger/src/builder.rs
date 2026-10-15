@@ -3,11 +3,14 @@
 use crate::{
     Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace_with_precompiles,
 };
-use alloy_primitives::{Address, map::AddressHashMap};
-use foundry_common::get_contract_name;
+use alloy_primitives::{
+    Address, Bytes,
+    map::{AddressHashMap, HashMap},
+};
+use foundry_common::{ContractsByArtifact, get_contract_name, slot_identifier::SlotIdentifier};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
-    CallTraceArena, CallTraceDecoder, Traces,
+    CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
     debug::{ContractSources, DebugTraceIdentifier},
 };
 
@@ -21,6 +24,10 @@ pub struct DebuggerBuilder {
     stats: DebuggerStats,
     /// Identified contracts.
     identified_contracts: AddressHashMap<String>,
+    /// Full artifact identifiers for identified contracts.
+    contract_identifiers: AddressHashMap<String>,
+    /// Known local contracts and their compiler metadata.
+    known_contracts: ContractsByArtifact,
     /// Active precompile labels for the current trace context.
     precompile_labels: AddressHashMap<String>,
     /// Map of source files.
@@ -39,6 +46,8 @@ impl DebuggerBuilder {
     }
 
     /// Extends the debug arena.
+    ///
+    /// Internal calls are decoded during [`Self::build`], after resolving each frame's contract.
     #[inline]
     pub fn traces(mut self, traces: Traces) -> Self {
         for (_, arena) in traces {
@@ -48,6 +57,8 @@ impl DebuggerBuilder {
     }
 
     /// Extends the debug arena.
+    ///
+    /// Internal calls are decoded during [`Self::build`], after resolving each frame's contract.
     #[inline]
     pub fn trace_arena(mut self, arena: CallTraceArena) -> Self {
         if let Some(root) = arena.nodes().first() {
@@ -72,9 +83,18 @@ impl DebuggerBuilder {
     /// Extends the identified contracts from a decoder.
     #[inline]
     pub fn decoder(mut self, decoder: &CallTraceDecoder) -> Self {
-        let c = decoder.contracts.iter().map(|(k, v)| (*k, get_contract_name(v).to_string()));
-        self.identified_contracts.extend(c);
+        for (address, identifier) in &decoder.contracts {
+            self.identified_contracts.insert(*address, get_contract_name(identifier).to_string());
+            self.contract_identifiers.insert(*address, identifier.clone());
+        }
         self.precompile_labels.extend(decoder.precompile_labels());
+        self
+    }
+
+    /// Sets known local contracts used to identify storage slots.
+    #[inline]
+    pub fn known_contracts(mut self, known_contracts: &ContractsByArtifact) -> Self {
+        self.known_contracts = known_contracts.clone();
         self
     }
 
@@ -113,23 +133,53 @@ impl DebuggerBuilder {
     #[inline]
     pub fn build(self) -> Debugger {
         let Self {
-            mut trace_arenas,
+            trace_arenas,
             stats,
             identified_contracts,
+            contract_identifiers,
+            known_contracts,
             precompile_labels,
             sources,
             breakpoints,
             layout,
         } = self;
-        identify_internal_calls(&mut trace_arenas, &identified_contracts, &sources);
+        let slot_identifiers = contract_identifiers
+            .into_iter()
+            .filter_map(|(address, identifier)| {
+                let (_, contract) =
+                    known_contracts.find_by_name_or_identifier(&identifier).ok().flatten()?;
+                let layout = contract.storage_layout.clone()?;
+                Some((address, SlotIdentifier::new(layout)))
+            })
+            .collect();
+        let mut identified_code = HashMap::default();
         let mut debug_arena = Vec::new();
-        for arena in trace_arenas {
-            flatten_call_trace_with_precompiles(arena, &mut debug_arena, &precompile_labels);
+        for mut arena in trace_arenas {
+            let contract_names = arena
+                .nodes_mut()
+                .iter_mut()
+                .map(|node| {
+                    identify_node(
+                        node,
+                        &known_contracts,
+                        &identified_contracts,
+                        &sources,
+                        &mut identified_code,
+                    )
+                })
+                .collect::<Vec<_>>();
+            flatten_call_trace_with_precompiles(
+                arena,
+                &mut debug_arena,
+                &precompile_labels,
+                &contract_names,
+            );
         }
         Debugger::new_with_stats(
             debug_arena,
             stats,
             identified_contracts,
+            slot_identifiers,
             sources,
             breakpoints,
             layout,
@@ -137,32 +187,60 @@ impl DebuggerBuilder {
     }
 }
 
-fn identify_internal_calls(
-    trace_arenas: &mut [CallTraceArena],
+/// Identifies the contract executed by `node` from its recorded bytecode, since an address can
+/// execute different code over time (e.g. after `vm.etch`), and decodes its internal calls.
+fn identify_node(
+    node: &mut CallTraceNode,
+    known_contracts: &ContractsByArtifact,
     identified_contracts: &AddressHashMap<String>,
     sources: &ContractSources,
-) {
-    if sources.artifacts_by_name.is_empty() {
-        return;
+    identified_code: &mut HashMap<(Address, Bytes), Option<String>>,
+) -> Option<String> {
+    let address = node.trace.address;
+    let address_name = identified_contracts.get(&address);
+    let contract_name = match &node.trace.bytecode {
+        Some(code) if !code.is_empty() && !node.trace.kind.is_any_create() => identified_code
+            .entry((address, code.clone()))
+            .or_insert_with(|| identify_code(known_contracts, address_name, code))
+            .clone(),
+        _ => address_name.cloned(),
+    };
+    if contract_name.as_ref() != address_name
+        && let Some(decoded) = node.trace.decoded.as_mut()
+        && decoded.label.as_ref() == address_name
+    {
+        decoded.label.clone_from(&contract_name);
     }
+    if let Some(contract_name) = &contract_name
+        && !sources.artifacts_by_name.is_empty()
+    {
+        DebugTraceIdentifier::identify_node_steps_with_sources(node, sources, contract_name);
+    }
+    contract_name
+}
 
-    for arena in trace_arenas {
-        for node in arena.nodes_mut() {
-            let Some(contract_name) = identified_contracts.get(&node.trace.address) else {
-                continue;
-            };
-            DebugTraceIdentifier::identify_node_steps_with_sources(node, sources, contract_name);
-        }
+/// Identifies `code` by an exact match against local artifacts. Identities that aren't local
+/// artifacts (e.g. from Etherscan) can't be checked, so they are kept when nothing matches.
+fn identify_code(
+    known_contracts: &ContractsByArtifact,
+    address_name: Option<&String>,
+    code: &[u8],
+) -> Option<String> {
+    // Prefer the address identity only among equally strong runtime matches.
+    if let Some((id, _)) = known_contracts
+        .find_by_deployed_code_exact_preferred(code, |id| address_name == Some(&id.name))
+    {
+        return Some(id.name.clone());
     }
+    // External identities cannot be checked against local artifacts.
+    address_name.filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name)).cloned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
-    use foundry_evm_traces::{CallKind, CallTrace, CallTraceNode};
+    use foundry_evm_traces::{CallKind, CallTrace, CallTraceStep, TraceMemberOrder};
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::{CallTraceStep, TraceMemberOrder};
 
     fn step() -> CallTraceStep {
         CallTraceStep {
@@ -176,6 +254,9 @@ mod tests {
             gas_refund_counter: 0,
             gas_used: 0,
             gas_cost: 0,
+            state_gas_cost: None,
+            state_gas_reservoir: None,
+            state_gas_spent: 0,
             storage_change: None,
             status: Some(InstructionResult::Stop),
             immediate_bytes: None,
@@ -213,7 +294,7 @@ mod tests {
 
     #[test]
     fn trace_arena_accumulates_stats() {
-        let builder = DebuggerBuilder::new().trace_arena(trace_arena(100, 1));
+        let builder = Debugger::builder().trace_arena(trace_arena(100, 1));
 
         assert_eq!(builder.stats.session_subcalls, 1);
         assert_eq!(builder.stats.session_trace_gas_used, 100);
@@ -222,9 +303,8 @@ mod tests {
 
     #[test]
     fn trace_arena_accumulates_session_stats_across_multiple_arenas() {
-        let builder = DebuggerBuilder::new()
-            .trace_arena(trace_arena(100, 1))
-            .trace_arena(trace_arena(200, 2));
+        let builder =
+            Debugger::builder().trace_arena(trace_arena(100, 1)).trace_arena(trace_arena(200, 2));
 
         assert_eq!(builder.stats.session_subcalls, 3);
         assert_eq!(builder.stats.session_trace_gas_used, 300);

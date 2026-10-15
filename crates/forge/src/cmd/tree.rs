@@ -27,7 +27,7 @@ foundry_config::impl_figment_convert!(TreeArgs, project_paths);
 
 impl TreeArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.load_config()?;
+        let config = self.load_config_with_dependencies()?;
         let graph = <Graph>::resolve(&config.project_paths())?;
         let opts = TreeOptions { charset: self.charset, no_dedupe: self.no_dedupe };
         graph.print_with_options(opts);

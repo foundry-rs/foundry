@@ -30,23 +30,23 @@ contract ControlledDelegatecall {
     }
 
     function delegateToParameter(address target, bytes calldata data) external returns (bool ok) {
-        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToPayableParameter(
         address payable target,
         bytes calldata data
     ) external returns (bool ok) {
-        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToParameterCast(address target, bytes calldata data) external returns (bool ok) {
-        (ok,) = address(target).delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = address(target).delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToAssignedParameter(address target, bytes calldata data) external returns (bool ok) {
         address localTarget = target;
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToTernaryParameter(
@@ -54,30 +54,30 @@ contract ControlledDelegatecall {
         bool useTarget,
         bytes calldata data
     ) external returns (bool ok) {
-        (ok,) = (useTarget ? target : TRUSTED).delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = (useTarget ? target : TRUSTED).delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToStorage(bytes calldata data) external returns (bool ok) {
-        (ok,) = implementation.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = implementation.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToMapping(address user, bytes calldata data) external returns (bool ok) {
-        (ok,) = plugins[user].delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = plugins[user].delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToMsgSender(bytes calldata data) external returns (bool ok) {
-        (ok,) = msg.sender.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = msg.sender.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function protectedDelegateToParameter(
         address target,
         bytes calldata data
     ) external onlyOwner returns (bool ok) {
-        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToImmutable(bytes calldata data) external returns (bool ok) {
-        (ok,) = trustedImplementation.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = trustedImplementation.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToConstant(bytes calldata data) external returns (bool ok) {
@@ -110,7 +110,7 @@ contract ControlledDelegatecall {
 
     function delegateToGuarded(address target, bytes calldata data) external returns (bool ok) {
         require(target == trustedImplementation);
-        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToConstantGuarded(address target, bytes calldata data) external returns (bool ok) {
@@ -140,11 +140,11 @@ contract ControlledDelegatecall {
     }
 
     function delegateToHelperReturn(address target, bytes calldata data) external returns (bool ok) {
-        (ok,) = id(target).delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = id(target).delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToStorageHelperReturn(bytes calldata data) external returns (bool ok) {
-        (ok,) = impl().delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = impl().delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToTrustedHelperReturn(bytes calldata data) external returns (bool ok) {
@@ -152,24 +152,24 @@ contract ControlledDelegatecall {
     }
 
     function delegateToDecoded(bytes calldata blob, bytes calldata data) external returns (bool ok) {
-        (ok,) = abi.decode(blob, (address)).delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = abi.decode(blob, (address)).delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToAssignmentReceiver(address target, bytes calldata data) external returns (bool ok) {
         address localTarget;
-        (ok,) = (localTarget = target).delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = (localTarget = target).delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToTupleReassigned(address target, bytes calldata data) external returns (bool ok) {
         address localTarget = TRUSTED;
         (localTarget,) = (target, uint256(0));
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToTupleHelper(address target, bytes calldata data) external returns (bool ok) {
         address localTarget = TRUSTED;
         (localTarget,) = pair(target);
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function pair(address target) internal pure returns (address, uint256) {
@@ -183,7 +183,7 @@ contract ControlledDelegatecall {
         } else {
             localTarget = TRUSTED;
         }
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToImplicitElseJoin(bool useTrusted, address target, bytes calldata data) external returns (bool ok) {
@@ -191,7 +191,7 @@ contract ControlledDelegatecall {
         if (useTrusted) {
             localTarget = TRUSTED;
         }
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToLoopJoin(bool useTrusted, address target, bytes calldata data) external returns (bool ok) {
@@ -199,7 +199,7 @@ contract ControlledDelegatecall {
         while (useTrusted) {
             localTarget = TRUSTED;
         }
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToExitingBranch(bool useTarget, address target, bytes calldata data) external returns (bool ok) {
@@ -219,13 +219,13 @@ contract ControlledDelegatecall {
     function delegateToShortCircuit(bool skipAssignment, address target, bytes calldata data) external returns (bool ok) {
         address localTarget = target;
         if (skipAssignment || (localTarget = TRUSTED) == TRUSTED) {}
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToTernarySideEffect(bool skipAssignment, address target, bytes calldata data) external returns (bool ok) {
         address localTarget = target;
         skipAssignment ? localTarget : (localTarget = TRUSTED);
-        (ok,) = localTarget.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = localTarget.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToZero(bytes calldata data) external returns (bool ok) {
@@ -247,7 +247,7 @@ contract ControlledDelegatecall {
         bytes calldata data
     ) external returns (bool ok) {
         require(target == TRUSTED && (target = msg.sender) != address(0));
-        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateAfterSideEffectingRequireMessage(
@@ -255,7 +255,7 @@ contract ControlledDelegatecall {
         bytes calldata data
     ) external returns (bool ok) {
         require(target == TRUSTED, string(abi.encodePacked(target = msg.sender)));
-        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateInSideEffectingIf(
@@ -263,23 +263,23 @@ contract ControlledDelegatecall {
         bytes calldata data
     ) external returns (bool ok) {
         if (target == TRUSTED && (target = msg.sender) != address(0)) {
-            (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+            (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
         }
     }
 
     function delegateToGetter(bytes calldata data) external returns (bool ok) {
-        (ok,) = this.implementation().delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = this.implementation().delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToFunctionPointer(
         function () external returns (address) getTarget,
         bytes calldata data
     ) external returns (bool ok) {
-        (ok,) = getTarget().delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = getTarget().delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateToArrayLiteral(address target, bytes calldata data) external returns (bool ok) {
-        (ok,) = [target][0].delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = [target][0].delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     function delegateAfterDoWhile(bytes calldata data) external returns (bool ok) {
@@ -295,7 +295,7 @@ contract ControlledDelegatecall {
         do {
             target = TRUSTED;
         } while ((target = msg.sender) != address(0));
-        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = target.delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 
     modifier onlyOwner() {
@@ -325,7 +325,7 @@ contract ControlledDelegatecallFactory {
 
 contract ControlledDelegatecallNew {
     function delegateToNew(bytes calldata data) external returns (bool ok) {
-        (ok,) = new ControlledDelegatecallFactory().impl().delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = new ControlledDelegatecallFactory().impl().delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 }
 
@@ -337,7 +337,7 @@ contract ControlledDelegatecallBase {
     }
 
     function delegateToVirtualHelper(bytes calldata data) external returns (bool ok) {
-        (ok,) = impl().delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = impl().delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 }
 
@@ -355,6 +355,6 @@ contract ControlledDelegatecallSuperBase {
 
 contract ControlledDelegatecallSuperChild is ControlledDelegatecallSuperBase {
     function delegateToSuper(bytes calldata data) external returns (bool ok) {
-        (ok,) = super.impl().delegatecall(data); //~WARN: delegatecall target is not provably trusted
+        (ok,) = super.impl().delegatecall(data); //~WARN: `delegatecall` target is not provably trusted
     }
 }

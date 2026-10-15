@@ -1,11 +1,34 @@
 use foundry_compilers::utils::read_json_file;
-use foundry_test_utils::TestProject;
+use foundry_config::SolcReq;
+use foundry_test_utils::{TestProject, cargo_profile_dir};
 use std::{fs, path::Path, process::Command};
 
+// Keep each generated crate isolated while reusing its dependencies across binding tests.
+// Cargo locks the shared target directory across nextest processes and fingerprints each crate.
+pub(super) fn bindings_cargo(bindings_path: &Path, subcommand: &str) -> Command {
+    // Preserve the generated manifest, including its conditional serde_with dependency.
+    // Refresh these fixtures from the corresponding generated crates when updating bindings deps.
+    let manifest = fs::read_to_string(bindings_path.join("Cargo.toml"))
+        .unwrap()
+        .parse::<toml_edit::DocumentMut>()
+        .unwrap();
+    let lock = if manifest["dependencies"].get("serde_with").is_some() {
+        include_str!("../fixtures/bind-with-serde-with/Cargo.lock")
+    } else {
+        include_str!("../fixtures/bind/Cargo.lock")
+    };
+    fs::write(bindings_path.join("Cargo.lock"), lock).unwrap();
+
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(bindings_path)
+        .args([subcommand, "--locked"])
+        .env("CARGO_TARGET_DIR", cargo_profile_dir().join("bind-test-target"));
+    cmd
+}
+
 fn assert_bindings_compile(bindings_path: &Path) {
-    let out = Command::new("cargo")
-        .args(["check", "--tests"])
-        .current_dir(bindings_path)
+    let out = bindings_cargo(bindings_path, "check")
+        .arg("--tests")
         .output()
         .expect("failed to run cargo check");
 
@@ -107,7 +130,8 @@ fn event_has_all_derives() {
 }
 
 // <https://github.com/foundry-rs/foundry/issues/9482>
-forgetest!(bind_unlinked_bytecode, |prj, cmd| {
+#[forgetest]
+fn bind_unlinked_bytecode(prj: _, cmd: _) {
     prj.add_source(
         "SomeLibContract.sol",
         r#"
@@ -137,9 +161,10 @@ Generating bindings for 1 contracts
 Bindings have been generated to [..]
 
 "#]]);
-});
+}
 
-forgetest_init!(bind_status_on_stderr, |prj, cmd| {
+#[forgetest_init]
+fn bind_status_on_stderr(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
     cmd.arg("bind").assert_success().stderr_eq(str![[r#"
@@ -147,9 +172,10 @@ Generating bindings for [..] contracts
 Bindings have been generated to [..]
 
 "#]]);
-});
+}
 
-forgetest_init!(bind_writes_abi_only_artifacts, |prj, cmd| {
+#[forgetest_init]
+fn bind_writes_abi_only_artifacts(prj: _, cmd: _) {
     prj.add_source(
         "BindTarget.sol",
         r#"
@@ -170,10 +196,175 @@ contract BindTarget {
     assert!(!abi.is_empty());
     assert!(artifact["bytecode"]["object"].as_str().is_none());
     assert!(artifact["deployedBytecode"]["object"].as_str().is_none());
-});
+}
+
+// <https://github.com/foundry-rs/foundry/issues/10441>
+#[forgetest]
+fn bind_generates_enum_variants(prj: _, cmd: _) {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+
+    function echo(Status status) external pure returns (Status) {
+        return status;
+    }
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select", "^EnumUser$"]).assert_success();
+
+    let bindings_path = prj.root().join("out/bindings");
+    let tests_path = bindings_path.join("tests");
+    let enum_test = r#"
+use foundry_contracts::enum_user::EnumUser::{Status, echoCall};
+
+#[test]
+fn enum_variants_are_typed() {
+    let call = echoCall { status: Status::Active };
+    assert_eq!(call.status, Status::Active);
+}
+"#;
+    fs::create_dir_all(&tests_path).unwrap();
+    fs::write(tests_path.join("enums.rs"), enum_test).unwrap();
+    assert_bindings_compile(&bindings_path);
+
+    cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Active, Pending }
+
+    function echo(Status status) external pure returns (Status) {
+        return status;
+    }
+}
+"#,
+    );
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+
+    let binding = fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub struct Status"), "{binding}");
+    assert!(!binding.contains("pub enum Status"), "{binding}");
+}
+
+#[forgetest]
+fn bind_skip_build_does_not_require_compiler(prj: _, cmd: _) {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    let missing_solc = prj.root().join("missing-solc");
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(missing_solc)));
+    cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub enum Status"), "{binding}");
+}
+
+#[forgetest]
+fn bind_skip_build_keeps_enums_with_external_artifacts(prj: _, cmd: _) {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    let artifact = prj.paths().artifacts.join("EnumUser.sol/EnumUser.json");
+    let external = prj.paths().artifacts.join(".external/fixture/app/External.json");
+    fs::create_dir_all(external.parent().unwrap()).unwrap();
+    fs::copy(artifact, external).unwrap();
+
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^(EnumUser|External)$"])
+        .assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub enum Status"), "{binding}");
+}
+
+#[forgetest]
+fn bind_stale_untracked_enum_artifacts_fall_back_to_udvt(prj: _, cmd: _) {
+    prj.add_source(
+        "A.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    fs::remove_file(prj.paths().sources.join("A.sol")).unwrap();
+    prj.add_source(
+        "Z.sol",
+        r#"
+contract EnumUser {
+    enum Status { Active, Pending }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub struct Status"), "{binding}");
+    assert!(!binding.contains("pub enum Status"), "{binding}");
+}
+
+#[forgetest]
+fn bind_ambiguous_enum_definitions_fall_back_to_udvt(prj: _, cmd: _) {
+    prj.add_source(
+        "A.sol",
+        r#"
+contract Duplicate {
+    enum Status { A }
+    function status(Status value) external pure returns (Status) { return value; }
+}
+"#,
+    );
+    prj.add_source(
+        "B.sol",
+        r#"
+contract Duplicate {
+    enum Status { B }
+    function status(Status value) external pure returns (Status) { return value; }
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select", "^Duplicate$"]).assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/duplicate.rs")).unwrap();
+    assert!(binding.contains("pub struct Status"), "{binding}");
+    assert!(!binding.contains("pub enum Status"), "{binding}");
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11177>
-forgetest!(bind_event_module_name_shadowing, |prj, cmd| {
+#[forgetest]
+fn bind_event_module_name_shadowing(prj: _, cmd: _) {
     prj.add_source(
         "IExampleContract.sol",
         r#"
@@ -224,9 +415,10 @@ OK.
 
     let bindings_path = prj.root().join("out/bindings");
     assert_bindings_compile(&bindings_path);
-});
+}
 
-forgetest!(bind_event_module_prefix_does_not_shadow_aliases, |prj, cmd| {
+#[forgetest]
+fn bind_event_module_prefix_does_not_shadow_aliases(prj: _, cmd: _) {
     prj.add_source(
         "alloy_sol_types.sol",
         r#"
@@ -252,24 +444,27 @@ Bindings have been generated to [..]
 
     let bindings_path = prj.root().join("out/bindings");
     assert_bindings_compile(&bindings_path);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11538>
-forgetest!(bind_dedups_canonical_event_signatures, |prj, cmd| {
+#[forgetest]
+fn bind_dedups_canonical_event_signatures(prj: _, cmd: _) {
     add_duplicate_events_source(&prj);
 
     cmd.args(["bind", "--select", "^DuplicateEvents$"]).assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10353>
-forgetest!(bind_namespaced_custom_type_derives, |prj, cmd| {
+#[forgetest]
+fn bind_namespaced_custom_type_derives(prj: _, cmd: _) {
     add_namespaced_type_sources(&prj);
 
     cmd.args(["bind", "--select", "^MyContract$"]).assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10911>
-forgetest!(bind_large_fixed_arrays, |prj, cmd| {
+#[forgetest]
+fn bind_large_fixed_arrays(prj: _, cmd: _) {
     add_large_array_source(&prj);
 
     cmd.args(["bind", "--select", "^serde_with$"])
@@ -294,9 +489,10 @@ OK.
 
 "#
     ]]);
-});
+}
 
-forgetest!(bind_regression_fixtures_compile, |prj, cmd| {
+#[forgetest]
+fn bind_regression_fixtures_compile(prj: _, cmd: _) {
     add_duplicate_events_source(&prj);
     add_namespaced_type_sources(&prj);
     add_large_array_source(&prj);
@@ -306,9 +502,10 @@ forgetest!(bind_regression_fixtures_compile, |prj, cmd| {
     let bindings_path = prj.root().join("out/bindings");
     add_namespaced_type_derives_test(&bindings_path);
     assert_bindings_compile(&bindings_path);
-});
+}
 
-forgetest!(bind_single_file_crate_and_module_match, |prj, cmd| {
+#[forgetest]
+fn bind_single_file_crate_and_module_match(prj: _, cmd: _) {
     add_duplicate_events_source(&prj);
     add_namespaced_type_sources(&prj);
 
@@ -342,4 +539,127 @@ forgetest!(bind_single_file_crate_and_module_match, |prj, cmd| {
         fs::read(crate_path.join("src/lib.rs")).unwrap(),
         fs::read(module_path.join("mod.rs")).unwrap()
     );
-});
+}
+
+// `$` is valid in Solidity identifiers but not Rust identifiers; `forge bind` used to panic
+// instead of sanitizing it.
+#[forgetest]
+fn bind_dollar_sign_in_contract_name(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo.sol",
+        r#"
+contract Foo$Bar {
+    uint256 public value;
+
+    function setValue(uint256 v) public {
+        value = v;
+    }
+}
+"#,
+    );
+
+    cmd.args(["bind"]).assert_success();
+
+    let bindings_path = prj.root().join("out/bindings");
+    let binding = fs::read_to_string(bindings_path.join("src/foo_bar.rs")).unwrap();
+    assert!(binding.contains("pub mod Foo_Bar"), "{binding}");
+    assert!(!binding.contains('$'), "{binding}");
+    assert_bindings_compile(&bindings_path);
+}
+
+// `--single-file` bindings used to pass the consistency check regardless of their contents.
+#[forgetest]
+fn bind_single_file_checks_consistency(prj: _, cmd: _) {
+    prj.add_source("Foo.sol", "contract Foo { function a() external {} }");
+
+    let module_path = prj.root().join("module-bindings");
+    let crate_args = ["bind", "--select", "^Foo$", "--single-file"];
+    let module_args = [
+        "bind",
+        "--select",
+        "^Foo$",
+        "--single-file",
+        "--module",
+        "--bindings-path",
+        module_path.to_str().unwrap(),
+    ];
+    cmd.args(crate_args).assert_success();
+    cmd.forge_fuse().args(module_args).assert_success();
+
+    for args in [&crate_args[..], &module_args[..]] {
+        cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+    }
+
+    prj.add_source("Foo.sol", "contract Foo { function a() external {} function b() external {} }");
+
+    cmd.forge_fuse().args(crate_args).assert_failure().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+Error: File contents do not match expected contents for "[..]/out/bindings/src/lib.rs"
+
+"#]]);
+    cmd.forge_fuse().args(module_args).assert_failure().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+Error: File contents do not match expected contents for "[..]/module-bindings/mod.rs"
+
+"#]]);
+}
+
+#[forgetest]
+fn bind_single_file_checks_multiple_contracts(prj: _, cmd: _) {
+    // The FooCalls contract must not shadow the call enum inside the Foo binding.
+    prj.add_source(
+        "Foo.sol",
+        "contract Foo { function a() external {} } contract FooCalls { function b() external {} }",
+    );
+
+    let module_path = prj.root().join("module-bindings");
+    let crate_args = ["bind", "--select", "^(Foo|FooCalls)$", "--single-file"];
+    let module_args = [
+        "bind",
+        "--select",
+        "^(Foo|FooCalls)$",
+        "--single-file",
+        "--module",
+        "--bindings-path",
+        module_path.to_str().unwrap(),
+    ];
+    let crate_file = prj.root().join("out/bindings/src/lib.rs");
+    let module_file = module_path.join("mod.rs");
+    for (args, file) in [(&crate_args[..], &crate_file), (&module_args[..], &module_file)] {
+        cmd.forge_fuse().args(args).assert_success();
+        cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+OK.
+
+"#]]);
+
+        // Whitespace changes must not invalidate otherwise identical bindings.
+        let contents = fs::read_to_string(file).unwrap();
+        fs::write(file, format!("\n{contents}\n")).unwrap();
+        cmd.forge_fuse().args(args).assert_success();
+    }
+
+    fs::remove_file(crate_file).unwrap();
+    cmd.forge_fuse().args(crate_args).assert_failure().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+Error: [..]/out/bindings/src/lib.rs is not a file
+
+"#]]);
+
+    fs::remove_file(module_file).unwrap();
+    cmd.forge_fuse().args(module_args).assert_failure().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+Error: [..]/module-bindings/mod.rs is not a file
+
+"#]]);
+}

@@ -1,18 +1,24 @@
 //! # foundry-evm-core
 //!
-//! Core EVM abstractions.
+//! Generic execution, environment, fork, backend, and state abstractions shared by Foundry tools.
+//!
+//! [`evm::FoundryEvmNetwork`] binds an Alloy network to an [`evm::FoundryEvmFactory`]. The factory
+//! owns the concrete execution types and constructs a Foundry-compatible EVM context, while
+//! `foundry-evm-networks` owns runtime family selection. Keeping those responsibilities separate
+//! allows one compiled binary to dispatch to different execution families at runtime.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(feature = "optimism")]
-use op_alloy_rpc_types as _;
-
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
+use foundry_evm_networks::NetworkConfigs;
 use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
+
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
 pub type Breakpoints = HashMap<char, (Address, usize)>;
@@ -27,7 +33,6 @@ pub mod abi {
 
 pub mod env;
 pub use env::*;
-use foundry_evm_networks::NetworkConfigs;
 
 pub mod backend;
 pub mod buffer;
@@ -47,8 +52,8 @@ pub mod utils;
 
 /// Foundry-specific inspector methods, decoupled from any particular EVM context type.
 ///
-/// This trait holds Foundry-specific extensions (create2 factory, console logging,
-/// network config, deployer address). It has no `Inspector<CTX>` supertrait so it can
+/// This trait holds Foundry-specific extensions (create2 factory, console logging, temporary Celo
+/// configuration, deployer address). It has no `Inspector<CTX>` supertrait so it can
 /// be used in generic code with `I: FoundryInspectorExt + Inspector<CTX>`.
 #[auto_impl(&mut, Box)]
 pub trait InspectorExt {
@@ -65,7 +70,7 @@ pub trait InspectorExt {
         let _ = msg;
     }
 
-    /// Returns configured networks.
+    /// Returns configuration retained for Celo precompile support.
     fn get_networks(&self) -> NetworkConfigs {
         NetworkConfigs::default()
     }

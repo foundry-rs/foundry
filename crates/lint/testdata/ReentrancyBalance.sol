@@ -47,13 +47,6 @@ contract ReentrancyBalance {
         );
     }
 
-    function assertAfterLowLevelCall(address target, uint256 amount) external {
-        uint256 balanceBefore = address(this).balance;
-        (bool ok,) = target.call("");
-        require(ok, "call failed");
-        assert(address(this).balance - balanceBefore >= amount);
-    }
-
     function revertingBranchAfterCall(IReentrancyBalanceCallback callback, uint256 amount) external {
         uint256 balanceBefore = address(this).balance;
         callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked

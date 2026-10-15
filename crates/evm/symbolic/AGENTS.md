@@ -12,8 +12,7 @@ scoped to the modeled EVM surface and configured bounds.
 
 ## Internal Structure
 
-- `src/lib.rs`: crate boundary, public symbolic run inputs/results, solver
-  availability helpers, and compatibility helper mapping.
+- `src/lib.rs`: crate boundary and public symbolic run inputs/results.
 - `src/abi.rs`: ABI-to-symbolic calldata/value construction and replay value
   extraction.
 - `src/executor/`: bytecode execution, calls/creates, cheatcodes, branch
@@ -24,8 +23,10 @@ scoped to the modeled EVM surface and configured bounds.
 - `src/runtime/expr/`: symbolic word/bool expressions, hash-consing, symbol
   interning, simplification, canonicalization, SMT emission, traversal, and
   folding.
-- `src/tests.rs`: crate-level symbolic behavior tests. Put private expression
-  representation tests in the relevant module-local `#[cfg(test)]` module.
+- `src/runtime/solver/`: solver orchestration, query scheduling, caches, budgets,
+  and model validation. Its `normalize/`, `reasoning/`, `fallback/`, and `smt/`
+  folders own normalization, lightweight proof passes, bounded witness fallback,
+  and query-level SMT emission respectively.
 
 ## Expression Invariants
 
@@ -59,17 +60,9 @@ scoped to the modeled EVM surface and configured bounds.
 
 ## Testing
 
-Use the existing test infrastructure; do not create standalone test harnesses.
-For focused symbolic changes, run:
-
-```bash
-cargo fmt --all
-cargo check -p foundry-evm-symbolic
-cargo nextest run -p foundry-evm-symbolic
-git diff --check
-```
-
-For Forge integration behavior, prefer focused CLI tests such as:
+Cover symbolic behavior with end-to-end Forge CLI tests under
+`crates/forge/tests/cli/test_cmd/symbolic*.rs`; do not add crate-level unit
+tests or standalone test harnesses. Run:
 
 ```bash
 cargo nextest run -p forge --test cli test_cmd::symbolic
@@ -78,4 +71,4 @@ SYMBOLIC_LIMITS=1 cargo nextest run -p forge --test cli symbolic_limits
 ```
 
 The conformance and limits suites require a local solver and are intentionally
-broader/slower.
+broader/slower. PR CI skips them; the nightly `test-flaky` workflow runs them.

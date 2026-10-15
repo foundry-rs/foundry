@@ -3,8 +3,6 @@
 **Severity**: `Med`
 **ID**: `mapping-deletion`
 
-Flags `delete` applied to a value whose type contains a `mapping`.
-
 ## What it does
 
 Reports `delete x` when `x` is a struct or array whose type holds a `mapping`, directly or through a
@@ -20,8 +18,6 @@ stale balances or flags remain reachable.
 
 ## Example
 
-### Bad
-
 ```solidity
 struct Account {
     uint256 total;
@@ -35,7 +31,11 @@ function reset(uint256 id) external {
 }
 ```
 
-### Good
+Use instead:
+
+Delete each known key explicitly. This example fully resets the balances only if `holders` is an
+authoritative, complete list of keys: caller-supplied omissions leave those entries intact. Track
+keys when they are inserted if the contract needs to guarantee a complete reset.
 
 ```solidity
 function reset(uint256 id, address[] calldata holders) external {

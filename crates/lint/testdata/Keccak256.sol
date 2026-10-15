@@ -16,14 +16,14 @@ contract AsmKeccak256 {
 
         // lints fire before the disabled block
         address c = address(1);
-        bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(bytes20(c)))); //~NOTE: inefficient hashing mechanism
-        uint256 MixedCase_Variable = 1; //~NOTE: mutable variables should use mixedCase
+        bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(bytes20(c)))); //~NOTE: high-level `keccak256` call
+        uint256 MixedCase_Variable = 1; //~NOTE: mutable variable name is not `mixedCase`
 
         // forge-lint: disable-start(asm-keccak256) -------------------------------------
         keccak256(abi.encodePacked(a, b)); // disabled                                  |
         //                                                                              |
         // non-disabled lints still fire                                                |
-        uint256 Another_MixedCase = 2; //~NOTE: mutable variables should use mixedCase
+        uint256 Another_MixedCase = 2; //~NOTE: mutable variable name is not `mixedCase`
         //                                                                              |
         // forge-lint: disable-start(asm-keccak256) -------                             |
         keccak256(abi.encodePacked(a, b)); // disabled    |                             |
@@ -32,8 +32,8 @@ contract AsmKeccak256 {
         // forge-lint: disable-end(asm-keccak256) ---------------------------------------
 
         // lints still fire after the disabled block
-        bytes32 afterDisabledBlock = keccak256(abi.encode(a, b, c)); //~NOTE: inefficient hashing mechanism
-        uint256 YetAnother_MixedCase = 3; //~NOTE: mutable variables should use mixedCase
+        bytes32 afterDisabledBlock = keccak256(abi.encode(a, b, c)); //~NOTE: high-level `keccak256` call
+        uint256 YetAnother_MixedCase = 3; //~NOTE: mutable variable name is not `mixedCase`
     }
 
     // forge-lint: disable-next-item(asm-keccak256)
@@ -43,11 +43,11 @@ contract AsmKeccak256 {
     }
 
     function solidityHash(bytes calldata z, uint256 a, uint256 b, address c) public pure returns (bytes32) {
-        bytes32 loadsFromCalldata = keccak256(z); //~NOTE: inefficient hashing mechanism
+        bytes32 loadsFromCalldata = keccak256(z); //~NOTE: high-level `keccak256` call
         bytes memory y = z;
-        bytes32 loadsFromMemory = keccak256(y); //~NOTE: inefficient hashing mechanism
-        bytes32 lintWithoutFix = keccak256(abi.encodePacked(a, b, c)); //~NOTE: inefficient hashing mechanism
-        return keccak256(abi.encode(a, b, c)); //~NOTE: inefficient hashing mechanism
+        bytes32 loadsFromMemory = keccak256(y); //~NOTE: high-level `keccak256` call
+        bytes32 lintWithoutFix = keccak256(abi.encodePacked(a, b, c)); //~NOTE: high-level `keccak256` call
+        return keccak256(abi.encode(a, b, c)); //~NOTE: high-level `keccak256` call
     }
 
     function assemblyHash(uint256 a, uint256 b) public pure returns (bytes32) {
@@ -63,7 +63,7 @@ contract AsmKeccak256 {
 
 // forge-lint: disable-next-item(asm-keccak256)
 contract OtherAsmKeccak256 {
-    uint256 Enabled_MixedCase_Variable; //~NOTE: mutable variables should use mixedCase
+    uint256 Enabled_MixedCase_Variable; //~NOTE: mutable variable name is not `mixedCase`
 
     function contratDisabledHash(uint256 a, uint256 b) public pure returns (bytes32) {
         return keccak256(abi.encode(a, b));
@@ -76,14 +76,14 @@ contract OtherAsmKeccak256 {
 
 contract YetAnotherAsmKeccak256 {
     function nonDisabledHash(uint256 x, uint256 y) public pure returns (bytes32) {
-        bytes32 doesNotUseScratchSpace = keccak256(abi.encode(x, y, x, y, x, y)); //~NOTE: inefficient hashing mechanism
-        bytes32 doesUseScratchSpace = keccak256(abi.encode(x)); //~NOTE: inefficient hashing mechanism
-        return keccak256(abi.encode(doesUseScratchSpace, doesNotUseScratchSpace)); //~NOTE: inefficient hashing mechanism
+        bytes32 doesNotUseScratchSpace = keccak256(abi.encode(x, y, x, y, x, y)); //~NOTE: high-level `keccak256` call
+        bytes32 doesUseScratchSpace = keccak256(abi.encode(x)); //~NOTE: high-level `keccak256` call
+        return keccak256(abi.encode(doesUseScratchSpace, doesNotUseScratchSpace)); //~NOTE: high-level `keccak256` call
     }
 
     // forge-lint: disable-next-item(asm-keccak256)
     function functionDisabledHash(uint256 a, uint256 b) public pure returns (bytes32) {
-        uint256 Enabled_MixedCase_Variable = 1; //~NOTE: mutable variables should use mixedCase
+        uint256 Enabled_MixedCase_Variable = 1; //~NOTE: mutable variable name is not `mixedCase`
         return keccak256(abi.encodePacked(a, b));
     }
 }

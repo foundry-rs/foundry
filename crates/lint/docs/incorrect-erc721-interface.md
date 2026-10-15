@@ -3,15 +3,15 @@
 **Severity**: `Med`
 **ID**: `incorrect-erc721-interface`
 
-Flags interfaces or contracts whose function signatures match an ERC721 (or ERC165) method by
-name and parameters but use the wrong return type.
-
 ## What it does
 
 For each function whose name and parameter types match a canonical ERC721/ERC165 method
 (`balanceOf`, `ownerOf`, `safeTransferFrom`, `transferFrom`, `approve`, `setApprovalForAll`,
 `getApproved`, `isApprovedForAll`, `supportsInterface`), the lint checks that the return type
 matches the spec. A mismatch is reported.
+
+Only contracts and interfaces named `ERC721` or `IERC721`, or inheriting from one of them, are
+checked.
 
 ## Why is this bad?
 
@@ -21,17 +21,15 @@ failures at runtime.
 
 ## Example
 
-### Bad
-
 ```solidity
-interface IBadERC721 {
+interface IERC721 {
     function balanceOf(address) external view returns (bool);   // should be uint256
     function ownerOf(uint256) external view returns (bool);     // should be address
     function supportsInterface(bytes4) external view returns (uint256); // should be bool
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 interface IERC721 {

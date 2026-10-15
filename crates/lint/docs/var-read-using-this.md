@@ -3,27 +3,18 @@
 **Severity**: `Gas`
 **ID**: `var-read-using-this`
 
-Flags reads of the contract's own state through `this.X(...)`. Calling a public state-variable
-getter or any `view`/`pure` function via `this` performs an external `STATICCALL` to the same
-address, paying the call overhead for data that could be read directly.
-
 ## What it does
 
-Reports `this.<name>(<args>)` calls where `<name>` resolves (via overload resolution by arity) to
-a function reachable on the contract's external interface (`public` or `external`) whose state
-mutability is `view` or `pure`. This includes:
+Reports calls through `this` to the contract's own public variable getters and `view`
+or `pure` functions, including inherited functions.
 
-- The auto-generated getter for any `public` state variable (simple variables, mappings, arrays).
-- Any inherited `public`/`external` `view`/`pure` function declared in a base contract.
+Read state directly where possible: use `foo` instead of `this.foo()`, or `m[k]` instead
+of `this.m(k)`. Check that the replacement preserves the getter's return value and any
+intentional external-call behavior.
 
-When the offending call is the auto-generated getter for a state variable, the lint emits a code
-fix:
-
-- Simple state variable: `this.foo()` → `foo` (machine-applicable).
-- Mapping/array getter: `this.m(k)` → `m[k]` (`maybe-incorrect`; double-check the rewrite).
-
-Calls that carry call options (e.g. `this.foo{gas: 1000}()`) are still flagged, but no fix is
-suggested — the developer is intentionally reaching for the external-call machinery.
+Struct getters return selected fields rather than the struct itself, and a local variable
+may shadow the state variable. Calls with explicit gas options receive no replacement;
+calls used as the target of `try` are excluded because `try` requires an external call.
 
 ## Why is this bad?
 
@@ -32,8 +23,6 @@ fixed amount of gas, plus the encoding/decoding of arguments and return data, in
 storage read itself. Reading the variable directly skips the call entirely.
 
 ## Example
-
-### Bad
 
 ```solidity
 contract C {
@@ -47,7 +36,7 @@ contract C {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract C {
@@ -60,10 +49,6 @@ contract C {
     }
 }
 ```
-
-## Notes
-
-This is a `Gas`-severity lint and is **not** applied to test or script files.
 
 For `external view`/`pure` functions, calling them via `this` from inside the contract is the
 only in-contract syntax that resolves; the recommended fix is to extract the body into an

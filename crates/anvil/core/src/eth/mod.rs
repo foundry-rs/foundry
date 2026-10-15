@@ -39,6 +39,31 @@ pub struct Params<T> {
     pub params: T,
 }
 
+/// Parameters accepted by `eth_getTransactionCount`.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum TransactionCountParams {
+    /// Address only.
+    Address((Address,)),
+    /// Standard address and block query.
+    Standard((Address, Option<BlockId>)),
+    /// EIP-8130 address, block, and nonce-key query.
+    #[cfg(feature = "base")]
+    Eip8130((Address, Option<BlockId>, U256)),
+}
+
+impl TransactionCountParams {
+    /// Splits the request into address, block, and optional EIP-8130 nonce key.
+    pub const fn into_parts(self) -> (Address, Option<BlockId>, Option<U256>) {
+        match self {
+            Self::Address((address,)) => (address, None, None),
+            Self::Standard((address, block)) => (address, block, None),
+            #[cfg(feature = "base")]
+            Self::Eip8130((address, block, nonce_key)) => (address, block, Some(nonce_key)),
+        }
+    }
+}
+
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(tag = "method", content = "params")]
@@ -90,7 +115,7 @@ pub enum EthRequest {
     EthCoinbase(()),
 
     #[serde(rename = "eth_getBalance")]
-    EthGetBalance(Address, Option<BlockId>),
+    EthGetBalance(Address, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getAccount")]
     EthGetAccount(Address, Option<BlockId>),
@@ -99,11 +124,11 @@ pub enum EthRequest {
     EthGetAccountInfo(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getStorageAt")]
-    EthGetStorageAt(Address, U256, Option<BlockId>),
+    EthGetStorageAt(Address, U256, #[serde(default)] Option<BlockId>),
 
     /// Returns storage values for multiple accounts and slots in a single call.
     #[serde(rename = "eth_getStorageValues")]
-    EthGetStorageValues(HashMap<Address, Vec<B256>>, Option<BlockId>),
+    EthGetStorageValues(HashMap<Address, Vec<B256>>, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(B256, bool),
@@ -139,7 +164,7 @@ pub enum EthRequest {
     EthGetBlockAccessListRaw(BlockId),
 
     #[serde(rename = "eth_getTransactionCount")]
-    EthGetTransactionCount(Address, Option<BlockId>),
+    EthGetTransactionCount(TransactionCountParams),
 
     #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
     EthGetTransactionCountByHash(B256),
@@ -160,12 +185,12 @@ pub enum EthRequest {
     EthGetUnclesCountByNumber(BlockNumber),
 
     #[serde(rename = "eth_getCode")]
-    EthGetCodeAt(Address, Option<BlockId>),
+    EthGetCodeAt(Address, #[serde(default)] Option<BlockId>),
 
     /// Returns the account and storage values of the specified account including the Merkle-proof.
     /// This call can be used to verify that the data you are pulling from is not tampered with.
     #[serde(rename = "eth_getProof")]
-    EthGetProof(Address, Vec<B256>, Option<BlockId>),
+    EthGetProof(Address, Vec<B256>, #[serde(default)] Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]
@@ -208,6 +233,10 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_sendRawTransactionConditional")]
     EthSendRawTransactionConditional(Bytes, TransactionConditional),
+
+    /// Signs a raw Tempo transaction as the node's fee payer (sponsor) without broadcasting it.
+    #[serde(rename = "eth_signRawTransaction", with = "sequence")]
+    EthSignRawTransaction(Bytes),
 
     #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
     AnvilClassifyTransaction(Bytes),
@@ -271,6 +300,10 @@ pub enum EthRequest {
     /// Returns the genesis time for the chain
     #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
     GetGenesisTime(()),
+
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
+    #[serde(rename = "anvil_getLastBlockWallTime", with = "empty_params")]
+    GetLastBlockWallTime(()),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(B256, Index),
@@ -450,7 +483,7 @@ pub enum EthRequest {
 
     /// Trace get endpoint for parity's `trace_get`.
     #[serde(rename = "trace_get")]
-    TraceGet(B256, Vec<Index>),
+    TraceGet(B256, #[serde(deserialize_with = "trace_address::deserialize")] Vec<Index>),
 
     /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
     #[serde(rename = "trace_replayBlockTransactions")]
@@ -624,6 +657,10 @@ pub enum EthRequest {
     /// Sets the `prevrandao` value of the next block
     #[serde(rename = "anvil_setNextBlockPrevRandao", with = "sequence")]
     SetNextBlockPrevRandao(B256),
+
+    /// Sets the parent beacon block root of the next block
+    #[serde(rename = "anvil_setNextBlockParentBeaconBlockRoot", with = "sequence")]
+    SetNextBlockParentBeaconBlockRoot(B256),
 
     /// Sets the chain id
     #[serde(rename = "anvil_setChainId", deserialize_with = "deserialize_u64_seq")]
@@ -913,11 +950,28 @@ pub enum EthPubSub {
 }
 
 /// Container type for either a request or a pub sub
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug)]
 pub enum EthRpcCall {
     Request(Box<EthRequest>),
     PubSub(EthPubSub),
+}
+
+impl<'de> serde::Deserialize<'de> for EthRpcCall {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.get("method").and_then(serde_json::Value::as_str) {
+            Some("eth_subscribe" | "eth_unsubscribe") => serde_json::from_value(value)
+                .map(Self::PubSub)
+                .map_err(<D::Error as serde::de::Error>::custom),
+            _ => serde_json::from_value(value)
+                .map(Box::new)
+                .map(Self::Request)
+                .map_err(<D::Error as serde::de::Error>::custom),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -936,6 +990,14 @@ mod tests {
         let s = r#"{"method": "web3_sha3", "params":["0x68656c6c6f20776f726c64"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn unknown_rpc_call_preserves_method_error() {
+        let err = serde_json::from_str::<EthRpcCall>(r#"{"method":"no_such_method","params":[]}"#)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("unknown variant"));
     }
 
     #[test]
@@ -1107,6 +1169,16 @@ mod tests {
         let s = r#"{"method": "anvil_getAutomine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_custom_get_last_block_wall_time() {
+        let s = r#"{"method": "anvil_getLastBlockWallTime", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        assert!(matches!(
+            serde_json::from_value::<EthRequest>(value).unwrap(),
+            EthRequest::GetLastBlockWallTime(())
+        ));
     }
 
     #[test]
@@ -1472,6 +1544,13 @@ mod tests {
     }
 
     #[test]
+    fn test_serde_custom_set_next_block_parent_beacon_block_root() {
+        let s = r#"{"method": "anvil_setNextBlockParentBeaconBlockRoot", "params": ["0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_serde_custom_logging() {
         let s = r#"{"method": "anvil_setLoggingEnabled", "params": [false]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
@@ -1774,6 +1853,7 @@ mod tests {
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["newHeads"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
+        assert!(matches!(serde_json::from_str(s).unwrap(), EthRpcCall::PubSub(_)));
 
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["logs", {"address":
 "0x8320fe7702b96808f7bbc0d4a888ed1468216cfd", "topics":
@@ -2013,9 +2093,19 @@ true}]}"#;
 
     #[test]
     fn test_serde_trace_get() {
-        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", [0]]}"#;
-        let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", ["0x6", "0xa0"]]}"#;
+        let req = serde_json::from_str::<EthRequest>(s).unwrap();
+        let EthRequest::TraceGet(_, indices) = req else { panic!("unexpected request {req:?}") };
+        assert_eq!(indices.into_iter().map(usize::from).collect::<Vec<_>>(), [6, 160]);
+
+        for indices in
+            [r#"[6, 0]"#, r#"["6"]"#, r#"["0x00"]"#, r#"["0x06"]"#, r#"["0xA"]"#, r#"["0x"]"#]
+        {
+            let s = format!(
+                r#"{{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {indices}]}}"#
+            );
+            serde_json::from_str::<EthRequest>(&s).unwrap_err();
+        }
     }
 
     #[test]
@@ -2031,6 +2121,55 @@ true}]}"#;
 ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_state_requests_without_block() {
+        let requests = [
+            r#"{"method":"eth_getBalance","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#,
+            r#"{"method":"eth_getCode","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#,
+            r#"{"method":"eth_getStorageAt","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251","0x0"]}"#,
+            r#"{"method":"eth_getStorageValues","params":[{"0x295a70b2de5e3953354a6a8344e616ed314d7251":["0x0000000000000000000000000000000000000000000000000000000000000000"]}]}"#,
+            r#"{"method":"eth_getTransactionCount","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#,
+            r#"{"method":"eth_getProof","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251",[]]}"#,
+        ];
+
+        for request in requests {
+            if let EthRequest::EthGetTransactionCount(params) =
+                serde_json::from_str::<EthRequest>(request).unwrap()
+            {
+                let (_, block, nonce_key) = params.into_parts();
+                assert!(block.is_none());
+                assert!(nonce_key.is_none());
+                continue;
+            }
+            assert!(matches!(
+                serde_json::from_str::<EthRequest>(request).unwrap(),
+                EthRequest::EthGetBalance(_, None)
+                    | EthRequest::EthGetCodeAt(_, None)
+                    | EthRequest::EthGetStorageAt(_, _, None)
+                    | EthRequest::EthGetStorageValues(_, None)
+                    | EthRequest::EthGetProof(_, _, None)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_serde_transaction_count_nonce_key_is_base_gated() {
+        let request = r#"{"method":"eth_getTransactionCount","params":["0x295a70b2de5e3953354a6a8344e616ed314d7251","latest","0x7"]}"#;
+        let result = serde_json::from_str::<EthRequest>(request);
+
+        #[cfg(feature = "base")]
+        {
+            let EthRequest::EthGetTransactionCount(params) = result.unwrap() else {
+                panic!("unexpected request variant")
+            };
+            let (_, block, nonce_key) = params.into_parts();
+            assert_eq!(block, Some(BlockId::latest()));
+            assert_eq!(nonce_key, Some(U256::from(7)));
+        }
+        #[cfg(not(feature = "base"))]
+        assert!(result.is_err());
     }
 
     #[test]

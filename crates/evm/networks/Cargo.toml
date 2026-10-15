@@ -27,6 +27,9 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 
+# Base
+base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
+
 revm = { workspace = true, features = [
     "std",
     "serde",
@@ -51,3 +54,4 @@ serde_json.workspace = true
 default = ["optimism"]
 monad = ["dep:monad-revm", "foundry-evm-hardforks/monad"]
 optimism = ["dep:alloy-op-hardforks", "foundry-evm-hardforks/optimism"]
+base = ["dep:base-common-precompiles", "foundry-evm-hardforks/base"]

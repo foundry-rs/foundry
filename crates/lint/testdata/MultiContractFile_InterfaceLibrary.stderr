@@ -1,4 +1,4 @@
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/MultiContractFile_InterfaceLibrary.sol:LL:CC
    │
 LL │ interface I1 {}
@@ -6,7 +6,7 @@ LL │ interface I1 {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/MultiContractFile_InterfaceLibrary.sol:LL:CC
    │
 LL │ library L1 {}
@@ -14,7 +14,7 @@ LL │ library L1 {}
    │
    ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
+note[multi-contract-file]: file contains multiple contracts, interfaces or libraries
    ╭▸ ROOT/testdata/MultiContractFile_InterfaceLibrary.sol:LL:CC
    │
 LL │ contract C1 {}

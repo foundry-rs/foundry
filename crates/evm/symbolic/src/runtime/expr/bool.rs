@@ -1,4 +1,10 @@
 use super::{hashcons::HashConsed, *};
+use foundry_evm::revm::interpreter::instructions::i256::i256_cmp;
+
+/// Bounds both the number of distinct word nodes inspected by constant-ITE equality expansion and
+/// the unfolded size of the Boolean expression it could produce.
+const MAX_CONSTANT_ITE_EQ_NODES: usize = 128;
+const MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES: usize = 8 * 1024;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymBoolExpr {
@@ -20,12 +26,13 @@ pub(in crate::runtime) enum SymBoolExprKind {
 }
 
 impl SymBoolExpr {
-    pub(in crate::runtime) fn kind(&self) -> &SymBoolExprKind {
-        self.kind.value()
+    #[inline]
+    pub(in crate::runtime) fn stable_hash_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.kind.stable_hash_cmp(&other.kind)
     }
 
-    pub(in crate::runtime) fn into_kind(self) -> SymBoolExprKind {
-        self.kind.into_value()
+    pub(in crate::runtime) fn kind(&self) -> &SymBoolExprKind {
+        self.kind.value()
     }
 
     pub(in crate::runtime) fn from_kind(cx: &mut SymCx, kind: SymBoolExprKind) -> Self {
@@ -46,7 +53,7 @@ impl SymBoolExpr {
             Self::constant(cx, op.eval(word, value))
         } else {
             let value = SymExpr::constant(cx, value);
-            Self::cmp(cx, op, word.clone(), value)
+            Self::cmp_word_expr(cx, op, word, value)
         }
     }
 
@@ -64,6 +71,27 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn cmp(cx: &mut SymCx, op: SymCmpOp, left: SymExpr, right: SymExpr) -> Self {
+        if let (
+            SymExprKind::Ite(left_condition, left_then, left_else),
+            SymExprKind::Ite(right_condition, right_then, right_else),
+        ) = (left.kind(), right.kind())
+            && left_condition == right_condition
+            && let (Some(left_then), Some(left_else), Some(right_then), Some(right_else)) = (
+                left_then.as_const(),
+                left_else.as_const(),
+                right_then.as_const(),
+                right_else.as_const(),
+            )
+        {
+            // Compare aligned constant-arm ITEs pointwise without expanding either expression.
+            return match (op.eval(left_then, right_then), op.eval(left_else, right_else)) {
+                (true, true) => Self::constant(cx, true),
+                (false, false) => Self::constant(cx, false),
+                (true, false) => left_condition.clone(),
+                (false, true) => Self::not_bool(cx, left_condition.clone()),
+            };
+        }
+
         match op {
             SymCmpOp::Eq => {
                 if let Some(condition) = Self::ite_eq_arm(cx, &left, &right)
@@ -277,22 +305,22 @@ impl SymBoolExpr {
         let SymExprKind::Ite(condition, then_expr, else_expr) = word.kind() else { return None };
         match (then_expr.as_const(), else_expr.as_const()) {
             (Some(then_value), Some(else_value))
-                if then_value == U256::from(1) && else_value.is_zero() =>
+                if then_value == U256::ONE && else_value.is_zero() =>
             {
                 Some(if value.is_zero() {
                     Self::not_bool(cx, condition.clone())
-                } else if value == U256::from(1) {
+                } else if value == U256::ONE {
                     condition.clone()
                 } else {
                     Self::constant(cx, false)
                 })
             }
             (Some(then_value), Some(else_value))
-                if then_value.is_zero() && else_value == U256::from(1) =>
+                if then_value.is_zero() && else_value == U256::ONE =>
             {
                 Some(if value.is_zero() {
                     condition.clone()
-                } else if value == U256::from(1) {
+                } else if value == U256::ONE {
                     Self::not_bool(cx, condition.clone())
                 } else {
                     Self::constant(cx, false)
@@ -315,7 +343,135 @@ impl SymBoolExpr {
             let condition = Self::not_bool(cx, condition.clone());
             return Some(Self::or(cx, vec![condition, then_matches]));
         }
+        if let Some(expected_value) = expected.as_const() {
+            let mut cost_cache = HashMap::default();
+            let mut remaining = MAX_CONSTANT_ITE_EQ_NODES;
+            if Self::constant_ite_eq_unfolded_nodes(conditional, &mut cost_cache, &mut remaining)
+                .is_none()
+            {
+                let (left, right) =
+                    SymExpr::ordered_commutative_operands(conditional.clone(), expected.clone());
+                return Some(Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)));
+            }
+
+            let mut cache = HashMap::default();
+            let mut remaining = MAX_CONSTANT_ITE_EQ_NODES;
+            return Self::constant_ite_eq(
+                cx,
+                conditional,
+                expected_value,
+                &mut cache,
+                &mut remaining,
+            );
+        }
         None
+    }
+
+    /// Computes a conservative upper bound for the unfolded Boolean result without interning it.
+    ///
+    /// Cached child costs are deliberately added again at each use. This keeps construction of a
+    /// small shared word DAG from creating a Boolean DAG that becomes exponential when a later
+    /// consumer traverses occurrences instead of identities.
+    fn constant_ite_eq_unfolded_nodes(
+        expr: &SymExpr,
+        cache: &mut HashMap<SymExpr, Option<usize>>,
+        remaining: &mut usize,
+    ) -> Option<usize> {
+        if let Some(cached) = cache.get(expr) {
+            return *cached;
+        }
+        if *remaining == 0 {
+            cache.insert(expr.clone(), None);
+            return None;
+        }
+        *remaining -= 1;
+
+        let result = match expr.kind() {
+            SymExprKind::Const(_) => Some(1),
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                let then_nodes = Self::constant_ite_eq_unfolded_nodes(then_expr, cache, remaining)?;
+                let else_nodes = Self::constant_ite_eq_unfolded_nodes(else_expr, cache, remaining)?;
+
+                let mut pending = vec![condition];
+                let mut condition_nodes = 0usize;
+                while let Some(condition) = pending.pop() {
+                    condition_nodes = condition_nodes.checked_add(1)?;
+                    if condition_nodes > MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES {
+                        return None;
+                    }
+                    match condition.kind() {
+                        SymBoolExprKind::Not(value) => pending.push(value),
+                        SymBoolExprKind::And(values) => pending.extend(values.iter()),
+                        SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) => {}
+                    }
+                }
+
+                // Two selected branches and the `or` encoding add at most seven Boolean wrapper
+                // occurrences around both children and two occurrences of the condition.
+                then_nodes
+                    .checked_add(else_nodes)
+                    .and_then(|nodes| nodes.checked_add(2 * condition_nodes))
+                    .and_then(|nodes| nodes.checked_add(7))
+                    .filter(|nodes| *nodes <= MAX_CONSTANT_ITE_EQ_UNFOLDED_NODES)
+            }
+            _ => None,
+        };
+        cache.insert(expr.clone(), result);
+        result
+    }
+
+    fn constant_ite_eq(
+        cx: &mut SymCx,
+        expr: &SymExpr,
+        expected: U256,
+        cache: &mut HashMap<SymExpr, Option<Self>>,
+        remaining: &mut usize,
+    ) -> Option<Self> {
+        if let Some(cached) = cache.get(expr) {
+            return cached.clone();
+        }
+        if *remaining == 0 {
+            cache.insert(expr.clone(), None);
+            return None;
+        }
+        *remaining -= 1;
+
+        let result = match expr.kind() {
+            SymExprKind::Const(value) => Some(Self::constant(cx, *value == expected)),
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                let condition = condition.clone();
+                let then_matches = Self::constant_ite_eq(cx, then_expr, expected, cache, remaining);
+                let else_matches = Self::constant_ite_eq(cx, else_expr, expected, cache, remaining);
+                match (then_matches, else_matches) {
+                    (Some(then_matches), Some(else_matches)) => {
+                        let then_selected =
+                            Self::and_ite_branch(cx, condition.clone(), then_matches);
+                        let condition = Self::not_bool(cx, condition);
+                        let else_selected = Self::and_ite_branch(cx, condition, else_matches);
+                        Some(Self::or(cx, vec![then_selected, else_selected]))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        cache.insert(expr.clone(), result.clone());
+        result
+    }
+
+    /// Builds one selected ITE branch without flattening a cached child conjunction.
+    ///
+    /// Flattening here makes a linear ITE chain retain conjunctions of lengths `1..n` in the
+    /// per-call cache. Keeping this pair binary preserves the shared DAG and leaves flattening to
+    /// solver constraint normalization, where only the final expression is expanded.
+    fn and_ite_branch(cx: &mut SymCx, condition: Self, branch: Self) -> Self {
+        match (condition.as_const(), branch.as_const()) {
+            (Some(false), _) | (_, Some(false)) => Self::constant(cx, false),
+            (Some(true), _) => branch,
+            (_, Some(true)) => condition,
+            _ if condition == branch => condition,
+            _ => Self::from_kind(cx, SymBoolExprKind::And(vec![condition, branch].into())),
+        }
     }
 
     pub(crate) fn as_const(&self) -> Option<bool> {
@@ -341,11 +497,46 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::GasLeft(_)))
+        self.visit_bool(|expr| expr.is_raw_gasleft())
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
         self.visit_bool(|expr| expr.contains_udiv())
+    }
+
+    pub(crate) fn implies_unsigned_less_or_equal(
+        &self,
+        expected: bool,
+        left: &SymExpr,
+        right: &SymExpr,
+        remaining: &mut usize,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        let Some(next) = remaining.checked_sub(1) else { return false };
+        *remaining = next;
+
+        match self.kind() {
+            SymBoolExprKind::Not(value) => {
+                value.implies_unsigned_less_or_equal(!expected, left, right, remaining)
+            }
+            SymBoolExprKind::And(values) if expected => values
+                .iter()
+                .any(|value| value.implies_unsigned_less_or_equal(true, left, right, remaining)),
+            SymBoolExprKind::Cmp(op, fact_left, fact_right) => match (*op, expected) {
+                (SymCmpOp::Ult | SymCmpOp::Ule, true) => fact_left == left && fact_right == right,
+                (SymCmpOp::Uge | SymCmpOp::Ugt, true) => fact_right == left && fact_left == right,
+                (SymCmpOp::Ult | SymCmpOp::Ule, false) => fact_right == left && fact_left == right,
+                (SymCmpOp::Uge | SymCmpOp::Ugt, false) => fact_left == left && fact_right == right,
+                (SymCmpOp::Eq, true) => {
+                    (fact_left == left && fact_right == right)
+                        || (fact_right == left && fact_left == right)
+                }
+                (SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt, _) => false,
+            },
+            SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
+        }
     }
 
     pub(crate) fn forces_expr_const_with_context(
@@ -390,27 +581,31 @@ impl SymBoolExpr {
             SymBoolExprKind::Cmp(op, left, right) => {
                 if *op == SymCmpOp::Eq {
                     return match (left == expr, right == expr) {
-                        (true, _) => right.eval().and_then(|value| usize::try_from(value).ok()),
-                        (_, true) => left.eval().and_then(|value| usize::try_from(value).ok()),
+                        (true, _) => right.as_const().and_then(|value| usize::try_from(value).ok()),
+                        (_, true) => left.as_const().and_then(|value| usize::try_from(value).ok()),
                         _ => None,
                     };
                 }
                 if left == expr {
                     match *op {
                         SymCmpOp::Ult => right
-                            .eval()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
+                            .as_const()
+                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
                             .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Ule => right.eval().and_then(|value| usize::try_from(value).ok()),
+                        SymCmpOp::Ule => {
+                            right.as_const().and_then(|value| usize::try_from(value).ok())
+                        }
                         _ => None,
                     }
                 } else if right == expr {
                     match *op {
                         SymCmpOp::Ugt => left
-                            .eval()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
+                            .as_const()
+                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
                             .and_then(|value| usize::try_from(value).ok()),
-                        SymCmpOp::Uge => left.eval().and_then(|value| usize::try_from(value).ok()),
+                        SymCmpOp::Uge => {
+                            left.as_const().and_then(|value| usize::try_from(value).ok())
+                        }
                         _ => None,
                     }
                 } else {
@@ -424,21 +619,7 @@ impl SymBoolExpr {
         &self,
         model: &M,
     ) -> Result<bool, SymbolicError> {
-        Ok(match self.kind() {
-            SymBoolExprKind::Const(value) => *value,
-            SymBoolExprKind::Not(value) => !value.eval_model(model)?,
-            SymBoolExprKind::And(values) => {
-                for value in values.iter() {
-                    if !value.eval_model(model)? {
-                        return Ok(false);
-                    }
-                }
-                true
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                op.eval(left.eval_model(model)?, right.eval_model(model)?)
-            }
-        })
+        ModelEvaluator::new(model).eval_bool(self)
     }
 
     pub(crate) fn eval_model_if_complete<M: SymbolicModelLookup + ?Sized>(
@@ -454,27 +635,15 @@ impl SymBoolExpr {
         }
     }
 
-    /// Visits all word expressions contained in this boolean expression.
+    /// Visits each distinct word expression once, in depth-first, left-to-right order.
     pub(crate) fn visit_exprs<B>(
         &self,
         visitor: &mut impl FnMut(&SymExpr) -> ControlFlow<B>,
     ) -> ControlFlow<B> {
-        match self.kind() {
-            SymBoolExprKind::Const(_) => {}
-            SymBoolExprKind::Not(value) => value.visit_exprs(visitor)?,
-            SymBoolExprKind::And(values) => {
-                for value in values.iter() {
-                    value.visit_exprs(visitor)?;
-                }
-            }
-            SymBoolExprKind::Cmp(_, left, right) => {
-                left.visit(visitor)?;
-                right.visit(visitor)?;
-            }
-        }
-        ControlFlow::Continue(())
+        visit_unique(None, Some(self), visitor)
     }
 
+    /// Returns whether any word node satisfies `visitor`, visiting each distinct node once.
     pub(crate) fn visit_bool(&self, mut visitor: impl FnMut(&SymExpr) -> bool) -> bool {
         self.visit_exprs(&mut |expr| {
             if visitor(expr) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
@@ -482,61 +651,91 @@ impl SymBoolExpr {
         .is_break()
     }
 
+    /// Rewrites each distinct Boolean node once in bottom-up order.
+    ///
+    /// The folder must return the same result for every occurrence of one hash-consed node.
     pub(crate) fn fold(
-        self,
+        &self,
         cx: &mut SymCx,
         folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
     ) -> Self {
-        if matches!(self.kind(), SymBoolExprKind::Const(_)) {
-            return folder(cx, self);
-        }
-
-        let expr = match self.into_kind() {
-            SymBoolExprKind::Not(value) => {
-                let value = value.fold(cx, folder);
-                Self::not_bool(cx, value)
-            }
-            SymBoolExprKind::And(values) => {
-                let values = values.iter().cloned().map(|value| value.fold(cx, folder)).collect();
-                Self::and(cx, values)
-            }
-            SymBoolExprKind::Cmp(op, left, right) => Self::cmp(cx, op, left, right),
-            SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding"),
-        };
-        folder(cx, expr)
+        let mut folded = HashMap::default();
+        self.fold_cached(cx, folder, &mut folded)
     }
 
-    pub(crate) fn fold_exprs(
-        self,
+    fn fold_cached<'a>(
+        &'a self,
         cx: &mut SymCx,
-        folder: &mut impl FnMut(&mut SymCx, SymExpr) -> SymExpr,
+        folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
+        folded: &mut HashMap<&'a Self, Self>,
     ) -> Self {
-        if matches!(self.kind(), SymBoolExprKind::Const(_)) {
-            return self;
+        if let Some(expr) = folded.get(self) {
+            return expr.clone();
         }
 
-        match self.into_kind() {
+        let expr = match self.kind() {
+            SymBoolExprKind::Const(_) => self.clone(),
             SymBoolExprKind::Not(value) => {
-                let value = value.fold_exprs(cx, folder);
+                let value = value.fold_cached(cx, folder, folded);
                 Self::not_bool(cx, value)
             }
             SymBoolExprKind::And(values) => {
                 let values =
-                    values.iter().cloned().map(|value| value.fold_exprs(cx, folder)).collect();
+                    values.iter().map(|value| value.fold_cached(cx, folder, folded)).collect();
                 Self::and(cx, values)
             }
             SymBoolExprKind::Cmp(op, left, right) => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                Self::cmp(cx, op, left, right)
+                Self::cmp_word_expr(cx, *op, left, right.clone())
             }
-            SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding exprs"),
-        }
+        };
+        let expr = folder(cx, expr);
+        folded.insert(self, expr.clone());
+        expr
     }
 
-    #[cfg(test)]
-    pub(crate) fn raw_and(cx: &mut SymCx, values: Vec<Self>) -> Self {
-        Self::from_kind(cx, SymBoolExprKind::And(values.into()))
+    /// Rewrites each distinct word node once while rebuilding this Boolean expression.
+    ///
+    /// The folder must return the same result for every occurrence of one hash-consed node.
+    pub(crate) fn fold_exprs(
+        &self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, SymExpr) -> SymExpr,
+    ) -> Self {
+        let mut folded = ExpressionFoldCache::default();
+        self.fold_exprs_cached(cx, folder, &mut folded)
+    }
+
+    pub(in crate::runtime::expr) fn fold_exprs_cached<'a>(
+        &'a self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, SymExpr) -> SymExpr,
+        folded: &mut ExpressionFoldCache<'a>,
+    ) -> Self {
+        if let Some(expr) = folded.bools.get(self) {
+            return expr.clone();
+        }
+
+        let expr = match self.kind() {
+            SymBoolExprKind::Const(_) => self.clone(),
+            SymBoolExprKind::Not(value) => {
+                let value = value.fold_exprs_cached(cx, folder, folded);
+                Self::not_bool(cx, value)
+            }
+            SymBoolExprKind::And(values) => {
+                let values = values
+                    .iter()
+                    .map(|value| value.fold_exprs_cached(cx, folder, folded))
+                    .collect();
+                Self::and(cx, values)
+            }
+            SymBoolExprKind::Cmp(op, left, right) => {
+                let left = left.fold_cached(cx, folder, folded);
+                let right = right.fold_cached(cx, folder, folded);
+                Self::cmp(cx, *op, left, right)
+            }
+        };
+        folded.bools.insert(self, expr.clone());
+        expr
     }
 
     pub(crate) fn cmp_word_expr(
@@ -553,20 +752,16 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit_exprs(&mut |expr| {
-            if let Some(var) = expr.kind().get_var() {
-                vars.insert(var);
-            }
-            ControlFlow::<()>::Continue(())
+        let _ = self.visit_exprs::<()>(&mut |expr| {
+            vars.extend(expr.kind().get_var());
+            ControlFlow::Continue(())
         });
     }
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit_exprs(&mut |expr| {
-            if let Some(var) = expr.kind().get_eval_var() {
-                vars.insert(var);
-            }
-            ControlFlow::<()>::Continue(())
+        let _ = self.visit_exprs::<()>(&mut |expr| {
+            vars.extend(expr.kind().get_eval_var());
+            ControlFlow::Continue(())
         });
     }
 
@@ -634,8 +829,81 @@ impl SymCmpOp {
             Self::Ugt => left > right,
             Self::Ule => left <= right,
             Self::Uge => left >= right,
-            Self::Slt => slt(left, right),
-            Self::Sgt => slt(right, left),
+            Self::Slt => i256_cmp(&left, &right).is_lt(),
+            Self::Sgt => i256_cmp(&left, &right).is_gt(),
         }
     }
+}
+
+/// Visits reachable word nodes in depth-first, left-to-right order until the visitor breaks.
+///
+/// Expressions are hash-consed DAGs, so each distinct node is visited once. A tree walk would
+/// revisit shared subexpressions, which grows exponentially along chains such as nested hashes.
+pub(crate) fn visit_unique<'a, B>(
+    word: Option<&'a SymExpr>,
+    condition: Option<&'a SymBoolExpr>,
+    mut visitor: impl FnMut(&SymExpr) -> ControlFlow<B>,
+) -> ControlFlow<B> {
+    enum Node<'a> {
+        Word(&'a SymExpr),
+        Bool(&'a SymBoolExpr),
+    }
+
+    let mut pending = Vec::new();
+    pending.extend(word.map(Node::Word));
+    pending.extend(condition.map(Node::Bool));
+    let mut visited_bools = HashSet::<&SymBoolExpr>::default();
+    let mut visited_words = HashSet::<&SymExpr>::default();
+    while let Some(node) = pending.pop() {
+        match node {
+            Node::Bool(expr) => {
+                if !visited_bools.insert(expr) {
+                    continue;
+                }
+                match expr.kind() {
+                    SymBoolExprKind::Const(_) => {}
+                    SymBoolExprKind::Not(value) => pending.push(Node::Bool(value)),
+                    SymBoolExprKind::And(values) => {
+                        pending.extend(values.iter().rev().map(Node::Bool));
+                    }
+                    SymBoolExprKind::Cmp(_, left, right) => {
+                        pending.push(Node::Word(right));
+                        pending.push(Node::Word(left));
+                    }
+                }
+            }
+            Node::Word(expr) => {
+                if !visited_words.insert(expr) {
+                    continue;
+                }
+                visitor(expr)?;
+                match expr.kind() {
+                    SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {}
+                    SymExprKind::Keccak { len, bytes, .. } => {
+                        pending.extend(bytes.iter().rev().map(Node::Word));
+                        pending.push(Node::Word(len));
+                    }
+                    SymExprKind::Hash { bytes, .. } => {
+                        pending.extend(bytes.iter().rev().map(Node::Word));
+                    }
+                    SymExprKind::Not(value) => pending.push(Node::Word(value)),
+                    SymExprKind::BinOp(_, left, right) => {
+                        pending.push(Node::Word(right));
+                        pending.push(Node::Word(left));
+                    }
+                    SymExprKind::TernOp(_, left, right, modulus) => {
+                        pending.push(Node::Word(modulus));
+                        pending.push(Node::Word(right));
+                        pending.push(Node::Word(left));
+                    }
+                    SymExprKind::Ite(condition, left, right) => {
+                        pending.push(Node::Word(right));
+                        pending.push(Node::Word(left));
+                        pending.push(Node::Bool(condition));
+                    }
+                }
+            }
+        }
+    }
+    ControlFlow::Continue(())
 }

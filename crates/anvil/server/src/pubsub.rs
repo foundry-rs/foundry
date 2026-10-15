@@ -18,7 +18,6 @@ use std::{
 };
 
 /// The general purpose trait for handling RPC requests and subscriptions
-#[async_trait::async_trait]
 pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
     /// The request type to expect
     type Request: DeserializeOwned + Send + Sync + fmt::Debug;
@@ -28,7 +27,11 @@ pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
     type Subscription: Stream<Item = serde_json::Value> + Send + Sync + Unpin;
 
     /// Invoked when the request was received
-    async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult;
+    fn on_request(
+        &self,
+        request: Self::Request,
+        cx: PubSubContext<Self>,
+    ) -> impl Future<Output = ResponseResult> + Send;
 }
 
 type Subscriptions<SubscriptionId, Subscription> = Arc<Mutex<Vec<(SubscriptionId, Subscription)>>>;
@@ -97,12 +100,11 @@ impl<Handler: PubSubRpcHandler> Clone for ContextAwareHandler<Handler> {
     }
 }
 
-#[async_trait::async_trait]
 impl<Handler: PubSubRpcHandler> RpcHandler for ContextAwareHandler<Handler> {
     type Request = Handler::Request;
 
-    async fn on_request(&self, request: Self::Request) -> ResponseResult {
-        self.handler.on_request(request, self.context.clone()).await
+    fn on_request(&self, request: Self::Request) -> impl Future<Output = ResponseResult> + Send {
+        self.handler.on_request(request, self.context.clone())
     }
 }
 
@@ -141,7 +143,12 @@ impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection
                 Ok(req) => handle_request(req, handler).await,
                 Err(err) => {
                     error!(target: "rpc", ?err, "invalid request");
-                    Some(Response::error(RpcError::invalid_request()))
+                    let err = if err.is_syntax() || err.is_eof() {
+                        RpcError::parse_error()
+                    } else {
+                        RpcError::invalid_request()
+                    };
+                    Some(Response::error(err))
                 }
             }
         }));
@@ -276,7 +283,6 @@ mod tests {
         requests: Arc<AtomicUsize>,
     }
 
-    #[async_trait::async_trait]
     impl PubSubRpcHandler for TestHandler {
         type Request = serde_json::Value;
         type SubscriptionId = u64;
@@ -320,6 +326,15 @@ mod tests {
             response,
             Some(Response::Single(RpcResponse::from(RpcError::invalid_request())))
         );
+    }
+
+    #[test]
+    fn process_request_returns_parse_error_for_malformed_json() {
+        let mut connection = PubSubConnection::new((), TestHandler::default());
+        connection.process_request(serde_json::from_str("{"));
+
+        let response = run_ready(connection.processing.pop().unwrap());
+        assert_eq!(response, Some(Response::error(RpcError::parse_error())));
     }
 
     #[test]

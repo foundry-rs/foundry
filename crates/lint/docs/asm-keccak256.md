@@ -1,42 +1,34 @@
-# Inefficient keccak256 call
+# High-level `keccak256` call
 
 **Severity**: `Gas`
 **ID**: `asm-keccak256`
 
-Flags calls to the high-level `keccak256(...)` builtin that can be cheaply rewritten with inline
-assembly.
-
 ## What it does
 
-Reports `keccak256(arg)` calls and (when possible) emits a fix suggestion that uses inline
-assembly to compute the hash directly, avoiding the overhead of the high-level call.
+Reports direct `keccak256(...)` calls in statements and initializers for gas review.
 
 ## Why is this bad?
 
-The high-level `keccak256` call performs additional memory management and ABI encoding compared
-to a direct `keccak256(ptr, len)` opcode invocation. In hot paths the difference is visible in
-gas reports.
+Hashing freshly encoded arguments can allocate memory and copy data. A carefully written assembly
+block can avoid some of that work. Savings depend on the input layout and compiler settings;
+measure them before replacing high-level code, and preserve the exact bytes being hashed.
 
 ## Example
 
-### Bad
-
 ```solidity
-bytes32 h = keccak256(abi.encodePacked(a, b));
-```
-
-### Good
-
-```solidity
-bytes32 h;
-assembly ("memory-safe") {
-    let m := mload(0x40)
-    mstore(m, a)
-    mstore(add(m, 0x20), b)
-    h := keccak256(m, 0x40)
+function hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
+    return keccak256(abi.encodePacked(a, b));
 }
 ```
 
-## Notes
+Use instead:
 
-This is a `Gas`-severity lint and is **not** applied to test or script files.
+```solidity
+function hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32 h) {
+    assembly ("memory-safe") {
+        mstore(0x00, a)
+        mstore(0x20, b)
+        h := keccak256(0x00, 0x40)
+    }
+}
+```

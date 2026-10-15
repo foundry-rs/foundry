@@ -88,6 +88,18 @@ impl<'ast> State<'_, 'ast> {
         if !item_needs_iso(&next_item.kind) {
             return;
         }
+        // Never isolate items within a `disable-start`/`disable-end` region, where the source
+        // layout is preserved verbatim. The cursor sits right past the line break that follows the
+        // previous item, so check the byte that was last copied from the source. Line-based
+        // directives such as `disable-line` only opt out of formatting that line's contents, so
+        // they keep the isolation break.
+        if self.cursor.pos > BytePos(0)
+            && self
+                .inline_config
+                .is_disabled_block(Span::new(self.cursor.pos - BytePos(1), self.cursor.pos))
+        {
+            return;
+        }
         let span = next_item.span;
 
         let cmnts = self
@@ -120,24 +132,22 @@ impl<'ast> State<'_, 'ast> {
         let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
 
-        if self.handle_span(item.span, skip_ws) {
+        // The comments preceding the item are printed before checking whether it is disabled,
+        // because printing a disabled item copies the source verbatim and drops every comment
+        // that ends before it.
+        let cmnt = self.print_comments(
+            span.lo(),
+            if skip_ws { CommentConfig::skip_leading_ws(false) } else { CommentConfig::default() },
+        );
+
+        if self.print_span_if_disabled(span) {
             if !self.print_trailing_comment(span.hi(), None) {
                 self.print_sep(Separator::Hardbreak);
             }
             return;
         }
 
-        if self
-            .print_comments(
-                span.lo(),
-                if skip_ws {
-                    CommentConfig::skip_leading_ws(false)
-                } else {
-                    CommentConfig::default()
-                },
-            )
-            .is_some_and(|cmnt| cmnt.is_mixed())
-        {
+        if cmnt.is_some_and(|cmnt| cmnt.is_mixed()) {
             self.zerobreak();
         }
 
@@ -159,7 +169,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
-        self.cursor.next_line(self.is_at_crlf());
+        self.cursor_next_line();
     }
 
     fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
@@ -314,6 +324,17 @@ impl<'ast> State<'_, 'ast> {
         self.contract = Some(c);
         self.cursor.advance_to(span.lo(), true);
 
+        // Position of the body's opening brace, needed to identify the comments that belong to
+        // the contract header. The `is` and `layout` clauses can appear in either order, so the
+        // header ends at whichever clause ends last.
+        let header_hi = bases
+            .last()
+            .map(|base| base.span().hi())
+            .max(layout.as_ref().map(|layout| layout.span.hi()))
+            .unwrap_or(name.span.hi());
+        let body_lo = body.first().map_or(span.hi(), |item| item.span.lo());
+        let brace = self.find_opening_brace(Span::new(header_hi, body_lo));
+
         self.s.cbox(self.ind);
         self.ibox(0);
         self.cbox(0);
@@ -326,7 +347,8 @@ impl<'ast> State<'_, 'ast> {
         {
             self.word("layout at ");
             self.print_expr(layout.slot);
-            self.print_sep(Separator::Space);
+            let breaks = !bases.is_empty() || !self.peek_mixed_comment_before(brace);
+            self.print_sep(Separator::SpaceOrNbsp(breaks));
         }
 
         if let Some(first) = bases.first().map(|base| base.span())
@@ -355,23 +377,39 @@ impl<'ast> State<'_, 'ast> {
                     }
                 }
             }
-            if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+            if self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+                self.s.offset(-self.ind);
+            } else if self.peek_mixed_comment_before(brace) {
+                self.nbsp();
+            } else {
                 self.space();
+                self.s.offset(-self.ind);
             }
-            self.s.offset(-self.ind);
+        }
+
+        // Print the comments preceding the opening brace, otherwise they get relocated into the
+        // contract body. They are glued to both the header and the brace, as breaking them apart
+        // turns them into trailing comments, which are relocated again on the next run.
+        while self.peek_mixed_comment_before(brace) {
+            let cmnt = self.next_comment().unwrap();
+            if let Some(cmnt) = self.handle_comment(cmnt, true) {
+                self.print_comment(cmnt, CommentConfig::skip_ws().mixed_no_break());
+            }
+            self.nbsp();
         }
         self.end();
 
         self.print_word("{");
         self.end();
         if body.is_empty() {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+            match self.print_comments(span.hi(), CommentConfig::empty_block()) {
                 // Adjust the offset of the trailing break from comment printing
                 // so the closing brace is not indented
-                self.s.offset(-self.ind);
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
+                Some(_) if self.last_token_is_break() => self.s.offset(-self.ind),
+                Some(_) => {}
+                None if self.config.bracket_spacing => self.nbsp(),
+                None => {}
+            }
             self.end();
         } else {
             // update block depth
@@ -400,25 +438,50 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
-            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws())
-                && self.config.contract_new_lines
-                && !cmnt.is_blank()
-            {
-                self.print_sep(Separator::Hardbreak);
+            let cmnt = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws());
+            let mut glued = false;
+            if self.last_token_is_break() {
+                if self.config.contract_new_lines && cmnt.is_some_and(|cmnt| !cmnt.is_blank()) {
+                    self.print_sep(Separator::Hardbreak);
+                }
+                self.s.offset(-self.ind);
+            } else {
+                glued = self.glue_brace_to_trailing_comments(cmnt.is_some());
             }
-            self.s.offset(-self.ind);
             self.end();
-            if self.config.contract_new_lines {
+            if self.config.contract_new_lines && !glued {
                 self.hardbreak_if_nonempty();
             }
 
             // restore block depth
             self.block_depth -= 1;
         }
-        self.print_word("}");
+        // The cursor is updated with the actual span; a disabled trailing comment of the last item
+        // may have already consumed source beyond the closing brace.
+        self.word("}");
 
         self.cursor.advance_to(span.hi(), true);
         self.contract = None;
+    }
+
+    /// Glues the closing brace of an item body to a trailing run of mixed comments.
+    ///
+    /// A trailing run of mixed comments ends in a string token; a break in between would
+    /// reclassify the last comment on the next run, so the brace is glued with a hard space.
+    /// Bodies that end with a pending break (the caller adjusts its offset instead), an existing
+    /// space, or verbatim source that already broke the line are left unchanged.
+    ///
+    /// Returns `true` if the brace was glued.
+    fn glue_brace_to_trailing_comments(&mut self, printed: bool) -> bool {
+        if printed
+            && !self.last_token_is_break()
+            && !self.last_token_is_space()
+            && !self.is_beginning_of_line()
+        {
+            self.nbsp();
+            return true;
+        }
+        false
     }
 
     fn print_struct(&mut self, strukt: &'ast ast::ItemStruct<'ast>, span: Span) {
@@ -439,9 +502,15 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
-        if ind == 0 {
-            self.s.offset(-self.ind);
+        let cmnt_config =
+            if fields.is_empty() { CommentConfig::empty_block() } else { CommentConfig::skip_ws() };
+        let printed = self.print_comments(span.hi(), cmnt_config).is_some();
+        if self.last_token_is_break() {
+            if ind == 0 {
+                self.s.offset(-self.ind);
+            }
+        } else {
+            self.glue_brace_to_trailing_comments(printed);
         }
         self.end();
         self.end();
@@ -455,18 +524,26 @@ impl<'ast> State<'_, 'ast> {
         self.print_ident(name);
         self.word(" {");
         self.hardbreak_if_nonempty();
+        let mut printed = false;
         for (pos, ident) in variants.iter().delimited() {
             self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
             if !pos.is_last {
                 self.word(",");
             }
-            if !self.print_trailing_comment(ident.span.hi(), None) {
+            printed = self.print_trailing_comment(ident.span.hi(), None);
+            if !printed {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
-        self.s.offset(-self.ind);
+        if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+            printed = true;
+        }
+        if self.last_token_is_break() {
+            self.s.offset(-self.ind);
+        } else {
+            self.glue_brace_to_trailing_comments(printed);
+        }
         self.end();
         self.word("}");
     }
@@ -687,12 +764,25 @@ impl<'ast> State<'_, 'ast> {
     ) {
         match map.remove(&span.lo()) {
             Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
-                // Print preceding comments.
+                // Print preceding comments. The separator before the attribute is printed below,
+                // so a mixed comment must not add one of its own or the two become a blank line.
+                let mut previous_mixed = false;
                 for cmnt in pre_cmnts {
+                    // A line comment after a mixed comment becomes isolated once the header wraps.
+                    if previous_mixed
+                        && cmnt.style.is_trailing()
+                        && matches!(cmnt.kind, ast::CommentKind::Line)
+                    {
+                        self.hardbreak_if_not_bol();
+                    }
+                    previous_mixed = cmnt.style.is_mixed();
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
-                    self.print_comment(cmnt, CommentConfig::default());
+                    self.print_comment(
+                        cmnt,
+                        CommentConfig::default().mixed_no_break_post().mixed_prev_space(),
+                    );
                 }
                 // Push the inner comments back to the queue, so that they are printed in their
                 // intended place.
@@ -807,7 +897,19 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
-        let rhs_size = self.estimate_size(rhs.span);
+        let rhs_size = if is_binary_expr(&rhs.kind)
+            && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
+        {
+            self.estimate_binary_size(rhs)
+        } else if assignment_member_depth(rhs) >= 2
+            && self.peek_comment_before(rhs.span.lo()).is_none()
+        {
+            // These chains can break before a member after collapsing their terminal delimiters.
+            // Size that collapsed form before choosing the assignment break instead.
+            self.estimate_assignment_size(rhs.span)
+        } else {
+            self.estimate_size(rhs.span)
+        };
         let overflows = lhs_size + rhs_size >= space_left;
         let fits_alone = rhs_size + self.config.tab_width < space_left;
         let fits_alone_no_cmnts =
@@ -878,7 +980,7 @@ impl<'ast> State<'_, 'ast> {
                         && get_callee_head_size(lhs) + lhs_size <= space_left
                     {
                         // Keep complex exprs (where callee fits) inline, as they will have breaks
-                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                        if is_call(&lhs.kind) {
                             self.s.ibox(-self.ind);
                             print_inline(self);
                             self.end();
@@ -1112,6 +1214,13 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::TypeKind::Array(ast::TypeArray { element, size }) => {
                 self.print_ty(element);
+                let open_bracket = self
+                    .find_uncommented_char(Span::new(element.span.hi(), ty.span.hi()), '[')
+                    .unwrap();
+                self.print_comments(
+                    open_bracket,
+                    CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+                );
                 if let Some(size) = size {
                     self.word("[");
                     self.print_expr(size);
@@ -1172,9 +1281,9 @@ impl<'ast> State<'_, 'ast> {
                 // 'mapping(' + {key} + ' => ' {value} ') ' + {name} + ';'
                 // To be more conservative, we use 18 to decide whether to force a break or not.
                 else if 18
-                    + self.estimate_size(key.span)
+                    + self.estimate_type_size(key)
                     + key_name.map(|k| self.estimate_size(k.span)).unwrap_or(0)
-                    + self.estimate_size(value.span)
+                    + self.estimate_type_size(value)
                     + value_name.map(|v| self.estimate_size(v.span)).unwrap_or(0)
                     >= self.space_left()
                 {
@@ -1203,12 +1312,11 @@ impl<'ast> State<'_, 'ast> {
                 // consumes "comment6" of which should be printed after the `=>`
                 self.print_comments(
                     value.span.lo(),
-                    CommentConfig::skip_ws()
-                        .trailing_no_break()
-                        .mixed_no_break()
-                        .mixed_prev_space(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 );
-                self.space();
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
                 self.s.offset(self.ind);
                 self.word("=> ");
                 self.s.ibox(self.ind);
@@ -1344,7 +1452,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
-                        self.estimate_size(call_args.span),
+                        self.estimate_call_args_size(call_args.span),
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
                     |s| {
@@ -1440,7 +1548,10 @@ impl<'ast> State<'_, 'ast> {
                 |this, expr| match expr.as_ref() {
                     SpannedOption::Some(expr) => this.print_expr(expr),
                     SpannedOption::None(span) => {
-                        this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
+                        this.print_comments(
+                            span.hi(),
+                            CommentConfig::skip_ws().mixed_no_break_post(),
+                        );
                     }
                 },
                 |expr| match expr.as_ref() {
@@ -1486,6 +1597,16 @@ impl<'ast> State<'_, 'ast> {
 
         let space_left = self.space_left();
         let lhs_size = self.estimate_size(lhs.span);
+        // Normalize only indexes that the existing layout keeps together. Longer indexes keep
+        // their own breaks, so their source delimiter padding remains relevant to that layout.
+        let lhs_size = if matches!(lhs.kind, ast::ExprKind::Index(..))
+            && lhs_size + 2 <= space_left
+            && !self.has_comment_between(lhs.span.lo(), rhs.span.lo())
+        {
+            self.estimate_assignment_size(lhs.span)
+        } else {
+            lhs_size
+        };
         self.print_expr(lhs);
         self.word(" =");
         self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
@@ -1929,12 +2050,17 @@ impl<'ast> State<'_, 'ast> {
     /// Prints the given statement in the source code, handling formatting, inline documentation,
     /// trailing comments and layout logic for various statement kinds.
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
+        self.print_stmt_bound(stmt, None);
+    }
+
+    /// Prints a statement with a bounded trailing-comment scan.
+    fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
 
         // Handle disabled statements.
         if self.handle_span(span, false) {
-            self.print_trailing_comment_no_break(stmt.span.hi(), None);
+            self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
             return;
         }
 
@@ -1999,11 +2125,26 @@ impl<'ast> State<'_, 'ast> {
             self.cursor.advance_to(span.hi(), true);
         }
         // print comments without breaks, as those are handled by the caller.
+        let ends_with_line_comment = self
+            .comments
+            .iter()
+            .take_while(|cmnt| cmnt.pos() < stmt.span.hi())
+            .filter(|cmnt| !cmnt.style.is_blank())
+            .last()
+            .is_some_and(|cmnt| {
+                cmnt.style.is_trailing() && matches!(cmnt.kind, ast::CommentKind::Line)
+            });
         self.print_comments(
             stmt.span.hi(),
-            CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
+            CommentConfig::skip_trailing_ws()
+                .trailing_no_break()
+                .mixed_no_break()
+                .mixed_prev_space(),
         );
-        self.print_trailing_comment_no_break(stmt.span.hi(), None);
+        if ends_with_line_comment && self.peek_comment().is_some() {
+            self.hardbreak_if_not_bol();
+        }
+        self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
     }
 
     /// Prints an `assembly` statement, including optional dialect and flags,
@@ -2097,19 +2238,51 @@ impl<'ast> State<'_, 'ast> {
     ) {
         self.cbox(0);
         self.s.ibox(self.ind);
-        self.print_word("for (");
-        self.zerobreak();
+        let open_paren = self.find_uncommented_char(span, '(').unwrap();
+        self.print_word("for");
+        if self
+            .print_comments(
+                open_paren,
+                CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+            )
+            .is_none()
+        {
+            self.nbsp();
+        }
+        self.cursor.advance_to(open_paren, true);
+        self.print_word("(");
+        let init_has_leading_comment =
+            init.as_ref().is_some_and(|stmt| self.peek_comment_before(stmt.span.lo()).is_some());
+        if !init_has_leading_comment {
+            self.zerobreak();
+        }
 
         // Print init.
         self.s.cbox(0);
-        match init {
-            Some(init_stmt) => self.print_stmt(init_stmt),
-            None => self.print_word(";"),
-        }
+        let init_trailing_comment = match init {
+            Some(init_stmt) => {
+                let has_trailing_comment = cond.as_ref().is_some_and(|cond| {
+                    self.comments
+                        .iter()
+                        .skip_while(|cmnt| cmnt.pos() < init_stmt.span.hi())
+                        .take_while(|cmnt| cmnt.pos() < cond.span.lo())
+                        .any(|cmnt| cmnt.style.is_trailing())
+                });
+                self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
+                has_trailing_comment
+            }
+            None => {
+                self.print_word(";");
+                false
+            }
+        };
 
         // Print condition.
         match cond {
             Some(cond_expr) => {
+                if init_trailing_comment {
+                    self.hardbreak_if_not_bol();
+                }
                 self.print_sep(Separator::Space);
                 self.print_expr(cond_expr);
             }
@@ -2237,7 +2410,7 @@ impl<'ast> State<'_, 'ast> {
             let is_simple = matches!(expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
             let allow_break = overflows && fits_alone;
 
-            self.return_bin_expr = matches!(expr.kind, ast::ExprKind::Binary(..));
+            self.return_bin_expr = is_binary_expr(&expr.kind);
             self.s.ibox(if is_simple || allow_break { self.ind } else { 0 });
 
             self.print_word("return");
@@ -2246,7 +2419,7 @@ impl<'ast> State<'_, 'ast> {
                 expr.span.lo(),
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
             ) {
-                Some(cmnt) if cmnt.is_trailing() && !is_simple => self.s.offset(self.ind),
+                Some(_) if !is_simple => self.s.offset(self.ind),
                 None => self.print_sep(Separator::SpaceOrNbsp(allow_break)),
                 _ => {}
             }
@@ -2399,6 +2572,16 @@ impl<'ast> State<'_, 'ast> {
                 && self.peek_comment_before(then.span.hi()).is_none()
             {
                 self.neverbreak();
+                self.print_sep(Separator::Nbsp);
+            } else if inline
+                && is_call(&cond.kind)
+                && matches!(
+                    self.config.single_line_statement_blocks,
+                    config::SingleLineBlockStyle::Preserve
+                )
+            {
+                // Keep the body beside a wrapped call condition so Preserve sees the same
+                // layout on the next pass.
                 self.print_sep(Separator::Nbsp);
             } else {
                 self.print_sep(Separator::Space);
@@ -2596,7 +2779,7 @@ impl<'ast> State<'_, 'ast> {
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
             let if_span = cond.span.to(then.span);
-            if self.sm.is_multiline(if_span)
+            if !self.same_source_line(if_span.lo(), if_span.hi())
                 && matches!(
                     self.config.single_line_statement_blocks,
                     config::SingleLineBlockStyle::Preserve
@@ -2616,7 +2799,7 @@ impl<'ast> State<'_, 'ast> {
             if matches!(
                 self.config.single_line_statement_blocks,
                 config::SingleLineBlockStyle::Preserve
-            ) && self.sm.is_multiline(stmt.span)
+            ) && !self.same_source_line(stmt.span.lo(), stmt.span.hi())
             {
                 return false;
             }
@@ -2634,7 +2817,7 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
     ) -> bool {
         let span_between = cond.span.between(then.span);
-        if let Ok(snip) = self.sm.span_to_snippet(span_between) {
+        if let Some(snip) = self.snippet(span_between) {
             // Check for newlines after the closing parenthesis of the `if (...)`.
             if let Some((_, after_paren)) = snip.split_once(')') {
                 return after_paren.lines().count() > 1;
@@ -2729,8 +2912,8 @@ impl<'ast> State<'_, 'ast> {
 
         // Check for multiline block.span first.
         // Block can spans multipline because of comments.
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
@@ -2840,6 +3023,27 @@ impl<'ast> State<'_, 'ast> {
         kw + header.name.map_or(0, |name| self.estimate_size(name.span)) + std::cmp::max(2, params)
     }
 
+    /// Estimates a comment-free binary expression using the printed operator spacing.
+    fn estimate_binary_size(&self, expr: &ast::Expr<'_>) -> usize {
+        match &expr.kind {
+            ast::ExprKind::Binary(lhs, op, rhs) => {
+                let spaces = if self.config.pow_no_space && matches!(op.kind, ast::BinOpKind::Pow) {
+                    0
+                } else {
+                    2
+                };
+                self.estimate_binary_size(lhs)
+                    + op.kind.to_str().len()
+                    + spaces
+                    + self.estimate_binary_size(rhs)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(inner)] = exprs.as_ref() => {
+                self.estimate_binary_size(inner) + 2
+            }
+            _ => self.estimate_size(expr.span),
+        }
+    }
+
     fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
         match &expr.kind {
             ast::ExprKind::Binary(lhs, op, _) if op.kind.group() == parent_op.kind.group() => {
@@ -2906,11 +3110,7 @@ impl<'ast> State<'_, 'ast> {
             last_span_end = expr.span.hi();
         }
 
-        if self.has_comment_between(last_span_end, limits.hi()) {
-            return true;
-        }
-
-        false
+        self.has_comment_between(last_span_end, limits.hi())
     }
 }
 
@@ -2982,7 +3182,9 @@ impl<'ast> AttributeCommentMapper<'ast> {
         header: &'ast ast::FunctionHeader<'ast>,
     ) -> (AttributeCommentMap, Vec<AttributeInfo<'ast>>, BytePos) {
         let first_attr = self.collect_attributes(header);
-        self.cache_comments(state);
+        if !self.attributes.is_empty() {
+            self.cache_comments(state);
+        }
         (self.map(), self.attributes, first_attr)
     }
 
@@ -3256,9 +3458,7 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
                 }
 
                 // Chainned calls are not traversed, and instead just the member identifier is used
-                ast::ExprKind::Member(child, ..)
-                    if !matches!(&child.kind, ast::ExprKind::Call(..)) =>
-                {
+                ast::ExprKind::Member(child, ..) if !is_call(&child.kind) => {
                     get_callee_head_size(base) + 1 + member_ident.as_str().len()
                 }
                 _ => member_ident.as_str().len(),
@@ -3267,6 +3467,17 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Binary(lhs, _, _) => get_callee_head_size(lhs),
 
         // If the callee is not an identifier or member access, it has no "head"
+        _ => 0,
+    }
+}
+
+/// Counts member links in an assignment RHS, through calls and indexes.
+fn assignment_member_depth(expr: &ast::Expr<'_>) -> usize {
+    match &expr.kind {
+        ast::ExprKind::Member(child, _) => 1 + assignment_member_depth(child),
+        ast::ExprKind::Call(child, _) | ast::ExprKind::Index(child, _) => {
+            assignment_member_depth(child)
+        }
         _ => 0,
     }
 }
@@ -3314,7 +3525,7 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(gcx.sess.source_map(), config, inline_config, comments);
+                let mut state = State::new(&source_obj.file, config, inline_config, comments);
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast

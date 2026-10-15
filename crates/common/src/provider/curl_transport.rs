@@ -8,68 +8,6 @@ use serde_json::Value;
 use tower::Service;
 use url::Url;
 
-/// Escapes a string for use in a single-quoted shell argument.
-fn shell_escape(s: &str) -> String {
-    s.replace('\'', "'\"'\"'")
-}
-
-/// Build a JWT using a secret
-fn build_jwt(jwt_secret: &str) -> eyre::Result<String> {
-    // Decode jwt from hex, then generate claims (iat with current timestamp)
-    let secret = JwtSecret::from_hex(jwt_secret)?;
-    let claims = Claims::default();
-    let token = secret.encode(&claims)?;
-    Ok(token)
-}
-
-/// Appends a JWT Authorization header to a curl command.
-fn append_jwt_auth(cmd: &mut String, jwt_secret: &str) -> eyre::Result<()> {
-    let jwt = build_jwt(jwt_secret).wrap_err("Invalid --jwt-secret provided")?;
-
-    cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt.as_str())));
-
-    Ok(())
-}
-
-/// Generates a curl command for an RPC request.
-///
-/// This is a standalone helper that can be used to generate curl commands
-/// without going through the transport layer.
-pub fn generate_curl_command(
-    url: &str,
-    method: &str,
-    params: Value,
-    headers: Option<&[String]>,
-    jwt_secret: Option<&str>,
-) -> eyre::Result<String> {
-    let payload = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
-    let payload_str = serde_json::to_string(&payload).unwrap_or_default();
-    let escaped_payload = shell_escape(&payload_str);
-
-    let mut cmd = String::from("curl -X POST");
-    cmd.push_str(" -H 'Content-Type: application/json'");
-
-    if let Some(secret) = jwt_secret {
-        append_jwt_auth(&mut cmd, secret)?;
-    }
-
-    if let Some(hdrs) = headers {
-        for h in hdrs {
-            cmd.push_str(&format!(" -H '{}'", shell_escape(h)));
-        }
-    }
-
-    cmd.push_str(&format!(" --data-raw '{escaped_payload}'"));
-    cmd.push_str(&format!(" '{}'", shell_escape(url)));
-
-    Ok(cmd)
-}
-
 /// A transport that prints curl commands instead of executing RPC requests.
 ///
 /// When a request is made through this transport, it will print the equivalent
@@ -179,6 +117,68 @@ impl Service<RequestPacket> for &CurlTransport {
     fn call(&mut self, req: RequestPacket) -> Self::Future {
         self.request(req)
     }
+}
+
+/// Escapes a string for use in a single-quoted shell argument.
+fn shell_escape(s: &str) -> String {
+    s.replace('\'', "'\"'\"'")
+}
+
+/// Build a JWT using a secret
+fn build_jwt(jwt_secret: &str) -> eyre::Result<String> {
+    // Decode jwt from hex, then generate claims (iat with current timestamp)
+    let secret = JwtSecret::from_hex(jwt_secret)?;
+    let claims = Claims::default();
+    let token = secret.encode(&claims)?;
+    Ok(token)
+}
+
+/// Appends a JWT Authorization header to a curl command.
+fn append_jwt_auth(cmd: &mut String, jwt_secret: &str) -> eyre::Result<()> {
+    let jwt = build_jwt(jwt_secret).wrap_err("Invalid --jwt-secret provided")?;
+
+    cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt.as_str())));
+
+    Ok(())
+}
+
+/// Generates a curl command for an RPC request.
+///
+/// This is a standalone helper that can be used to generate curl commands
+/// without going through the transport layer.
+pub fn generate_curl_command(
+    url: &str,
+    method: &str,
+    params: Value,
+    headers: Option<&[String]>,
+    jwt_secret: Option<&str>,
+) -> eyre::Result<String> {
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    });
+    let payload_str = serde_json::to_string(&payload).unwrap_or_default();
+    let escaped_payload = shell_escape(&payload_str);
+
+    let mut cmd = String::from("curl -X POST");
+    cmd.push_str(" -H 'Content-Type: application/json'");
+
+    if let Some(secret) = jwt_secret {
+        append_jwt_auth(&mut cmd, secret)?;
+    }
+
+    if let Some(hdrs) = headers {
+        for h in hdrs {
+            cmd.push_str(&format!(" -H '{}'", shell_escape(h)));
+        }
+    }
+
+    cmd.push_str(&format!(" --data-raw '{escaped_payload}'"));
+    cmd.push_str(&format!(" '{}'", shell_escape(url)));
+
+    Ok(cmd)
 }
 
 #[cfg(test)]

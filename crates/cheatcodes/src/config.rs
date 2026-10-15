@@ -1,6 +1,6 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{Address, U256, map::AddressHashMap};
+use alloy_primitives::{U256, map::AddressHashMap};
 use foundry_common::{ContractsByArtifact, fs::normalize_path};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
@@ -8,6 +8,7 @@ use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
+use foundry_evm_traces::identifier::ExternalIdentifierConfig;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -54,6 +55,15 @@ pub struct CheatsConfig {
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<ContractsByArtifact>,
+    /// Artifacts used to resolve cheatcode artifact references.
+    /// Unlike `available_artifacts`, this is retained when artifact safety checks are disabled.
+    pub artifact_lookup: Option<ContractsByArtifact>,
+    /// Whether to decode the storage layouts of contracts outside the local project in state
+    /// diffs, by fetching their verified source code from a block explorer.
+    pub decode_external_storage: bool,
+    /// Settings for looking contracts up on block explorers, resolved lazily against the chain a
+    /// test is running on: a `vm.createSelectFork` can change it after this config was built.
+    pub external_sources: ExternalIdentifierConfig,
     /// Currently running artifact.
     pub running_artifact: Option<ArtifactId>,
     /// Whether to enable legacy (non-reverting) assertions.
@@ -62,8 +72,6 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
-    /// Fee token to use for Tempo transactions.
-    pub fee_token: Option<Address>,
 }
 
 impl CheatsConfig {
@@ -73,13 +81,13 @@ impl CheatsConfig {
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
         running_artifact: Option<ArtifactId>,
-        fee_token: Option<Address>,
         batch_rewrite_creates: bool,
     ) -> Self {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
 
-        // If user explicitly disabled safety checks, do not set available_artifacts
+        let artifact_lookup = available_artifacts.clone();
+        // If user explicitly disabled safety checks, do not set available_artifacts.
         let available_artifacts =
             if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
         let mut labels = config.labels.clone();
@@ -103,11 +111,13 @@ impl CheatsConfig {
             evm_opts,
             labels,
             available_artifacts,
+            artifact_lookup,
+            decode_external_storage: config.decode_external_storage,
+            external_sources: ExternalIdentifierConfig::new(config),
             running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
-            fee_token,
         }
     }
 
@@ -116,9 +126,8 @@ impl CheatsConfig {
         let mut cloned = Self::new(
             config,
             evm_opts,
-            self.available_artifacts.clone(),
+            self.artifact_lookup.clone().or_else(|| self.available_artifacts.clone()),
             self.running_artifact.clone(),
-            self.fee_token,
             self.batch_rewrite_creates,
         );
         cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
@@ -249,11 +258,13 @@ impl Default for CheatsConfig {
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
+            artifact_lookup: Default::default(),
+            decode_external_storage: false,
+            external_sources: Default::default(),
             running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,
             internal_expect_revert: false,
-            fee_token: None,
         }
     }
 }
@@ -278,8 +289,9 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::address;
+    use alloy_primitives::Address;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 
@@ -287,7 +299,6 @@ mod tests {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
-            None,
             None,
             None,
             false,
@@ -313,7 +324,7 @@ mod tests {
     fn test_batch_rewrite_creates_flag_plumbing() {
         assert!(!CheatsConfig::default().batch_rewrite_creates);
 
-        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, None, true);
+        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, true);
         assert!(on.batch_rewrite_creates);
 
         let cloned = on.clone_with(&Config::default(), Default::default());
@@ -321,13 +332,44 @@ mod tests {
     }
 
     #[test]
+    fn unchecked_artifacts_retain_lookup_without_validation() {
+        let config = Config { unchecked_cheatcode_artifacts: true, ..Default::default() };
+        let cheats = CheatsConfig::new(
+            &config,
+            Default::default(),
+            Some(ContractsByArtifact::default()),
+            None,
+            false,
+        );
+
+        assert!(cheats.available_artifacts.is_none());
+        assert!(cheats.artifact_lookup.is_some());
+
+        let cloned = cheats.clone_with(&config, Default::default());
+        assert!(cloned.available_artifacts.is_none());
+        assert!(cloned.artifact_lookup.is_some());
+    }
+
+    #[test]
+    fn clone_with_preserves_available_artifacts_without_lookup() {
+        let cheats = CheatsConfig {
+            available_artifacts: Some(ContractsByArtifact::default()),
+            ..Default::default()
+        };
+
+        let cloned = cheats.clone_with(&Config::default(), Default::default());
+        assert!(cloned.available_artifacts.is_some());
+        assert!(cloned.artifact_lookup.is_some());
+    }
+
+    #[test]
     fn tracing_labels_override_legacy_labels() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let mut config = Config::default();
         config.labels.insert(address, "legacy".to_string());
         config.tracing.labels.insert(address, "canonical".to_string());
 
-        let config = CheatsConfig::new(&config, Default::default(), None, None, None, false);
+        let config = CheatsConfig::new(&config, Default::default(), None, None, false);
 
         assert_eq!(config.labels.get(&address).map(String::as_str), Some("canonical"));
     }

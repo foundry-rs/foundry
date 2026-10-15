@@ -1,12 +1,11 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*, string};
+use crate::{Cheatcode, CheatcodesCore, Result, Vm::*, string};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
 use alloy_primitives::{Address, B256, I256, U256, hex};
 use alloy_sol_types::SolValue;
 use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::evm::FoundryEvmNetwork;
 use serde_json::{Map, Value};
 use std::{
     borrow::Cow,
@@ -14,140 +13,104 @@ use std::{
 };
 
 impl Cheatcode for keyExistsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { json, key } = self;
         check_json_key_exists(json, key)
     }
 }
 
 impl Cheatcode for keyExistsJsonCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { json, key } = self;
         check_json_key_exists(json, key)
     }
 }
 
 impl Cheatcode for parseJson_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json } = self;
         parse_json(json, "$", state.struct_defs())
     }
 }
 
 impl Cheatcode for parseJson_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, key } = self;
         parse_json(json, key, state.struct_defs())
     }
 }
 
-impl Cheatcode for parseJsonUintCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Uint(256))
-    }
+macro_rules! impl_parse_json {
+    ($call:ident, $call_with_default:ident, $ty:expr) => {
+        impl Cheatcode for $call {
+            fn apply_context_free(&self) -> Result {
+                let Self { json, key } = self;
+                parse_json_coerce(json, key, &$ty)
+            }
+        }
+
+        impl Cheatcode for $call_with_default {
+            fn apply_context_free(&self) -> Result {
+                let Self { json, key, defaultValue } = self;
+                parse_json_coerce_default(json, key, &$ty, defaultValue)
+            }
+        }
+    };
 }
 
-impl Cheatcode for parseJsonUintArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
-    }
-}
-
-impl Cheatcode for parseJsonIntCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Int(256))
-    }
-}
-
-impl Cheatcode for parseJsonIntArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
-    }
-}
-
-impl Cheatcode for parseJsonBoolCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bool)
-    }
-}
-
-impl Cheatcode for parseJsonBoolArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
-    }
-}
-
-impl Cheatcode for parseJsonAddressCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Address)
-    }
-}
-
-impl Cheatcode for parseJsonAddressArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
-    }
-}
-
-impl Cheatcode for parseJsonStringCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::String)
-    }
-}
-
-impl Cheatcode for parseJsonStringArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
-    }
-}
+impl_parse_json!(parseJsonUint_0Call, parseJsonUint_1Call, DynSolType::Uint(256));
+impl_parse_json!(
+    parseJsonUintArray_0Call,
+    parseJsonUintArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Uint(256)))
+);
+impl_parse_json!(parseJsonInt_0Call, parseJsonInt_1Call, DynSolType::Int(256));
+impl_parse_json!(
+    parseJsonIntArray_0Call,
+    parseJsonIntArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Int(256)))
+);
+impl_parse_json!(parseJsonBool_0Call, parseJsonBool_1Call, DynSolType::Bool);
+impl_parse_json!(
+    parseJsonBoolArray_0Call,
+    parseJsonBoolArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Bool))
+);
+impl_parse_json!(parseJsonAddress_0Call, parseJsonAddress_1Call, DynSolType::Address);
+impl_parse_json!(
+    parseJsonAddressArray_0Call,
+    parseJsonAddressArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Address))
+);
+impl_parse_json!(parseJsonString_0Call, parseJsonString_1Call, DynSolType::String);
+impl_parse_json!(
+    parseJsonStringArray_0Call,
+    parseJsonStringArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::String))
+);
 
 impl Cheatcode for parseJsonArrayLengthCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { json, key } = self;
         parse_json_array_length(json, key)
     }
 }
 
-impl Cheatcode for parseJsonBytesCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bytes)
-    }
-}
-
-impl Cheatcode for parseJsonBytesArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
-    }
-}
-
-impl Cheatcode for parseJsonBytes32Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
-    }
-}
-
-impl Cheatcode for parseJsonBytes32ArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
-    }
-}
+impl_parse_json!(parseJsonBytes_0Call, parseJsonBytes_1Call, DynSolType::Bytes);
+impl_parse_json!(
+    parseJsonBytesArray_0Call,
+    parseJsonBytesArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Bytes))
+);
+impl_parse_json!(parseJsonBytes32_0Call, parseJsonBytes32_1Call, DynSolType::FixedBytes(32));
+impl_parse_json!(
+    parseJsonBytes32Array_0Call,
+    parseJsonBytes32Array_1Call,
+    DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))
+);
 
 impl Cheatcode for parseJsonType_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, typeDescription } = self;
         parse_json_coerce(json, "$", &resolve_type(typeDescription, state.struct_defs())?)
             .map(|v| v.abi_encode())
@@ -155,7 +118,7 @@ impl Cheatcode for parseJsonType_0Call {
 }
 
 impl Cheatcode for parseJsonType_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, key, typeDescription } = self;
         parse_json_coerce(json, key, &resolve_type(typeDescription, state.struct_defs())?)
             .map(|v| v.abi_encode())
@@ -163,7 +126,7 @@ impl Cheatcode for parseJsonType_1Call {
 }
 
 impl Cheatcode for parseJsonTypeArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, key, typeDescription } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
@@ -171,14 +134,14 @@ impl Cheatcode for parseJsonTypeArrayCall {
 }
 
 impl Cheatcode for parseJsonKeysCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { json, key } = self;
         parse_json_keys(json, key)
     }
 }
 
 impl Cheatcode for serializeJsonCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, value } = self;
         *state.serialized_jsons.entry(objectKey.into()).or_default() = serde_json::from_str(value)?;
         Ok(value.abi_encode())
@@ -186,56 +149,56 @@ impl Cheatcode for serializeJsonCall {
 }
 
 impl Cheatcode for serializeBool_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeUint_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeInt_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeAddress_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeBytes32_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, DynSolValue::FixedBytes(*value, 32))
     }
 }
 
 impl Cheatcode for serializeString_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, value.clone().into())
     }
 }
 
 impl Cheatcode for serializeBytes_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, value.to_vec().into())
     }
 }
 
 impl Cheatcode for serializeBool_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -247,7 +210,7 @@ impl Cheatcode for serializeBool_1Call {
 }
 
 impl Cheatcode for serializeUint_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -259,7 +222,7 @@ impl Cheatcode for serializeUint_1Call {
 }
 
 impl Cheatcode for serializeInt_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -271,7 +234,7 @@ impl Cheatcode for serializeInt_1Call {
 }
 
 impl Cheatcode for serializeAddress_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -283,7 +246,7 @@ impl Cheatcode for serializeAddress_1Call {
 }
 
 impl Cheatcode for serializeBytes32_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -295,7 +258,7 @@ impl Cheatcode for serializeBytes32_1Call {
 }
 
 impl Cheatcode for serializeString_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -307,7 +270,7 @@ impl Cheatcode for serializeString_1Call {
 }
 
 impl Cheatcode for serializeBytes_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -321,7 +284,7 @@ impl Cheatcode for serializeBytes_1Call {
 }
 
 impl Cheatcode for serializeJsonType_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
@@ -332,7 +295,7 @@ impl Cheatcode for serializeJsonType_0Call {
 }
 
 impl Cheatcode for serializeJsonType_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
@@ -341,7 +304,7 @@ impl Cheatcode for serializeJsonType_1Call {
 }
 
 impl Cheatcode for serializeUintToHexCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { objectKey, valueKey, value } = self;
         let hex = format!("0x{value:x}");
         serialize_json(state, objectKey, valueKey, hex.into())
@@ -349,7 +312,7 @@ impl Cheatcode for serializeUintToHexCall {
 }
 
 impl Cheatcode for writeJson_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, path } = self;
         let json = serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.to_owned()));
         let json_string = serde_json::to_string_pretty(&json)?;
@@ -358,7 +321,7 @@ impl Cheatcode for writeJson_0Call {
 }
 
 impl Cheatcode for writeJson_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json: value, path, valueKey } = self;
 
         // Read, parse, and update the JSON object.
@@ -399,6 +362,20 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
     };
 
     parse_json_as(value, ty).map(|v| v.abi_encode())
+}
+
+pub(super) fn parse_json_coerce_default<T: SolValue>(
+    json: &str,
+    path: &str,
+    ty: &DynSolType,
+    default: &T,
+) -> Result {
+    let json = parse_json_str(json)?;
+    match select(&json, path)?.as_slice() {
+        [] => Ok(default.abi_encode()),
+        [value] => parse_json_as(value, ty).map(|value| value.abi_encode()),
+        _ => bail!("path {path:?} must return exactly one JSON value"),
+    }
 }
 
 /// Parses given [serde_json::Value] as a [DynSolValue].
@@ -810,8 +787,8 @@ fn contains_fixed_array(ty: &DynSolType) -> bool {
 /// object, so that the user can use that as a value to a new invocation of the same function with a
 /// new object key. This enables the user to reuse the same function to crate arbitrarily complex
 /// object structures (JSON).
-fn serialize_json<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn serialize_json(
+    state: &mut CheatcodesCore,
     object_key: &str,
     value_key: &str,
     value: DynSolValue,
@@ -836,8 +813,10 @@ pub(super) fn resolve_type(
         return ordered_ty(ty);
     };
 
-    if let Ok(encoded) = EncodeType::parse(type_description) {
-        let main_type = encoded.types[0].type_name;
+    if let Ok(encoded) = EncodeType::parse(type_description)
+        && let Some(main) = encoded.types.first()
+    {
+        let main_type = main.type_name;
         let mut resolver = Resolver::default();
         for t in &encoded.types {
             resolver.ingest(t.to_owned());
@@ -863,18 +842,7 @@ pub(super) fn resolve_type(
 ///   JSON, and if that fails, it's treated as a plain JSON string.
 /// * `key` - A dot-separated string representing the path to the location for upserting.
 pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Result<()> {
-    // Parse the path key into segments.
-    let canonical_key = canonicalize_json_path(key);
-    let parts: Vec<&str> = canonical_key
-        .strip_prefix("$.")
-        .unwrap_or(key)
-        .split('.')
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    if parts.is_empty() {
-        return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
-    }
+    let parts = split_value_key(key)?;
 
     // Separate the final key from the path.
     // Traverse the objects, creating intermediary ones if necessary.
@@ -888,14 +856,14 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
             current_level = current_level
                 .as_object_mut()
                 .unwrap()
-                .entry(segment.to_string())
+                .entry(segment.clone())
                 .or_insert(Value::Object(Map::new()));
         }
 
         // Upsert the new value
         if let Some(parent_obj) = current_level.as_object_mut() {
             parent_obj.insert(
-                key_to_insert.to_string(),
+                key_to_insert.clone(),
                 serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned())),
             );
         } else {
@@ -904,6 +872,25 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
     }
 
     Ok(())
+}
+
+/// Splits the `valueKey` of a write cheatcode into the object keys leading to the value.
+pub(super) fn split_value_key(key: &str) -> Result<Vec<String>> {
+    // Parse the path key into segments.
+    let canonical_key = canonicalize_json_path(key);
+    let parts = canonical_key
+        .strip_prefix("$.")
+        .unwrap_or(key)
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
+    }
+
+    Ok(parts)
 }
 
 /// Recursively traverses a `DynSolType` and reorders the fields of any
@@ -1156,6 +1143,16 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_type_bare_struct_name_errors_instead_of_panicking() {
+        // `EncodeType::parse` succeeds with an empty type list for inputs without `(`.
+        let err = resolve_type("Foo", None).unwrap_err();
+        assert!(
+            err.to_string().contains("valid Solidity type or a EIP712 `encodeType` string"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_parse_fixed_array() {
         let mut struct_defs = TypeDefMap::new();
         struct_defs.insert(
@@ -1302,8 +1299,8 @@ mod tests {
         );
 
         // Create the "original" DynSolValue instance.
-        let owner_address = Address::from([1; 20]);
-        let wallet_id = B256::from([2; 32]);
+        let owner_address = Address::repeat_byte(1);
+        let wallet_id = B256::repeat_byte(2);
         let original_wallet = DynSolValue::CustomStruct {
             name: "Wallet".to_string(),
             prop_names: vec!["owner".to_string(), "balance".to_string(), "id".to_string()],

@@ -240,6 +240,19 @@ contract ParseTomlTest is Test {
         assertEq(bytesArray[1], hex"02");
     }
 
+    function test_parseTomlDefaults() public {
+        assertEq(vm.parseTomlUint("", ".missing", 42), 42);
+        assertEq(vm.parseTomlUint("value = 7", ".value", 42), 7);
+
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        assertEq(abi.encode(vm.parseTomlUintArray("", ".missing", defaultValue)), abi.encode(defaultValue));
+
+        bytes[] memory dynamicDefault = new bytes[](1);
+        dynamicDefault[0] = hex"deadbeef";
+        assertEq(abi.encode(vm.parseTomlBytesArray("", ".missing", dynamicDefault)), abi.encode(dynamicDefault));
+    }
+
     struct NestedStruct {
         uint256 number;
         string str;
@@ -368,7 +381,7 @@ contract WriteTomlTest is Test {
 
     function test_serializeNestedStructToml() public {
         string memory json3 = "json3";
-        string memory path = "fixtures/Toml/write_complex_test.toml";
+        string memory path = "fixtures/Toml/write_complex_test_serialize.toml";
         vm.serializeUint(json3, "a", uint256(123));
         string memory semiFinal = vm.serializeString(json3, "b", "test");
         string memory finalJson = vm.serializeString(json3, "c", semiFinal);
@@ -379,6 +392,7 @@ contract WriteTomlTest is Test {
         nestedStruct memory decodedData = abi.decode(data, (nestedStruct));
         console.log(decodedData.a);
         assertEq(decodedData.a, 123);
+        vm.removeFile(path);
     }
 
     function test_retrieveEntireToml() public {
@@ -406,7 +420,7 @@ contract WriteTomlTest is Test {
 
     function test_writeToml() public {
         string memory json3 = "json3";
-        string memory path = "fixtures/Toml/write_test.toml";
+        string memory path = "fixtures/Toml/write_test_overwrite.toml";
         vm.serializeUint(json3, "a", uint256(123));
         string memory finalJson = vm.serializeString(json3, "b", "test");
         vm.writeToml(finalJson, path);
@@ -433,10 +447,12 @@ contract WriteTomlTest is Test {
         data = vm.parseToml(toml, ".b");
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
+        vm.removeFile(path);
     }
 
     function test_writeToml_createKeys() public {
-        string memory path = "fixtures/Toml/write_test.toml";
+        string memory path = "fixtures/Toml/write_test_create_keys.toml";
+        vm.copyFile("fixtures/Toml/write_test.toml", path);
         string memory toml = vm.readFile(path);
 
         bool exists = vm.keyExistsToml(toml, ".parent");
@@ -454,8 +470,20 @@ contract WriteTomlTest is Test {
         uint256 value = abi.decode(vm.parseToml(toml, ".parent.child.value"), (uint256));
         assertEq(value, 42);
 
-        // Clean up the test file by removing the parent key we added
         vm.removeFile(path);
-        vm.writeToml("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
+    }
+
+    function test_writeToml_keepsFormatting() public {
+        string memory path = "fixtures/Toml/write_formatted_test.toml";
+        vm.copyFile("fixtures/Toml/write_formatted.toml", path);
+
+        vm.writeToml(vm.toString(address(0xBEEF)), path, ".mainnet.token");
+        vm.writeToml("2000", path, ".mainnet.limits.daily");
+        vm.writeToml("30000000", path, ".base.gas_limit");
+
+        // Only the written values change: comments, blank lines, the datetime, the hex integer, the
+        // literal string and the inline table are kept as written.
+        assertEq(vm.readFile(path), vm.readFile("fixtures/Toml/write_formatted_expected.toml"));
+        vm.removeFile(path);
     }
 }

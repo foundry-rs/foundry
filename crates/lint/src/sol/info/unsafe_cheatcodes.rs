@@ -12,7 +12,7 @@ declare_forge_lint!(
     "usage of unsafe cheatcodes that can perform dangerous operations"
 );
 
-const UNSAFE_CHEATCODES: [&str; 9] = [
+const UNSAFE_CHEATCODES: &[&str] = &[
     "ffi",
     "readFile",
     "readLine",
@@ -26,9 +26,9 @@ const UNSAFE_CHEATCODES: [&str; 9] = [
 
 impl<'ast> EarlyLintPass<'ast> for UnsafeCheatcodes {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
-        if let ExprKind::Call(lhs, _args) = &expr.kind
-            && let ExprKind::Member(_lhs, member) = &lhs.kind
-            && UNSAFE_CHEATCODES.iter().any(|&c| c == member.as_str())
+        if let ExprKind::Call(callee, _) = &expr.kind
+            && let ExprKind::Member(_, member) = &callee.kind
+            && UNSAFE_CHEATCODES.contains(&member.as_str())
         {
             ctx.emit(&UNSAFE_CHEATCODE_USAGE, member.span);
         }

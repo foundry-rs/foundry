@@ -21,7 +21,7 @@ contract CacheArrayLength {
     Counter internal counter;
 
     function storageArrayLength() external view returns (uint256 sum) {
-        for (uint256 i = 0; i < items.length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < items.length; ++i) { //~NOTE: array length is read on every loop iteration
             sum += items[i];
         }
     }
@@ -31,7 +31,7 @@ contract CacheArrayLength {
         view
         returns (uint256 sum)
     {
-        for (uint256 i = 0; i < items.length && i < cap; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < items.length && i < cap; ++i) { //~NOTE: array length is read on every loop iteration
             sum += items[i];
         }
     }
@@ -41,7 +41,7 @@ contract CacheArrayLength {
         view
         returns (uint256 sum)
     {
-        for (uint256 i = 0; i < cap && items.length > i; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < cap && items.length > i; ++i) { //~NOTE: array length is read on every loop iteration
             sum += items[i];
         }
     }
@@ -183,6 +183,18 @@ contract CacheArrayLength {
     {
         for (uint256 i = 0; i < pickValues(values, i).length; ++i) {
             sum += i;
+        }
+    }
+
+    function viewPointer(function(uint256) external view check) external view {
+        for (uint256 i = 0; i < items.length; ++i) { //~NOTE: array length is read on every loop iteration
+            check(i);
+        }
+    }
+
+    function mutatingPointer(function(uint256) external check) external {
+        for (uint256 i = 0; i < items.length; ++i) {
+            check(i);
         }
     }
 

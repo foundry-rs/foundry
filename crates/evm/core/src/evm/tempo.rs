@@ -4,15 +4,16 @@ use foundry_evm_hardforks::TempoHardfork;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        ContextTr, LocalContextTr,
-        result::{EVMError, HaltReason, ResultAndState},
+        Journal,
+        result::{EVMError, ResultAndState},
     },
-    handler::{EvmTr, FrameResult, Handler},
+    handler::{EvmTr, FrameResult},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
+    interpreter::FrameInput,
     state::Bytecode,
 };
-use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
+use tempo_alloy::TempoNetwork;
+use tempo_evm::{TempoBlockEnv, TempoEvmFactory, evm::TempoEvm};
 use tempo_precompiles::{
     extend_tempo_precompiles,
     storage::{StorageActions, StorageCtx},
@@ -25,13 +26,145 @@ use tempo_revm::{
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    constants::{CALLER, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, NestedEvm},
+    constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, NestedEvm, NestedEvmFor, run_inspected_frame},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TempoEvmNetwork;
+impl FoundryEvmNetwork for TempoEvmNetwork {
+    type Network = TempoNetwork;
+    type EvmFactory = TempoEvmFactory;
+}
+
 // Will be removed when the next revm release includes bluealloy/revm#3518.
 pub type TempoRevmEvm<'db, I> = tempo_revm::TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>;
+
+impl FoundryEvmFactory for TempoEvmFactory {
+    type Chain = ();
+    type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
+
+    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
+        TempoEvm<&'db mut dyn DatabaseExt<Self>, I>;
+
+    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        inspector: I,
+    ) -> Self::FoundryEvm<'db, I> {
+        let is_forked = db.is_forked_mode();
+        let spec = *evm_env.spec_id();
+        let mut tempo_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
+        Self::set_execution_spec(tempo_evm.ctx_mut(), spec);
+        tempo_evm.cfg.tx_chain_id_check = true;
+        if tempo_evm.cfg.tx_gas_limit_cap.is_none() {
+            tempo_evm.cfg.tx_gas_limit_cap = spec.tx_gas_limit_cap();
+        }
+
+        // Re-extend Tempo precompiles, preserving shared non-creditable slots.
+        let cfg = tempo_evm.cfg.clone();
+        let non_creditable_slots = tempo_evm.non_creditable_slots();
+        extend_tempo_precompiles(
+            tempo_evm.precompiles_mut(),
+            &cfg,
+            StorageActions::disabled(),
+            non_creditable_slots,
+        );
+
+        initialize_tempo_evm(&mut tempo_evm, is_forked);
+        tempo_evm
+    }
+
+    fn create_nested_evm_with_inspector<'db, I>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        inspector: I,
+    ) -> NestedEvmFor<'db, Self>
+    where
+        I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
+    {
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
+    }
+
+    fn set_execution_spec(context: &mut Self::FoundryContext<'_>, spec: Self::Spec) {
+        context.cfg.spec = spec;
+        context.cfg.set_gas_params(tempo_gas_params(spec));
+    }
+}
+
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> NestedEvm
+    for TempoRevmEvm<'db, I>
+{
+    type Spec = TempoHardfork;
+    type Block = TempoBlockEnv;
+    type Tx = TempoTxEnv;
+    type Chain = ();
+    type Journal = Journal<&'db mut dyn DatabaseExt<TempoEvmFactory>>;
+
+    fn tx_mut(&mut self) -> &mut Self::Tx {
+        self.ctx_mut().tx_mut()
+    }
+
+    fn journal_inner_mut(&mut self) -> &mut JournaledState {
+        &mut self.ctx_mut().journaled_state.inner
+    }
+
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
+    }
+
+    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
+        &mut self.precompiles
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
+    }
+
+    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
+        run_inspected_frame(self, TempoEvmHandler::new(), frame).map_err(map_tempo_error)
+    }
+
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
+        // The backend seeds nested transactions at outer depth + 1. Tempo AA's batch checkpoint
+        // supplies that increment before inspector callbacks, so avoid counting it twice.
+        if tx.tempo_tx_env.is_some() && self.ctx.journaled_state.inner.depth > 0 {
+            self.ctx.journaled_state.inner.depth -= 1;
+        }
+        self.set_tx(tx);
+
+        let mut handler = TempoEvmHandler::new();
+        let result = handler.inspect_run(self).map_err(map_tempo_error)?;
+
+        Ok(ResultAndState::new(result, self.ctx.journaled_state.inner.state.clone()))
+    }
+
+    fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
+        self.ctx_ref().evm_clone()
+    }
+}
+
+/// Maps a Tempo [`EVMError`] to the common `EVMError<DatabaseError>` used by [`NestedEvm`].
+///
+/// This exists because [`NestedEvm`] currently uses Eth-typed errors. When `NestedEvm` gains
+/// an associated `Error` type, this mapping can be removed.
+pub(crate) fn map_tempo_error(
+    e: EVMError<DatabaseError, TempoInvalidTransaction>,
+) -> EVMError<DatabaseError> {
+    match e {
+        EVMError::Database(db) => EVMError::Database(db),
+        EVMError::Header(h) => EVMError::Header(h),
+        EVMError::Custom(s) => EVMError::Custom(s),
+        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
+        EVMError::Transaction(t) => match t {
+            TempoInvalidTransaction::EthInvalidTransaction(eth) => EVMError::Transaction(eth),
+            t => EVMError::Custom(format!("tempo transaction error: {t}")),
+        },
+    }
+}
 
 /// Initialize Tempo precompiles and contracts for a newly created EVM.
 ///
@@ -58,15 +191,16 @@ pub(crate) fn initialize_tempo_evm<
         || {
             if is_forked {
                 // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
+                // Skip addresses that fail to load. Later accesses fetch them again and
+                // return the database error instead of a panic.
                 let mut sctx = StorageCtx;
-                let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+                let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
                 for addr in TEMPO_PRECOMPILE_ADDRESSES
                     .iter()
                     .copied()
                     .chain(TEMPO_TIP20_TOKENS.iter().copied())
                 {
-                    sctx.set_code(addr, sentinel.clone())
-                        .expect("failed to warm tempo precompile address");
+                    let _ = sctx.set_code(addr, sentinel.clone());
                 }
             } else {
                 // In non-fork mode, run full genesis initialization.
@@ -77,144 +211,27 @@ pub(crate) fn initialize_tempo_evm<
     );
 }
 
-impl FoundryEvmFactory for TempoEvmFactory {
-    type ChainContext = ();
-    type TransactionState = ();
-    type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::Backend;
+    use revm::{
+        context_interface::cfg::GasParams, inspector::NoOpInspector, primitives::hardfork::SpecId,
+    };
 
-    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
-        TempoEvm<&'db mut dyn DatabaseExt<Self>, I>;
-
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        self.create_evm(db, evm_env)
-    }
-
-    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
-        inspector: I,
-    ) -> Self::FoundryEvm<'db, I> {
-        let is_forked = db.is_forked_mode();
-        let spec = *evm_env.spec_id();
-        let mut tempo_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
-        tempo_evm.cfg.gas_params = tempo_gas_params(spec);
-        tempo_evm.cfg.tx_chain_id_check = true;
-        if tempo_evm.cfg.tx_gas_limit_cap.is_none() {
-            tempo_evm.cfg.tx_gas_limit_cap = spec.tx_gas_limit_cap();
+    #[test]
+    fn tempo_execution_spec_preserves_network_gas() {
+        let mut db = Backend::<TempoEvmNetwork>::spawn(None).unwrap();
+        let mut evm = TempoEvmFactory::default().create_foundry_evm_with_inspector(
+            &mut db,
+            EvmEnv::default(),
+            NoOpInspector,
+        );
+        for spec in [TempoHardfork::T3, TempoHardfork::T7, TempoHardfork::T14] {
+            TempoEvmFactory::set_execution_spec(evm.ctx_mut(), spec);
+            assert_eq!(evm.cfg.spec, spec);
+            assert_eq!(evm.cfg.gas_params, tempo_gas_params(spec));
+            assert_ne!(evm.cfg.gas_params, GasParams::new_spec(SpecId::OSAKA));
         }
-
-        let networks = tempo_evm.inspector().get_networks();
-        networks.inject_precompiles(tempo_evm.precompiles_mut());
-        // Re-extend Tempo precompiles, preserving shared non-creditable slots.
-        let cfg = tempo_evm.cfg.clone();
-        let non_creditable_slots = tempo_evm.non_creditable_slots();
-        extend_tempo_precompiles(
-            tempo_evm.precompiles_mut(),
-            &cfg,
-            StorageActions::disabled(),
-            non_creditable_slots,
-        );
-
-        initialize_tempo_evm(&mut tempo_evm, is_forked);
-        tempo_evm
-    }
-
-    fn create_foundry_nested_evm<'db>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
-        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<
-        dyn NestedEvm<
-                Spec = TempoHardfork,
-                Block = TempoBlockEnv,
-                Tx = TempoTxEnv,
-                ChainContext = (),
-                TransactionState = (),
-            > + 'db,
-    > {
-        Box::new(
-            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
-                .into_inner(),
-        )
-    }
-}
-
-/// Maps a Tempo [`EVMError`] to the common `EVMError<DatabaseError>` used by [`NestedEvm`].
-///
-/// This exists because [`NestedEvm`] currently uses Eth-typed errors. When `NestedEvm` gains
-/// an associated `Error` type, this mapping can be removed.
-pub(crate) fn map_tempo_error(
-    e: EVMError<DatabaseError, TempoInvalidTransaction>,
-) -> EVMError<DatabaseError> {
-    match e {
-        EVMError::Database(db) => EVMError::Database(db),
-        EVMError::Header(h) => EVMError::Header(h),
-        EVMError::Custom(s) => EVMError::Custom(s),
-        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
-        EVMError::Transaction(t) => match t {
-            TempoInvalidTransaction::EthInvalidTransaction(eth) => EVMError::Transaction(eth),
-            t => EVMError::Custom(format!("tempo transaction error: {t}")),
-        },
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> NestedEvm
-    for TempoRevmEvm<'db, I>
-{
-    type Spec = TempoHardfork;
-    type Block = TempoBlockEnv;
-    type Tx = TempoTxEnv;
-    type ChainContext = ();
-    type TransactionState = ();
-    fn journal_inner_mut(&mut self) -> &mut JournaledState {
-        &mut self.ctx_mut().journaled_state.inner
-    }
-
-    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = TempoEvmHandler::new();
-        let memory =
-            SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
-        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
-
-        let mut frame_result =
-            handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_tempo_error)?;
-
-        let mut parent_gas = GasTracker::new(
-            frame_result.gas().limit(),
-            frame_result.gas().remaining(),
-            frame_result.gas().reservoir(),
-        );
-        handler
-            .last_frame_result(self, &mut frame_result, &mut parent_gas)
-            .map_err(map_tempo_error)?;
-
-        Ok(frame_result)
-    }
-
-    fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, EVMError<DatabaseError>> {
-        self.set_tx(tx);
-
-        let mut handler = TempoEvmHandler::new();
-        let result = handler.inspect_run(self).map_err(map_tempo_error)?;
-
-        let result = result.map_haltreason(|h| match h {
-            TempoHaltReason::Ethereum(eth) => eth,
-            _ => HaltReason::PrecompileError,
-        });
-
-        Ok(ResultAndState::new(result, self.ctx.journaled_state.inner.state.clone()))
-    }
-
-    fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
-        self.ctx_ref().evm_clone()
     }
 }

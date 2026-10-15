@@ -1,4 +1,6 @@
 //! Contains tests for checking forge execution context cheatcodes
+use std::process::Command;
+
 const FORGE_TEST_CONTEXT_CONTRACT: &str = r#"
 import "./test.sol";
 interface Vm {
@@ -44,36 +46,75 @@ contract ForgeContextTest is DSTest {
    "#;
 
 // tests that context properly set for `forge test` command
-forgetest!(can_set_forge_test_standard_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_test_standard_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
-    cmd.args(["test", "--match-test", "testForgeTestContext"]).assert_success();
-});
+    cmd.args(["test", "--match-test", "testForgeTestContext"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for src/ForgeContextTest.t.sol:ForgeContextTest
+[PASS] testForgeTestContext() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}
 
 // tests that context properly set for `forge snapshot` command
-forgetest!(can_set_forge_test_snapshot_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_test_snapshot_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.args(["snapshot", "--match-test", "testForgeSnapshotContext"]).assert_success();
-});
+}
 
 // tests that context properly set for `forge coverage` command
-forgetest!(can_set_forge_test_coverage_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_test_coverage_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.args(["coverage", "--match-test", "testForgeCoverageContext"]).assert_success();
-});
+}
+
+#[forgetest]
+fn symbolic_uses_actual_forge_context(prj: _, cmd: _) {
+    if !Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success()) {
+        return;
+    }
+    prj.insert_ds_test();
+    prj.add_source(
+        "ForgeContextTest.t.sol",
+        &FORGE_TEST_CONTEXT_CONTRACT.replace("testForge", "checkForge"),
+    );
+    prj.update_config(|config| config.symbolic.enabled = true);
+    for (command, test) in [
+        ("test", "checkForgeTestContext"),
+        ("coverage", "checkForgeCoverageContext"),
+        ("snapshot", "checkForgeSnapshotContext"),
+    ] {
+        cmd.forge_fuse().args([command, "--match-test", test]).assert_success().stdout_eq(
+            foundry_test_utils::str![[r#"
+...
+[PASS] checkForge[..] (paths: [..])
+...
+"#]],
+        );
+    }
+}
 
 // tests that context properly set for `forge script` command
-forgetest!(can_set_forge_script_dry_run_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_script_dry_run_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     let script = prj.add_source("ForgeScriptContextTest.s.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.arg("script").arg(script).args(["--sig", "runDryRun()"]).assert_success();
-});
+}
 
 // tests that context properly set for `forge script --broadcast` command
-forgetest!(can_set_forge_script_broadcast_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_script_broadcast_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     let script = prj.add_source("ForgeScriptContextTest.s.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.arg("script").arg(script).args(["--broadcast", "--sig", "runBroadcast()"]).assert_success();
-});
+}

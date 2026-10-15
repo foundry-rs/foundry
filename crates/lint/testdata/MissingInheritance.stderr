@@ -1,4 +1,4 @@
-note[missing-inheritance]: contract `Something` implements interface `ISomething`'s external API but does not explicitly inherit from it
+note[missing-inheritance]: contract `Something` has all selectors of interface `ISomething` but does not explicitly inherit from it
    ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
    │
 LL │ contract Something {
@@ -6,7 +6,7 @@ LL │ contract Something {
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
 
-note[missing-inheritance]: contract `SomethingBase` implements interface `ISomething`'s external API but does not explicitly inherit from it
+note[missing-inheritance]: contract `SomethingBase` has all selectors of interface `ISomething` but does not explicitly inherit from it
    ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
    │
 LL │ abstract contract SomethingBase {
@@ -14,7 +14,7 @@ LL │ abstract contract SomethingBase {
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
 
-note[missing-inheritance]: contract `Token` implements interface `IERC20LikeMetadata`'s external API but does not explicitly inherit from it
+note[missing-inheritance]: contract `Token` has all selectors of interface `IERC20LikeMetadata` but does not explicitly inherit from it
    ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
    │
 LL │ contract Token {
@@ -22,7 +22,7 @@ LL │ contract Token {
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
 
-note[missing-inheritance]: contract `Foo` implements interface `IFooLike`'s external API but does not explicitly inherit from it
+note[missing-inheritance]: contract `Foo` has all selectors of interface `IFooLike` but does not explicitly inherit from it
    ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
    │
 LL │ contract Foo {
@@ -30,7 +30,7 @@ LL │ contract Foo {
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
 
-note[missing-inheritance]: contract `MultiNoInherit` implements interface `ISomething`'s external API but does not explicitly inherit from it
+note[missing-inheritance]: contract `MultiNoInherit` has all selectors of interface `ISomething` but does not explicitly inherit from it
    ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
    │
 LL │ contract MultiNoInherit {
@@ -38,7 +38,7 @@ LL │ contract MultiNoInherit {
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
 
-note[missing-inheritance]: contract `MultiNoInherit` implements interface `IExtra`'s external API but does not explicitly inherit from it
+note[missing-inheritance]: contract `MultiNoInherit` has all selectors of interface `IExtra` but does not explicitly inherit from it
    ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
    │
 LL │ contract MultiNoInherit {
@@ -46,7 +46,7 @@ LL │ contract MultiNoInherit {
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
 
-note[missing-inheritance]: contract `External` implements interface `IExternalThing`'s external API but does not explicitly inherit from it
+note[missing-inheritance]: contract `External` has all selectors of interface `IExternalThing` but does not explicitly inherit from it
    ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
    │
 LL │ contract External {

@@ -1,17 +1,23 @@
 use super::UnprotectedInitializer;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
-};
-use solar::{
-    ast::{ContractKind, DataLocation, FunctionKind, StateMutability, Visibility},
-    interface::{Symbol, kw, sym},
-    sema::{
-        builtins::Builtin,
-        hir::{self, ContractId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
+    sol::{
+        Severity, SolLint,
+        analysis::{is_builtin, runtime_entry_points},
     },
 };
-use std::collections::HashSet;
+use alloy_primitives::map::HashSet;
+use solar::{
+    ast::{ContractKind, DataLocation},
+    interface::sym,
+    sema::{
+        Gcx,
+        builtins::Builtin,
+        hir::{self, ContractId, Expr, ExprKind, FunctionId, Visit},
+        ty::TyKind,
+    },
+};
+use std::ops::ControlFlow;
 
 declare_forge_lint!(
     UNPROTECTED_INITIALIZER,
@@ -20,261 +26,67 @@ declare_forge_lint!(
     "upgradeable initializer is not protected against direct implementation calls"
 );
 
-impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
+impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let contract = hir.contract(contract_id);
-        if !matches!(contract.kind, ContractKind::Contract) || contract.linearization_failed() {
+        let contract = gcx.hir.contract(contract_id);
+        if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
         }
+        let bases = contract.linearized_bases;
 
-        let upgradeable = contract
-            .linearized_bases
+        // The effective runtime dispatch surface: most-derived overrides plus the inherited
+        // fallback/receive functions.
+        let entries = runtime_entry_points(gcx, contract_id);
+
+        let upgradeable = bases
             .iter()
-            .any(|&base_id| hir.contract(base_id).name.as_str() == "Initializable");
-        let runtime_entries = effective_runtime_dispatch_surface(hir, contract.linearized_bases);
-        if !upgradeable
-            && !runtime_entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)))
-        {
+            .any(|&cid| gcx.hir.contract(cid).name.as_str() == "Initializable")
+            || entries.iter().any(|&fid| has_initializer_modifier(&gcx.hir, gcx.hir.function(fid)));
+        if !upgradeable {
+            return;
+        }
+        let locked = bases.iter().filter_map(|&cid| gcx.hir.contract(cid).ctor).any(|ctor| {
+            reaches(gcx, bases, ctor, |expr| {
+                let ExprKind::Call(callee, ..) = &expr.kind else { return false };
+                if !gcx.type_of_expr(callee.peel_parens().id).is_some_and(
+                    |ty| matches!(ty.kind, TyKind::Fn(function) if function.is_internal()),
+                ) {
+                    return false;
+                }
+                gcx.resolved_function(callee).is_some_and(|fid| {
+                    let func = gcx.hir.function(fid);
+                    func.contract.is_some_and(|cid| bases.contains(&cid))
+                        && func.name.is_some_and(|name| name.as_str() == "_disableInitializers")
+                })
+            })
+        });
+        if locked {
+            return;
+        }
+        let destructive = entries.iter().any(|&fid| {
+            !has_modifier_named(&gcx.hir, gcx.hir.function(fid), "onlyProxy")
+                && reaches(gcx, bases, fid, |expr| is_destructive_call(gcx, expr))
+        });
+        if !destructive {
             return;
         }
 
-        if initializers_disabled_in_constructor(hir, contract) {
-            return;
-        }
-
-        if !has_destructive_entrypoint(hir, contract, &runtime_entries) {
-            return;
-        }
-
-        for fid in runtime_entries {
-            let func = hir.function(fid);
-            if !is_public_initializer(hir, func) || has_modifier_named(hir, func, "onlyProxy") {
-                continue;
-            }
-
-            let Some(body) = func.body else { continue };
-            let mut analyzer =
-                StateWriteAnalyzer { hir, bases: contract.linearized_bases, stack: Vec::new() };
-            if analyzer.block_writes_state(body) {
+        for fid in entries {
+            let func = gcx.hir.function(fid);
+            if func.is_part_of_external_interface()
+                && func.mutates_state()
+                && has_initializer_modifier(&gcx.hir, func)
+                && !has_modifier_named(&gcx.hir, func, "onlyProxy")
+                && reaches(gcx, bases, fid, |expr| writes_state(gcx, expr))
+            {
                 ctx.emit(&UNPROTECTED_INITIALIZER, func.name.map_or(func.span, |name| name.span));
             }
         }
-    }
-}
-
-fn is_public_initializer(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
-    func.kind.is_function()
-        && matches!(func.visibility, Visibility::Public | Visibility::External)
-        && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-        && has_initializer_modifier(hir, func)
-}
-
-fn initializers_disabled_in_constructor<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    contract: &hir::Contract<'hir>,
-) -> bool {
-    contract.linearized_bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor_id| {
-        let ctor = hir.function(ctor_id);
-        function_calls_named(hir, ctor, contract.linearized_bases, "_disableInitializers")
-    })
-}
-
-fn has_destructive_entrypoint<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    contract: &hir::Contract<'hir>,
-    runtime_entries: &[FunctionId],
-) -> bool {
-    runtime_entries.iter().copied().any(|fid| {
-        let func = hir.function(fid);
-        if has_modifier_named(hir, func, "onlyProxy") {
-            return false;
-        }
-
-        let Some(body) = func.body else { return false };
-        let mut finder =
-            DestructiveSinkFinder { hir, bases: contract.linearized_bases, stack: vec![fid] };
-        finder.block_has_destructive_sink(body)
-    })
-}
-
-fn effective_runtime_dispatch_surface(hir: &hir::Hir<'_>, bases: &[ContractId]) -> Vec<FunctionId> {
-    let mut seen_functions: HashSet<(Symbol, String)> = HashSet::new();
-    let mut seen_fallback = false;
-    let mut seen_receive = false;
-    let mut entries = Vec::new();
-
-    for &cid in bases {
-        for fid in hir.contract(cid).all_functions() {
-            let func = hir.function(fid);
-            match func.kind {
-                FunctionKind::Function => {
-                    if !matches!(func.visibility, Visibility::Public | Visibility::External) {
-                        continue;
-                    }
-                    let Some(name) = func.name else { continue };
-                    if seen_functions.insert((name.name, parameter_signature(hir, func.parameters)))
-                    {
-                        entries.push(fid);
-                    }
-                }
-                FunctionKind::Fallback => {
-                    if !seen_fallback {
-                        seen_fallback = true;
-                        entries.push(fid);
-                    }
-                }
-                FunctionKind::Receive => {
-                    if !seen_receive {
-                        seen_receive = true;
-                        entries.push(fid);
-                    }
-                }
-                FunctionKind::Constructor | FunctionKind::Modifier => {}
-            }
-        }
-    }
-
-    entries
-}
-
-fn parameter_signature(hir: &hir::Hir<'_>, params: &[VariableId]) -> String {
-    params
-        .iter()
-        .map(|&param| format!("{:?}", hir.variable(param).ty.kind))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-struct DestructiveSinkFinder<'hir> {
-    hir: &'hir hir::Hir<'hir>,
-    bases: &'hir [ContractId],
-    stack: Vec<FunctionId>,
-}
-
-impl<'hir> DestructiveSinkFinder<'hir> {
-    fn block_has_destructive_sink(&mut self, block: hir::Block<'hir>) -> bool {
-        block.stmts.iter().any(|stmt| self.stmt_has_destructive_sink(stmt))
-    }
-
-    fn stmt_has_destructive_sink(&mut self, stmt: &'hir hir::Stmt<'hir>) -> bool {
-        match &stmt.kind {
-            StmtKind::DeclSingle(var_id) => self
-                .hir
-                .variable(*var_id)
-                .initializer
-                .is_some_and(|init| self.expr_has_destructive_sink(init)),
-            StmtKind::DeclMulti(_, expr)
-            | StmtKind::Emit(expr)
-            | StmtKind::Revert(expr)
-            | StmtKind::Return(Some(expr))
-            | StmtKind::Expr(expr) => self.expr_has_destructive_sink(expr),
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-                self.block_has_destructive_sink(*block)
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => {
-                self.expr_has_destructive_sink(condition)
-                    || self.stmt_has_destructive_sink(then_stmt)
-                    || else_stmt.is_some_and(|stmt| self.stmt_has_destructive_sink(stmt))
-            }
-            StmtKind::Try(stmt_try) => {
-                self.expr_has_destructive_sink(&stmt_try.expr)
-                    || stmt_try
-                        .clauses
-                        .iter()
-                        .any(|clause| self.block_has_destructive_sink(clause.block))
-            }
-            StmtKind::Return(None)
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Placeholder
-            | StmtKind::AssemblyBlock(_)
-            | StmtKind::Switch(_)
-            | StmtKind::Err(_) => false,
-        }
-    }
-
-    fn expr_has_destructive_sink(&mut self, expr: &'hir hir::Expr<'hir>) -> bool {
-        match &expr.kind {
-            ExprKind::Call(callee, args, opts) => {
-                if is_destructive_call(callee) {
-                    return true;
-                }
-
-                if self.expr_has_destructive_sink(callee)
-                    || opts.is_some_and(|opts| {
-                        opts.args.iter().any(|opt| self.expr_has_destructive_sink(&opt.value))
-                    })
-                    || args.exprs().any(|arg| self.expr_has_destructive_sink(arg))
-                {
-                    return true;
-                }
-
-                resolved_internal_function_ids(self.hir, callee, self.bases)
-                    .into_iter()
-                    .any(|func_id| self.function_has_destructive_sink(func_id))
-            }
-            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-                self.expr_has_destructive_sink(lhs) || self.expr_has_destructive_sink(rhs)
-            }
-            ExprKind::Unary(_, inner) | ExprKind::Delete(inner) | ExprKind::Payable(inner) => {
-                self.expr_has_destructive_sink(inner)
-            }
-            ExprKind::Index(base, index) => {
-                self.expr_has_destructive_sink(base)
-                    || index.is_some_and(|index| self.expr_has_destructive_sink(index))
-            }
-            ExprKind::Slice(base, start, end) => {
-                self.expr_has_destructive_sink(base)
-                    || start.is_some_and(|start| self.expr_has_destructive_sink(start))
-                    || end.is_some_and(|end| self.expr_has_destructive_sink(end))
-            }
-            ExprKind::Member(base, _) => self.expr_has_destructive_sink(base),
-            ExprKind::Ternary(condition, if_true, if_false) => {
-                self.expr_has_destructive_sink(condition)
-                    || self.expr_has_destructive_sink(if_true)
-                    || self.expr_has_destructive_sink(if_false)
-            }
-            ExprKind::Array(exprs) => exprs.iter().any(|expr| self.expr_has_destructive_sink(expr)),
-            ExprKind::Tuple(exprs) => {
-                exprs.iter().flatten().any(|expr| self.expr_has_destructive_sink(expr))
-            }
-            ExprKind::Lit(_)
-            | ExprKind::Ident(_)
-            | ExprKind::New(_)
-            | ExprKind::TypeCall(_)
-            | ExprKind::Type(_)
-            | ExprKind::YulMember(..)
-            | ExprKind::Err(_) => false,
-        }
-    }
-
-    fn function_has_destructive_sink(&mut self, func_id: FunctionId) -> bool {
-        if self.stack.contains(&func_id) {
-            return false;
-        }
-
-        let func = self.hir.function(func_id);
-        let Some(body) = func.body else { return false };
-        self.stack.push(func_id);
-        let found = self.block_has_destructive_sink(body);
-        self.stack.pop();
-        found
-    }
-}
-
-fn is_destructive_call(callee: &hir::Expr<'_>) -> bool {
-    match &callee.peel_parens().kind {
-        ExprKind::Member(_, member) => matches!(member.name, kw::Delegatecall | kw::Callcode),
-        ExprKind::Ident(resolutions) => {
-            resolutions.iter().any(|res| matches!(res, Res::Builtin(Builtin::Selfdestruct)))
-        }
-        _ => false,
     }
 }
 
@@ -283,364 +95,142 @@ fn has_initializer_modifier(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> boo
 }
 
 fn has_modifier_named(hir: &hir::Hir<'_>, func: &hir::Function<'_>, name: &str) -> bool {
-    func.modifiers.iter().any(|modifier| modifier_name_is(hir, modifier, name))
+    func.modifiers.iter().any(|modifier| {
+        modifier
+            .id
+            .as_function()
+            .is_some_and(|fid| hir.function(fid).name.is_some_and(|ident| ident.as_str() == name))
+    })
 }
 
-fn modifier_name_is(hir: &hir::Hir<'_>, modifier: &hir::Modifier<'_>, name: &str) -> bool {
-    match modifier.id {
-        ItemId::Function(fid) => hir.function(fid).name.is_some_and(|ident| ident.as_str() == name),
-        ItemId::Contract(cid) => hir.contract(cid).name.as_str() == name,
-        _ => false,
-    }
-}
-
-fn function_calls_named<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    func: &hir::Function<'hir>,
-    bases: &'hir [ContractId],
-    name: &str,
+/// True if `hit` matches an expression in `fid`'s body or, transitively, in the body of any
+/// internal function it calls.
+fn reaches<'gcx>(
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
+    fid: FunctionId,
+    hit: impl FnMut(&'gcx Expr<'gcx>) -> bool,
 ) -> bool {
-    let Some(body) = func.body else { return false };
-    let mut finder = CallNameFinder { hir, name, bases, stack: vec![] };
-    finder.block_calls_named(body)
+    Reach { gcx, bases, defining_contract: None, visited: HashSet::default(), hit }
+        .visit_function_body(fid)
+        .is_break()
 }
 
-struct CallNameFinder<'a, 'hir> {
-    hir: &'hir hir::Hir<'hir>,
-    name: &'a str,
-    bases: &'hir [ContractId],
-    stack: Vec<FunctionId>,
+struct Reach<'gcx, F> {
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
+    defining_contract: Option<ContractId>,
+    // The predicate and dispatch context are fixed for the entire reachability check.
+    visited: HashSet<FunctionId>,
+    hit: F,
 }
 
-impl<'hir> CallNameFinder<'_, 'hir> {
-    fn block_calls_named(&mut self, block: hir::Block<'hir>) -> bool {
-        block.stmts.iter().any(|stmt| self.stmt_calls_named(stmt))
-    }
-
-    fn stmt_calls_named(&mut self, stmt: &'hir hir::Stmt<'hir>) -> bool {
-        match &stmt.kind {
-            StmtKind::DeclSingle(var_id) => self
-                .hir
-                .variable(*var_id)
-                .initializer
-                .is_some_and(|init| self.expr_calls_named(init)),
-            StmtKind::DeclMulti(_, expr)
-            | StmtKind::Emit(expr)
-            | StmtKind::Revert(expr)
-            | StmtKind::Return(Some(expr))
-            | StmtKind::Expr(expr) => self.expr_calls_named(expr),
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-                self.block_calls_named(*block)
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => {
-                self.expr_calls_named(condition)
-                    || self.stmt_calls_named(then_stmt)
-                    || else_stmt.is_some_and(|stmt| self.stmt_calls_named(stmt))
-            }
-            StmtKind::Try(stmt_try) => {
-                self.expr_calls_named(&stmt_try.expr)
-                    || stmt_try.clauses.iter().any(|clause| self.block_calls_named(clause.block))
-            }
-            StmtKind::Return(None)
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Placeholder
-            | StmtKind::AssemblyBlock(_)
-            | StmtKind::Switch(_)
-            | StmtKind::Err(_) => false,
+impl<'gcx, F: FnMut(&'gcx Expr<'gcx>) -> bool> Reach<'gcx, F> {
+    fn visit_function_body(&mut self, fid: FunctionId) -> ControlFlow<()> {
+        if !self.visited.insert(fid) {
+            return ControlFlow::Continue(());
         }
-    }
-
-    fn expr_calls_named(&mut self, expr: &'hir hir::Expr<'hir>) -> bool {
-        match &expr.kind {
-            ExprKind::Call(callee, args, opts) => {
-                let called_functions = resolved_internal_function_ids(self.hir, callee, self.bases);
-                if called_functions
-                    .iter()
-                    .copied()
-                    .any(|func_id| self.function_matches_name(func_id))
-                {
-                    return true;
-                }
-
-                if let Some(opts) = opts
-                    && opts.args.iter().any(|opt| self.expr_calls_named(&opt.value))
-                {
-                    return true;
-                }
-
-                if args.exprs().any(|arg| self.expr_calls_named(arg)) {
-                    return true;
-                }
-
-                for func_id in called_functions {
-                    if self.function_belongs_to_bases(func_id) && self.function_calls_named(func_id)
-                    {
-                        return true;
-                    }
-                }
-
-                false
-            }
-            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-                self.expr_calls_named(lhs) || self.expr_calls_named(rhs)
-            }
-            ExprKind::Unary(_, inner) | ExprKind::Delete(inner) | ExprKind::Payable(inner) => {
-                self.expr_calls_named(inner)
-            }
-            ExprKind::Index(base, index) => {
-                self.expr_calls_named(base)
-                    || index.is_some_and(|index| self.expr_calls_named(index))
-            }
-            ExprKind::Slice(base, start, end) => {
-                self.expr_calls_named(base)
-                    || start.is_some_and(|start| self.expr_calls_named(start))
-                    || end.is_some_and(|end| self.expr_calls_named(end))
-            }
-            ExprKind::Member(base, _) => self.expr_calls_named(base),
-            ExprKind::Ternary(condition, if_true, if_false) => {
-                self.expr_calls_named(condition)
-                    || self.expr_calls_named(if_true)
-                    || self.expr_calls_named(if_false)
-            }
-            ExprKind::Array(exprs) => exprs.iter().any(|expr| self.expr_calls_named(expr)),
-            ExprKind::Tuple(exprs) => {
-                exprs.iter().flatten().any(|expr| self.expr_calls_named(expr))
-            }
-            ExprKind::Lit(_)
-            | ExprKind::Ident(_)
-            | ExprKind::New(_)
-            | ExprKind::TypeCall(_)
-            | ExprKind::Type(_)
-            | ExprKind::YulMember(..)
-            | ExprKind::Err(_) => false,
-        }
-    }
-
-    fn function_calls_named(&mut self, func_id: FunctionId) -> bool {
-        if self.stack.contains(&func_id) {
-            return false;
-        }
-
-        let func = self.hir.function(func_id);
-        let Some(body) = func.body else { return false };
-        self.stack.push(func_id);
-        let found = self.block_calls_named(body);
-        self.stack.pop();
-        found
-    }
-
-    fn function_matches_name(&self, func_id: FunctionId) -> bool {
-        self.function_belongs_to_bases(func_id)
-            && self.hir.function(func_id).name.is_some_and(|ident| ident.as_str() == self.name)
-    }
-
-    fn function_belongs_to_bases(&self, func_id: FunctionId) -> bool {
-        self.hir
-            .function(func_id)
-            .contract
-            .is_some_and(|contract_id| self.bases.contains(&contract_id))
+        let Some(body) = self.gcx.hir.function(fid).body else {
+            return ControlFlow::Continue(());
+        };
+        let previous = self.defining_contract;
+        self.defining_contract = self.gcx.hir.function(fid).contract;
+        let result = body.stmts.iter().try_for_each(|stmt| self.visit_stmt(stmt));
+        self.defining_contract = previous;
+        result
     }
 }
 
-struct StateWriteAnalyzer<'hir> {
-    hir: &'hir hir::Hir<'hir>,
-    bases: &'hir [ContractId],
-    stack: Vec<FunctionId>,
-}
+impl<'gcx, F: FnMut(&'gcx Expr<'gcx>) -> bool> Visit<'gcx> for Reach<'gcx, F> {
+    type BreakValue = ();
 
-impl<'hir> StateWriteAnalyzer<'hir> {
-    fn block_writes_state(&mut self, block: hir::Block<'hir>) -> bool {
-        block.stmts.iter().any(|stmt| self.stmt_writes_state(stmt))
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
     }
 
-    fn stmt_writes_state(&mut self, stmt: &'hir hir::Stmt<'hir>) -> bool {
-        match &stmt.kind {
-            StmtKind::DeclSingle(var_id) => self
-                .hir
-                .variable(*var_id)
-                .initializer
-                .is_some_and(|init| self.expr_writes_state(init)),
-            StmtKind::DeclMulti(_, expr)
-            | StmtKind::Emit(expr)
-            | StmtKind::Revert(expr)
-            | StmtKind::Return(Some(expr))
-            | StmtKind::Expr(expr) => self.expr_writes_state(expr),
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-                self.block_writes_state(*block)
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => {
-                self.expr_writes_state(condition)
-                    || self.stmt_writes_state(then_stmt)
-                    || else_stmt.is_some_and(|stmt| self.stmt_writes_state(stmt))
-            }
-            StmtKind::Try(stmt_try) => {
-                self.expr_writes_state(&stmt_try.expr)
-                    || stmt_try.clauses.iter().any(|clause| self.block_writes_state(clause.block))
-            }
-            StmtKind::Return(None)
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Placeholder
-            | StmtKind::AssemblyBlock(_)
-            | StmtKind::Switch(_)
-            | StmtKind::Err(_) => false,
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
+        if (self.hit)(expr) {
+            return ControlFlow::Break(());
         }
-    }
-
-    fn expr_writes_state(&mut self, expr: &'hir hir::Expr<'hir>) -> bool {
-        match &expr.kind {
-            ExprKind::Assign(lhs, _, rhs) => {
-                lhs_writes_state(self.hir, lhs)
-                    || self.expr_writes_state(lhs)
-                    || self.expr_writes_state(rhs)
-            }
-            ExprKind::Delete(inner) => {
-                lhs_writes_state(self.hir, inner) || self.expr_writes_state(inner)
-            }
-            ExprKind::Unary(op, inner) => {
-                (op.kind.has_side_effects() && lhs_writes_state(self.hir, inner))
-                    || self.expr_writes_state(inner)
-            }
-            ExprKind::Call(callee, args, opts) => {
-                if member_call_writes_state(self.hir, callee) {
-                    return true;
-                }
-
-                if self.expr_writes_state(callee)
-                    || opts.is_some_and(|opts| {
-                        opts.args.iter().any(|opt| self.expr_writes_state(&opt.value))
-                    })
-                    || args.exprs().any(|arg| self.expr_writes_state(arg))
-                {
-                    return true;
-                }
-
-                resolved_internal_function_ids(self.hir, callee, self.bases)
-                    .into_iter()
-                    .any(|func_id| self.function_writes_state(func_id))
-            }
-            ExprKind::Binary(lhs, _, rhs) => {
-                self.expr_writes_state(lhs) || self.expr_writes_state(rhs)
-            }
-            ExprKind::Index(base, index) => {
-                self.expr_writes_state(base)
-                    || index.is_some_and(|index| self.expr_writes_state(index))
-            }
-            ExprKind::Slice(base, start, end) => {
-                self.expr_writes_state(base)
-                    || start.is_some_and(|start| self.expr_writes_state(start))
-                    || end.is_some_and(|end| self.expr_writes_state(end))
-            }
-            ExprKind::Member(base, _) | ExprKind::Payable(base) => self.expr_writes_state(base),
-            ExprKind::Ternary(condition, if_true, if_false) => {
-                self.expr_writes_state(condition)
-                    || self.expr_writes_state(if_true)
-                    || self.expr_writes_state(if_false)
-            }
-            ExprKind::Array(exprs) => exprs.iter().any(|expr| self.expr_writes_state(expr)),
-            ExprKind::Tuple(exprs) => {
-                exprs.iter().flatten().any(|expr| self.expr_writes_state(expr))
-            }
-            ExprKind::Lit(_)
-            | ExprKind::Ident(_)
-            | ExprKind::New(_)
-            | ExprKind::TypeCall(_)
-            | ExprKind::Type(_)
-            | ExprKind::YulMember(..)
-            | ExprKind::Err(_) => false,
+        if let ExprKind::Call(callee, ..) = &expr.kind
+            && let Some(fid) =
+                internal_callee(self.gcx, callee, self.bases[0], self.defining_contract)
+        {
+            self.visit_function_body(fid)?;
         }
-    }
-
-    fn function_writes_state(&mut self, func_id: FunctionId) -> bool {
-        if self.stack.contains(&func_id) {
-            return false;
-        }
-
-        let func = self.hir.function(func_id);
-        let Some(body) = func.body else { return false };
-        self.stack.push(func_id);
-        let writes = self.block_writes_state(body);
-        self.stack.pop();
-        writes
+        self.walk_expr(expr)
     }
 }
 
-fn member_call_writes_state(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
-    let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
-    matches!(member.as_str(), "push" | "pop") && lhs_writes_state(hir, base)
+/// The selected internal function in the analyzed contract's dispatch context.
+fn internal_callee(
+    gcx: Gcx<'_>,
+    callee: &Expr<'_>,
+    contract: ContractId,
+    defining_contract: Option<ContractId>,
+) -> Option<FunctionId> {
+    let callee = callee.peel_parens();
+    let fid = gcx.resolved_function(callee)?;
+    let TyKind::Fn(function) = gcx.type_of_expr(callee.id)?.kind else { return None };
+    if !function.is_internal() {
+        return None;
+    }
+    Some(match &callee.kind {
+        ExprKind::Ident(_) => gcx.resolve_virtual_function(contract, fid),
+        ExprKind::Member(base, _) if is_builtin(gcx, base, sym::super_) => {
+            gcx.resolve_super_function(contract, defining_contract?, fid)
+        }
+        _ => fid,
+    })
 }
 
-fn lhs_writes_state(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(resolutions) => {
-            resolutions.iter().any(|res| matches!(res, Res::Item(ItemId::Variable(var_id)) if hir.variable(*var_id).kind.is_state()))
-        }
-        ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            expr_references_storage(hir, base)
-        }
-        ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| lhs_writes_state(hir, expr))
+/// `x.delegatecall(..)` or `selfdestruct(..)`.
+fn is_destructive_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    let ExprKind::Call(callee, ..) = &expr.kind else { return false };
+    matches!(
+        gcx.resolved_builtin(callee),
+        Some(Builtin::AddressDelegatecall | Builtin::Selfdestruct)
+    )
+}
+
+/// An assignment, `delete`, `++`/`--` or `push`/`pop` whose target lives in contract storage.
+fn writes_state(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    match &expr.kind {
+        ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => lhs_writes_state(gcx, lhs),
+        ExprKind::Unary(op, lhs) => op.kind.has_side_effects() && lhs_writes_state(gcx, lhs),
+        ExprKind::Call(callee, ..) => {
+            matches!(&callee.peel_parens().kind, ExprKind::Member(base, member)
+                if matches!(member.as_str(), "push" | "pop") && references_storage(gcx, base))
         }
         _ => false,
     }
 }
 
-fn expr_references_storage(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+/// A state variable, or a member/index of an expression that denotes contract storage.
+fn lhs_writes_state(gcx: Gcx<'_>, lhs: &Expr<'_>) -> bool {
+    match &lhs.peel_parens().kind {
+        ExprKind::Ident(_) => {
+            gcx.resolved_variable(lhs).is_some_and(|v| gcx.hir.variable(v).kind.is_state())
+        }
+        ExprKind::Index(base, _) | ExprKind::Slice(base, ..) | ExprKind::Member(base, _) => {
+            references_storage(gcx, base)
+        }
+        ExprKind::Tuple(elems) => elems.iter().flatten().any(|elem| lhs_writes_state(gcx, elem)),
+        _ => false,
+    }
+}
+
+fn references_storage(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(resolutions) => resolutions.iter().any(|res| {
-            matches!(res, Res::Item(ItemId::Variable(var_id)) if variable_references_storage(hir.variable(*var_id)))
+        ExprKind::Ident(_) => gcx.resolved_variable(expr).is_some_and(|v| {
+            let var = gcx.hir.variable(v);
+            var.kind.is_state() || var.data_location == Some(DataLocation::Storage)
         }),
-        ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            expr_references_storage(hir, base)
+        ExprKind::Index(base, _) | ExprKind::Slice(base, ..) | ExprKind::Member(base, _) => {
+            references_storage(gcx, base)
         }
-        _ => false,
-    }
-}
-
-fn variable_references_storage(var: &hir::Variable<'_>) -> bool {
-    var.kind.is_state() || var.data_location == Some(DataLocation::Storage)
-}
-
-fn resolved_internal_function_ids(
-    hir: &hir::Hir<'_>,
-    callee: &hir::Expr<'_>,
-    bases: &[ContractId],
-) -> Vec<FunctionId> {
-    match &callee.peel_parens().kind {
-        ExprKind::Ident(resolutions) => resolutions
-            .iter()
-            .filter_map(|res| match res {
-                Res::Item(ItemId::Function(func_id)) => Some(*func_id),
-                _ => None,
-            })
-            .collect(),
-        ExprKind::Member(base, method) => {
-            let ExprKind::Ident(resolutions) = &base.peel_parens().kind else { return vec![] };
-            let is_super = resolutions
-                .iter()
-                .any(|res| matches!(res, Res::Builtin(builtin) if builtin.name() == sym::super_));
-
-            let contracts: Vec<_> = if is_super {
-                bases.get(1..).unwrap_or_default().to_vec()
-            } else {
-                resolutions
-                    .iter()
-                    .filter_map(|res| match res {
-                        Res::Item(ItemId::Contract(cid)) => Some(*cid),
-                        _ => None,
-                    })
-                    .collect()
-            };
-
-            contracts
-                .into_iter()
-                .flat_map(|cid| hir.contract(cid).all_functions())
-                .filter(|&fid| {
-                    hir.function(fid).name.is_some_and(|name| name.as_str() == method.as_str())
-                })
-                .collect()
-        }
-        _ => vec![],
+        _ => gcx
+            .type_of_expr(expr.peel_parens().id)
+            .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage)),
     }
 }

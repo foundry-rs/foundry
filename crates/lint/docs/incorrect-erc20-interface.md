@@ -3,14 +3,15 @@
 **Severity**: `Med`
 **ID**: `incorrect-erc20-interface`
 
-Flags interfaces or contracts whose function signatures match an ERC20 method by name and
-parameters but use the wrong return type.
-
 ## What it does
 
 For each function whose name and parameter types match a canonical ERC20 method
 (`totalSupply`, `balanceOf`, `transfer`, `transferFrom`, `approve`, `allowance`), the lint checks
 that the return type matches the spec. A mismatch is reported.
+
+Only contracts and interfaces named `ERC20` or `IERC20`, or inheriting from one of them, are
+checked. Contracts that also inherit from `ERC721` or `IERC721` are skipped, since ERC721 has
+functions with the same names and different return types.
 
 ## Why is this bad?
 
@@ -19,16 +20,14 @@ lending protocols, multisigs) and are a common source of integration bugs and ex
 
 ## Example
 
-### Bad
-
 ```solidity
-interface IBadERC20 {
+interface IERC20 {
     function balanceOf(address) external view returns (bool);  // should be uint256
     function transfer(address, uint256) external;              // should return bool
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 interface IERC20 {

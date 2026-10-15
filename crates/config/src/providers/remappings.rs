@@ -102,12 +102,10 @@ impl Remappings {
             // `@prb/math/=src/math/` can coexist with an incoming `@prb/=lib/prb/`; the root alias
             // resolves its subtree while the dependency alias acts as a fallback for the rest of
             // the namespace.
-            let mut existing_name_path = existing.name.clone();
-            if !existing_name_path.ends_with('/') {
-                existing_name_path.push('/')
-            }
-            let is_conflicting = remapping.name.starts_with(&existing_name_path);
-            is_conflicting && existing.context == remapping.context
+            // Compare without one optional trailing slash so `pkg` and `pkg/` denote the same
+            // alias while preserving significant repeated slashes.
+            remapping_name_is_prefix(&existing.name, &remapping.name)
+                && existing.context == remapping.context
         }) {
             return false;
         };
@@ -356,6 +354,7 @@ impl RemappingsProvider<'_> {
             for remapping in contextual
                 .into_iter()
                 .filter(|remapping| ambiguous_aliases.contains(&remapping.name))
+                .flat_map(expand_scoped_contextual_remapping)
             {
                 if let Some(overlays) = contextual_overlays(&authoritative_remappings, &remapping) {
                     contextual_remappings.extend(overlays);
@@ -548,8 +547,8 @@ fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> 
 }
 
 fn remapping_name_is_prefix(prefix: &str, name: &str) -> bool {
-    let prefix = prefix.trim_end_matches('/');
-    let name = name.trim_end_matches('/');
+    let prefix = prefix.strip_suffix('/').unwrap_or(prefix);
+    let name = name.strip_suffix('/').unwrap_or(name);
     prefix == name || name.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with('/'))
 }
 
@@ -559,7 +558,10 @@ fn contextual_overlays(
 ) -> Option<Vec<Remapping>> {
     let applicable = |mapping: &&Remapping| {
         mapping.context.as_deref().is_none_or(|context| {
-            refinement.context.as_deref().is_some_and(|refinement| refinement.starts_with(context))
+            refinement
+                .context
+                .as_deref()
+                .is_some_and(|refinement| context_starts_with(refinement, context))
         })
     };
     if authoritative
@@ -580,6 +582,54 @@ fn contextual_overlays(
         overlay.context.clone_from(&refinement.context);
     }
     Some(overlays)
+}
+
+fn context_starts_with(path: &str, base: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use path_slash::PathBufExt as _;
+
+        let path = PathBuf::from_slash(path);
+        let base = PathBuf::from_slash(base);
+        return path.starts_with(base);
+    }
+    #[cfg(not(windows))]
+    Path::new(path).starts_with(base)
+}
+
+/// Narrows an npm scope mapping to its installed packages so missing siblings can use the global
+/// hoisted-package fallback.
+fn expand_scoped_contextual_remapping(remapping: Remapping) -> Vec<Remapping> {
+    let scope = remapping.name.trim_end_matches('/');
+    let path = Path::new(&remapping.path);
+    if !scope.starts_with('@')
+        || path.file_name().and_then(|name| name.to_str()) != Some(scope)
+        || path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str())
+            != Some("node_modules")
+    {
+        return vec![remapping];
+    }
+
+    let Ok(entries) = fs::read_dir(path) else { return vec![remapping] };
+    let mut packages = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else { return vec![remapping] };
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else { return vec![remapping] };
+        let mut path = entry.path().display().to_string();
+        if !path.ends_with(['/', '\\']) {
+            path.push(MAIN_SEPARATOR);
+        }
+        packages.push(Remapping {
+            context: remapping.context.clone(),
+            name: format!("{scope}/{name}/"),
+            path,
+        });
+    }
+    packages.sort_by(|a, b| a.name.cmp(&b.name));
+    if packages.is_empty() { vec![remapping] } else { packages }
 }
 
 fn configured_auto_remapping(
@@ -905,6 +955,23 @@ mod tests {
         assert_eq!(generated.into_inner(), vec![contextual_cli]);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn contextual_overlay_accepts_mixed_windows_separators() {
+        let authoritative = Remapping {
+            context: Some(r"C:\workspace\lib/a/".to_string()),
+            name: "shared/".to_string(),
+            path: "src/override/".to_string(),
+        };
+        let refinement = Remapping {
+            context: Some(r"C:\workspace\lib\a\lib\x\".to_string()),
+            name: "shared/".to_string(),
+            path: "lib/a/lib/x/lib/shared/src/".to_string(),
+        };
+
+        assert!(contextual_overlays(&[authoritative], &refinement).is_none());
+    }
+
     #[test]
     fn nested_remapping_groups_are_sorted() {
         let root = tempfile::tempdir().unwrap();
@@ -1136,6 +1203,29 @@ mod tests {
         let mut duplicate = Remappings::new_with_remappings(vec![remapping("pkg/", "src/local/")]);
         duplicate.extend(vec![remapping("pkg/", "lib/pkg/src/")]);
         assert_eq!(duplicate.remappings, vec![remapping("pkg/", "src/local/")]);
+
+        // The first remapping wins regardless of whether either name carries a trailing slash.
+        for (existing, incoming) in
+            [("pkg", "pkg"), ("pkg", "pkg/"), ("pkg/", "pkg"), ("pkg", "pkg/sub/")]
+        {
+            let mut duplicate =
+                Remappings::new_with_remappings(vec![remapping(existing, "src/local/")]);
+            duplicate.extend(vec![remapping(incoming, "lib/pkg/src/")]);
+            assert_eq!(
+                duplicate.remappings,
+                vec![remapping(existing, "src/local/")],
+                "{existing} then {incoming}"
+            );
+        }
+
+        // Repeated slashes are significant Solidity import-prefix characters.
+        for incoming in ["pkg/", "pkg/sub/"] {
+            let existing = remapping("pkg//", "src/double-slash/");
+            let mut distinct = Remappings::new_with_remappings(vec![existing.clone()]);
+            let incoming = remapping(incoming, "lib/pkg/src/");
+            distinct.extend(vec![incoming.clone()]);
+            assert_eq!(distinct.remappings, vec![existing, incoming]);
+        }
 
         let contextual_remapping = |context: &str, name: &str, path: &str| Remapping {
             context: Some(context.to_string()),

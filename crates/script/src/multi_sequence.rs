@@ -104,9 +104,18 @@ impl<N: Network> MultiChainSequence<N> {
             foundry_compilers::utils::read_json_file(&sensitive_path)
                 .wrap_err("Multi-chain deployment sensitive details not found.")?;
 
-        sequence.deployments.iter_mut().enumerate().for_each(|(i, sequence)| {
-            sequence.fill_sensitive(&sensitive_sequence.deployments[i]);
-        });
+        let deployments_len = sequence.deployments.len();
+        let sensitive_deployments_len = sensitive_sequence.deployments.len();
+        if deployments_len != sensitive_deployments_len {
+            eyre::bail!(
+                "sensitive-cache deployment count ({sensitive_deployments_len}) does not match \
+                 deployment count ({deployments_len}); the multi-chain deployment and its \
+                 sensitive-cache counterpart are out of sync"
+            );
+        }
+        for (i, deployment) in sequence.deployments.iter_mut().enumerate() {
+            deployment.fill_sensitive(&sensitive_sequence.deployments[i])?;
+        }
 
         sequence.path = path;
         sequence.sensitive_path = sensitive_path;
@@ -139,7 +148,7 @@ impl<N: Network> MultiChainSequence<N> {
 
         // cache writes
         //../Contract-latest/run.json
-        fs::write_pretty_json_file(&self.sensitive_path, &sensitive_sequence)?;
+        fs::write_sensitive_json_file(&self.sensitive_path, &sensitive_sequence)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json
@@ -166,5 +175,54 @@ impl<N: Network> MultiChainSequence<N> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+
+    #[test]
+    fn load_rejects_mismatched_deployment_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            broadcast: dir.path().join("broadcast"),
+            cache_path: dir.path().join("cache"),
+            ..Default::default()
+        };
+        let target = ArtifactId {
+            path: PathBuf::from("Script.json"),
+            name: "Script".to_string(),
+            source: PathBuf::from("Script.sol"),
+            version: "0.8.30".parse().unwrap(),
+            build_id: String::new(),
+            profile: "default".to_string(),
+        };
+        let (path, sensitive_path) =
+            MultiChainSequence::<Ethereum>::get_paths(&config, "run()", &target, false).unwrap();
+        let sequence = MultiChainSequence::<Ethereum> {
+            deployments: vec![ScriptSequence::default()],
+            path: PathBuf::new(),
+            sensitive_path: PathBuf::new(),
+            timestamp: 0,
+        };
+        fs::write_pretty_json_file(&path, &sequence).unwrap();
+        for count in [0, 2] {
+            let sensitive = SensitiveMultiChainSequence {
+                deployments: vec![SensitiveScriptSequence::default(); count],
+            };
+            fs::write_sensitive_json_file(&sensitive_path, &sensitive).unwrap();
+            let err = MultiChainSequence::<Ethereum>::load(&config, "run()", &target, false)
+                .err()
+                .expect("mismatched counts must fail");
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "sensitive-cache deployment count ({count}) does not match deployment count (1); \
+                     the multi-chain deployment and its sensitive-cache counterpart are out of sync"
+                )
+            );
+        }
     }
 }

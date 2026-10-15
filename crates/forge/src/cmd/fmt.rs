@@ -96,22 +96,35 @@ impl FmtArgs {
             dirs.iter().any(check_against_dir)
         };
 
-        let mut input = match &self.paths[..] {
-            [] => {
-                // Retrieve the project paths, and filter out the ignored ones and libs.
-                let project_paths: Vec<PathBuf> = config
-                    .project_paths::<SolcLanguage>()
-                    .input_files_iter()
-                    .filter(|p| {
-                        !((!self.nearest
-                            && (ignored.contains(p)
-                                || ignored.contains(&cwd.join(p))
-                                || is_under_dir(p, &ignored)))
-                            || is_under_dir(p, &libs))
-                    })
-                    .collect();
-                Input::Paths(project_paths)
+        // Directory walks follow symlinks, so only keep discovered files that resolve inside the
+        // project root or the configured/explicit directory. Explicit file paths are always
+        // included.
+        let root = fs::canonicalize_path(&config.root).unwrap_or_else(|_| config.root.clone());
+        let is_contained = |file_path: &Path, dir: &Path| -> bool {
+            let Ok(resolved) = fs::canonicalize_path(file_path) else { return false };
+            if resolved.starts_with(&root) || resolved.starts_with(dir) {
+                return true;
             }
+            let _ = sh_warn!(
+                "Skipping {}: it resolves outside of the project root.\n\
+                 HINT: Pass the path explicitly to format it: `forge fmt <paths>`",
+                file_path.display()
+            );
+            false
+        };
+
+        let default_paths = self.paths.is_empty();
+        let paths = if default_paths {
+            let paths = config.project_paths::<SolcLanguage>();
+            // Missing default directories are normal, and configured directories may be external.
+            [paths.sources, paths.tests, paths.scripts]
+                .into_iter()
+                .filter(|path| path.exists())
+                .collect()
+        } else {
+            self.paths
+        };
+        let mut input = match &paths[..] {
             [one] if one == Path::new("-") => Input::Stdin,
             paths => {
                 let mut inputs = Vec::with_capacity(paths.len());
@@ -126,8 +139,9 @@ impl FmtArgs {
                     }
 
                     if path.is_dir() {
-                        // If the input directory is not a lib directory, make sure to ignore libs.
-                        let exclude_libs = !is_under_dir(path, &libs);
+                        // Only explicitly requested library directories opt in to formatting libs.
+                        let exclude_libs = default_paths || !is_under_dir(path, &libs);
+                        let dir = fs::canonicalize_path(path)?;
                         inputs.extend(
                             foundry_compilers::utils::source_files_iter(path, SOLC_EXTENSIONS)
                                 .filter(|p| {
@@ -136,10 +150,17 @@ impl FmtArgs {
                                             || ignored.contains(&cwd.join(p))
                                             || is_under_dir(p, &ignored)))
                                         || (exclude_libs && is_under_dir(p, &libs)))
-                                }),
+                                })
+                                .filter(|p| is_contained(p, &dir)),
                         );
                     } else if path.is_sol() {
-                        // Explicit file paths are always included, even if in a lib
+                        if default_paths
+                            && ((!self.nearest && is_under_dir(path, &ignored))
+                                || is_under_dir(path, &libs))
+                        {
+                            continue;
+                        }
+                        // CLI file paths are always included, even if in a lib.
                         inputs.push(path.clone());
                     } else {
                         warn!("Cannot process path {}", path.display());

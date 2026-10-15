@@ -42,5 +42,4 @@ mod symbolic_regression;
 pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
 
-mod lockfile;
-pub use lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile};
+pub use foundry_cli::lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile};

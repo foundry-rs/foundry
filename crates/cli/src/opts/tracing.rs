@@ -49,7 +49,7 @@ pub struct TracingArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
 
-    /// Disable external trace identification using Sourcify, Etherscan, or OpenChain.
+    /// Disable external trace identification using Sourcify or Etherscan.
     #[arg(long, help_heading = "Trace options")]
     #[serde(skip)]
     pub disable_external_identification: bool,
@@ -92,12 +92,12 @@ impl TracingArgs {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::address;
 
     #[test]
     fn resolve_merges_cli_overrides() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let config = TracingConfig {
             verbosity: 2,
             labels: AddressHashMap::from_iter([(address, "config".to_string())]),

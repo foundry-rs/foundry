@@ -1,19 +1,9 @@
 //! Helper types for working with [revm]
 
-#[cfg(feature = "monad")]
-use std::collections::BTreeSet;
-use std::{
-    collections::BTreeMap,
-    fmt::{self, Debug},
-    fs::File,
-    io::BufReader,
-    path::Path,
-};
-
+use crate::mem::storage::MinedTransaction;
 use alloy_consensus::BlockBody;
-#[cfg(test)]
-use alloy_consensus::Header;
-use alloy_eips::eip4895::Withdrawals;
+use alloy_eips::{eip4895::Withdrawals, eip7928::BlockAccessList};
+use alloy_evm::block::BalIndexedDatabase;
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
@@ -27,27 +17,30 @@ use anvil_core::eth::{
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
-    StateSnapshot,
+    StateSnapshot, existing_account,
 };
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
-    database::{AccountState, CacheDB, DatabaseRef, DbAccount},
-    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    state::AccountInfo,
+    database::{AccountState, CacheDB, DatabaseRef, DbAccount, bal::BalState},
+    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId},
+    state::{AccountInfo, bal::BlockAccessIndex},
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{Error as DeError, MapAccess, Visitor},
 };
 use serde_json::Value;
-
-use crate::mem::storage::MinedTransaction;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    fs::File,
+    io::BufReader,
+    path::Path,
+};
 
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
 pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
@@ -59,7 +52,7 @@ pub struct MonadBlockReplayProfile {
     /// Chain ID active when the block was executed.
     pub execution_chain_id: u64,
     /// Monad hardfork active when the block was executed.
-    pub hardfork: MonadHardfork,
+    pub hardfork: foundry_evm::hardfork::MonadHardfork,
 }
 
 /// Inserts a block hash, discards entries outside the EVM-visible cache, and returns its head.
@@ -76,6 +69,10 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        None
+    }
+
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
         None
     }
 
@@ -141,6 +138,10 @@ where
         T::maybe_as_full_db(self)
     }
 
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        T::maybe_as_full_db_mut(self)
+    }
+
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         T::maybe_full_db(self)
     }
@@ -179,13 +180,23 @@ pub trait MaybeForkedDatabase {
 /// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
 impl alloy_evm::Database for dyn Db {}
 
-/// A wrapper around [`CacheDB`].
+/// A wrapper around [`CacheDB`] that executes transactions at `spec`.
 #[derive(Debug)]
-pub struct AnvilCacheDB<T>(pub CacheDB<T>);
+pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState, SpecId);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
-    pub fn new(inner: T) -> Self {
-        Self(CacheDB::new(inner))
+    pub fn new(inner: T, spec: SpecId) -> Self {
+        Self(CacheDB::new(inner), BalState::new(), spec)
+    }
+
+    /// Enables EIP-7928 block access list recording.
+    pub fn enable_bal_recording(&mut self) {
+        self.1 = BalState::new().with_bal_builder();
+    }
+
+    /// Takes the recorded EIP-7928 block access list, if recording was enabled.
+    pub fn take_block_access_list(&mut self) -> Option<BlockAccessList> {
+        self.1.take_built_alloy_bal()
     }
 }
 
@@ -206,7 +217,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> Database for AnvilCache
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.0.basic(address)
+        Ok(existing_account(self.2, self.0.basic(address)?))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -244,18 +255,69 @@ impl<T: DatabaseRef<Error = DatabaseError>> DatabaseRef for AnvilCacheDB<T> {
 
 impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for AnvilCacheDB<T> {
     fn commit(&mut self, changes: revm::state::EvmState) {
+        self.1.commit(&changes);
         self.0.commit(changes)
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase for AnvilCacheDB<T> {
+    fn set_bal_index(&mut self, index: u64) {
+        self.1.bal_index = BlockAccessIndex::new(index);
+    }
+
+    fn bump_bal_index(&mut self) {
+        self.1.bump_bal_index();
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase
+    for &mut AnvilCacheDB<T>
+{
+    fn set_bal_index(&mut self, index: u64) {
+        (**self).set_bal_index(index);
+    }
+
+    fn bump_bal_index(&mut self) {
+        (**self).bump_bal_index();
+    }
+}
+
+/// A read-only view of a database that reports empty accounts as absent.
+///
+/// Anvil's databases return a default [`AccountInfo`] for an account they don't hold (see
+/// [`EmptyDBWrapper`]), so an absent account can't be told apart from an empty one. Since
+/// EIP-161 an empty account can't be created and is deleted when touched, so this view lets a
+/// pre-state lookup treat both as absent. An account that already exists while empty, from genesis
+/// or before Spurious Dragon, is also reported as absent.
+#[derive(Debug)]
+pub(super) struct EmptyAsAbsentDb<T>(pub(super) T);
+
+impl<T: DatabaseRef> DatabaseRef for EmptyAsAbsentDb<T> {
+    type Error = T::Error;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        Ok(self.0.basic_ref(address)?.filter(|info| !info.is_empty()))
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.0.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.0.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.0.block_hash_ref(number)
     }
 }
 
 /// This bundles all required revm traits
 pub trait Db:
-    DatabaseRef<Error = DatabaseError>
-    + Database<Error = DatabaseError>
+    Database<Error = DatabaseError>
     + DatabaseCommit
     + MaybeFullDatabase
     + MaybeForkedDatabase
-    + fmt::Debug
     + Send
     + Sync
 {
@@ -314,10 +376,8 @@ pub trait Db:
     /// Deserialize and add all accounts to the backend storage.
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts {
-            let old_account_nonce = DatabaseRef::basic_ref(self, addr)
-                .ok()
-                .and_then(|acc| acc.map(|acc| acc.nonce))
-                .unwrap_or_default();
+            let old_account_nonce =
+                DatabaseRef::basic_ref(self, addr)?.map(|acc| acc.nonce).unwrap_or_default();
             // use max nonce in case account is imported multiple times with difference
             // nonces to prevent collisions
             let nonce = std::cmp::max(old_account_nonce, account.nonce);
@@ -351,6 +411,9 @@ pub trait Db:
     ///
     /// Returns `true` if the state snapshot was reverted.
     fn revert_state(&mut self, state_snapshot: U256, action: RevertStateSnapshotAction) -> bool;
+
+    /// Deletes a state snapshot without reverting it.
+    fn delete_state_snapshot(&mut self, state_snapshot: U256) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
@@ -404,6 +467,10 @@ where
         false
     }
 
+    fn delete_state_snapshot(&mut self, _state_snapshot: U256) -> bool {
+        false
+    }
+
     fn maybe_state_root(&self) -> Option<B256> {
         self.maybe_full_db().map(|accounts| crate::mem::state::state_root(&accounts))
     }
@@ -425,7 +492,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
                 accounts.remove(address);
                 continue;
             }
-            if overlay.account_state == AccountState::StorageCleared {
+            if overlay.account_state.is_storage_cleared() {
                 accounts.insert(*address, overlay.clone());
                 continue;
             }
@@ -447,7 +514,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
             let mut info = acc.info;
-            info.code = self.cache.contracts.remove(&info.code_hash);
+            info.code = self.cache.contracts.remove(&info.code_hash());
             accounts.insert(addr, info);
         }
         let block_hashes = std::mem::take(&mut self.cache.block_hashes);
@@ -461,7 +528,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, acc) in &self.cache.accounts {
             account_storage.insert(*addr, acc.storage.clone());
             let mut info = acc.info.clone();
-            info.code = self.cache.contracts.get(&info.code_hash).cloned();
+            info.code = self.cache.contracts.get(&info.code_hash()).cloned();
             accounts.insert(*addr, info);
         }
 
@@ -478,7 +545,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
-                self.cache.contracts.insert(acc.code_hash, code);
+                self.cache.contracts.insert(acc.code_hash(), code);
             }
             self.cache.accounts.insert(
                 addr,
@@ -726,7 +793,7 @@ pub struct SerializableState {
     /// used, so it is preserved even while the corresponding transaction bodies are retained.
     #[cfg(feature = "monad")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub monad_block_participants: BTreeMap<B256, BTreeSet<Address>>,
+    pub monad_block_participants: BTreeMap<B256, std::collections::BTreeSet<Address>>,
     /// Execution profile used for each locally stored Monad block.
     #[cfg(feature = "monad")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -915,6 +982,12 @@ impl IntoIterator for SerializableHistoricalStates {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::eth::backend::mem::fork_db::ForkedDatabase;
+    use alloy_consensus::Header;
+    use alloy_network::AnyNetwork;
+    use alloy_provider::ProviderBuilder;
+    use alloy_transport::mock::Asserter;
+    use foundry_evm::backend::{BlockchainDbMeta, SharedBackend};
     use std::fs;
 
     #[test]
@@ -945,26 +1018,23 @@ mod test {
         let updated = Address::with_last_byte(2);
         let deleted = Address::with_last_byte(3);
         let cleared = Address::with_last_byte(4);
-        let deleted_slot = U256::from(1);
+        let deleted_slot = U256::ONE;
         let updated_slot = U256::from(2);
 
         let mut base = MemDb::default();
-        base.insert_account(preserved, AccountInfo::from_balance(U256::from(1)));
+        base.insert_account(preserved, AccountInfo::from_balance(U256::ONE));
         base.insert_account(updated, AccountInfo::from_balance(U256::from(2)));
-        base.set_storage_at(updated, deleted_slot.into(), B256::from(U256::from(10))).unwrap();
-        base.set_storage_at(updated, updated_slot.into(), B256::from(U256::from(11))).unwrap();
+        base.set_storage_at(updated, deleted_slot.into(), B256::with_last_byte(10)).unwrap();
+        base.set_storage_at(updated, updated_slot.into(), B256::with_last_byte(11)).unwrap();
         base.insert_account(deleted, AccountInfo::from_balance(U256::from(3)));
         base.insert_account(cleared, AccountInfo::from_balance(U256::from(4)));
-        base.set_storage_at(cleared, deleted_slot.into(), B256::from(U256::from(11))).unwrap();
+        base.set_storage_at(cleared, deleted_slot.into(), B256::with_last_byte(11)).unwrap();
 
         let mut cache = CacheDB::new(base);
         cache.insert_account_info(updated, AccountInfo::from_balance(U256::from(20)));
         cache.insert_account_storage(updated, deleted_slot, U256::ZERO).unwrap();
         cache.insert_account_storage(updated, updated_slot, U256::from(12)).unwrap();
-        cache.cache.accounts.insert(
-            deleted,
-            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
-        );
+        cache.cache.accounts.insert(deleted, DbAccount::new_not_existing());
         cache.cache.accounts.insert(
             cleared,
             DbAccount {
@@ -975,7 +1045,7 @@ mod test {
         );
 
         let accounts = cache.maybe_full_db().unwrap();
-        assert_eq!(accounts[&preserved].info.balance, U256::from(1));
+        assert_eq!(accounts[&preserved].info.balance, U256::ONE);
         assert_eq!(accounts[&updated].info.balance, U256::from(20));
         assert_eq!(accounts[&updated].storage[&deleted_slot], U256::ZERO);
         assert_eq!(accounts[&updated].storage[&updated_slot], U256::from(12));
@@ -1067,5 +1137,47 @@ mod test {
         assert_eq!(withdrawals.len(), 1);
         assert_eq!(withdrawals[0].index, 42);
         assert_eq!(withdrawals[0].validator_index, 123);
+    }
+
+    #[test]
+    fn load_state_fork_read_error_allows_snapshot_rollback() {
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(Asserter::new());
+        let remote = BlockchainDb::new(
+            BlockchainDbMeta::new(BlockEnv::default(), "http://localhost".to_string()),
+            None,
+        );
+        let (backend, handler) = SharedBackend::new(provider, remote.clone(), None);
+        drop(handler);
+        let mut db = ForkedDatabase::new(backend, remote);
+        let cached = Address::with_last_byte(1);
+        let uncached = Address::with_last_byte(2);
+        let original = AccountInfo { nonce: 7, balance: U256::ONE, ..Default::default() };
+        db.insert_account(cached, original.clone());
+        let snapshot = db.snapshot_state();
+        let mut state = SerializableState::default();
+        for address in [cached, uncached] {
+            state.accounts.insert(
+                address,
+                SerializableAccountRecord {
+                    nonce: 3,
+                    balance: U256::from(10),
+                    code: Bytes::new(),
+                    storage: Default::default(),
+                },
+            );
+        }
+
+        // The cached account imports first; the next lookup reaches the closed fork backend.
+        assert!(matches!(db.load_state(state), Err(DatabaseError::Send(_))));
+        let imported = db.basic_ref(cached).unwrap().unwrap();
+        assert_eq!(imported.nonce, original.nonce);
+        assert_eq!(imported.balance, U256::from(10));
+        assert!(!db.database().cache.accounts.contains_key(&uncached));
+
+        // Mirror Backend::load_state's error path and restore the earlier partial import.
+        assert!(db.revert_state(snapshot, RevertStateSnapshotAction::RevertRemove));
+        assert_eq!(db.basic_ref(cached).unwrap().unwrap(), original);
+        assert!(!db.database().cache.accounts.contains_key(&uncached));
     }
 }

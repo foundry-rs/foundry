@@ -22,4 +22,3 @@ doc = false
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
-proc-macro-error2 = "2"

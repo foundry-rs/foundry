@@ -1,4 +1,4 @@
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │             (bool ok,) = target.delegatecall(payloads[i]);
@@ -6,7 +6,7 @@ LL │             (bool ok,) = target.delegatecall(payloads[i]);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │             (bool ok,) = target.delegatecall(payloads[i]);
@@ -14,7 +14,7 @@ LL │             (bool ok,) = target.delegatecall(payloads[i]);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │             (bool ok,) = target.delegatecall(payloads[i]);
@@ -22,7 +22,7 @@ LL │             (bool ok,) = target.delegatecall(payloads[i]);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │                 (bool ok,) = target.delegatecall(payloads[i]);
@@ -30,7 +30,7 @@ LL │                 (bool ok,) = target.delegatecall(payloads[i]);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │             (ok,) = target.delegatecall(payloads[i++])
@@ -38,7 +38,7 @@ LL │             (ok,) = target.delegatecall(payloads[i++])
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │             (bool ok,) = target.delegatecall(payloads[i]);
@@ -46,7 +46,7 @@ LL │             (bool ok,) = target.delegatecall(payloads[i]);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │         (bool ok,) = target.delegatecall(payload);
@@ -54,7 +54,7 @@ LL │         (bool ok,) = target.delegatecall(payload);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │         (bool ok,) = target.delegatecall(payload);
@@ -62,7 +62,7 @@ LL │         (bool ok,) = target.delegatecall(payload);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │             (bool ok,) = target.delegatecall(payloads[i]);
@@ -70,7 +70,7 @@ LL │             (bool ok,) = target.delegatecall(payloads[i]);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │         (bool ok,) = target.delegatecall(payload);
@@ -78,7 +78,7 @@ LL │         (bool ok,) = target.delegatecall(payload);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │         (bool ok,) = target.delegatecall(payload);
@@ -86,7 +86,7 @@ LL │         (bool ok,) = target.delegatecall(payload);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │         (bool ok,) = target.delegatecall(payload);
@@ -94,7 +94,7 @@ LL │         (bool ok,) = target.delegatecall(payload);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │         (bool ok,) = target.delegatecall(payload);
@@ -102,7 +102,7 @@ LL │         (bool ok,) = target.delegatecall(payload);
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │ …     (bool ok,) = (flag ? targetA : targetB).delegatecall(payloads[i]);
@@ -110,7 +110,7 @@ LL │ …     (bool ok,) = (flag ? targetA : targetB).delegatecall(payloads[i])
    │
    ╰ help: https://getfoundry.sh/forge/linting/delegatecall-loop
 
-warning[delegatecall-loop]: payable functions should not use `delegatecall` inside a loop
+warning[delegatecall-loop]: payable function uses `delegatecall` inside a loop
    ╭▸ ROOT/testdata/DelegatecallLoop.sol:LL:CC
    │
 LL │ …     (bool ok,) = (payloads[i].length != 0 ? targetA : targetB).delegatecall(payloads[i]);

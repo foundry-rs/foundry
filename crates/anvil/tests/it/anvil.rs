@@ -125,17 +125,13 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         api.config().unwrap().current.precompiles.values().find(|&&address| address == P256_VERIFY),
         Some(&P256_VERIFY)
     );
-    for block in [
-        BlockId::Number(BlockNumberOrTag::Latest),
-        BlockId::Number(0_u64.into()),
-        BlockId::pending(),
-    ] {
+    for block in [BlockId::latest(), BlockId::number(0_u64), BlockId::pending()] {
         let output = provider.call(tx.clone().into()).block(block).await.unwrap();
         assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
     }
 
     let caller = Address::random();
-    api.anvil_set_code(caller, P256_CALLER_CODE.to_vec().into()).await.unwrap();
+    api.anvil_set_code(caller, P256_CALLER_CODE.into()).await.unwrap();
     let from = handle.dev_accounts().next().unwrap();
     let receipt = provider
         .send_transaction(
@@ -152,7 +148,7 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         .await
         .unwrap();
     assert!(receipt.status());
-    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::from(1));
+    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::ONE);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -286,6 +282,28 @@ async fn test_can_use_default_genesis_block_number() {
     let provider = handle.http_provider();
 
     assert_eq!(0, provider.get_block(0.into()).await.unwrap().unwrap().header.number);
+}
+
+/// `earliest`, `safe` and `finalized` resolve within the chain when it starts at a non-zero
+/// genesis number.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_tags_respect_genesis_block_number() {
+    let genesis_number = 1000u64;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_genesis_block_number(Some(genesis_number))).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+
+    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    assert_eq!(provider.get_block_number().await.unwrap(), genesis_number + 5);
+
+    let latest = provider.get_balance(account).await.unwrap();
+    for tag in [BlockNumberOrTag::Earliest, BlockNumberOrTag::Safe, BlockNumberOrTag::Finalized] {
+        let balance = provider.get_balance(account).block_id(tag.into()).await.unwrap();
+        assert_eq!(balance, latest, "{tag} should resolve to a block of this chain");
+        let block = provider.get_block(tag.into()).await.unwrap().unwrap();
+        assert_eq!(block.header.number, genesis_number, "{tag} should resolve to genesis");
+    }
 }
 
 /// Verify that genesis block number affects both RPC and EVM execution layer.

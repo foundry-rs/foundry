@@ -23,6 +23,7 @@ jobs:
     name: Run All Benchmarks
     runs-on: depot-ubuntu-24.04-32
     permissions:
+      id-token: write
       contents: read
       pull-requests: read
     outputs:
@@ -32,6 +33,8 @@ jobs:
       FOUNDRY_BENCH_LOCAL_BUILD_PROFILE: profiling
       FOUNDRY_BENCH_LOCAL_BUILD_BINS: forge
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,30 +48,9 @@ jobs:
           sudo apt-get install -y build-essential pkg-config z3
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
-
-      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
-
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-
-      - name: Setup Foundry
-        env:
-          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          GITHUB_WORKSPACE: ${{ github.workspace }}
-        run: |
-          ./.github/scripts/setup-foundryup.sh
-          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
-
-      - name: Build benchmark binary
-        run: cargo build --locked --release --bin foundry-bench
-
-      - name: Install hyperfine
-        run: |
-          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
-          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
 
       # When 'local' is requested, build origin/master from source in a separate
       # worktree and benchmark it as the baseline (labelled 'master') against
@@ -102,6 +84,27 @@ jobs:
             echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
+
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          ./.github/scripts/setup-foundryup.sh
+          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
+
+      - name: Build benchmark binary
+        run: cargo build --locked --release --bin foundry-bench
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
 
       - name: Run forge test benchmarks
         env:

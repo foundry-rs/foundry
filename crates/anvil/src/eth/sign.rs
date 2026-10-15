@@ -122,6 +122,10 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
                 let sig = signer.sign_transaction_sync(&mut t)?;
                 FoundryTxEnvelope::Eip2930(t.into_signed(sig))
             }
+            FoundryTypedTx::Celo(mut t) => {
+                let sig = signer.sign_transaction_sync(&mut t)?;
+                FoundryTxEnvelope::Celo(t.into_signed(sig))
+            }
             FoundryTypedTx::Eip1559(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;
                 FoundryTxEnvelope::Eip1559(t.into_signed(sig))
@@ -134,13 +138,17 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
                 let sig = signer.sign_transaction_sync(&mut t)?;
                 FoundryTxEnvelope::Eip4844(t.into_signed(sig))
             }
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
             }
             #[cfg(feature = "optimism")]
             FoundryTypedTx::PostExec(_) => {
                 unreachable!("op post-exec txs should not be signed")
+            }
+            #[cfg(feature = "base")]
+            FoundryTypedTx::Eip8130(_) => {
+                unreachable!("EIP-8130 requires a signed raw transaction envelope")
             }
             FoundryTypedTx::Tempo(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;

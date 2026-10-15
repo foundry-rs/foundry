@@ -139,6 +139,19 @@ contract FsTest is Test {
         vm.writeFile("./Foundry.toml", "\nffi = true\n");
     }
 
+    function testRemoveDirFoundrytoml() public {
+        string memory root = vm.projectRoot();
+
+        vm._expectCheatcodeRevert();
+        vm.removeDir(root, true);
+
+        vm._expectCheatcodeRevert();
+        vm.removeDir(".", true);
+
+        vm._expectCheatcodeRevert();
+        vm.removeDir("./", true);
+    }
+
     function testReadDir() public {
         string memory path = "fixtures/Dir";
 

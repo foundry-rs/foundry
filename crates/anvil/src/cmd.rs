@@ -1,7 +1,10 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
     config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
-    eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
+    eth::{
+        EthApi, backend::db::SerializableState, miner::INSTANT_COALESCE_WINDOW,
+        pool::transactions::TransactionOrder,
+    },
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
@@ -12,11 +15,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
-use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
+use foundry_evm::hardfork::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -33,7 +32,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tempo_hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -84,6 +82,14 @@ pub struct NodeArgs {
     #[arg(long)]
     pub derivation_path: Option<String>,
 
+    /// The account used to sponsor Tempo fee-payer requests (`eth_signRawTransaction` and raw
+    /// transactions carrying the sponsorship placeholder).
+    ///
+    /// Must be an unlocked account. Only used on Tempo networks; defaults to the last dev
+    /// account.
+    #[arg(long = "tempo.fee-payer", value_name = "ADDRESS")]
+    pub tempo_fee_payer: Option<Address>,
+
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `prague`, `cancun`, `shanghai`, `paris`, `london`, etc...
@@ -91,9 +97,19 @@ pub struct NodeArgs {
     #[arg(long)]
     pub hardfork: Option<String>,
 
+    /// Override the Base activation-registry administrator.
+    #[cfg(feature = "base")]
+    #[arg(long, value_name = "ADDRESS")]
+    pub base_activation_admin: Option<Address>,
+
     /// Block time in seconds for interval mining.
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
     pub block_time: Option<Duration>,
+
+    /// Time in milliseconds to group ready transactions into one auto-mined block.
+    /// Defaults to 0 (no delay). Set a positive value to enable transaction coalescing.
+    #[arg(long, value_name = "MILLISECONDS", default_value_t = INSTANT_COALESCE_WINDOW.as_millis() as u64)]
+    pub transaction_coalescing_window: u64,
 
     /// Slots in an epoch
     #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
@@ -253,6 +269,8 @@ impl NodeArgs {
         }
 
         let funded_accounts = self.parse_funded_accounts()?;
+        #[cfg(feature = "base")]
+        let base_activation_admin = self.base_activation_admin;
 
         let local_chain_id = self
             .evm
@@ -280,13 +298,16 @@ impl NodeArgs {
             networks
         };
 
-        Ok(NodeConfig::default()
+        let config = NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
             .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
+            .with_transaction_coalescing_window(Duration::from_millis(
+                self.transaction_coalescing_window,
+            ))
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
             .with_account_generator(self.account_generator())?
@@ -306,6 +327,9 @@ impl NodeArgs {
             })
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
+            .with_no_fork_node_info(self.evm.no_fork_node_info)
+            .with_no_bal(self.evm.no_bal)
+            .with_fork_state_by_number(self.evm.fork_state_by_number)
             .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm.fork_request_retries)
             .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
@@ -336,12 +360,16 @@ impl NodeArgs {
             // Restore the source-derived or explicitly selected network after applying the
             // execution chain ID. Fork source discovery can refine an unresolved network later.
             .with_networks(networks)
+            .with_tempo_fee_payer(self.tempo_fee_payer)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)
-            .with_funded_accounts(funded_accounts))
+            .with_funded_accounts(funded_accounts);
+        #[cfg(feature = "base")]
+        let config = config.with_base_activation_admin(base_activation_admin);
+        Ok(config)
     }
 
     fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {
@@ -568,6 +596,32 @@ pub struct AnvilEvmArgs {
     )]
     pub fork_chain_id: Option<Chain>,
 
+    /// Do not probe the fork endpoint with `anvil_nodeInfo` / `anvil_metadata`.
+    ///
+    /// Those calls detect a nested Anvil. Some public RPCs retry unknown methods for tens of
+    /// seconds instead of returning method-not-found, which delays listen until the probe
+    /// finishes.
+    #[arg(long, requires = "fork_url", help_heading = "Fork config")]
+    pub no_fork_node_info: bool,
+
+    /// Disable pre-filling the fork cache with block access list (BAL) post-state.
+    ///
+    /// By default, eligible Ethereum forks briefly try fetching a BAL at the fork block.
+    /// Missing or invalid BALs fall back to ordinary state reads. This setting also applies
+    /// to subsequent resets and does not disable serving BAL RPC methods.
+    #[arg(long, help_heading = "Fork config")]
+    pub no_bal: bool,
+
+    /// Read fork state by block number instead of by block hash.
+    ///
+    /// Use this for RPCs that cannot serve `eth_getBalance`, `eth_getCode`, `eth_getStorageAt` or
+    /// `eth_getTransactionCount` for a block hash. Block hash ancestry is still validated against
+    /// the fork block.
+    ///
+    /// See --fork-url.
+    #[arg(long, requires = "fork_url", help_heading = "Fork config")]
+    pub fork_state_by_number: bool,
+
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
@@ -660,6 +714,10 @@ pub struct AnvilEvmArgs {
     pub chain_id: Option<Chain>,
 
     /// Enable steps tracing used for debug calls returning geth-style traces
+    ///
+    /// Steps are recorded by replaying the transaction from its parent block's state, so they
+    /// are unavailable once that state is pruned or when loading a state dump created without
+    /// `--preserve-historical-states`.
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
@@ -766,9 +824,11 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N
         Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
-    async fn dump(&self) {
-        if let Some(state) = self.dump_state.clone() {
-            Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
+    async fn dump(mut self) {
+        // Shutdown no longer polls the periodic future, so release its locks first.
+        self.in_progress_dump = None;
+        if let Some(state) = self.dump_state {
+            Self::dump_state(self.api, state, self.preserve_historical_states).await
         }
     }
 
@@ -905,20 +965,7 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
         return Ok(hardfork);
     }
 
-    #[cfg(feature = "optimism")]
-    if networks.is_optimism() {
-        return Ok(OpHardfork::from_str(hf)?.into());
-    }
-    if networks.is_tempo() {
-        return Ok(TempoHardfork::from_str(hf)?.into());
-    }
-    #[cfg(feature = "monad")]
-    if networks.is_monad() {
-        return Ok(MonadHardfork::from_str(hf)
-            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hf}': {err:?}"))?
-            .into());
-    }
-    Ok(EthereumHardfork::from_str(hf)?.into())
+    networks.execution_network().parse_hardfork(hf).map_err(eyre::Report::msg)
 }
 
 /// Clap's value parser for genesis. Loads a genesis.json file.
@@ -937,7 +984,71 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::hardfork::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
+    use tempo_hardfork::TempoHardfork;
+
+    #[cfg(feature = "base")]
+    use foundry_evm::hardforks::BaseUpgrade;
+
+    #[cfg(feature = "optimism")]
+    use foundry_evm::hardfork::OpHardfork;
+
+    #[tokio::test]
+    async fn final_dump_cancels_suspended_periodic_dump() {
+        for queued_for_mining in [false, true] {
+            let (api, _handle) = crate::spawn(NodeConfig::test().with_no_mining(true)).await;
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("state.json");
+            let mining =
+                if queued_for_mining { Some(api.backend.lock_mining().await) } else { None };
+            let db = api.backend.get_db().write().await;
+            let mut dumper = PeriodicStateDumper::new(
+                api.clone(),
+                Some(path.clone()),
+                Duration::from_secs(60),
+                false,
+            );
+            dumper.in_progress_dump =
+                Some(Box::pin(PeriodicStateDumper::dump_state(api.clone(), path.clone(), false)));
+            assert!(futures::poll!(&mut dumper).is_pending());
+
+            // Shutdown stops polling the periodic dumper before starting the final dump.
+            drop(db);
+            drop(mining);
+            tokio::time::timeout(Duration::from_secs(2), dumper.dump())
+                .await
+                .expect("final dump waited for a suspended periodic dump");
+            let state = foundry_common::fs::read_json_file::<SerializableState>(&path).unwrap();
+            assert_eq!(state.best_block_number, Some(0));
+        }
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_chain_ids_select_native_base_unless_overridden() {
+        for chain_id in ["8453", "84532"] {
+            let config =
+                NodeArgs::parse_from(["anvil", "--chain-id", chain_id]).into_node_config().unwrap();
+            assert!(config.networks.is_base());
+
+            let config =
+                NodeArgs::parse_from(["anvil", "--chain-id", chain_id, "--network", "ethereum"])
+                    .into_node_config()
+                    .unwrap();
+            assert!(config.networks.execution_network().is_ethereum());
+        }
+    }
+
+    #[test]
+    fn fork_bal_can_be_disabled() {
+        let args =
+            NodeArgs::try_parse_from(["anvil", "--fork-url", "http://localhost:8545", "--no-bal"]);
+        let config = args.unwrap().into_node_config().unwrap();
+        assert!(config.no_bal);
+        assert!(!NodeArgs::parse_from(["anvil"]).into_node_config().unwrap().no_bal);
+        assert!(NodeArgs::parse_from(["anvil", "--no-bal"]).into_node_config().unwrap().no_bal);
+    }
 
     #[test]
     fn test_parse_fork_url() {
@@ -1004,6 +1115,47 @@ mod tests {
         assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_base_hardfork_from_network() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "base", "--hardfork", "Beryl"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork, Some(BaseUpgrade::Beryl.into()));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_namespaced_base_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--hardfork", "base:Beryl"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork, Some(BaseUpgrade::Beryl.into()));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_base_activation_admin() {
+        let admin = Address::repeat_byte(0xaa);
+        let admin_arg = admin.to_string();
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--network",
+            "base",
+            "--hardfork",
+            "base:Beryl",
+            "--base-activation-admin",
+            admin_arg.as_str(),
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.base_activation_admin, Some(admin));
+    }
+
     #[cfg(feature = "optimism")]
     #[test]
     fn chain_id_infers_optimism_network_in_node_config() {
@@ -1027,6 +1179,40 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "base")]
+    fn base_fork_chain_id_precedes_execution_chain_id_for_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "8453",
+            "--chain-id",
+            "1",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    /// `anvil --chain-id 8453` resolved to Optimism before Base support existed and must keep
+    /// doing so in builds without the feature, which is what release binaries ship.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in ["8453", "84532"] {
+            let args = NodeArgs::parse_from(["anvil", "--chain-id", chain_id]);
+            let config = args
+                .into_node_config()
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(config.networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
+    }
+
+    #[test]
     #[cfg(not(feature = "monad"))]
     fn chain_id_rejects_disabled_monad_network() {
         for chain_id in ["143", "10143"] {
@@ -1041,6 +1227,15 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn explicit_ethereum_allows_base_chain_id() {
+        let args = NodeArgs::parse_from(["anvil", "--network", "ethereum", "--chain-id", "8453"]);
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 8453);
     }
 
     #[test]
@@ -1068,6 +1263,32 @@ mod tests {
             "cannot infer execution network from chain ID 143: network family `monad` is not \
              enabled in this build"
         );
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn genesis_chain_id_infers_base_network() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert!(config.networks.is_base());
+    }
+
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature must keep resolving them that way rather than erroring.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn genesis_chain_id_without_base_still_infers_optimism() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert!(config.networks.is_optimism());
     }
 
     #[test]
@@ -1099,6 +1320,30 @@ mod tests {
     }
 
     #[test]
+    fn explicit_network_overrides_base_genesis_chain_id_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--network", "ethereum"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 8453);
+    }
+
+    #[test]
+    fn explicit_chain_id_precedes_base_genesis_network_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--chain-id", "1"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert!(!config.networks.has_network_selection());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
     #[cfg(not(feature = "monad"))]
     fn disabled_fork_chain_id_precedes_execution_chain_id() {
         let args = NodeArgs::parse_from([
@@ -1118,6 +1363,19 @@ mod tests {
             "cannot infer execution network from chain ID 10143: network family `monad` is not \
              enabled in this build"
         ));
+    }
+
+    #[test]
+    fn fork_state_by_number_flag_sets_config() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-state-by-number",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.fork_state_by_number);
     }
 
     #[test]
@@ -1207,7 +1465,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(MonadHardfork::MonadNine.into()));
+        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
         assert!(config.networks.is_monad());
     }
 
@@ -1217,7 +1475,7 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, None);
-        assert_eq!(config.get_hardfork(), MonadHardfork::default().into());
+        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
         assert!(config.networks.is_monad());
     }
 
@@ -1324,6 +1582,19 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_no_fork_node_info() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--no-fork-node-info",
+        ]);
+        assert!(args.evm.no_fork_node_info);
+        let config = args.into_node_config().unwrap();
+        assert!(config.no_fork_node_info);
+    }
+
+    #[test]
     fn can_parse_multiple_fork_urls() {
         let args: NodeArgs = NodeArgs::parse_from([
             "anvil",
@@ -1377,10 +1648,26 @@ mod tests {
             vec!["anvil", "--retries", "3"],
             vec!["anvil", "--fork-block-number", "100"],
             vec!["anvil", "--fork-retry-backoff", "500"],
+            vec!["anvil", "--no-fork-node-info"],
         ];
         for args in &cases {
             let result = NodeArgs::try_parse_from(args);
             assert!(result.is_err(), "expected error when using {:?} without --fork-url", args[1]);
         }
+    }
+
+    #[test]
+    fn transaction_coalescing_window_cli() {
+        for (args, expected) in [
+            (vec!["anvil"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "0"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "20"], 20),
+        ] {
+            let config = NodeArgs::parse_from(args).into_node_config().unwrap();
+            assert_eq!(config.transaction_coalescing_window, Duration::from_millis(expected));
+        }
+        assert!(
+            NodeArgs::try_parse_from(["anvil", "--transaction-coalescing-window", "-1"]).is_err()
+        );
     }
 }

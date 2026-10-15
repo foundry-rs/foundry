@@ -733,6 +733,206 @@ contract ArbitrarySendErc20 {
         } while (false);
         token.transferFrom(x, to, a);
     }
+
+    // A single flash-loan callback must not license repeated pulls across loop iterations.
+    function badFlashLoanLoopPull(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        }
+    }
+
+    // Mint-and-consume both inside the same loop body is still safe on every iteration.
+    function okFlashLoanPerIterationMintAndPull(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        for (uint256 i = 0; i < n; i++) {
+            receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+            token.transferFrom(address(receiver), address(this), amount + fee);
+        }
+    }
+
+    // A pull *after* a loop that never touches the repayment is still safely licensed by the
+    // pre-loop mint - the loop-entry floor only restricts sinks reached *inside* that loop.
+    function okFlashLoanPostLoopPullStillGuarded(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            unrelatedSideEffect();
+        }
+        token.transferFrom(address(receiver), address(this), amount + fee);
+    }
+
+    // Same shape, nested: an inner loop unrelated to the repayment must not strip the license
+    // from a pull that happens after both loops return.
+    function okFlashLoanNestedUnrelatedLoop(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        uint256 m,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            for (uint256 j = 0; j < m; j++) {
+                unrelatedSideEffect();
+            }
+        }
+        token.transferFrom(address(receiver), address(this), amount + fee);
+    }
+
+    // `do { ... } while (false)` provably runs exactly once, so the repeated-pull hazard the
+    // loop-entry floor guards against doesn't actually apply here - but the lint has no
+    // constant-condition reasoning to prove that, so it conservatively still flags this as if
+    // the license could be replayed. Accepted false positive on an otherwise-safe idiom, in
+    // exchange for never missing a real repeated-pull drain.
+    function badFlashLoanDoWhileFalseSingleIteration(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        do {
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        } while (false);
+    }
+
+    // Same accepted trade-off, spelled as a `while` that always breaks on its first pass - also
+    // provably single-iteration, also unrecognised as such, also intentionally still flagged.
+    function badFlashLoanWhileBreakSingleIteration(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bool cond,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        while (cond) {
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+            break;
+        }
+    }
+
+    // Reassigning a repayment's own key variable mid-loop invalidates the stale pre-loop record,
+    // and the fresh `onFlashLoan` right after re-mints the same key - but the loop-entry floor
+    // isn't corrected for that, since doing so in-place would leak across sibling `if`/`try`
+    // branches sharing this loop (see the comment on `invalidate`). Accepted false positive on
+    // a rare shape, in exchange for the floor mechanism never producing a branch-sensitive
+    // false negative.
+    function badFlashLoanReassignThenRemintInLoop(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 n,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        for (uint256 i = 0; i < n; i++) {
+            receiver = receiver;
+            receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+            token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        }
+    }
+
+    function unrelatedSideEffect() internal {}
+
+    // -- MODIFIER BODY SINKS --
+
+    modifier pullBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+
+    function modifierSinkBad(address from, address to, uint256 a) public pullBad(from, to, a) {}
+
+    modifier guardedPullOk(address from, address to, uint256 a) {
+        require(from == msg.sender, "auth");
+        token.transferFrom(from, to, a);
+        _;
+    }
+
+    function modifierGuardedSinkOk(address from, address to, uint256 a) public guardedPullOk(from, to, a) {}
+
+    modifier pullBeforeGuardBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        require(from == msg.sender, "auth");
+        _;
+    }
+
+    function modifierSinkBeforeGuardBad(address from, address to, uint256 a)
+        public
+        pullBeforeGuardBad(from, to, a)
+    {}
+
+    // A modifier is only reachable through its invocations, so a `from` that is safe at every
+    // invocation site is not arbitrary.
+    modifier pullFromCallerOk(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a);
+        _;
+    }
+
+    function modifierSenderInvocationOk(address to, uint256 a) public pullFromCallerOk(msg.sender, to, a) {}
+
+    function modifierSelfInvocationOk(address to, uint256 a) public pullFromCallerOk(address(this), to, a) {}
+
+    modifier pullFromMixedCallersBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+
+    function modifierMixedSenderInvocation(address to, uint256 a) public pullFromMixedCallersBad(msg.sender, to, a) {}
+
+    function modifierMixedArbitraryInvocation(address from, address to, uint256 a)
+        public
+        pullFromMixedCallersBad(from, to, a)
+    {}
+
+    // Statements after `_;` keep the prefix facts: parameters and locals cannot be changed by the
+    // wrapped function body, and mutable state is never trusted in the first place.
+    modifier guardedSuffixPullOk(address from, address to, uint256 a) {
+        require(from == msg.sender, "auth");
+        _;
+        token.transferFrom(from, to, a);
+    }
+
+    function modifierGuardedSuffixOk(address from, address to, uint256 a)
+        public
+        guardedSuffixPullOk(from, to, a)
+    {}
+
+    modifier suffixPullBad(address from, address to, uint256 a) {
+        _;
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function modifierSuffixSinkBad(address from, address to, uint256 a) public suffixPullBad(from, to, a) {}
+
+    // -- FALLBACK SINKS --
+    // Only constructors are excluded, so a sink reachable through `fallback`/`receive` is
+    // reported like one in an ordinary function.
+
+    fallback(bytes calldata data) external returns (bytes memory) {
+        address from = abi.decode(data, (address));
+        token.transferFrom(from, msg.sender, 1); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        return "";
+    }
 }
 
 // Struct / array / mapping receivers.
@@ -857,5 +1057,46 @@ contract SafeERC721CallSites {
 
     function okSafeErc721ArbitraryFrom(address from, address to, uint256 tokenId) public {
         SafeERC721.safeTransferFrom(nft, from, to, tokenId);
+    }
+}
+
+// A modifier declared in a base contract is seeded from the invocations in derived contracts.
+abstract contract PullModifierBase {
+    IERC20 internal token;
+
+    modifier pullFromCaller(address from, uint256 a) {
+        token.transferFrom(from, address(this), a);
+        _;
+    }
+
+    modifier pullFromAnyone(address from, uint256 a) {
+        token.transferFrom(from, address(this), a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+}
+
+contract PullModifierDerived is PullModifierBase {
+    function depositFromSender(uint256 a) external pullFromCaller(msg.sender, a) {}
+
+    function depositFrom(address from, uint256 a) external pullFromAnyone(from, a) {}
+}
+
+interface InheritedERC20 is IERC20 {}
+
+interface InheritedFlashBorrower is IERC3156FlashBorrower {}
+
+contract InheritedERC20CallSites {
+    function arbitraryFrom(InheritedERC20 token, address from, address to, uint256 amount) external {
+        token.transferFrom(from, to, amount); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function callerFrom(InheritedERC20 token, address to, uint256 amount) external {
+        token.transferFrom(msg.sender, to, amount);
+    }
+
+    function flashRepayment(InheritedERC20 token, InheritedFlashBorrower receiver, uint256 amount, uint256 fee, bytes calldata data) external {
+        token.transfer(address(receiver), amount);
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), amount + fee);
     }
 }

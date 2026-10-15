@@ -5,6 +5,8 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
+pub use foundry_cli::install;
+
 pub mod bind;
 pub mod bind_json;
 pub mod build;
@@ -20,11 +22,11 @@ pub mod flatten;
 pub mod fmt;
 pub mod fuzz;
 pub mod geiger;
-pub mod generate;
 pub mod init;
 pub mod inspect;
-pub mod install;
 pub mod lint;
+pub mod lsp;
+pub mod reinit;
 pub mod remappings;
 pub mod remove;
 pub mod selectors;

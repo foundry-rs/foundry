@@ -96,18 +96,31 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas used. Returned by `lastCallGas` and `lastFrameGas`.
+    /// Gas measured for the last completed call or create frame, from the callee's perspective,
+    /// including nested execution. Isolated transactions include intrinsic gas.
+    /// Regular gas (the EIP's execution gas) and EIP-8037 state gas are reported separately.
+    /// Without EIP-8037, state creation uses the ordinary gas schedule and `gasStateUsed` is zero.
+    /// See <https://eips.ethereum.org/EIPS/eip-8037> and <https://getfoundry.sh/reference/cheatcodes/last-frame-gas>.
     struct Gas {
-        /// The gas limit of the call.
+        /// Regular gas available to the frame at entry. Excludes the EIP-8037 state gas reservoir.
         uint64 gasLimit;
-        /// The total gas used.
+        /// Regular gas spent by the frame, before refunds. Excludes EIP-8037 state gas; see `gasStateUsed`.
+        /// With isolation, includes intrinsic gas and the regular-gas calldata floor.
         uint64 gasTotalUsed;
-        /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
+        /// DEPRECATED: always zero. Memory expansion costs are included in `gasTotalUsed`.
+        /// Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>.
         uint64 gasMemoryUsed;
-        /// The amount of gas refunded.
+        /// Ordinary refund counter before transaction settlement; finalized for an isolated transaction.
+        /// Can be negative in nested frames. State gas refills are already netted into `gasStateUsed`.
         int64 gasRefunded;
-        /// The amount of gas remaining.
+        /// Regular gas left at frame end. Excludes the EIP-8037 state gas reservoir.
+        /// State charges can draw from this allowance, so `gasLimit - gasRemaining` can include state gas.
         uint64 gasRemaining;
+        /// Net EIP-8037 state gas: state creation charges minus refills, including nested execution.
+        /// Zero without EIP-8037 or if the frame reverted or halted. Can be negative when the frame
+        /// undoes state created earlier in the same transaction; use signed arithmetic with `gasTotalUsed`.
+        /// Their sum measures net consumption, not the gas limit needed to execute.
+        int64 gasStateUsed;
     }
 
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
@@ -138,6 +151,34 @@ interface Vm {
         uint256 logIndex;
         /// Whether the log was removed.
         bool removed;
+    }
+
+    /// A Merkle proof for a single storage slot. Part of `EthGetProof`.
+    struct EthStorageProof {
+        /// The storage slot.
+        bytes32 key;
+        /// The value stored at the slot.
+        uint256 value;
+        /// The RLP-encoded trie nodes from the storage root to the slot, root first.
+        bytes[] proof;
+    }
+
+    /// An EIP-1186 account and storage proof. Returned by `eth_getProof`.
+    struct EthGetProof {
+        /// The address of the account.
+        address account;
+        /// The balance of the account.
+        uint256 balance;
+        /// The hash of the account's code.
+        bytes32 codeHash;
+        /// The nonce of the account.
+        uint64 nonce;
+        /// The root of the account's storage trie.
+        bytes32 storageHash;
+        /// The RLP-encoded trie nodes from the state root to the account, root first.
+        bytes[] accountProof;
+        /// The proofs for the requested storage slots, in the order they were requested.
+        EthStorageProof[] storageProof;
     }
 
     /// A single entry in a directory listing. Returned by `readDir`.
@@ -353,7 +394,7 @@ interface Vm {
     struct PotentialRevert {
         /// The allowed origin of the revert opcode; address(0) allows reverts from any address
         address reverter;
-        /// When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data
+        /// When true, only matches on the first 4 bytes (usually the selector) of the revert data, otherwise, matches on entire revert data
         bool partialMatch;
         /// The data to use to match encountered reverts
         bytes revertData;
@@ -381,6 +422,10 @@ interface Vm {
     /// Loads a storage slot from an address.
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
+
+    /// Loads a transient storage slot from an address.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);
 
     /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -429,7 +474,7 @@ interface Vm {
     /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
     /// protocol call-depth slots; a load at the maximum legal call depth can have its callback
     /// rejected as too deep, propagating as a failure of the load.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function registerSloadHook(address target, bytes4 callback) external;
 
     /// Registers a callback invoked after each SSTORE against `target`'s effective storage account,
@@ -445,7 +490,7 @@ interface Vm {
     /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
     /// protocol call-depth slots; a store at the maximum legal call depth can have its callback
     /// rejected as too deep, propagating as a failure of the store.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function registerSstoreHook(address target, bytes4 callback) external;
 
     /// Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.
@@ -463,7 +508,7 @@ interface Vm {
     /// callback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent
     /// external spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping
     /// roots may be registered.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;
 
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
@@ -561,7 +606,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function blobhashes(bytes32[] calldata hashes) external;
 
-    /// Gets the blockhashes from the current transaction.
+    /// Gets the blobhashes from the current transaction.
     /// Not available on EVM versions before Cancun.
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -577,6 +622,20 @@ interface Vm {
     /// See https://github.com/foundry-rs/foundry/issues/6180
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockNumber() external view returns (uint256 height);
+
+    /// Sets `block.slotnum` without changing the block number or timestamp.
+    /// Not available on EVM versions before Amsterdam.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function rollSlot(uint64 newSlotNumber) external;
+
+    /// Gets the current `block.slotnum`.
+    /// Use this instead of `block.slotnum` after `vm.rollSlot`, as the compiler assumes
+    /// `block.slotnum` is constant across a transaction and may optimize repeated reads away.
+    /// Not available on EVM versions before Amsterdam.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getSlotNumber() external view returns (uint64 slotNumber);
 
     /// Sets `tx.gasprice`.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -648,6 +707,22 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Stores a value to an address' transient storage slot.
+    /// The value lasts until the end of the current transaction, like a value written with `TSTORE`.
+    /// This writes the journal directly rather than executing `TSTORE`.
+    /// With isolation enabled (the default), each top-level `CALL` from a test runs as its own
+    /// transaction with empty transient storage, so a value the test stored is not visible to that
+    /// call, even though a later `loadTransient` in the test still returns it. For the target to see
+    /// the value, store it and call the target inside the same call, for example through a helper.
+    /// `STATICCALL` and `DELEGATECALL` stay in the surrounding transaction and can see its values;
+    /// `DELEGATECALL` uses the caller's transient storage, not the target's.
+    /// Example usage, where `f` is non-view and `helper.storeAndCall` stores then calls `target.f()`:
+    /// vm.storeTransient(address(target), slot, value);
+    /// target.f(); // With isolation, `f` reads 0 from `slot`.
+    /// helper.storeAndCall(address(target), slot, value); // `f` reads `value`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function storeTransient(address target, bytes32 slot, bytes32 value) external;
+
     /// Sets a TIP-20 token's logo URI directly in storage.
     /// This bypasses the token admin check, but still validates the URI against T5 constraints.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -688,7 +763,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getEvmVersion() external pure returns (string memory evm);
 
-    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    /// Selects the test or script execution hardfork, e.g. `berlin`, `cancun`, or `tempo:T7`.
+    /// Uses the active network's version mappings and gas schedule. Does not change the network
+    /// or Solidity compiler target. On Tempo, runtime changes do not rebuild instructions or
+    /// precompiles; configure `hardfork` before execution to select a different revision.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
@@ -789,7 +867,8 @@ interface Vm {
     /// `target` contract from `callee`.
     /// Can be used to substitute a call to a function with another implementation that captures
     /// the primary logic of the original function but is easier to reason about.
-    /// If calldata is not a strict match then partial match by selector is attempted.
+    /// If no exact calldata match exists, a mock registered with only the 4-byte selector is
+    /// attempted.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockFunction(address callee, address target, bytes calldata data) external;
 
@@ -850,41 +929,54 @@ interface Vm {
 
     /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
     /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
 
     /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata name) external;
 
     /// Start a snapshot capture of the current gas usage by name in a group.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata group, string calldata name) external;
 
     /// Stop the snapshot capture of the current gas by latest snapshot name, capturing the gas used since the start.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas() external returns (uint256 gasUsed);
 
     /// Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.
     /// The group name is derived from the contract name.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
 
     /// Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
@@ -1028,6 +1120,14 @@ interface Vm {
         view
         returns (EthGetLogs[] memory logs);
 
+    /// Gets the EIP-1186 account and storage proof of `target` at `blockNumber` from the active fork.
+    /// The proof is fetched from the fork's RPC endpoint and does not reflect local state changes.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function eth_getProof(address target, bytes32[] calldata slots, uint256 blockNumber)
+        external
+        view
+        returns (EthGetProof memory proof);
+
     // --- Behavior ---
 
     /// In forking mode, explicitly grant the given address cheatcode access.
@@ -1093,11 +1193,15 @@ interface Vm {
     // -------- Gas Measurement --------
 
     /// DEPRECATED: use `lastFrameGas` instead.
-    /// Gets the gas used in the last call from the callee perspective.
+    /// Gets gas measurements for the last completed call, from the callee's perspective.
+    /// Unlike `lastFrameGas`, CREATE and CREATE2 frames are not recorded; calls made by a constructor are.
+    /// See `Gas` for field semantics.
     #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
 
-    /// Gets the gas used in the last call or create from the callee perspective.
+    /// Gets gas measurements for the last completed call or create, from the callee's perspective.
+    /// Unlike `lastCallGas`, CREATE and CREATE2 frames are recorded too. Cheatcode calls are never recorded.
+    /// See `Gas` for field semantics and <https://getfoundry.sh/reference/cheatcodes/last-frame-gas>.
     #[cheatcode(group = Evm, safety = Safe)]
     function lastFrameGas() external view returns (Gas memory gas);
 
@@ -1373,7 +1477,7 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes4 revertData) external;
 
-    /// Expects an error on next cheatcode call that exactly matches the revert data.
+    /// Expects an error on next cheatcode call that contains the revert data.
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes calldata revertData) external;
 
@@ -2228,6 +2332,18 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
 
+    /// Performs a foreign function call via the terminal and parses the output as a `uint256`.
+    #[cheatcode(group = Filesystem)]
+    function ffiUint(string[] calldata commandInput) external returns (uint256 result);
+
+    /// Performs a foreign function call via the terminal and returns the output as a string.
+    #[cheatcode(group = Filesystem)]
+    function ffiString(string[] calldata commandInput) external returns (string memory result);
+
+    /// Performs a foreign function call via the terminal and decodes the output as hex bytes.
+    #[cheatcode(group = Filesystem)]
+    function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);
+
     /// Performs a foreign function call via terminal and returns the exit code, stdout, and stderr.
     #[cheatcode(group = Filesystem)]
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
@@ -2578,18 +2694,18 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-json to understand the
     // limitations and caveats of the JSON parsing cheats.
 
-    /// Checks if `key` exists in a JSON object
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
     #[cheatcode(group = Json, status = Deprecated(Some("replaced by `keyExistsJson`")))]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
-    /// Checks if `key` exists in a JSON object.
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     #[cheatcode(group = Json)]
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
 
     /// ABI-encodes a JSON object.
     #[cheatcode(group = Json)]
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
-    /// ABI-encodes a JSON object at `key`.
+    /// ABI-encodes a JSON object at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     #[cheatcode(group = Json)]
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
 
@@ -2599,54 +2715,123 @@ interface Vm {
     // Type coercion works ONLY for discrete values or arrays. That means that the key must return a value or array, not
     // a JSON object.
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`.
     #[cheatcode(group = Json)]
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue) external pure returns (uint256);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`.
     #[cheatcode(group = Json)]
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `int256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue)
+        external
+        pure
+        returns (uint256[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`.
     #[cheatcode(group = Json)]
     function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`.
     #[cheatcode(group = Json)]
     function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bool`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue)
+        external
+        pure
+        returns (int256[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`.
     #[cheatcode(group = Json)]
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`.
     #[cheatcode(group = Json)]
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `address`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue)
+        external
+        pure
+        returns (bool[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`.
     #[cheatcode(group = Json)]
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonAddress(string calldata json, string calldata key, address defaultValue) external pure returns (address);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`.
     #[cheatcode(group = Json)]
     function parseJsonAddressArray(string calldata json, string calldata key)
         external
         pure
         returns (address[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue)
+        external
+        pure
+        returns (address[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`.
     #[cheatcode(group = Json)]
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonString(string calldata json, string calldata key, string calldata defaultValue)
+        external
+        pure
+        returns (string memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
-    /// Returns the length of the JSON array at `key`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue)
+        external
+        pure
+        returns (string[] memory);
+    /// Returns the length of the JSON array at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     #[cheatcode(group = Json)]
     function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue)
+        external
+        pure
+        returns (bytes memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue)
+        external
+        pure
+        returns (bytes[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue) external pure returns (bytes32);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32Array(string calldata json, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
@@ -2654,10 +2839,10 @@ interface Vm {
     /// Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type array corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription)
         external
@@ -2807,48 +2992,117 @@ interface Vm {
     /// Parses a string of TOML data at `key` and coerces it to `uint256`.
     #[cheatcode(group = Toml)]
     function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlUint(string calldata toml, string calldata key, uint256 defaultValue) external pure returns (uint256);
     /// Parses a string of TOML data at `key` and coerces it to `uint256[]`.
     #[cheatcode(group = Toml)]
     function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlUintArray(string calldata toml, string calldata key, uint256[] calldata defaultValue)
+        external
+        pure
+        returns (uint256[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `int256`.
     #[cheatcode(group = Toml)]
     function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
+    /// Parses a string of TOML data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlInt(string calldata toml, string calldata key, int256 defaultValue) external pure returns (int256);
     /// Parses a string of TOML data at `key` and coerces it to `int256[]`.
     #[cheatcode(group = Toml)]
     function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlIntArray(string calldata toml, string calldata key, int256[] calldata defaultValue)
+        external
+        pure
+        returns (int256[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bool`.
     #[cheatcode(group = Toml)]
     function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);
+    /// Parses a string of TOML data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBool(string calldata toml, string calldata key, bool defaultValue) external pure returns (bool);
     /// Parses a string of TOML data at `key` and coerces it to `bool[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBoolArray(string calldata toml, string calldata key, bool[] calldata defaultValue)
+        external
+        pure
+        returns (bool[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `address`.
     #[cheatcode(group = Toml)]
     function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);
+    /// Parses a string of TOML data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddress(string calldata toml, string calldata key, address defaultValue) external pure returns (address);
     /// Parses a string of TOML data at `key` and coerces it to `address[]`.
     #[cheatcode(group = Toml)]
     function parseTomlAddressArray(string calldata toml, string calldata key)
         external
         pure
         returns (address[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddressArray(string calldata toml, string calldata key, address[] calldata defaultValue)
+        external
+        pure
+        returns (address[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `string`.
     #[cheatcode(group = Toml)]
     function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlString(string calldata toml, string calldata key, string calldata defaultValue)
+        external
+        pure
+        returns (string memory);
     /// Parses a string of TOML data at `key` and coerces it to `string[]`.
     #[cheatcode(group = Toml)]
     function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlStringArray(string calldata toml, string calldata key, string[] calldata defaultValue)
+        external
+        pure
+        returns (string[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes(string calldata toml, string calldata key, bytes calldata defaultValue)
+        external
+        pure
+        returns (bytes memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytesArray(string calldata toml, string calldata key, bytes[] calldata defaultValue)
+        external
+        pure
+        returns (bytes[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes32`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32(string calldata toml, string calldata key, bytes32 defaultValue) external pure returns (bytes32);
     /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes32Array(string calldata toml, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32Array(string calldata toml, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
@@ -2991,6 +3245,22 @@ interface Vm {
     /// Derives secp256r1 public key from the provided `privateKey`.
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
+
+    /// Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.
+    /// The point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecAffineToProjective(uint256 pointX, uint256 pointY)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+
+    /// Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.
+    /// The point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
 
     /// Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and
     /// `point2 = (pointX2, pointY2)`.

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1-bookworm@sha256:13c186980fa33cc12759b429662a1322939dbe697484b7c33b47dd2698d28460 AS chef
+FROM rust:1.98-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS chef
 WORKDIR /app
 
 RUN apt update && apt install -y build-essential libssl-dev git pkg-config curl perl
@@ -17,7 +17,8 @@ RUN set -eux; \
     echo "${SHA256}  /tmp/cargo-binstall.tgz" | sha256sum -c -; \
     tar -xzf /tmp/cargo-binstall.tgz -C /usr/local/cargo/bin cargo-binstall; \
     rm /tmp/cargo-binstall.tgz
-RUN cargo binstall -y cargo-chef sccache
+RUN cargo binstall --locked --disable-telemetry --disable-strategies quick-install -y \
+    cargo-chef@0.1.78 sccache@0.17.0
 
 # Prepare the cargo-chef recipe.
 FROM chef AS planner
@@ -39,7 +40,7 @@ ENV CARGO_INCREMENTAL=0 \
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    cargo chef cook --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
+    cargo chef cook --locked --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
 
 ARG TAG_NAME="dev"
 ENV TAG_NAME=$TAG_NAME
@@ -51,7 +52,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
+    cargo build --locked --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
     && sccache --show-stats || true
 
 # `dev` profile outputs to the `target/debug` directory.

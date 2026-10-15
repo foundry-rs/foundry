@@ -7,7 +7,8 @@ use foundry_test_utils::{forgetest_init, str};
 // ---------------------------------------------------------------------------
 // Classic DeFi bug: vault without virtual offset lets attacker donate raw
 // assets after depositing 1 wei, so the next depositor's shares round to 0.
-forgetest_init!(erc4626_inflation_attack, |prj, cmd| {
+#[forgetest_init]
+fn erc4626_inflation_attack(prj: _, cmd: _) {
     skip_unless_z3!("erc4626_inflation_attack");
 
     prj.add_test(
@@ -63,14 +64,14 @@ contract Erc4626Inflation is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/Erc4626Inflation.t.sol:Erc4626Inflation
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // ERC20 approve overwrite race — classic non-atomic approve footgun.
@@ -80,7 +81,8 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 // spender `transferFrom(N2)`. The engine does NOT discover the interleaving
 // itself; it solves for symbolic `N1`, `N2` over this fixed call sequence and
 // witnesses the property violation `balanceOf(spender) > max(N1, N2)`.
-forgetest_init!(erc20_approve_race, |prj, cmd| {
+#[forgetest_init]
+fn erc20_approve_race(prj: _, cmd: _) {
     skip_unless_z3!("erc20_approve_race");
 
     prj.add_test(
@@ -146,21 +148,22 @@ contract Erc20ApproveRace is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/Erc20ApproveRace.t.sol:Erc20ApproveRace
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // ERC721 ownership uniqueness — bounded stateful proof.
 // ---------------------------------------------------------------------------
 // Two-token minimal NFT: ownership is unique per id and never falls to the
 // zero address after mint. Symbolic invariant should PROVE within depth 2.
-forgetest_init!(erc721_unique_ownership_passes, |prj, cmd| {
+#[forgetest_init]
+fn erc721_unique_ownership_passes(prj: _, cmd: _) {
     skip_unless_z3!("erc721_unique_ownership_passes");
 
     prj.add_test(
@@ -211,14 +214,15 @@ Ran 1 test for test/Erc721Ownership.t.sol:Erc721Ownership
 [PASS] invariant_ownerNonZero() ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // ERC4626 deposit → withdraw round-trip — single user, no fee.
 // ---------------------------------------------------------------------------
 // Property: a user who deposits and then withdraws should get back exactly
 // what they put in. Engine should PROVE this for an honest 1:1 vault.
-forgetest_init!(erc4626_roundtrip_passes, |prj, cmd| {
+#[forgetest_init]
+fn erc4626_roundtrip_passes(prj: _, cmd: _) {
     skip_unless_z3!("erc4626_roundtrip_passes");
 
     prj.add_test(
@@ -263,4 +267,4 @@ Ran 1 test for test/Erc4626Roundtrip.t.sol:Erc4626Roundtrip
 [PASS] checkSingleUserRoundtrip(uint64) ([METRICS])
 ...
 "#]]);
-});
+}

@@ -341,20 +341,25 @@ impl SignaturesIdentifier {
         trace!(target: "evm::traces", ?selectors, "identifying selectors");
 
         let mut cache_r = self.0.cache.read().await;
-        if let Some(client) = &self.0.client {
-            let query =
-                selectors.iter().copied().filter(|v| !cache_r.contains_key(v)).collect::<Vec<_>>();
-            if !query.is_empty() {
-                drop(cache_r);
-                let mut cache_w = self.0.cache.write().await;
-                if let Ok(res) = client.decode_selectors(&query).await {
-                    for (selector, signatures) in std::iter::zip(query, res) {
-                        cache_w.signatures.insert(selector, signatures.into_iter().next());
-                    }
+        if let Some(client) = &self.0.client
+            && selectors.iter().any(|selector| !cache_r.contains_key(selector))
+        {
+            drop(cache_r);
+            let mut cache_w = self.0.cache.write().await;
+            let query = selectors
+                .iter()
+                .copied()
+                .filter(|selector| !cache_w.contains_key(selector))
+                .collect::<Vec<_>>();
+            if !query.is_empty()
+                && let Ok(res) = client.decode_selectors(&query).await
+            {
+                for (selector, signatures) in std::iter::zip(query, res) {
+                    cache_w.signatures.insert(selector, signatures.into_iter().next());
                 }
-                drop(cache_w);
-                cache_r = self.0.cache.read().await;
             }
+            drop(cache_w);
+            cache_r = self.0.cache.read().await;
         }
         selectors.iter().map(|selector| cache_r.get(selector).unwrap_or_default()).collect()
     }
@@ -431,7 +436,7 @@ mod tests {
     async fn abi_seeded_signatures_are_not_persisted_to_disk() {
         let temp = tempfile::tempdir().unwrap();
         let event = Event::parse("event CodexEphemeral(uint256 indexed value)").unwrap();
-        let mut abi = JsonAbi::default();
+        let mut abi = JsonAbi::new();
         abi.events.insert(event.name.clone(), vec![event.clone()]);
 
         {
@@ -451,9 +456,9 @@ mod tests {
         let first = Event::parse("event CodexCollision(uint256 indexed value)").unwrap();
         let second = Event::parse("event CodexCollision(uint256 value)").unwrap();
 
-        let mut first_abi = JsonAbi::default();
+        let mut first_abi = JsonAbi::new();
         first_abi.events.insert(first.name.clone(), vec![first.clone()]);
-        let mut second_abi = JsonAbi::default();
+        let mut second_abi = JsonAbi::new();
         second_abi.events.insert(second.name.clone(), vec![second]);
 
         let mut cache = SignaturesCache::default();
@@ -473,9 +478,9 @@ mod tests {
             Event::parse("event CodexIndexedCount(uint256 indexed marker, uint256 indexed value)")
                 .unwrap();
 
-        let mut one_topic_abi = JsonAbi::default();
+        let mut one_topic_abi = JsonAbi::new();
         one_topic_abi.events.insert(one_topic.name.clone(), vec![one_topic.clone()]);
-        let mut two_topics_abi = JsonAbi::default();
+        let mut two_topics_abi = JsonAbi::new();
         two_topics_abi.events.insert(two_topics.name.clone(), vec![two_topics.clone()]);
 
         let identifier = SignaturesIdentifier::new_offline_with_abis_from_cache(

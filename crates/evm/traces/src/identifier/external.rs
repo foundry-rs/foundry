@@ -1,13 +1,15 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
     Address,
-    map::{Entry, HashMap, HashSet},
+    map::{AddressMap, AddressSet, Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
 use foundry_common::compile::etherscan_project;
-use foundry_config::{Chain, Config};
+use foundry_config::{Chain, Config, EtherscanConfigs, NamedChain, ResolvedEtherscanConfig};
+use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use futures::{
     future::join_all,
     stream::{FuturesUnordered, Stream, StreamExt},
@@ -34,38 +36,88 @@ pub struct ExternalIdentifier {
     remaining_budget: Duration,
 }
 
-impl ExternalIdentifier {
-    /// Creates a new external identifier with the given client
-    pub fn new(config: &Config, mut chain: Option<Chain>) -> eyre::Result<Option<Self>> {
-        let timeout = config.tracing.external_identification_timeout;
-        if config.offline || timeout == 0 {
-            return Ok(None);
+/// The [`Config`] settings an [`ExternalIdentifier`] is built from, detached from the config
+/// itself.
+///
+/// Lets a consumer that keeps only a snapshot of the config — the cheatcode config — build an
+/// identifier for a chain it doesn't learn until runtime, when a test selects a fork.
+#[derive(Clone, Debug, Default)]
+pub struct ExternalIdentifierConfig {
+    /// Whether network access is disabled altogether.
+    offline: bool,
+    /// How long identification may block, in seconds. Zero disables it.
+    timeout: u64,
+    /// Whether to skip system proxy lookups when building the explorer client.
+    no_proxy: bool,
+    /// The `[etherscan]` table, and the settings that pick an entry out of it.
+    etherscan: EtherscanConfigs,
+    etherscan_alias: Option<String>,
+    etherscan_api_key: Option<String>,
+    /// The configured chain, used when the caller doesn't name one.
+    chain: Option<Chain>,
+}
+
+impl ExternalIdentifierConfig {
+    /// Takes the settings an [`ExternalIdentifier`] needs out of `config`.
+    pub fn new(config: &Config) -> Self {
+        Self {
+            offline: config.offline,
+            timeout: config.tracing.external_identification_timeout,
+            no_proxy: config.eth_rpc_no_proxy,
+            etherscan: config.etherscan.clone(),
+            etherscan_alias: config.etherscan_alias().map(str::to_string),
+            etherscan_api_key: config.etherscan_api_key.clone(),
+            chain: config.chain,
+        }
+    }
+
+    /// Builds an identifier that looks contracts up on `chain`.
+    ///
+    /// Returns `None` when there is nothing to look them up with: identification is off, or
+    /// neither Sourcify nor a block explorer is usable.
+    pub fn identifier(&self, chain: Option<Chain>) -> Option<ExternalIdentifier> {
+        self.identifier_with(
+            chain,
+            self.etherscan_alias.as_deref(),
+            self.etherscan_api_key.as_deref(),
+            true,
+        )
+    }
+
+    /// Builds an identifier for compiling storage layouts on exactly `chain`.
+    ///
+    /// Storage layouts are cached by chain, so an alias for another chain must not override the
+    /// chain that executed the recorded storage access. Sourcify is omitted because its compact
+    /// response does not contain the verified sources required for compilation.
+    pub fn storage_identifier(&self, chain: Chain) -> Option<ExternalIdentifier> {
+        self.identifier_with(Some(chain), None, self.literal_api_key(), false)
+    }
+
+    fn identifier_with(
+        &self,
+        chain: Option<Chain>,
+        etherscan_alias: Option<&str>,
+        etherscan_api_key: Option<&str>,
+        sourcify: bool,
+    ) -> Option<ExternalIdentifier> {
+        if self.offline || self.timeout == 0 {
+            return None;
         }
 
-        let no_proxy = config.eth_rpc_no_proxy;
-        let config = match config.get_etherscan_config_with_chain(chain) {
-            Ok(Some(config)) => {
-                chain = config.chain;
-                Some(config)
-            }
-            Ok(None) => {
-                warn!(target: "evm::traces::external", "etherscan config not found");
-                None
-            }
-            Err(err) => {
-                warn!(target: "evm::traces::external", ?err, "failed to get etherscan config");
-                None
-            }
-        };
+        let (chain, etherscan) = self.resolve_explorer(chain, etherscan_alias, etherscan_api_key);
 
         let mut fetchers = Vec::<Arc<dyn ExternalFetcherT>>::new();
-        if let Some(chain) = chain {
+        // Sourcify never indexes local development chains.
+        if sourcify
+            && let Some(chain) = chain
+            && !matches!(chain.named(), Some(NamedChain::AnvilHardhat | NamedChain::Dev))
+        {
             debug!(target: "evm::traces::external", ?chain, "using sourcify identifier");
             fetchers.push(Arc::new(SourcifyFetcher::new(chain)));
         }
-        if let Some(config) = config {
+        if let Some(config) = etherscan {
             debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            match config.into_client_with_no_proxy(no_proxy) {
+            match config.into_client_with_no_proxy(self.no_proxy) {
                 Ok(client) => {
                     fetchers.push(Arc::new(EtherscanFetcher::new(client)));
                 }
@@ -76,14 +128,64 @@ impl ExternalIdentifier {
         }
         if fetchers.is_empty() {
             debug!(target: "evm::traces::external", "no fetchers enabled");
-            return Ok(None);
+            return None;
         }
 
-        Ok(Some(Self {
+        Some(ExternalIdentifier {
             fetchers,
             contracts: Default::default(),
-            remaining_budget: Duration::from_secs(timeout),
-        }))
+            remaining_budget: Duration::from_secs(self.timeout),
+        })
+    }
+
+    /// Picks the explorer config and the chain to look contracts up on.
+    fn resolve_explorer(
+        &self,
+        chain: Option<Chain>,
+        etherscan_alias: Option<&str>,
+        etherscan_api_key: Option<&str>,
+    ) -> (Option<Chain>, Option<ResolvedEtherscanConfig>) {
+        let mut resolved =
+            self.etherscan.resolve_for(etherscan_alias, etherscan_api_key, chain.or(self.chain));
+        // Only an alias can resolve to a chain other than the requested one. An alias pinned to
+        // another chain must not redirect lookups away from the traced chain.
+        if let Some(chain) = chain
+            && let Ok(Some(config)) = &resolved
+            && config.chain.is_some_and(|c| c != chain)
+        {
+            resolved = self.etherscan.resolve_for(None, self.literal_api_key(), Some(chain));
+        }
+        match resolved {
+            Ok(Some(config)) => (chain.or(config.chain), Some(config)),
+            Ok(None) => {
+                warn!(target: "evm::traces::external", "etherscan config not found");
+                (chain, None)
+            }
+            Err(err) => {
+                warn!(target: "evm::traces::external", ?err, "failed to get etherscan config");
+                (chain, None)
+            }
+        }
+    }
+
+    /// Maximum time a storage-layout lookup may block.
+    pub const fn storage_timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout)
+    }
+
+    /// Returns `etherscan_api_key` unless it names an `[etherscan]` entry.
+    ///
+    /// `etherscan_api_key` also accepts a table alias. An alias name must not be sent as the
+    /// literal API key when the alias itself is not used.
+    fn literal_api_key(&self) -> Option<&str> {
+        self.etherscan_api_key.as_deref().filter(|key| !self.etherscan.contains_key(*key))
+    }
+}
+
+impl ExternalIdentifier {
+    /// Creates a new external identifier with the given client.
+    pub fn new(config: &Config, chain: Option<Chain>) -> eyre::Result<Option<Self>> {
+        Ok(ExternalIdentifierConfig::new(config).identifier(chain))
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
@@ -184,7 +286,12 @@ impl ExternalIdentifier {
     }
 
     async fn fetch_addresses_async(&mut self, addresses: &[Address]) {
-        if addresses.is_empty() || self.remaining_budget.is_zero() {
+        self.fetch_addresses_with_timeout(addresses, self.remaining_budget).await;
+    }
+
+    async fn fetch_addresses_with_timeout(&mut self, addresses: &[Address], timeout: Duration) {
+        let timeout = timeout.min(self.remaining_budget);
+        if addresses.is_empty() || timeout.is_zero() {
             return;
         }
 
@@ -194,7 +301,7 @@ impl ExternalIdentifier {
             .into_iter()
             .map(|fetcher| ExternalFetcher::new(fetcher, addresses));
         let started = tokio::time::Instant::now();
-        let timed_out = tokio::time::timeout(self.remaining_budget, async {
+        let timed_out = tokio::time::timeout(timeout, async {
             let mut fetched = futures::stream::select_all(fetchers);
             while let Some((address, value)) = fetched.next().await {
                 self.cache_fetched(address, value);
@@ -203,10 +310,110 @@ impl ExternalIdentifier {
         .await
         .is_err();
         self.remaining_budget = self.remaining_budget.saturating_sub(started.elapsed());
-        if timed_out {
-            self.remaining_budget = Duration::ZERO;
+        if timed_out && self.remaining_budget.is_zero() {
             warn!(target: "evm::traces::external", "external identification timed out; disabling it for the remainder of this session");
         }
+    }
+
+    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
+    pub async fn get_abis(
+        &mut self,
+        addresses: &[Address],
+    ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
+        const MAX_PROXY_DEPTH: usize = 16;
+
+        struct Chain {
+            current: Option<Address>,
+            visited: HashSet<Address>,
+            abis: Vec<JsonAbi>,
+            complete: bool,
+        }
+
+        let mut chains = addresses
+            .iter()
+            .map(|&address| Chain {
+                current: Some(address),
+                visited: HashSet::default(),
+                abis: Vec::new(),
+                complete: true,
+            })
+            .collect::<Vec<_>>();
+
+        for _ in 0..MAX_PROXY_DEPTH {
+            let to_fetch = chains
+                .iter()
+                .filter_map(|chain| chain.current)
+                .filter(|address| !self.contracts.contains_key(address))
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            self.fetch_addresses_async(&to_fetch).await;
+
+            let mut has_next = false;
+            for chain in &mut chains {
+                let Some(current) = chain.current else { continue };
+                if !chain.visited.insert(current) {
+                    chain.current = None;
+                    chain.complete = false;
+                    continue;
+                }
+                let Some((_, Some(metadata))) = self.contracts.get(&current) else {
+                    chain.current = None;
+                    chain.complete = false;
+                    continue;
+                };
+                if let Ok(abi) = metadata.abi() {
+                    chain.abis.push(abi);
+                } else {
+                    chain.complete = false;
+                }
+                chain.current = (metadata.proxy != 0).then_some(metadata.implementation).flatten();
+                if metadata.proxy != 0 && chain.current.is_none() {
+                    chain.complete = false;
+                }
+                has_next |= chain.current.is_some();
+            }
+            if !has_next {
+                break;
+            }
+        }
+
+        chains
+            .into_iter()
+            .zip(addresses.iter().copied())
+            .map(|(mut chain, address)| {
+                chain.complete &= chain.current.is_none();
+                let result = if chain.abis.is_empty() {
+                    Err(eyre::eyre!("external ABI lookup failed"))
+                } else {
+                    Ok((chain.abis.into_iter().rev().collect(), chain.complete))
+                };
+                (address, result)
+            })
+            .collect()
+    }
+
+    /// Fetches metadata for the exact addresses supplied, without following explorer proxy hints.
+    ///
+    /// Storage decoding uses the implementation address recorded by the EVM, which is authoritative
+    /// for historical forks and proxies that upgrade over time.
+    pub async fn get_metadata(
+        &mut self,
+        addresses: &[Address],
+        timeout: Duration,
+    ) -> AddressMap<Option<Metadata>> {
+        let to_fetch = addresses
+            .iter()
+            .copied()
+            .filter(|address| !self.contracts.contains_key(address))
+            .collect::<Vec<_>>();
+        self.fetch_addresses_with_timeout(&to_fetch, timeout).await;
+        addresses
+            .iter()
+            .filter_map(|address| {
+                self.contracts.get(address).map(|(_, metadata)| (*address, metadata.clone()))
+            })
+            .collect()
     }
 }
 
@@ -219,11 +426,15 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
-        let mut to_fetch = HashSet::new();
+        let mut to_fetch = AddressSet::default();
 
         // Check cache first.
         for &node in nodes {
             let address = node.trace.address;
+            // Foundry-only addresses that are never deployed contracts on a real chain.
+            if matches!(address, CHEATCODE_ADDRESS | HARDHAT_CONSOLE_ADDRESS) {
+                continue;
+            }
             if let Some((_, metadata)) = self.contracts.get(&address) {
                 if let Some(metadata) = metadata {
                     identities.push(self.identify_from_metadata(address, metadata));
@@ -259,9 +470,9 @@ impl TraceIdentifier for ExternalIdentifier {
 type FetchFuture =
     Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)>>>;
 
-/// Maximum number of times a single address is retried through a transient Cloudflare
-/// block before we give up on it. Bounded so a persistent block can't loop forever.
-const MAX_CLOUDFLARE_RETRIES: u32 = 5;
+/// Maximum number of times a single address is retried after a rate limit or a transient
+/// Cloudflare block before we give up on it. Bounded so a persistent block can't loop forever.
+const MAX_TRANSIENT_RETRIES: u32 = 5;
 
 fn backoff_interval(period: Duration) -> Interval {
     tokio::time::interval_at(tokio::time::Instant::now() + period, period)
@@ -283,7 +494,7 @@ struct ExternalFetcher {
     queue: Vec<Address>,
     /// The in progress requests
     in_progress: FuturesUnordered<FetchFuture>,
-    /// Per-address retry counter for transient Cloudflare blocks.
+    /// Per-address retry counter for rate limits and transient Cloudflare blocks.
     attempts: HashMap<Address, u32>,
 }
 
@@ -310,6 +521,21 @@ impl ExternalFetcher {
                 (addr, res)
             }));
         }
+    }
+
+    /// Requeues `addr` after a backoff, unless it already used all of its retries.
+    ///
+    /// Returns `false` when the address is dropped. A dropped address is not cached, so a
+    /// transient failure does not become an "unverified" result.
+    fn retry(&mut self, addr: Address) -> bool {
+        let attempts = self.attempts.entry(addr).or_default();
+        *attempts += 1;
+        if *attempts > MAX_TRANSIENT_RETRIES {
+            return false;
+        }
+        self.backoff = Some(backoff_interval(self.timeout));
+        self.queue.push(addr);
+        true
     }
 }
 
@@ -351,13 +577,21 @@ impl Stream for ExternalFetcher {
                             return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
-                            warn!(target: "evm::traces::external", "rate limit exceeded on attempt");
-                            pin.backoff = Some(backoff_interval(pin.timeout));
-                            pin.queue.push(addr);
+                            if pin.retry(addr) {
+                                warn!(target: "evm::traces::external", "rate limit exceeded, backing off");
+                            } else {
+                                warn!(target: "evm::traces::external", "rate limit exceeded, giving up on address");
+                            }
                         }
                         Err(EtherscanError::InvalidApiKey) => {
                             warn!(target: "evm::traces::external", "invalid api key");
                             // mark key as invalid
+                            pin.fetcher.invalid_api_key().store(true, Ordering::Relaxed);
+                            return Poll::Ready(None);
+                        }
+                        Err(EtherscanError::ChainNotSupported(chain)) => {
+                            warn!(target: "evm::traces::external", %chain, "chain not supported");
+                            // No address on this chain can resolve, so stop using the fetcher.
                             pin.fetcher.invalid_api_key().store(true, Ordering::Relaxed);
                             return Poll::Ready(None);
                         }
@@ -367,24 +601,17 @@ impl Stream for ExternalFetcher {
                             // Back off and retry the address a bounded number of times instead
                             // of aborting the whole stream, which would abandon every still-
                             // queued address and leave traces only partially decoded (#9880).
-                            let attempts = {
-                                let entry = pin.attempts.entry(addr).or_default();
-                                *entry += 1;
-                                *entry
-                            };
-                            if attempts <= MAX_CLOUDFLARE_RETRIES {
-                                warn!(target: "evm::traces::external", attempts, "blocked by cloudflare, backing off");
-                                pin.backoff = Some(backoff_interval(pin.timeout));
-                                pin.queue.push(addr);
+                            if pin.retry(addr) {
+                                warn!(target: "evm::traces::external", "blocked by cloudflare, backing off");
                             } else {
                                 warn!(target: "evm::traces::external", "blocked by cloudflare, giving up on address");
-                                return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                                // No conclusion: do not turn a transient outage into a cached
+                                // "unverified" result.
                             }
                         }
                         Err(err) => {
                             warn!(target: "evm::traces::external", ?err, "could not get info");
-                            // Cache the failure so we don't re-fetch on subsequent arenas.
-                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                            // Only ContractCodeNotVerified is a conclusive negative result.
                         }
                     }
                 }
@@ -448,6 +675,7 @@ impl ExternalFetcherT for EtherscanFetcher {
 
 struct SourcifyFetcher {
     client: reqwest::Client,
+    chain: Chain,
     url: String,
     invalid_api_key: AtomicBool,
 }
@@ -455,7 +683,11 @@ struct SourcifyFetcher {
 impl SourcifyFetcher {
     fn new(chain: Chain) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .user_agent(foundry_common::DEFAULT_USER_AGENT)
+                .build()
+                .expect("Client::builder() with static config cannot fail"),
+            chain,
             url: format!("https://sourcify.dev/server/v2/contract/{}", chain.id()),
             invalid_api_key: AtomicBool::new(false),
         }
@@ -494,6 +726,18 @@ impl ExternalFetcherT for SourcifyFetcher {
             404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
             // Too many requests.
             429 => return Err(EtherscanError::RateLimitExceeded),
+            // Bad request. Only a recognized error code is final; anything else is not cached.
+            400 => {
+                let error = response
+                    .json::<SourcifyError>()
+                    .await
+                    .map_err(|e| EtherscanError::Unknown(e.to_string()))?;
+                return Err(match error.custom_code.as_str() {
+                    "unsupported_chain" => EtherscanError::ChainNotSupported(self.chain),
+                    "invalid_parameter" => EtherscanError::ContractCodeNotVerified(address),
+                    _ => EtherscanError::Unknown(format!("{error:#?}")),
+                });
+            }
             _ => {}
         }
         let response: SourcifyResponse =
@@ -574,6 +818,8 @@ mod tests {
     use std::{
         collections::HashSet as StdHashSet,
         future::pending,
+        io::{Read, Write},
+        net::TcpListener,
         sync::{
             Mutex,
             atomic::{AtomicUsize, Ordering as AtomicOrdering},
@@ -645,6 +891,35 @@ mod tests {
         }
     }
 
+    struct ErrorFetcher {
+        calls: Arc<AtomicUsize>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for ErrorFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Etherscan
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::ZERO
+        }
+
+        fn concurrency(&self) -> usize {
+            1
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, _address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+            Err(EtherscanError::Unknown("temporary explorer failure".to_string()))
+        }
+    }
+
     fn metadata(contract_name: &str) -> Metadata {
         SourcifyMetadata {
             abi: None,
@@ -669,6 +944,63 @@ mod tests {
         config.tracing.external_identification_timeout = 0;
 
         assert!(ExternalIdentifier::new(&config, Some(Chain::mainnet())).unwrap().is_none());
+    }
+
+    #[test]
+    fn alias_for_another_chain_does_not_redirect_lookups() {
+        let config = ExternalIdentifierConfig {
+            timeout: 1,
+            etherscan: serde_json::from_value(serde_json::json!({
+                "mainnet": { "key": "key" }
+            }))
+            .unwrap(),
+            etherscan_alias: Some("mainnet".to_string()),
+            etherscan_api_key: Some("mainnet".to_string()),
+            ..Default::default()
+        };
+
+        assert!(config.storage_identifier(Chain::from(8453)).is_none());
+
+        let kinds = |identifier: ExternalIdentifier| {
+            identifier.fetchers.iter().map(|fetcher| fetcher.kind()).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(config.identifier(Some(Chain::from(8453))).unwrap()),
+            [FetcherKind::Sourcify]
+        );
+        assert_eq!(
+            kinds(config.identifier(Some(Chain::mainnet())).unwrap()),
+            [FetcherKind::Sourcify, FetcherKind::Etherscan]
+        );
+
+        // The traced chain's own entry is used instead of the foreign alias.
+        let config = ExternalIdentifierConfig {
+            etherscan: serde_json::from_value(serde_json::json!({
+                "mainnet": { "key": "key" },
+                "base": { "key": "key" }
+            }))
+            .unwrap(),
+            ..config
+        };
+        let (chain, etherscan) =
+            config.resolve_explorer(Some(Chain::from(8453)), Some("mainnet"), Some("mainnet"));
+        assert_eq!(chain, Some(Chain::from(8453)));
+        assert_eq!(etherscan.unwrap().chain, Some(Chain::from(8453)));
+
+        // A chainless alias keeps its explorer URL without clearing the traced chain.
+        let config = ExternalIdentifierConfig {
+            etherscan: serde_json::from_value(serde_json::json!({
+                "custom": { "key": "key", "url": "https://explorer.invalid/api" }
+            }))
+            .unwrap(),
+            etherscan_alias: Some("custom".to_string()),
+            etherscan_api_key: Some("custom".to_string()),
+            ..config
+        };
+        assert_eq!(
+            kinds(config.identifier(Some(Chain::from(8453))).unwrap()),
+            [FetcherKind::Sourcify, FetcherKind::Etherscan]
+        );
     }
 
     /// Fetcher that returns a transient Cloudflare block the first time it sees an address, then
@@ -807,6 +1139,28 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn metadata_requests_preserve_cumulative_budget() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(TestFetcher {
+            kind: FetcherKind::Etherscan,
+            delay: None,
+            contract_name: None,
+            calls: Arc::clone(&calls),
+            invalid: AtomicBool::new(false),
+        });
+        let mut identifier = test_identifier(vec![fetcher], Duration::from_millis(30));
+        let address = Address::with_last_byte(1);
+
+        assert!(identifier.get_metadata(&[address], Duration::from_millis(10)).await.is_empty());
+        assert!(!identifier.remaining_budget.is_zero());
+        assert!(identifier.remaining_budget <= Duration::from_millis(20));
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert!(identifier.remaining_budget.is_zero());
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn rate_limit_retries_cannot_escape_timeout_budget() {
         let calls = Arc::new(AtomicUsize::new(0));
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(RateLimitedFetcher {
@@ -819,6 +1173,156 @@ mod tests {
 
         assert!(identifier.remaining_budget.is_zero());
         assert!(calls.load(AtomicOrdering::Relaxed) > 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rate_limit_retries_are_bounded() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(RateLimitedFetcher {
+            calls: Arc::clone(&calls),
+            invalid: AtomicBool::new(false),
+        });
+
+        let fetched =
+            ExternalFetcher::new(fetcher, &[Address::with_last_byte(1)]).collect::<Vec<_>>().await;
+
+        assert!(fetched.is_empty());
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), MAX_TRANSIENT_RETRIES as usize + 1);
+    }
+
+    struct UnsupportedChainFetcher {
+        calls: Arc<AtomicUsize>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for UnsupportedChainFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Sourcify
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::ZERO
+        }
+
+        fn concurrency(&self) -> usize {
+            1
+        }
+
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+
+        async fn fetch(&self, _address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+            Err(EtherscanError::ChainNotSupported(Chain::from_id(12345)))
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_chain_disables_fetcher() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut identifier = test_identifier(
+            vec![Arc::new(UnsupportedChainFetcher {
+                calls: Arc::clone(&calls),
+                invalid: AtomicBool::new(false),
+            })],
+            Duration::from_secs(1),
+        );
+
+        identifier
+            .fetch_addresses_async(&[Address::with_last_byte(1), Address::with_last_byte(2)])
+            .await;
+        identifier.fetch_addresses_async(&[Address::with_last_byte(3)]).await;
+
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[test]
+    fn sourcify_skips_local_chains() {
+        let config = ExternalIdentifierConfig { timeout: 1, ..Default::default() };
+
+        assert!(config.identifier(Some(Chain::from_id(31337))).is_none());
+        assert!(config.identifier(Some(Chain::dev())).is_none());
+        assert!(config.identifier(Some(Chain::mainnet())).is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn foundry_addresses_are_not_fetched() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut identifier = test_identifier(
+            vec![Arc::new(TestFetcher {
+                kind: FetcherKind::Sourcify,
+                delay: Some(Duration::ZERO),
+                contract_name: None,
+                calls: Arc::clone(&calls),
+                invalid: AtomicBool::new(false),
+            })],
+            Duration::from_secs(1),
+        );
+        let nodes = [CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS].map(|address| {
+            let mut node = CallTraceNode::default();
+            node.trace.address = address;
+            node
+        });
+
+        assert!(identifier.identify_addresses(&[&nodes[0], &nodes[1]]).is_empty());
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    /// Serves one HTTP response with status 400 and `body`, then returns the Sourcify result.
+    async fn sourcify_bad_request(body: &'static str) -> EtherscanError {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 4096]);
+            let response = format!(
+                "HTTP/1.1 400 Bad Request\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let mut fetcher = SourcifyFetcher::new(Chain::mainnet());
+        fetcher.url = format!("http://{addr}");
+        fetcher.fetch(Address::with_last_byte(1)).await.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn sourcify_bad_request_is_final_only_when_recognized() {
+        let error =
+            sourcify_bad_request(r#"{"customCode":"unsupported_chain","message":"","errorId":""}"#)
+                .await;
+        assert!(matches!(error, EtherscanError::ChainNotSupported(_)));
+
+        let error =
+            sourcify_bad_request(r#"{"customCode":"invalid_parameter","message":"","errorId":""}"#)
+                .await;
+        assert!(matches!(error, EtherscanError::ContractCodeNotVerified(_)));
+
+        let error =
+            sourcify_bad_request(r#"{"customCode":"other","message":"","errorId":""}"#).await;
+        assert!(matches!(error, EtherscanError::Unknown(_)));
+
+        let error = sourcify_bad_request("<html>bad request</html>").await;
+        assert!(matches!(error, EtherscanError::Unknown(_)));
+    }
+
+    #[tokio::test]
+    async fn transient_errors_are_not_cached_as_unverified() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut identifier = test_identifier(
+            vec![Arc::new(ErrorFetcher {
+                calls: Arc::clone(&calls),
+                invalid: AtomicBool::new(false),
+            })],
+            Duration::from_secs(1),
+        );
+        let address = Address::with_last_byte(1);
+
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert!(identifier.get_metadata(&[address], Duration::from_secs(1)).await.is_empty());
+        assert_eq!(calls.load(AtomicOrdering::Relaxed), 2);
     }
 
     #[test]
@@ -840,5 +1344,62 @@ mod tests {
             identifier.contracts[&address].1.as_ref().unwrap().contract_name,
             "EtherscanResult"
         );
+    }
+
+    #[tokio::test]
+    async fn proxy_metadata_preserves_address_identity_and_all_abis() {
+        let proxy = Address::with_last_byte(1);
+        let implementation_address = Address::with_last_byte(2);
+        let mut proxy_metadata = metadata("Proxy");
+        proxy_metadata.abi =
+            r#"[{"anonymous":false,"inputs":[],"name":"ProxyEvent","type":"event"}]"#.to_string();
+        proxy_metadata.proxy = 1;
+        proxy_metadata.implementation = Some(implementation_address);
+        let mut implementation = metadata("Implementation");
+        implementation.abi =
+            r#"[{"anonymous":false,"inputs":[],"name":"ImplementationEvent","type":"event"}]"#
+                .to_string();
+        let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
+        let identity = identifier.identify_from_metadata(proxy, &proxy_metadata);
+        assert_eq!(identity.contract.as_deref(), Some("Proxy"));
+        identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
+        identifier
+            .cache_fetched(implementation_address, (FetcherKind::Etherscan, Some(implementation)));
+
+        let mut results = identifier.get_abis(&[proxy]).await;
+        let (result_address, result) = results.pop().unwrap();
+        let (abis, complete) = result.unwrap();
+        let event_names =
+            abis.into_iter().map(|abi| abi.events.into_keys().next().unwrap()).collect::<Vec<_>>();
+
+        assert_eq!(result_address, proxy);
+        assert!(complete);
+        assert_eq!(event_names, ["ImplementationEvent", "ProxyEvent"]);
+
+        identifier.contracts.remove(&implementation_address);
+        let (_, result) = identifier.get_abis(&[proxy]).await.pop().unwrap();
+        let (abis, complete) = result.unwrap();
+        assert_eq!(abis.len(), 1);
+        assert!(!complete);
+    }
+
+    #[tokio::test]
+    async fn storage_metadata_does_not_follow_explorer_proxy_hints() {
+        let proxy = Address::with_last_byte(1);
+        let implementation_address = Address::with_last_byte(2);
+        let mut proxy_metadata = metadata("Proxy");
+        proxy_metadata.proxy = 1;
+        proxy_metadata.implementation = Some(implementation_address);
+        let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
+        identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
+        identifier.cache_fetched(
+            implementation_address,
+            (FetcherKind::Etherscan, Some(metadata("CurrentImplementation"))),
+        );
+
+        let result = identifier.get_metadata(&[proxy], Duration::from_secs(1)).await;
+
+        assert_eq!(result[&proxy].as_ref().unwrap().contract_name, "Proxy");
+        assert_eq!(result.len(), 1);
     }
 }

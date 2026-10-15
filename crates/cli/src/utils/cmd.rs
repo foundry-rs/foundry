@@ -178,6 +178,18 @@ pub trait LoadConfig {
         load_config_from_provider(self.figment())
     }
 
+    /// Loads config and installs missing project dependencies.
+    fn load_config_with_dependencies(&self) -> Result<Config, ExtractConfigError> {
+        let mut config = self.load_config()?;
+        self.install_missing_dependencies(&mut config)?;
+        Ok(config)
+    }
+
+    /// Installs missing dependencies, reloading config only for automatic remapping discovery.
+    fn install_missing_dependencies(&self, config: &mut Config) -> Result<(), ExtractConfigError> {
+        crate::install::install_missing_dependencies(config, || self.load_config())
+    }
+
     /// Same as [`LoadConfig::load_config`] but does not emit warnings.
     fn load_config_no_warnings(&self) -> Result<Config, ExtractConfigError> {
         self.load_config_unsanitized_no_warnings().map(Config::sanitized)
@@ -411,6 +423,7 @@ pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::b256;
     use foundry_config::TracingConfig;
     use std::fs;
     use tempfile::tempdir;
@@ -470,8 +483,8 @@ mod tests {
         let func_selector: alloy_primitives::Selector = "0x2e2dbaf7".parse().unwrap();
         assert!(cache.contains_key(&SelectorKind::Function(func_selector)));
 
-        let event_selector: alloy_primitives::B256 =
-            "0x8cc20c47f3a2463817352f75dec0dbf43a7a771b5f6817a92bd5724c1f4aa745".parse().unwrap();
+        let event_selector =
+            b256!("0x8cc20c47f3a2463817352f75dec0dbf43a7a771b5f6817a92bd5724c1f4aa745");
         assert!(cache.contains_key(&SelectorKind::Event(event_selector)));
 
         let error_selector: alloy_primitives::Selector = "0xd35f45de".parse().unwrap();

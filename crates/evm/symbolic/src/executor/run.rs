@@ -1,24 +1,6 @@
 use super::*;
 use std::cmp::Reverse;
 
-fn order_roots_by_corpus_seed_count(roots: &mut [PathState], order: SymbolicExplorationOrder) {
-    let Some((first, rest)) = roots.split_first() else {
-        return;
-    };
-    if rest.iter().all(|root| root.corpus_seed_model_count() == first.corpus_seed_model_count()) {
-        return;
-    }
-
-    match order {
-        SymbolicExplorationOrder::Bfs => {
-            roots.sort_by_key(|root| Reverse(root.corpus_seed_model_count()));
-        }
-        SymbolicExplorationOrder::Dfs => {
-            roots.sort_by_key(PathState::corpus_seed_model_count);
-        }
-    }
-}
-
 impl SymbolicExecutor {
     /// Creates a symbolic executor from Foundry's symbolic configuration.
     ///
@@ -32,14 +14,18 @@ impl SymbolicExecutor {
         Self {
             config,
             cx: SymCx::new(),
-            solver: Box::new(solver),
+            solver,
             deferred_incomplete: None,
             deadline: None,
+            nested_deferred_mode: DeferredPathMode::Skip,
+            stateless_retry_safe: true,
         }
     }
 
     fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
         self.deferred_incomplete = None;
+        self.nested_deferred_mode = DeferredPathMode::Skip;
+        self.stateless_retry_safe = true;
         self.deadline = if use_wall_clock_deadline {
             self.config
                 .timeout
@@ -61,12 +47,27 @@ impl SymbolicExecutor {
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
     pub(super) fn defer_incomplete(&mut self, reason: &'static str) {
-        self.deferred_incomplete.get_or_insert(DeferredIncomplete::Unsupported(reason));
+        if self
+            .deferred_incomplete
+            .is_none_or(|reason| reason == DeferredIncomplete::HardArithmetic)
+        {
+            self.deferred_incomplete = Some(DeferredIncomplete::Unsupported(reason));
+        }
     }
 
     /// Defers a solver-unknown result while continuing with decidable sibling paths.
     pub(super) fn defer_solver_unknown(&mut self) {
-        self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
+        if self
+            .deferred_incomplete
+            .is_none_or(|reason| reason == DeferredIncomplete::HardArithmetic)
+        {
+            self.deferred_incomplete = Some(DeferredIncomplete::SolverUnknown);
+        }
+    }
+
+    /// Defers an incomplete result for a hard-arithmetic branch skipped by nested execution.
+    pub(super) fn defer_hard_arithmetic(&mut self) {
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::HardArithmetic);
     }
 
     pub(super) fn is_sat_with_state(
@@ -84,12 +85,7 @@ impl SymbolicExecutor {
         state: &PathState,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
-        let replayable_storage = state.world.replay_storage_symbols();
-        match self.solver.is_sat_branch_with_replayable_storage(
-            &mut self.cx,
-            constraints,
-            &replayable_storage,
-        ) {
+        match self.is_sat_with_state(state, constraints) {
             Ok(feasible) => Ok(feasible),
             Err(SymbolicError::SolverUnknown) => {
                 self.defer_solver_unknown();
@@ -99,9 +95,9 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Returns and clears any deferred incomplete reason.
-    fn take_deferred_incomplete(&mut self) -> Option<(SymbolicStopReason, String)> {
-        match self.deferred_incomplete.take()? {
+    /// Returns any deferred incomplete reason.
+    fn deferred_incomplete(&self) -> Option<(SymbolicStopReason, String)> {
+        match self.deferred_incomplete? {
             DeferredIncomplete::Unsupported(reason) => Some((
                 SymbolicStopReason::Stuck,
                 format!("unsupported symbolic execution feature: {reason}"),
@@ -109,27 +105,11 @@ impl SymbolicExecutor {
             DeferredIncomplete::SolverUnknown => {
                 Some((SymbolicStopReason::Timeout, "solver returned unknown".to_string()))
             }
+            DeferredIncomplete::HardArithmetic => Some((
+                SymbolicStopReason::Timeout,
+                "nested hard arithmetic branch requires deferred SMT solving".to_string(),
+            )),
         }
-    }
-
-    /// Returns staged solver portfolio diagnostics collected by this executor.
-    pub fn portfolio_diagnostics(&self) -> Option<PortfolioDiagnostics> {
-        self.solver.portfolio_diagnostics().cloned()
-    }
-
-    /// Defers verbose solver diagnostics until the caller explicitly takes them.
-    pub fn capture_diagnostics(&mut self) {
-        self.solver.capture_diagnostics();
-    }
-
-    /// Returns and clears deferred verbose solver diagnostics.
-    pub fn take_diagnostics(&mut self) -> Option<String> {
-        self.solver.take_diagnostics()
-    }
-
-    /// Registers a callback invoked after each solver query for live progress rendering.
-    pub fn set_query_observer(&mut self, observer: impl Fn(usize) + Send + Sync + 'static) {
-        self.solver.set_query_observer(Some(Box::new(observer)));
     }
 
     /// Executes one function symbolically against an already-deployed test contract.
@@ -150,6 +130,45 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
+        self.execute_run(input, None)
+    }
+
+    /// Searches for concrete inputs that complete after reaching a requested branch outcome.
+    ///
+    /// Unlike [`Self::run`], this retains replay candidates independently of the proof result, so a
+    /// later unsupported path or resource limit does not discard an input found on an earlier
+    /// completed path. The caller must concretely replay every candidate before using it.
+    pub fn search_branch_target<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: SymbolicRunInput<'_, FEN>,
+    ) -> SymbolicBranchTargetSearchResult {
+        let mut candidates = Vec::new();
+        if input.branch_target.is_none() {
+            return SymbolicBranchTargetSearchResult {
+                candidates,
+                execution: SymbolicRunResult::Incomplete {
+                    kind: SymbolicStopReason::Error,
+                    reason: "branch target search requires a branch target".to_string(),
+                    stats: SymbolicStats::default(),
+                },
+            };
+        }
+
+        let execution = self.execute_run(input, Some(&mut candidates));
+        if let SymbolicRunResult::Counterexample { args, calldata, .. } = &execution {
+            candidates.insert(
+                0,
+                SymbolicConcreteInput { args: args.clone(), calldata: calldata.clone() },
+            );
+        }
+        SymbolicBranchTargetSearchResult { candidates, execution }
+    }
+
+    fn execute_run<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: SymbolicRunInput<'_, FEN>,
+        mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
+    ) -> SymbolicRunResult {
         self.reset_run_state(false);
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
@@ -161,12 +180,84 @@ impl SymbolicExecutor {
             };
         }
 
-        match self.run_inner(input) {
+        let mut completed_paths = 0;
+        let first =
+            match self.run_inner(&input, branch_candidates.as_deref_mut(), &mut completed_paths) {
+                Ok(result) => result,
+                Err(err) => {
+                    return SymbolicRunResult::Incomplete {
+                        kind: err.stop_reason(),
+                        reason: err.to_string(),
+                        stats: self.stats_with_paths(completed_paths),
+                    };
+                }
+            };
+
+        // Preserve the cheap-path priority of the first pass. Only a deterministic stateless
+        // proof retries after nested hard arithmetic was its remaining limitation.
+        let retry_nested_deferred = branch_candidates.is_none()
+            && self.stateless_retry_safe
+            && matches!(self.deferred_incomplete, Some(DeferredIncomplete::HardArithmetic))
+            && matches!(
+                &first,
+                SymbolicRunResult::Incomplete {
+                    kind: SymbolicStopReason::RevertAll | SymbolicStopReason::Timeout,
+                    ..
+                }
+            );
+        if !retry_nested_deferred {
+            return first;
+        }
+
+        if let Err(err) = self.check_timeout() {
+            return SymbolicRunResult::Incomplete {
+                kind: err.stop_reason(),
+                reason: err.to_string(),
+                stats: self.stats_with_paths(completed_paths),
+            };
+        }
+
+        self.deferred_incomplete = None;
+        self.nested_deferred_mode = DeferredPathMode::Yield;
+        let prioritized = match self.run_inner(&input, None, &mut completed_paths) {
+            Ok(result) => result,
+            Err(err) => {
+                return SymbolicRunResult::Incomplete {
+                    kind: err.stop_reason(),
+                    reason: err.to_string(),
+                    stats: self.stats_with_paths(completed_paths),
+                };
+            }
+        };
+        let drain_nested_deferred = self.stateless_retry_safe
+            && matches!(self.deferred_incomplete, Some(DeferredIncomplete::HardArithmetic))
+            && matches!(
+                &prioritized,
+                SymbolicRunResult::Incomplete {
+                    kind: SymbolicStopReason::RevertAll | SymbolicStopReason::Timeout,
+                    ..
+                }
+            );
+        if !drain_nested_deferred {
+            return prioritized;
+        }
+
+        if let Err(err) = self.check_timeout() {
+            return SymbolicRunResult::Incomplete {
+                kind: err.stop_reason(),
+                reason: err.to_string(),
+                stats: self.stats_with_paths(completed_paths),
+            };
+        }
+
+        self.deferred_incomplete = None;
+        self.nested_deferred_mode = DeferredPathMode::Drain;
+        match self.run_inner(&input, None, &mut completed_paths) {
             Ok(result) => result,
             Err(err) => SymbolicRunResult::Incomplete {
                 kind: err.stop_reason(),
                 reason: err.to_string(),
-                stats: self.solver.stats(),
+                stats: self.stats_with_paths(completed_paths),
             },
         }
     }
@@ -228,11 +319,49 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Searches for invariant-breaking inputs after one symbolic handler call.
+    ///
+    /// This is a best-effort candidate search from a concrete state. Returned candidates are
+    /// unconfirmed until the caller replays them concretely, and an empty result does not prove
+    /// any invariant.
+    pub fn search_invariant_candidates<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: SymbolicInvariantCandidateInput<'_, FEN>,
+    ) -> SymbolicInvariantCandidateSearchResult {
+        self.reset_run_state(true);
+        self.solver.clear_context_caches();
+        self.cx = SymCx::new();
+        if let Err(error) = self.solver.check_available() {
+            return SymbolicInvariantCandidateSearchResult {
+                candidates: Vec::new(),
+                limitation: Some(error.into()),
+            };
+        }
+
+        let mut candidates = Vec::new();
+        let mut limitation = None;
+        if let Err(error) =
+            self.search_invariant_candidates_inner(&input, &mut candidates, &mut limitation)
+        {
+            limitation = Some(error.into());
+        }
+        // Deferred hard-arithmetic branches are now sent to SMT before candidate search finishes.
+        // Only branches that nested execution could not escalate remain incomplete.
+        if limitation.is_none()
+            && let Some((kind, reason)) = self.deferred_incomplete()
+        {
+            limitation = Some(SymbolicInvariantSearchLimitation { kind, reason });
+        }
+
+        SymbolicInvariantCandidateSearchResult { candidates, limitation }
+    }
+
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
         &mut self,
-        input: SymbolicRunInput<'_, FEN>,
+        input: &SymbolicRunInput<'_, FEN>,
+        mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
+        completed_paths: &mut usize,
     ) -> Result<SymbolicRunResult, SymbolicError> {
-        let heuristic_witness_baseline = self.solver.heuristic_witnesses();
         let account = input
             .executor
             .backend()
@@ -265,31 +394,51 @@ impl SymbolicExecutor {
         }
         order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
         let mut worklist = roots.into_iter().collect::<VecDeque<_>>();
-        let mut completed_paths = 0usize;
+        let mut deferred_worklist = VecDeque::new();
         let mut reverted_paths = 0usize;
         let mut normal_paths = 0usize;
         let mut success_input = None;
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
-            if completed_paths >= path_limit {
-                debug!(completed_paths, path_limit, "symbolic path limit reached");
+        while let Some(next) = self.pop_next_feasible_path(
+            &mut worklist,
+            &mut deferred_worklist,
+            DeferredPathMode::Drain,
+        )? {
+            let mut state = next.state;
+            if *completed_paths >= path_limit {
+                debug!(
+                    completed_paths = *completed_paths,
+                    path_limit, "symbolic path limit reached"
+                );
                 return Ok(SymbolicRunResult::Incomplete {
                     kind: SymbolicStopReason::Stuck,
                     reason: format!("symbolic path limit exceeded ({path_limit})"),
-                    stats: self.stats_with_paths(completed_paths),
+                    stats: self.stats_with_paths(*completed_paths),
                 });
             }
             if std::mem::take(&mut state.pending_storage_hook_revert) {
-                completed_paths += 1;
+                self.collect_branch_candidate(
+                    branch_candidates.as_deref_mut(),
+                    input.function,
+                    &state,
+                )?;
+                *completed_paths += 1;
                 reverted_paths += 1;
                 continue;
             }
-            let _path_span =
-                trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
-                    .entered();
-            trace!(completed_paths, worklist_size = worklist.len(), "exploring symbolic path");
+            let _path_span = trace_span!(
+                "symbolic_path",
+                completed_paths = *completed_paths,
+                worklist_size = worklist.len()
+            )
+            .entered();
+            trace!(
+                completed_paths = *completed_paths,
+                worklist_size = worklist.len(),
+                "exploring symbolic path"
+            );
 
             loop {
                 self.check_timeout()?;
@@ -298,124 +447,75 @@ impl SymbolicExecutor {
                     return Ok(SymbolicRunResult::Incomplete {
                         kind: SymbolicStopReason::Stuck,
                         reason: format!("symbolic depth limit exceeded ({depth_limit})"),
-                        stats: self.stats_with_paths(completed_paths),
+                        stats: self.stats_with_paths(*completed_paths),
                     });
                 }
                 state.depth += 1;
 
-                let Some(op) = code.opcode(&mut self.cx, state.pc)? else {
-                    if !state.expectations_satisfied() {
-                        let Some((args, calldata_bytes)) = self
-                            .materialize_stateless_counterexample_if_branch_target_satisfied(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?
-                        else {
-                            completed_paths += 1;
-                            break;
-                        };
-                        return Ok(SymbolicRunResult::Counterexample {
-                            args,
-                            calldata: calldata_bytes,
-                            stats: self.stats_with_paths(completed_paths + 1),
-                        });
+                let outcome = match code.opcode(&mut self.cx, state.pc)? {
+                    Some(op) => {
+                        let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
+                        self.step(
+                            input.executor,
+                            &code,
+                            code.jump_table(),
+                            &mut state,
+                            &mut worklist,
+                            completed_paths,
+                            op,
+                        )?
                     }
-                    if input.collect_success_input
-                        && state.satisfies_branch_target()
-                        && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
-                    {
-                        success_input = Some((
-                            state.depth,
-                            self.materialize_stateless_input(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?,
-                        ));
-                    }
-                    completed_paths += 1;
-                    break;
+                    None => StepOutcome::Halt,
                 };
-
-                let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
-                match self.step(
-                    input.executor,
-                    &code,
-                    code.jump_table(),
-                    &mut state,
-                    &mut worklist,
-                    &mut completed_paths,
-                    op,
-                )? {
+                match outcome {
                     StepOutcome::Continue => {}
-                    StepOutcome::Halt => {
-                        if !state.expectations_satisfied() {
-                            let Some((args, calldata_bytes)) = self
-                                .materialize_stateless_counterexample_if_branch_target_satisfied(
-                                    state.root_calldata.as_ref().ok_or_else(|| {
-                                        SymbolicError::Unsupported("missing root symbolic calldata")
-                                    })?,
-                                    input.function,
-                                    &state,
-                                )?
-                            else {
-                                completed_paths += 1;
-                                break;
-                            };
-                            return Ok(SymbolicRunResult::Counterexample {
-                                args,
-                                calldata: calldata_bytes,
-                                stats: self.stats_with_paths(completed_paths + 1),
-                            });
-                        }
-                        if input.collect_success_input
-                            && state.satisfies_branch_target()
-                            && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
-                        {
-                            success_input = Some((
-                                state.depth,
-                                self.materialize_stateless_input(
-                                    state.root_calldata.as_ref().ok_or_else(|| {
-                                        SymbolicError::Unsupported("missing root symbolic calldata")
-                                    })?,
-                                    input.function,
-                                    &state,
-                                )?,
-                            ));
-                        }
-                        completed_paths += 1;
-                        normal_paths += 1;
-                        break;
-                    }
+                    StepOutcome::AssumeRejected | StepOutcome::Forked => break,
                     StepOutcome::Revert => {
-                        completed_paths += 1;
+                        self.collect_branch_candidate(
+                            branch_candidates.as_deref_mut(),
+                            input.function,
+                            &state,
+                        )?;
+                        *completed_paths += 1;
                         reverted_paths += 1;
                         break;
                     }
-                    StepOutcome::AssumeRejected => break,
-                    StepOutcome::Forked => break,
-                    StepOutcome::Failure => {
-                        let Some((args, calldata_bytes)) = self
-                            .materialize_stateless_counterexample_if_branch_target_satisfied(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?
-                        else {
-                            completed_paths += 1;
+                    StepOutcome::Halt if state.expectations_satisfied() => {
+                        let candidate = self.collect_branch_candidate(
+                            branch_candidates.as_deref_mut(),
+                            input.function,
+                            &state,
+                        )?;
+                        if input.collect_success_input
+                            && state.satisfies_branch_target()
+                            && state.can_materialize_seed()
+                            && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
+                        {
+                            let input = match candidate {
+                                Some(input) => input,
+                                None => self.materialize_root_input(input.function, &state)?,
+                            };
+                            success_input = Some((state.depth, input));
+                        }
+                        *completed_paths += 1;
+                        normal_paths += 1;
+                        break;
+                    }
+                    StepOutcome::Halt | StepOutcome::ExceptionalHalt | StepOutcome::Failure => {
+                        if !state.satisfies_branch_target() {
+                            *completed_paths += 1;
                             break;
-                        };
+                        }
+                        debug!(
+                            constraint_count = state.constraints.len(),
+                            "materializing counterexample from solver model"
+                        );
+                        let SymbolicConcreteInput { args, calldata } =
+                            self.materialize_root_input(input.function, &state)?;
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
-                            calldata: calldata_bytes,
-                            stats: self.stats_with_paths(completed_paths + 1),
+                            calldata,
+                            stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }
                 }
@@ -423,70 +523,65 @@ impl SymbolicExecutor {
         }
 
         if normal_paths == 0 && reverted_paths > 0 {
-            debug!(completed_paths, "all symbolic paths reverted");
+            debug!(completed_paths = *completed_paths, "all symbolic paths reverted");
             return Ok(SymbolicRunResult::Incomplete {
                 kind: SymbolicStopReason::RevertAll,
                 reason: "all symbolic paths reverted".to_string(),
-                stats: self.stats_with_paths(completed_paths),
+                stats: self.stats_with_paths(*completed_paths),
             });
         }
 
-        if self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
-            return Ok(SymbolicRunResult::Incomplete {
-                kind: SymbolicStopReason::Timeout,
-                reason: Self::hard_arith_heuristic_incomplete_reason(),
-                stats: self.stats_with_paths(completed_paths),
-            });
-        }
-
-        if let Some((kind, reason)) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.deferred_incomplete() {
             return Ok(SymbolicRunResult::Incomplete {
                 kind,
                 reason,
-                stats: self.stats_with_paths(completed_paths),
+                stats: self.stats_with_paths(*completed_paths),
             });
         }
 
-        debug!(completed_paths, "symbolic execution safe");
+        if normal_paths == 0 {
+            return Ok(SymbolicRunResult::Incomplete {
+                kind: SymbolicStopReason::Stuck,
+                reason: "no successful symbolic paths".to_string(),
+                stats: self.stats_with_paths(*completed_paths),
+            });
+        }
+
+        debug!(completed_paths = *completed_paths, "symbolic execution safe");
         Ok(SymbolicRunResult::Safe {
-            stats: self.stats_with_paths(completed_paths),
+            stats: self.stats_with_paths(*completed_paths),
             success_input: success_input.map(|(_, input)| input),
         })
     }
 
-    fn materialize_stateless_counterexample_if_branch_target_satisfied(
+    fn collect_branch_candidate(
         &mut self,
-        calldata: &SymbolicCalldata,
+        candidates: Option<&mut Vec<SymbolicConcreteInput>>,
         function: &Function,
         state: &PathState,
-    ) -> Result<Option<(Vec<DynSolValue>, Bytes)>, SymbolicError> {
-        if !state.satisfies_branch_target() {
+    ) -> Result<Option<SymbolicConcreteInput>, SymbolicError> {
+        let Some(candidates) = candidates else {
+            return Ok(None);
+        };
+        if !state.satisfies_branch_target() || !state.can_materialize_seed() {
             return Ok(None);
         }
-        self.materialize_stateless_counterexample(calldata, function, state).map(Some)
+
+        let input = self.materialize_root_input(function, state)?;
+        candidates.push(input.clone());
+        Ok(Some(input))
     }
 
-    pub(super) fn materialize_stateless_counterexample(
+    /// Materializes the root call input for `state` from a solver model.
+    fn materialize_root_input(
         &mut self,
-        calldata: &SymbolicCalldata,
-        function: &Function,
-        state: &PathState,
-    ) -> Result<(Vec<DynSolValue>, Bytes), SymbolicError> {
-        debug!(
-            constraint_count = state.constraints.len(),
-            "materializing counterexample from solver model"
-        );
-        self.materialize_stateless_input(calldata, function, state)
-            .map(|input| (input.args, input.calldata))
-    }
-
-    /// Runs the `materialize_stateless_input` symbolic executor helper.
-    pub(super) fn materialize_stateless_input(
-        &mut self,
-        calldata: &SymbolicCalldata,
         function: &Function,
         state: &PathState,
     ) -> Result<SymbolicConcreteInput, SymbolicError> {
+        let calldata = state
+            .root_calldata
+            .as_ref()
+            .ok_or(SymbolicError::Unsupported("missing root symbolic calldata"))?;
         let replayable_storage = state.world.replay_storage_symbols();
         let model = self.solver.model_with_replayable_storage(
             &mut self.cx,
@@ -502,7 +597,6 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> Result<SymbolicInvariantRunResult, SymbolicError> {
-        let heuristic_witness_baseline = self.solver.heuristic_witnesses();
         if input.targets.is_empty() {
             return Err(SymbolicError::Unsupported("symbolic invariant has no targets"));
         }
@@ -577,7 +671,7 @@ impl SymbolicExecutor {
                             };
                             let calldata = step.calldata.call_data(&mut self.cx);
                             let constraints = step.calldata.constraints().to_vec();
-                            let outcomes = self.execute_sequence_call(
+                            let mut call = self.prepare_sequence_call(
                                 input.executor,
                                 sequence.state.clone(),
                                 target.address,
@@ -585,15 +679,18 @@ impl SymbolicExecutor {
                                 &target.function,
                                 calldata,
                                 constraints,
-                                &mut completed_paths,
                             )?;
 
-                            for outcome in outcomes {
+                            while let Some(outcome) = self.execute_sequence_call_next(
+                                input.executor,
+                                &mut call,
+                                &mut completed_paths,
+                            )? {
                                 let mut steps = sequence.steps.clone();
                                 steps.push(step.clone());
 
-                                match outcome.status {
-                                    TopLevelCallStatus::Failure => {
+                                let post_state = match outcome.status {
+                                    CallStatus::Failure => {
                                         let (sequence, storage) =
                                             self.materialize_sequence(&steps, &outcome.state)?;
                                         return Ok(SymbolicInvariantRunResult::Counterexample {
@@ -603,7 +700,7 @@ impl SymbolicExecutor {
                                             stats: self.stats_with_paths(completed_paths),
                                         });
                                     }
-                                    TopLevelCallStatus::Revert => {
+                                    CallStatus::Revert | CallStatus::ExceptionalHalt => {
                                         if input.fail_on_revert {
                                             let (sequence, storage) =
                                                 self.materialize_sequence(&steps, &outcome.state)?;
@@ -624,100 +721,46 @@ impl SymbolicExecutor {
                                         // concrete campaign.
                                         let mut reverted_state = sequence.state.clone();
                                         reverted_state
-                                            .merge_reverted_top_level_effects(&outcome.state);
-                                        if symbolic_invariant_should_check(
-                                            steps.len(),
-                                            input.depth,
-                                            input.check_interval,
-                                        ) {
-                                            for invariant_outcome in self.execute_invariant_check(
-                                                input.executor,
-                                                reverted_state.clone(),
-                                                input.invariant_address,
-                                                input.sender,
-                                                input.invariant,
-                                                after_invariant_for(steps.len()),
-                                                &mut completed_paths,
-                                            )? {
-                                                if invariant_outcome.failed {
-                                                    let (sequence, storage) = self
-                                                        .materialize_sequence(
-                                                            &steps,
-                                                            &invariant_outcome.state,
-                                                        )?;
-                                                    return Ok(
-                                                        SymbolicInvariantRunResult::Counterexample {
-                                                            kind: SymbolicInvariantCounterexampleKind::Predicate,
-                                                            sequence,
-                                                            storage,
-                                                            stats: self
-                                                                .stats_with_paths(completed_paths),
-                                                        },
-                                                    );
-                                                }
-                                                let mut state = reverted_state.clone();
-                                                state.merge_noncommitting_check_constraints(
-                                                    &invariant_outcome.state,
-                                                );
-                                                next_frontier.push(SequencePath {
-                                                    state,
-                                                    steps: steps.clone(),
-                                                });
-                                            }
-                                        } else {
-                                            next_frontier.push(SequencePath {
-                                                state: reverted_state,
-                                                steps: steps.clone(),
+                                            .take_reverted_top_level_effects(outcome.state);
+                                        reverted_state
+                                    }
+                                    CallStatus::Success => outcome.state,
+                                };
+                                if symbolic_invariant_should_check(
+                                    steps.len(),
+                                    input.depth,
+                                    input.check_interval,
+                                ) {
+                                    for mut invariant_outcome in self.execute_invariant_check(
+                                        input.executor,
+                                        post_state.clone(),
+                                        input.invariant_address,
+                                        input.sender,
+                                        input.invariant,
+                                        after_invariant_for(steps.len()),
+                                        &mut completed_paths,
+                                    )? {
+                                        if invariant_outcome.failed {
+                                            let (sequence, storage) = self.materialize_sequence(
+                                                &steps,
+                                                &invariant_outcome.state,
+                                            )?;
+                                            return Ok(SymbolicInvariantRunResult::Counterexample {
+                                                kind: SymbolicInvariantCounterexampleKind::Predicate,
+                                                sequence,
+                                                storage,
+                                                stats: self.stats_with_paths(completed_paths),
                                             });
                                         }
+                                        let mut state = post_state.clone();
+                                        state.take_noncommitting_check_state(
+                                            &mut invariant_outcome.state,
+                                        );
+                                        next_frontier
+                                            .push(SequencePath { state, steps: steps.clone() });
                                     }
-                                    TopLevelCallStatus::Success => {
-                                        if symbolic_invariant_should_check(
-                                            steps.len(),
-                                            input.depth,
-                                            input.check_interval,
-                                        ) {
-                                            for invariant_outcome in self.execute_invariant_check(
-                                                input.executor,
-                                                outcome.state.clone(),
-                                                input.invariant_address,
-                                                input.sender,
-                                                input.invariant,
-                                                after_invariant_for(steps.len()),
-                                                &mut completed_paths,
-                                            )? {
-                                                if invariant_outcome.failed {
-                                                    let (sequence, storage) = self
-                                                        .materialize_sequence(
-                                                            &steps,
-                                                            &invariant_outcome.state,
-                                                        )?;
-                                                    return Ok(
-                                                        SymbolicInvariantRunResult::Counterexample {
-                                                            kind: SymbolicInvariantCounterexampleKind::Predicate,
-                                                            sequence,
-                                                            storage,
-                                                            stats: self
-                                                                .stats_with_paths(completed_paths),
-                                                        },
-                                                    );
-                                                }
-                                                let mut state = outcome.state.clone();
-                                                state.merge_noncommitting_check_constraints(
-                                                    &invariant_outcome.state,
-                                                );
-                                                next_frontier.push(SequencePath {
-                                                    state,
-                                                    steps: steps.clone(),
-                                                });
-                                            }
-                                        } else {
-                                            next_frontier.push(SequencePath {
-                                                state: outcome.state,
-                                                steps: steps.clone(),
-                                            });
-                                        }
-                                    }
+                                } else {
+                                    next_frontier.push(SequencePath { state: post_state, steps });
                                 }
 
                                 if completed_paths >= path_limit {
@@ -741,15 +784,7 @@ impl SymbolicExecutor {
             frontier = next_frontier;
         }
 
-        if self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
-            return Ok(SymbolicInvariantRunResult::Incomplete {
-                kind: SymbolicStopReason::Timeout,
-                reason: Self::hard_arith_heuristic_incomplete_reason(),
-                stats: self.stats_with_paths(completed_paths),
-            });
-        }
-
-        if let Some((kind, reason)) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.deferred_incomplete() {
             return Ok(SymbolicInvariantRunResult::Incomplete {
                 kind,
                 reason,
@@ -765,15 +800,23 @@ impl SymbolicExecutor {
         stats.paths = paths;
         stats
     }
+}
 
-    /// Returns whether this run used a hard-arithmetic heuristic witness.
-    fn heuristic_witnesses_used_since(&self, baseline: usize) -> bool {
-        self.solver.heuristic_witnesses() > baseline
+fn order_roots_by_corpus_seed_count(roots: &mut [PathState], order: SymbolicExplorationOrder) {
+    let Some((first, rest)) = roots.split_first() else {
+        return;
+    };
+    if rest.iter().all(|root| root.corpus_seed_model_count() == first.corpus_seed_model_count()) {
+        return;
     }
 
-    /// Returns the incomplete reason used when heuristic witnesses cannot certify safety.
-    fn hard_arith_heuristic_incomplete_reason() -> String {
-        "hard arithmetic heuristic witness used; no replayed counterexample found".to_string()
+    match order {
+        SymbolicExplorationOrder::Bfs => {
+            roots.sort_by_key(|root| Reverse(root.corpus_seed_model_count()));
+        }
+        SymbolicExplorationOrder::Dfs => {
+            roots.sort_by_key(PathState::corpus_seed_model_count);
+        }
     }
 }
 
@@ -786,21 +829,4 @@ const fn symbolic_invariant_should_check(
         || (check_interval != 0
             && sequence_len != 0
             && sequence_len.is_multiple_of(check_interval as usize))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stateless_runs_do_not_use_symbolic_timeout_as_wall_clock_deadline() {
-        let mut executor =
-            SymbolicExecutor::new(SymbolicConfig { timeout: Some(1), ..Default::default() });
-
-        executor.reset_run_state(false);
-        assert!(executor.deadline.is_none());
-
-        executor.reset_run_state(true);
-        assert!(executor.deadline.is_some());
-    }
 }

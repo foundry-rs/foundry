@@ -1,35 +1,17 @@
-#[cfg(feature = "monad")]
-use alloy_consensus::{SignableTransaction, TxEip1559};
-#[cfg(feature = "monad")]
-use alloy_network::{Ethereum, Network, ReceiptResponse, TransactionBuilder, TxSignerSync};
-#[cfg(feature = "monad")]
-use alloy_primitives::{Address, B256, TxKind, U256, address, hex, keccak256};
-#[cfg(feature = "monad")]
-use alloy_provider::Provider;
-#[cfg(feature = "monad")]
-use anvil::{NodeConfig, spawn};
-#[cfg(feature = "monad")]
-use axum::{Router, body::Bytes as BodyBytes};
 use foundry_compilers::artifacts::EvmVersion;
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
-#[cfg(feature = "monad")]
-use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
-#[cfg(feature = "monad")]
-use serde_json::{Value, json};
-#[cfg(feature = "monad")]
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-};
 
 #[cfg(feature = "monad")]
-async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
+use alloy_primitives::{Address, B256};
+#[cfg(feature = "monad")]
+use alloy_rpc_types::TransactionRequest;
+
+#[cfg(feature = "monad")]
+async fn rpc_request(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
     reqwest::Client::new()
         .post(endpoint)
-        .json(&json!({
+        .json(&serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": method,
@@ -44,60 +26,60 @@ async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
 }
 
 #[cfg(feature = "monad")]
-fn monad_staking_reward_input(block_author: Address) -> Vec<u8> {
-    let mut input = keccak256("syscallReward(address)")[..4].to_vec();
+fn monad_staking_reward_input(block_author: alloy_primitives::Address) -> Vec<u8> {
+    let mut input = alloy_primitives::keccak256("syscallReward(address)")[..4].to_vec();
     input.extend_from_slice(&[0u8; 12]);
     input.extend_from_slice(block_author.as_slice());
     input
 }
 
 #[cfg(feature = "monad")]
-fn monad_staking_validator_id_key(address: Address) -> U256 {
+fn monad_staking_validator_id_key(address: alloy_primitives::Address) -> alloy_primitives::U256 {
     let mut key = [0u8; 32];
     key[0] = 0x06;
     key[1..21].copy_from_slice(address.as_slice());
-    U256::from_be_bytes(key)
+    alloy_primitives::U256::from_be_bytes(key)
 }
 
 #[cfg(feature = "monad")]
-fn monad_staking_validator_key(namespace: u8, validator_id: u64, offset: u8) -> U256 {
+fn monad_staking_validator_key(
+    namespace: u8,
+    validator_id: u64,
+    offset: u8,
+) -> alloy_primitives::U256 {
     let mut key = [0u8; 32];
     key[0] = namespace;
     key[1..9].copy_from_slice(&validator_id.to_be_bytes());
-    U256::from_be_bytes(key) + U256::from(offset)
+    alloy_primitives::U256::from_be_bytes(key) + alloy_primitives::U256::from(offset)
 }
 
 #[cfg(feature = "monad")]
-fn left_aligned_u64(value: u64) -> U256 {
+fn left_aligned_u64(value: u64) -> alloy_primitives::U256 {
     let mut bytes = [0u8; 32];
     bytes[..8].copy_from_slice(&value.to_be_bytes());
-    U256::from_be_bytes(bytes)
+    alloy_primitives::U256::from_be_bytes(bytes)
 }
 
 #[cfg(feature = "monad")]
-fn address_and_flags(address: Address, flags: u64) -> U256 {
+fn address_and_flags(address: alloy_primitives::Address, flags: u64) -> alloy_primitives::U256 {
     let mut bytes = [0u8; 32];
     bytes[..20].copy_from_slice(address.as_slice());
     bytes[20..28].copy_from_slice(&flags.to_be_bytes());
-    U256::from_be_bytes(bytes)
+    alloy_primitives::U256::from_be_bytes(bytes)
 }
 
 #[cfg(feature = "monad")]
-fn storage_value(value: U256) -> B256 {
-    B256::from(value.to_be_bytes::<32>())
-}
-
-#[cfg(feature = "monad")]
-fn override_rpc_transaction_chain_id(value: &mut Value, target: &str, chain_id: &str) {
+fn override_rpc_transaction_chain_id(value: &mut serde_json::Value, target: &str, chain_id: &str) {
     match value {
-        Value::Array(values) => {
+        serde_json::Value::Array(values) => {
             for value in values {
                 override_rpc_transaction_chain_id(value, target, chain_id);
             }
         }
-        Value::Object(object) => {
-            if object.get("hash").and_then(Value::as_str) == Some(target) {
-                object.insert("chainId".to_string(), Value::String(chain_id.to_string()));
+        serde_json::Value::Object(object) => {
+            if object.get("hash").and_then(serde_json::Value::as_str) == Some(target) {
+                object
+                    .insert("chainId".to_string(), serde_json::Value::String(chain_id.to_string()));
             }
             for value in object.values_mut() {
                 override_rpc_transaction_chain_id(value, target, chain_id);
@@ -110,7 +92,8 @@ fn override_rpc_transaction_chain_id(value: &mut Value, target: &str, chain_id: 
 // Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
-forgetest_init!(test_set_evm_version, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
     prj.add_test(
         "TestEvmVersion.t.sol",
@@ -284,10 +267,11 @@ Traces:
 ...
 
 "#]]);
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_init!(test_set_evm_version_monad_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_monad_hardfork(prj: _, cmd: _) {
     prj.add_test(
         "MonadEvmVersion.t.sol",
         r#"
@@ -316,6 +300,31 @@ contract ModexpGasProbe {
     }
 }
 
+contract StorageGasProbe {
+    function measureRead(uint256 secondSlot)
+        external
+        view
+        returns (uint256 gasUsed, uint256 checksum)
+    {
+        assembly {
+            let gasBefore := gas()
+            let first := sload(0)
+            let second := sload(secondSlot)
+            gasUsed := sub(gasBefore, gas())
+            checksum := add(first, second)
+        }
+    }
+
+    function measureWrite(uint256 secondSlot) external returns (uint256 gasUsed) {
+        assembly {
+            let gasBefore := gas()
+            sstore(0, 1)
+            sstore(secondSlot, 1)
+            gasUsed := sub(gasBefore, gas())
+        }
+    }
+}
+
 contract MonadEvmVersionTest is Test {
     EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
     address constant CLZ_TARGET = address(uint160(0x0c17));
@@ -324,6 +333,9 @@ contract MonadEvmVersionTest is Test {
     ModexpGasProbe immutable modexpGasProbe = new ModexpGasProbe();
 
     function test_set_monad_evm_version() public {
+        assertEq(evm.getEvmVersion(), "monadten");
+        assertMip8Active();
+
         evm.setEvmVersion("MonadEight");
         vm.etch(CLZ_TARGET, hex"60011e60005260206000f3");
 
@@ -344,6 +356,11 @@ contract MonadEvmVersionTest is Test {
         (ok, output) = CLZ_TARGET.staticcall(hex"");
         assertTrue(ok, "CLZ should be available on MonadNine");
         assertEq(abi.decode(output, (uint256)), 255);
+        assertMip8Inactive();
+
+        evm.setEvmVersion("monad:MonadTen");
+        assertEq(evm.getEvmVersion(), "monadten");
+        assertMip8Active();
 
         evm.setEvmVersion("monad:MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
@@ -358,6 +375,26 @@ contract MonadEvmVersionTest is Test {
         );
         (ok,) = CLZ_TARGET.staticcall(hex"");
         assertFalse(ok, "CLZ should be disabled after switching back to MonadEight");
+    }
+
+    function assertMip8Active() internal {
+        assertEq(storageReadGas(128) - storageReadGas(127), 8_000, "MIP-8 page read cost");
+        assertEq(storageWriteGas(128) - storageWriteGas(1), 10_800, "MIP-8 page write cost");
+    }
+
+    function assertMip8Inactive() internal {
+        assertEq(storageReadGas(128), storageReadGas(127), "legacy slot read cost");
+        assertEq(storageWriteGas(128), storageWriteGas(1), "legacy slot write cost");
+    }
+
+    function storageReadGas(uint256 secondSlot) internal returns (uint256 gasUsed) {
+        uint256 checksum;
+        (gasUsed, checksum) = new StorageGasProbe().measureRead(secondSlot);
+        assertEq(checksum, 0);
+    }
+
+    function storageWriteGas(uint256 secondSlot) internal returns (uint256) {
+        return new StorageGasProbe().measureWrite(secondSlot);
     }
 
     function memoryExpansionGasDelta() internal returns (uint256) {
@@ -386,12 +423,26 @@ contract MonadEvmVersionTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadEvmVersion.t.sol:MonadEvmVersionTest
+[PASS] test_set_monad_evm_version() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(fork_resolves_monad_hardfork_from_timestamp, |prj, cmd| {
-    let activation = MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+#[forgetest]
+async fn fork_resolves_monad_hardfork_from_timestamp(prj: _, cmd: _) {
+    let monad_nine_activation =
+        foundry_evm::hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+    let mainnet_activation =
+        foundry_evm::hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
+    let testnet_activation =
+        foundry_evm::hardforks::MonadHardfork::MonadTen.testnet_activation_timestamp().unwrap();
     prj.add_test(
         "MonadForkHardfork.t.sol",
         r#"
@@ -417,12 +468,22 @@ contract MonadForkHardforkTest {
             "expected MonadNine"
         );
     }
+
+    function test_monad_ten() public {
+        require(block.chainid == 1, "expected CHAINID override");
+        require(
+            keccak256(bytes(evm.getEvmVersion())) == keccak256("monadten"),
+            "expected MonadTen"
+        );
+    }
 }
    "#,
     );
 
-    let (_api, before) = spawn(
-        NodeConfig::test().with_chain_id(Some(143u64)).with_genesis_timestamp(Some(activation - 1)),
+    let (_api, before) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(monad_nine_activation - 1)),
     )
     .await;
     cmd.args([
@@ -438,8 +499,10 @@ contract MonadForkHardforkTest {
     ])
     .assert_success();
 
-    let (_api, after) = spawn(
-        NodeConfig::test().with_chain_id(Some(143u64)).with_genesis_timestamp(Some(activation)),
+    let (_api, after) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(monad_nine_activation)),
     )
     .await;
     cmd.forge_fuse()
@@ -456,11 +519,91 @@ contract MonadForkHardforkTest {
         ])
         .assert_success();
 
-    let (_api, overridden) = spawn(
-        NodeConfig::test_monad()
+    let (_api, before) = anvil::spawn(
+        anvil::NodeConfig::test()
             .with_chain_id(Some(143u64))
-            .with_genesis_timestamp(Some(activation))
-            .with_hardfork(Some(MonadHardfork::MonadEight.into())),
+            .with_genesis_timestamp(Some(mainnet_activation - 1)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &before.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_nine",
+        ])
+        .assert_success();
+
+    let (_api, after) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(mainnet_activation)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &after.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_ten",
+        ])
+        .assert_success();
+
+    let (_api, before) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(10143u64))
+            .with_genesis_timestamp(Some(testnet_activation - 1)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &before.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_nine",
+        ])
+        .assert_success();
+
+    let (_api, after) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(10143u64))
+            .with_genesis_timestamp(Some(testnet_activation)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &after.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_ten",
+        ])
+        .assert_success();
+
+    let (_api, overridden) = anvil::spawn(
+        anvil::NodeConfig::test_monad()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(mainnet_activation))
+            .with_hardfork(Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into())),
     )
     .await;
     cmd.forge_fuse()
@@ -471,13 +614,21 @@ contract MonadForkHardforkTest {
             "--chain-id",
             "1",
             "--mt",
-            "test_monad_eight",
+            "test_monad_nine",
         ])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadForkHardfork.t.sol:MonadForkHardforkTest
+[PASS] test_monad_nine() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_init!(test_monad_memory_limit, |prj, cmd| {
+#[forgetest_init]
+fn test_monad_memory_limit(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
         config.memory_limit = 128 * 1024 * 1024;
@@ -538,34 +689,39 @@ contract MonadMemoryLimitTest is Test {
 [FAIL: EvmError: MemoryLimitOOG] test_memory_ending_above_limit() ([GAS])
 ...
 "#]]);
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
+#[forgetest]
+async fn execute_transaction_uses_monad_fork_context(prj: _, cmd: _) {
+    use alloy_consensus::SignableTransaction as _;
+    use alloy_network::TxSignerSync as _;
+    use alloy_provider::Provider as _;
+
     const CHAIN_ID: u64 = 31_337;
     const GAS_LIMIT: u64 = 100_000;
     const MAX_FEE_PER_GAS: u128 = 2_000_000_000;
     const MAX_PRIORITY_FEE_PER_GAS: u128 = 1_000_000_000;
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
     let provider = handle.http_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let ancestor = wallets[0].address();
     let control = wallets[1].address();
     let tracked = wallets[3].address();
     let nested_only = wallets[5].address();
-    let probe = Address::with_last_byte(0x20);
-    let receiver = Address::with_last_byte(0x21);
+    let probe = alloy_primitives::Address::with_last_byte(0x20);
+    let receiver = alloy_primitives::Address::with_last_byte(0x21);
 
     // Mine the ancestor in the block Forge will fork. The synthetic transaction should execute
     // in a child of this block, making this sender ineligible to dip into its reserve.
-    let mut ancestor_marker = TxEip1559 {
+    let mut ancestor_marker = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
-        to: TxKind::Call(wallets[2].address()),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(wallets[2].address()),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[0].sign_transaction_sync(&mut ancestor_marker).unwrap();
@@ -573,14 +729,14 @@ forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
     ancestor_marker.into_signed(signature).eip2718_encode(&mut encoded);
     provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
 
-    let value = U256::from(3_000_000_000_000_000_000u128);
-    let mut ancestor_tx = TxEip1559 {
+    let value = alloy_primitives::U256::from(3_000_000_000_000_000_000u128);
+    let mut ancestor_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 1,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
-        to: TxKind::Call(probe),
+        to: alloy_primitives::TxKind::Call(probe),
         value,
         ..Default::default()
     };
@@ -588,13 +744,13 @@ forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
     let mut ancestor_raw = Vec::new();
     ancestor_tx.into_signed(signature).eip2718_encode(&mut ancestor_raw);
 
-    let mut control_tx = TxEip1559 {
+    let mut control_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
-        to: TxKind::Call(probe),
+        to: alloy_primitives::TxKind::Call(probe),
         value,
         ..Default::default()
     };
@@ -602,13 +758,13 @@ forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
     let mut control_raw = Vec::new();
     control_tx.into_signed(signature).eip2718_encode(&mut control_raw);
 
-    let mut credit_tx = TxEip1559 {
+    let mut credit_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
-        to: TxKind::Call(tracked),
+        to: alloy_primitives::TxKind::Call(tracked),
         value,
         ..Default::default()
     };
@@ -616,14 +772,14 @@ forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
     let mut credit_raw = Vec::new();
     credit_tx.into_signed(signature).eip2718_encode(&mut credit_raw);
 
-    let mut preserve_tx = TxEip1559 {
+    let mut preserve_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
-        to: TxKind::Call(receiver),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(receiver),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[4].sign_transaction_sync(&mut preserve_tx).unwrap();
@@ -631,14 +787,14 @@ forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
     preserve_tx.into_signed(signature).eip2718_encode(&mut preserve_raw);
 
     let nested_only_balance = provider.get_balance(nested_only).await.unwrap();
-    let nested_only_remaining = U256::from(7_000_000_000_000_000_000u128);
-    let mut nested_only_tx = TxEip1559 {
+    let nested_only_remaining = alloy_primitives::U256::from(7_000_000_000_000_000_000u128);
+    let mut nested_only_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
-        to: TxKind::Call(receiver),
+        to: alloy_primitives::TxKind::Call(receiver),
         value: nested_only_balance - nested_only_remaining,
         ..Default::default()
     };
@@ -733,97 +889,112 @@ contract ExecuteTransactionMonadContextTest {
     .replace("<probe>", &probe.to_string())
     .replace("<receiver>", &receiver.to_string())
     .replace("<rpc>", &handle.http_endpoint())
-    .replace("<ancestor_raw>", &hex::encode(ancestor_raw))
-    .replace("<control_raw>", &hex::encode(control_raw))
-    .replace("<credit_raw>", &hex::encode(credit_raw))
-    .replace("<preserve_raw>", &hex::encode(preserve_raw))
-    .replace("<nested_only_raw>", &hex::encode(nested_only_raw));
+    .replace("<ancestor_raw>", &alloy_primitives::hex::encode(ancestor_raw))
+    .replace("<control_raw>", &alloy_primitives::hex::encode(control_raw))
+    .replace("<credit_raw>", &alloy_primitives::hex::encode(credit_raw))
+    .replace("<preserve_raw>", &alloy_primitives::hex::encode(preserve_raw))
+    .replace("<nested_only_raw>", &alloy_primitives::hex::encode(nested_only_raw));
     prj.add_test("ExecuteTransactionMonadContext.t.sol", &source);
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "ExecuteTransactionMonadContextTest"])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/ExecuteTransactionMonadContext.t.sol:ExecuteTransactionMonadContextTest
+[PASS] test_execute_transaction_credit_clears_outer_violation() ([GAS])
+[PASS] test_execute_transaction_does_not_track_nested_only_account() ([GAS])
+[PASS] test_execute_transaction_preserves_unaffected_outer_violation() ([GAS])
+[PASS] test_execute_transaction_uses_ancestor_context() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd| {
+#[forgetest]
+async fn transaction_fork_excludes_future_monad_participants(prj: _, cmd: _) {
+    use alloy_consensus::SignableTransaction as _;
+    use alloy_network::{ReceiptResponse as _, TxSignerSync as _};
+    use alloy_provider::Provider as _;
+
     const CHAIN_ID: u64 = 31_337;
     const GAS_LIMIT: u64 = 100_000;
     const MAX_FEE_PER_GAS: u128 = 3_000_000_000;
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
     let provider = handle.http_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let target_sender = wallets[3].address();
     let future_sender = wallets[0].address();
-    let probe = Address::with_last_byte(0x21);
-    let target_recipient = Address::with_last_byte(0x22);
-    let future_recipient = Address::with_last_byte(0x23);
+    let probe = alloy_primitives::Address::with_last_byte(0x21);
+    let target_recipient = alloy_primitives::Address::with_last_byte(0x22);
+    let future_recipient = alloy_primitives::Address::with_last_byte(0x23);
     let parent_block = provider.get_block_number().await.unwrap();
 
-    let mut target_tx = TxEip1559 {
+    let mut target_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 2_000_000_000,
-        to: TxKind::Call(target_recipient),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(target_recipient),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[3].sign_transaction_sync(&mut target_tx).unwrap();
     let mut target_raw = Vec::new();
     target_tx.into_signed(signature).eip2718_encode(&mut target_raw);
 
-    let mut future_marker = TxEip1559 {
+    let mut future_marker = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(future_recipient),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(future_recipient),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[0].sign_transaction_sync(&mut future_marker).unwrap();
     let mut future_marker_raw = Vec::new();
     future_marker.into_signed(signature).eip2718_encode(&mut future_marker_raw);
 
-    let mut future_probe = TxEip1559 {
+    let mut future_probe = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(probe),
-        value: U256::from(3_000_000_000_000_000_000u128),
+        to: alloy_primitives::TxKind::Call(probe),
+        value: alloy_primitives::U256::from(3_000_000_000_000_000_000u128),
         ..Default::default()
     };
     let signature = wallets[0].sign_transaction_sync(&mut future_probe).unwrap();
     let mut future_probe_raw = Vec::new();
     future_probe.into_signed(signature).eip2718_encode(&mut future_probe_raw);
 
-    let mut target_probe = TxEip1559 {
+    let mut target_probe = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 1,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(probe),
-        value: U256::from(3_000_000_000_000_000_000u128),
+        to: alloy_primitives::TxKind::Call(probe),
+        value: alloy_primitives::U256::from(3_000_000_000_000_000_000u128),
         ..Default::default()
     };
     let signature = wallets[3].sign_transaction_sync(&mut target_probe).unwrap();
     let mut target_probe_raw = Vec::new();
     target_probe.into_signed(signature).eip2718_encode(&mut target_probe_raw);
 
-    let mut replayed_future_probe = TxEip1559 {
+    let mut replayed_future_probe = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 1,
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(probe),
-        value: U256::from(3_000_000_000_000_000_000u128),
+        to: alloy_primitives::TxKind::Call(probe),
+        value: alloy_primitives::U256::from(3_000_000_000_000_000_000u128),
         ..Default::default()
     };
     let signature = wallets[0].sign_transaction_sync(&mut replayed_future_probe).unwrap();
@@ -978,24 +1149,42 @@ contract TransactionForkMonadContextTest {
     .replace("<target_hash>", &target_hash.to_string())
     .replace("<future_hash>", &future_hash.to_string())
     .replace("<parent_block>", &parent_block.to_string())
-    .replace("<future_probe_raw>", &hex::encode(future_probe_raw))
-    .replace("<target_probe_raw>", &hex::encode(target_probe_raw))
-    .replace("<replayed_future_probe_raw>", &hex::encode(replayed_future_probe_raw));
+    .replace("<future_probe_raw>", &alloy_primitives::hex::encode(future_probe_raw))
+    .replace("<target_probe_raw>", &alloy_primitives::hex::encode(target_probe_raw))
+    .replace(
+        "<replayed_future_probe_raw>",
+        &alloy_primitives::hex::encode(replayed_future_probe_raw),
+    );
     prj.add_test("TransactionForkMonadContext.t.sol", &source);
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "TransactionForkMonadContextTest"])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/TransactionForkMonadContext.t.sol:TransactionForkMonadContextTest
+[PASS] test_future_transaction_is_not_an_ancestor() ([GAS])
+[PASS] test_non_immediate_transact_rejects_without_mutation() ([GAS])
+[PASS] test_parent_block_transact_advances_to_next_transaction() ([GAS])
+[PASS] test_sequential_transacts_advance_past_block() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
+#[forgetest]
+async fn monad_fork_aux_lifecycle_tracks_outer_context(prj: _, cmd: _) {
+    use alloy_consensus::SignableTransaction as _;
+    use alloy_network::{ReceiptResponse as _, TxSignerSync as _};
+    use alloy_provider::Provider as _;
+
     const CHAIN_ID: u64 = 31_337;
     const MAX_FEE_PER_GAS: u128 = 3_000_000_000;
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
     let provider = handle.http_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let sender = wallets[0].address();
@@ -1004,44 +1193,44 @@ forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
     let marker_recipient = wallets[4].address();
     let target_recipient = wallets[5].address();
     let receiver = wallets[6].address();
-    let later_marker_recipient = Address::with_last_byte(0x30);
-    let later_replay_recipient = Address::with_last_byte(0x31);
-    let later_target_recipient = Address::with_last_byte(0x32);
+    let later_marker_recipient = alloy_primitives::Address::with_last_byte(0x30);
+    let later_replay_recipient = alloy_primitives::Address::with_last_byte(0x31);
+    let later_target_recipient = alloy_primitives::Address::with_last_byte(0x32);
     let fresh_block = provider.get_block_number().await.unwrap();
 
-    let mut marker_tx = TxEip1559 {
+    let mut marker_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 2_000_000_000,
-        to: TxKind::Call(marker_recipient),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(marker_recipient),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[0].sign_transaction_sync(&mut marker_tx).unwrap();
     let mut marker_raw = Vec::new();
     marker_tx.into_signed(signature).eip2718_encode(&mut marker_raw);
 
-    let mut target_tx = TxEip1559 {
+    let mut target_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(target_recipient),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(target_recipient),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[1].sign_transaction_sync(&mut target_tx).unwrap();
     let mut target_raw = Vec::new();
     target_tx.into_signed(signature).eip2718_encode(&mut target_raw);
 
-    let mut credit_tx = TxEip1559 {
+    let mut credit_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(spender),
-        value: U256::from(3_000_000_000_000_000_000u128),
+        to: alloy_primitives::TxKind::Call(spender),
+        value: alloy_primitives::U256::from(3_000_000_000_000_000_000u128),
         ..Default::default()
     };
     let signature = wallets[2].sign_transaction_sync(&mut credit_tx).unwrap();
@@ -1063,39 +1252,39 @@ forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
     assert_eq!(target_receipt.block_number(), Some(restricted_block));
     assert_eq!(target_receipt.transaction_index(), Some(1));
 
-    let mut later_marker_tx = TxEip1559 {
+    let mut later_marker_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 2_000_000_000,
-        to: TxKind::Call(later_marker_recipient),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(later_marker_recipient),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[7].sign_transaction_sync(&mut later_marker_tx).unwrap();
     let mut later_marker_raw = Vec::new();
     later_marker_tx.into_signed(signature).eip2718_encode(&mut later_marker_raw);
 
-    let mut later_replay_tx = TxEip1559 {
+    let mut later_replay_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(later_replay_recipient),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(later_replay_recipient),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[8].sign_transaction_sync(&mut later_replay_tx).unwrap();
     let mut later_replay_raw = Vec::new();
     later_replay_tx.into_signed(signature).eip2718_encode(&mut later_replay_raw);
 
-    let mut later_target_tx = TxEip1559 {
+    let mut later_target_tx = alloy_consensus::TxEip1559 {
         chain_id: CHAIN_ID,
         gas_limit: 21_000,
         max_fee_per_gas: MAX_FEE_PER_GAS,
         max_priority_fee_per_gas: 1_000_000_000,
-        to: TxKind::Call(later_target_recipient),
-        value: U256::ONE,
+        to: alloy_primitives::TxKind::Call(later_target_recipient),
+        value: alloy_primitives::U256::ONE,
         ..Default::default()
     };
     let signature = wallets[9].sign_transaction_sync(&mut later_target_tx).unwrap();
@@ -1122,36 +1311,40 @@ forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
 
     let upstream = handle.http_endpoint();
     let failing_replay_hash_string = later_replay_hash.to_string();
-    let block_requests_armed = Arc::new(AtomicBool::new(false));
-    let block_requests = Arc::new(AtomicUsize::new(0));
-    let corrupt_replay_chain_id = Arc::new(AtomicBool::new(false));
+    let block_requests_armed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let block_requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let corrupt_replay_chain_id = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let client = reqwest::Client::new();
-    let proxy_armed = Arc::clone(&block_requests_armed);
-    let proxy_requests = Arc::clone(&block_requests);
-    let proxy_corrupt_chain_id = Arc::clone(&corrupt_replay_chain_id);
-    let app = Router::new().fallback(move |body: BodyBytes| {
+    let proxy_armed = std::sync::Arc::clone(&block_requests_armed);
+    let proxy_requests = std::sync::Arc::clone(&block_requests);
+    let proxy_corrupt_chain_id = std::sync::Arc::clone(&corrupt_replay_chain_id);
+    let app = axum::Router::new().fallback(move |body: axum::body::Bytes| {
         let upstream = upstream.clone();
         let failing_replay_hash = failing_replay_hash_string.clone();
         let client = client.clone();
-        let armed = Arc::clone(&proxy_armed);
-        let block_requests = Arc::clone(&proxy_requests);
-        let corrupt_chain_id = Arc::clone(&proxy_corrupt_chain_id);
+        let armed = std::sync::Arc::clone(&proxy_armed);
+        let block_requests = std::sync::Arc::clone(&proxy_requests);
+        let corrupt_chain_id = std::sync::Arc::clone(&proxy_corrupt_chain_id);
         async move {
-            let request: Value = serde_json::from_slice(&body).unwrap();
-            match request.get("method").and_then(Value::as_str) {
-                Some("test_armBlockRequests") => armed.store(true, Ordering::SeqCst),
-                Some("test_corruptReplayChainId") => corrupt_chain_id.store(true, Ordering::SeqCst),
+            let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            match request.get("method").and_then(serde_json::Value::as_str) {
+                Some("test_armBlockRequests") => {
+                    armed.store(true, std::sync::atomic::Ordering::SeqCst)
+                }
+                Some("test_corruptReplayChainId") => {
+                    corrupt_chain_id.store(true, std::sync::atomic::Ordering::SeqCst)
+                }
                 Some("test_restoreReplayChainId") => {
-                    corrupt_chain_id.store(false, Ordering::SeqCst)
+                    corrupt_chain_id.store(false, std::sync::atomic::Ordering::SeqCst)
                 }
                 _ => {
-                    if armed.load(Ordering::SeqCst) {
+                    if armed.load(std::sync::atomic::Ordering::SeqCst) {
                         let count = request.as_array().map_or_else(
                             || {
                                 usize::from(
                                     request
                                         .get("method")
-                                        .and_then(Value::as_str)
+                                        .and_then(serde_json::Value::as_str)
                                         .is_some_and(|method| method.starts_with("eth_getBlockBy")),
                                 )
                             },
@@ -1159,14 +1352,17 @@ forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
                                 requests
                                     .iter()
                                     .filter(|request| {
-                                        request.get("method").and_then(Value::as_str).is_some_and(
-                                            |method| method.starts_with("eth_getBlockBy"),
-                                        )
+                                        request
+                                            .get("method")
+                                            .and_then(serde_json::Value::as_str)
+                                            .is_some_and(|method| {
+                                                method.starts_with("eth_getBlockBy")
+                                            })
                                     })
                                     .count()
                             },
                         );
-                        block_requests.fetch_add(count, Ordering::SeqCst);
+                        block_requests.fetch_add(count, std::sync::atomic::Ordering::SeqCst);
                     }
 
                     let response = client
@@ -1179,20 +1375,21 @@ forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
                         .bytes()
                         .await
                         .unwrap();
-                    if !corrupt_chain_id.load(Ordering::SeqCst) {
+                    if !corrupt_chain_id.load(std::sync::atomic::Ordering::SeqCst) {
                         return response;
                     }
 
-                    let mut response: Value = serde_json::from_slice(&response).unwrap();
+                    let mut response: serde_json::Value =
+                        serde_json::from_slice(&response).unwrap();
                     override_rpc_transaction_chain_id(&mut response, &failing_replay_hash, "0x1");
-                    return BodyBytes::from(serde_json::to_vec(&response).unwrap());
+                    return axum::body::Bytes::from(serde_json::to_vec(&response).unwrap());
                 }
             }
 
-            BodyBytes::from(
-                serde_json::to_vec(&json!({
+            axum::body::Bytes::from(
+                serde_json::to_vec(&serde_json::json!({
                     "jsonrpc": "2.0",
-                    "id": request.get("id").cloned().unwrap_or(Value::Null),
+                    "id": request.get("id").cloned().unwrap_or(serde_json::Value::Null),
                     "result": "0x",
                 }))
                 .unwrap(),
@@ -1577,7 +1774,7 @@ contract MonadForkAuxLifecycleTest {
     .replace("<marker_hash>", &marker_hash.to_string())
     .replace("<target_hash>", &target_hash.to_string())
     .replace("<later_target_hash>", &later_target_hash.to_string())
-    .replace("<credit_raw>", &hex::encode(credit_raw));
+    .replace("<credit_raw>", &alloy_primitives::hex::encode(credit_raw));
     prj.add_test("MonadForkAuxLifecycle.t.sol", &source);
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
@@ -1587,8 +1784,8 @@ contract MonadForkAuxLifecycleTest {
     cmd.args(["test", "--network", "monad", "--mc", "MonadForkAuxLifecycleTest", "--threads", "1"])
         .assert_success();
 
-    block_requests_armed.store(false, Ordering::SeqCst);
-    block_requests.store(0, Ordering::SeqCst);
+    block_requests_armed.store(false, std::sync::atomic::Ordering::SeqCst);
+    block_requests.store(0, std::sync::atomic::Ordering::SeqCst);
     cmd.forge_fuse()
         .args([
             "test",
@@ -1600,7 +1797,11 @@ contract MonadForkAuxLifecycleTest {
             "test_fork_select_same_id_preserves_tracker",
         ])
         .assert_success();
-    assert_eq!(block_requests.load(Ordering::SeqCst), 0, "same-active select fetched a block");
+    assert_eq!(
+        block_requests.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "same-active select fetched a block"
+    );
 
     cmd.forge_fuse()
         .args([
@@ -1613,39 +1814,52 @@ contract MonadForkAuxLifecycleTest {
             "test_fork_active_transact_advances_outer_context",
             "--isolate",
         ])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadForkAuxLifecycle.t.sol:MonadForkAuxLifecycleTest
+[PASS] test_fork_active_transact_advances_outer_context() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd| {
-    const SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
-    const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
-    const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
-    const VALIDATOR_AUTH: Address = address!("0x2222222222222222222222222222222222222222");
-    const UNKNOWN_BLOCK_AUTHOR: Address = address!("0x3333333333333333333333333333333333333333");
+#[forgetest]
+async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
+    use alloy_network::{ReceiptResponse as _, TransactionBuilder as _};
+    use alloy_provider::Provider as _;
+
+    const SYSTEM_ADDRESS: alloy_primitives::Address =
+        alloy_primitives::address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
+    const STAKING_ADDRESS: alloy_primitives::Address =
+        alloy_primitives::address!("0x0000000000000000000000000000000000001000");
+    const BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x11);
+    const VALIDATOR_AUTH: alloy_primitives::Address = Address::repeat_byte(0x22);
+    const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x33);
     const VALIDATOR_ID: u64 = 7;
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
     let provider = handle.http_provider();
-    let mon = U256::from(1_000_000_000_000_000_000u128);
-    let reward = U256::from(25) * mon;
-    let initial_system_balance = U256::from(100) * mon;
-    let initial_staking_balance = U256::from(3) * mon;
+    let mon = alloy_primitives::U256::from(1_000_000_000_000_000_000u128);
+    let reward = alloy_primitives::U256::from(25) * mon;
+    let initial_system_balance = alloy_primitives::U256::from(100) * mon;
+    let initial_staking_balance = alloy_primitives::U256::from(3) * mon;
     api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
-    api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
+    api.anvil_set_nonce(SYSTEM_ADDRESS, alloy_primitives::U256::from(11)).await.unwrap();
     api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
     api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_id_key(BLOCK_AUTHOR),
-        storage_value(left_aligned_u64(VALIDATOR_ID)),
+        left_aligned_u64(VALIDATOR_ID).into(),
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 0),
-        storage_value(U256::from(100) * mon),
+        (alloy_primitives::U256::from(100) * mon).into(),
     )
     .await
     .unwrap();
@@ -1659,7 +1873,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x09, VALIDATOR_ID, 6),
-        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+        address_and_flags(VALIDATOR_AUTH, 0).into(),
     )
     .await
     .unwrap();
@@ -1667,7 +1881,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     api.mine_one().await.unwrap();
     let parent_block = provider.get_block_number().await.unwrap();
 
-    let request = <Ethereum as Network>::TransactionRequest::default()
+    let request = TransactionRequest::default()
         .with_from(SYSTEM_ADDRESS)
         .with_to(STAKING_ADDRESS)
         .with_value(reward)
@@ -1680,9 +1894,13 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     assert_eq!(receipt.block_number(), Some(parent_block + 1));
 
     let target_hash = receipt.transaction_hash;
-    let endpoint = spawn_canonical_monad_system_rpc(handle.http_endpoint(), target_hash).await;
+    let endpoint = foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(
+        handle.http_endpoint(),
+        target_hash,
+    )
+    .await;
     let transaction =
-        rpc_request(&endpoint, "eth_getTransactionByHash", json!([target_hash])).await;
+        rpc_request(&endpoint, "eth_getTransactionByHash", serde_json::json!([target_hash])).await;
     assert_eq!(transaction["result"]["gas"], "0x0");
     assert_eq!(transaction["result"]["gasPrice"], "0x0");
     assert_ne!(transaction["result"]["r"], "0x0");
@@ -1692,7 +1910,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     assert_eq!(transaction["result"]["value"], format!("{reward:#x}"));
 
     let canonical_receipt =
-        rpc_request(&endpoint, "eth_getTransactionReceipt", json!([target_hash])).await;
+        rpc_request(&endpoint, "eth_getTransactionReceipt", serde_json::json!([target_hash])).await;
     assert_eq!(canonical_receipt["result"]["status"], "0x1");
     assert_eq!(canonical_receipt["result"]["gasUsed"], "0x0");
     assert_eq!(canonical_receipt["result"]["effectiveGasPrice"], "0x0");
@@ -1700,7 +1918,7 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     let target_block = rpc_request(
         &endpoint,
         "eth_getBlockByNumber",
-        json!([format!("{:#x}", parent_block + 1), true]),
+        serde_json::json!([format!("{:#x}", parent_block + 1), true]),
     )
     .await;
     assert_ne!(target_block["result"]["baseFeePerGas"], "0x0");
@@ -1711,15 +1929,15 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     assert_eq!(target_block["result"]["transactions"][0]["s"], transaction["result"]["s"]);
     assert_eq!(target_block["result"]["transactions"][0]["v"], transaction["result"]["v"]);
 
-    let (failed_api, failed_handle) = spawn(NodeConfig::test()).await;
+    let (failed_api, failed_handle) = anvil::spawn(anvil::NodeConfig::test()).await;
     let failed_provider = failed_handle.http_provider();
     failed_api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
-    failed_api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
+    failed_api.anvil_set_nonce(SYSTEM_ADDRESS, alloy_primitives::U256::from(11)).await.unwrap();
     failed_api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
     failed_api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
     failed_api.mine_one().await.unwrap();
     let failed_parent_block = failed_provider.get_block_number().await.unwrap();
-    let failed_request = <Ethereum as Network>::TransactionRequest::default()
+    let failed_request = TransactionRequest::default()
         .with_from(SYSTEM_ADDRESS)
         .with_to(STAKING_ADDRESS)
         .with_value(reward)
@@ -1736,8 +1954,11 @@ forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd|
     assert!(failed_receipt.status());
     assert_eq!(failed_receipt.block_number(), Some(failed_parent_block + 1));
     let failed_target_hash = failed_receipt.transaction_hash;
-    let failed_endpoint =
-        spawn_canonical_monad_system_rpc(failed_handle.http_endpoint(), failed_target_hash).await;
+    let failed_endpoint = foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(
+        failed_handle.http_endpoint(),
+        failed_target_hash,
+    )
+    .await;
 
     let source = r#"
 interface Vm {
@@ -1893,10 +2114,22 @@ contract MonadProtocolSystemTargetTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "MonadProtocolSystemTargetTest"])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/MonadProtocolSystemTarget.t.sol:MonadProtocolSystemTargetTest
+[PASS] test_failed_reward_target_from_parent_block_fork_rolls_back() ([GAS])
+[PASS] test_failed_reward_target_from_transaction_hash_fork_rolls_back() ([GAS])
+[PASS] test_gas_paying_system_sender_target_fork_is_rejected() ([GAS])
+[PASS] test_reward_target_from_parent_block_fork() ([GAS])
+[PASS] test_reward_target_from_transaction_hash_fork() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_tempo_hardfork(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
@@ -1927,10 +2160,54 @@ contract TempoEvmVersionTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoEvmVersion.t.sol:TempoEvmVersionTest
+[PASS] test_set_tempo_evm_version() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest_init!(test_network_tempo_defaults_to_latest_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_tempo_gas(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+    prj.add_test(
+        "TempoEvmVersionGas.t.sol",
+        include_str!("../../fixtures/TempoEvmVersionGas.t.sol"),
+    );
+    for hardfork in ["tempo:T3", "tempo:T7", "tempo:T14"] {
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--network",
+                "tempo",
+                "--hardfork",
+                hardfork,
+                "--mc",
+                "TempoEvmVersionGasTest",
+            ])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/TempoEvmVersionGas.t.sol:TempoEvmVersionGasTest
+[PASS] testCodeDepositGas() ([GAS])
+[PASS] testEmptyAccountGas() ([GAS])
+[PASS] testLegacyEthereumAliasGas() ([GAS])
+[PASS] testLegacyNativeRevisionChange() ([GAS])
+[PASS] testNewStorageSlotGas() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest_init]
+fn test_network_tempo_defaults_to_latest_hardfork(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
@@ -1960,13 +2237,22 @@ contract TempoDefaultEvmVersionTest is Test {{
         ),
     );
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoDefaultEvmVersion.t.sol:TempoDefaultEvmVersionTest
+[PASS] test_network_tempo_defaults_to_latest_hardfork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 // Validates T5 implicit-approval wiring: the cheatcodes, the AddressRegistry selector,
 // unchanged standard approve/transferFrom behavior, an implicit pull through StablecoinDEX,
 // and a non-implicit spender control case.
-forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
+#[forgetest_init]
+fn test_tempo_implicit_approval_t5(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
         // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
@@ -1978,12 +2264,27 @@ forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
     let fixture = include_str!("../../fixtures/TempoImplicitApproval.t.sol");
     prj.add_test("TempoImplicitApproval.t.sol", fixture);
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"]).assert_success();
-});
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/TempoImplicitApproval.t.sol:TempoImplicitApprovalTest
+[PASS] test_assumeImplicitApproval_positive_t5() ([GAS])
+[PASS] test_cheatcode_isImplicitlyApproved_reports_pre_t5() ([GAS])
+[PASS] test_cheatcode_matches_registry_selector_t5() ([GAS])
+[PASS] test_implicit_spender_pulls_without_approve_t5() ([GAS])
+[PASS] test_isImplicitlyApproved_t5() ([GAS])
+[PASS] test_non_implicit_spender_requires_approve_t5() ([GAS])
+[PASS] test_standard_approve_flow_unchanged_t5() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
 // configured evm_version must be preserved after createSelectFork / rollFork.
-forgetest_init!(test_fork_preserves_evm_version, |prj, cmd| {
+#[forgetest_init]
+fn test_fork_preserves_evm_version(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.update_config(|config| {
@@ -2008,5 +2309,33 @@ contract ForkEvmVersionTest is Test {
         .replace("<rpc>", &endpoint),
     );
 
-    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success();
-});
+    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/ForkEvmVersion.t.sol:ForkEvmVersionTest
+[PASS] test_evm_version_preserved_after_fork() ([GAS])
+Traces:
+  [12097] ForkEvmVersionTest::test_evm_version_preserved_after_fork()
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "before fork") [staticcall]
+    │   └─ ← [Return]
+    ├─ [0] VM::createSelectFork("<rpc url>", 21000000 [2.1e7])
+    │   └─ ← [Return] 0
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "after createSelectFork") [staticcall]
+    │   └─ ← [Return]
+    ├─ [0] VM::rollFork(21000001 [2.1e7])
+    │   └─ ← [Return]
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "after rollFork") [staticcall]
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}

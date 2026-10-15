@@ -3,15 +3,10 @@
 **Severity**: `Low`
 **ID**: `missing-zero-check`
 
-Flags entry-point functions and constructors where an `address` parameter flows into a state write
-or value transfer without a zero-address guard.
-
 ## What it does
 
-Performs a taint analysis from each `address` parameter of an externally callable, state-mutating
-function (or constructor) and reports a parameter that reaches a sink (state write, `transfer`,
-`call{value: ...}`, etc.) without first being compared against `address(0)` in an `if`/`require`/
-`assert` predicate.
+Reports `address` parameters used in a state write or value transfer by an externally
+callable state-mutating function or constructor without a check against `address(0)`.
 
 ## Why is this bad?
 
@@ -21,15 +16,13 @@ guard is cheap and removes an entire class of operational mistakes.
 
 ## Example
 
-### Bad
-
 ```solidity
 function setOwner(address newOwner) external onlyOwner {
     owner = newOwner; // no zero-address check
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 function setOwner(address newOwner) external onlyOwner {

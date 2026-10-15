@@ -7,15 +7,10 @@ use foundry_common::{
     FoundryTransactionBuilder,
     tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
 };
-use std::{
-    num::NonZeroU64,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use foundry_evm::hardfork::TempoHardfork;
+use std::{num::NonZeroU64, path::PathBuf, str::FromStr, sync::Arc};
 
-use crate::utils::parse_fee_token_address;
+use crate::utils::{now, parse_fee_token_address};
 
 mod session;
 pub use session::TEMPO_SESSION_ID_ENV;
@@ -35,7 +30,8 @@ pub struct TempoOpts {
     /// Fee token address, numeric TIP-20 token id, or known symbol for Tempo transactions.
     ///
     /// When set, builds a Tempo (type 0x76) transaction that pays gas fees
-    /// in the specified token. Known symbols are PathUSD, AlphaUSD, BetaUSD, and ThetaUSD.
+    /// in the specified token. Known symbols are PathUSD, AlphaUSD, BetaUSD, ThetaUSD,
+    /// and OUSD.
     ///
     /// If this is not set, the fee token is chosen according to network rules. See the Tempo docs
     /// for more information.
@@ -45,12 +41,13 @@ pub struct TempoOpts {
     /// Opt into TIP-1009 expiring-nonce mode with a validity window.
     ///
     /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
-    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
-    /// seconds.
+    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX and valid_before = now + seconds. The
+    /// nonce defaults to 0; see `--tempo.expiring-nonce` for how an explicit nonce is used.
     ///
-    /// Maximum value is 30 seconds. The transaction must be mined before the deadline or it
-    /// becomes permanently invalid, giving safe retry semantics: retries produce a fresh tx hash
-    /// and the old tx can never land late.
+    /// Maximum value is 300 seconds; networks that have not activated the T11 hardfork reject
+    /// windows above 30 seconds. The transaction must be mined before the deadline or it becomes
+    /// permanently invalid, giving safe retry semantics: retries produce a fresh tx hash and the
+    /// old tx can never land late.
     #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds)]
     pub expires: Option<u64>,
 
@@ -155,8 +152,14 @@ pub struct TempoOpts {
 
     /// Enable expiring nonce mode for Tempo transactions.
     ///
-    /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
-    /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
+    /// Sets nonce_key to U256::MAX, enabling time-bounded transaction validity via
+    /// `--tempo.valid-before` and `--tempo.valid-after`.
+    ///
+    /// The nonce is not sequential in this mode and defaults to 0. From the T12 hardfork
+    /// (TIP-1106) an explicitly supplied nonce is kept as an opaque discriminator, so otherwise
+    /// identical transactions with different nonces are distinct. Earlier hardforks reject any
+    /// nonce other than 0. `forge script` takes no nonce and from T12 uses each transaction's
+    /// ordinal across the complete script plan, including completed transactions on resume.
     #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
@@ -196,8 +199,7 @@ impl TempoOpts {
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
         let secs = self.expires?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-        Some(now.as_secs() + secs)
+        Some(now().as_secs() + secs)
     }
 
     /// Resolves `--tempo.expires` into concrete expiring-nonce fields.
@@ -250,14 +252,17 @@ impl TempoOpts {
     /// Applies Tempo-specific options to a transaction request.
     ///
     /// All setters are no-ops for non-Tempo networks, so this is safe to call unconditionally.
+    ///
+    /// In expiring nonce mode `nonce` is the TIP-1106 discriminator rather than a sequential
+    /// nonce: an explicit value is kept as supplied and `None` selects 0.
     pub fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, nonce: Option<u64>)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX.
+        // Handle expiring nonce mode: sets nonce_key=U256::MAX and never reads nonce state.
         // --tempo.expires is a convenience alias that also sets valid_before = now + duration.
         if self.expiring_nonce || self.expires.is_some() {
-            tx.set_nonce(0);
+            tx.set_nonce(nonce.unwrap_or_default());
             tx.set_nonce_key(U256::MAX);
         } else {
             if let Some(nonce) = nonce {
@@ -307,13 +312,17 @@ fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
 }
 
-/// Parses a seconds value for `--tempo.expires`, capped at the protocol maximum of 30 seconds.
+/// Largest TIP-1009 validity window accepted by any hardfork. The window was 30 seconds before
+/// T11; the node enforces the limit of its active hardfork.
+const MAX_EXPIRES_SECS: u64 = TempoHardfork::T11.expiring_nonce_max_expiry_secs();
+
+/// Parses a seconds value for `--tempo.expires`, capped at [`MAX_EXPIRES_SECS`].
 fn parse_expires_seconds(s: &str) -> Result<u64, String> {
     let secs: u64 = s
         .parse()
         .map_err(|_| format!("invalid value '{s}': expected an integer number of seconds"))?;
-    if secs > 30 {
-        return Err(format!("expires must be at most 30 seconds (got {secs})"));
+    if secs > MAX_EXPIRES_SECS {
+        return Err(format!("expires must be at most {MAX_EXPIRES_SECS} seconds (got {secs})"));
     }
     Ok(secs)
 }
@@ -322,7 +331,7 @@ fn parse_expires_seconds(s: &str) -> Result<u64, String> {
 mod tests {
     use super::*;
     use alloy_primitives::address;
-    use foundry_common::tempo::{BETA_USD_ADDRESS, PATH_USD_ADDRESS};
+    use foundry_common::tempo::{BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS};
 
     #[test]
     fn parses_lane_arg() {
@@ -344,14 +353,14 @@ mod tests {
 
     #[test]
     fn parse_expires_flag() {
-        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "30"]).unwrap();
-        assert_eq!(opts.expires, Some(30));
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "300"]).unwrap();
+        assert_eq!(opts.expires, Some(300));
 
         let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
         assert_eq!(opts.expires, Some(10));
 
-        // exceeds 30s maximum
-        assert!(TempoOpts::try_parse_from(["", "--tempo.expires", "31"]).is_err());
+        // exceeds the post-T11 maximum
+        assert!(TempoOpts::try_parse_from(["", "--tempo.expires", "301"]).is_err());
 
         // conflicts with --tempo.expiring-nonce
         assert!(
@@ -369,13 +378,11 @@ mod tests {
 
     #[test]
     fn resolve_expires_materializes_valid_before() {
-        let before =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let before = now().as_secs();
         let mut opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
 
         let resolved = opts.resolve_expires().unwrap();
-        let after =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let after = now().as_secs();
 
         assert!(resolved >= before + 10);
         assert!(resolved <= after + 10);
@@ -410,10 +417,13 @@ mod tests {
             TempoOpts::try_parse_from(["", "--tempo.fee-token", "bEtAuSd"]).unwrap();
         assert_eq!(opts_with_mixed_case_symbol.fee_token, Some(BETA_USD_ADDRESS));
 
+        let opts_with_ousd = TempoOpts::try_parse_from(["", "--tempo.fee-token", "OUSD"]).unwrap();
+        assert_eq!(opts_with_ousd.fee_token, Some(OUSD_ADDRESS));
+
         let err = TempoOpts::try_parse_from(["", "--tempo.fee-token", "unknownusd"]).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("expected address, numeric TIP-20 token id"));
-        assert!(msg.contains("PathUSD, AlphaUSD, BetaUSD, ThetaUSD"));
+        assert!(msg.contains("PathUSD, AlphaUSD, BetaUSD, ThetaUSD, OUSD"));
     }
 
     #[test]
@@ -427,7 +437,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert_eq!(opts.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
         assert!(opts.sponsor_sig.is_none());
         assert!(opts.is_tempo());
@@ -452,7 +462,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert!(opts.sponsor_sig.is_some());
     }
 
@@ -467,7 +477,7 @@ mod tests {
         .unwrap();
 
         assert!(opts.print_sponsor_hash);
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
     }
 
     #[test]

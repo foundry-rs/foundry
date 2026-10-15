@@ -99,6 +99,10 @@ impl<T: Encodable> Encodable for MaybeImpersonatedTransaction<T> {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         self.transaction.encode(out)
     }
+
+    fn length(&self) -> usize {
+        self.transaction.length()
+    }
 }
 
 impl From<MaybeImpersonatedTransaction<Self>> for FoundryTxEnvelope {
@@ -205,4 +209,26 @@ pub struct TransactionInfo {
     pub out: Option<Bytes>,
     pub nonce: u64,
     pub gas_used: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EncodableLength;
+
+    impl Encodable for EncodableLength {
+        fn encode(&self, _: &mut dyn BufMut) {
+            panic!("length should not encode")
+        }
+
+        fn length(&self) -> usize {
+            42
+        }
+    }
+
+    #[test]
+    fn rlp_length_delegates_to_inner_transaction() {
+        assert_eq!(MaybeImpersonatedTransaction::new(EncodableLength).length(), 42);
+    }
 }

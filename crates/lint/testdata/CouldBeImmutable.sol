@@ -76,7 +76,7 @@ contract CrossInitializerWrite {
     // assignments (immutables may only be assigned in their own initializer or in
     // the constructor body), so `x` must NOT be flagged as could-be-immutable.
     uint256 internal x = 0;
-    uint256 internal y = (x = 1); //~NOTE: state variable could be declared immutable
+    uint256 internal y = (x = 1); //~NOTE: state variable could be declared `immutable`
 }
 
 contract AssemblyWrite {

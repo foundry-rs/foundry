@@ -30,6 +30,8 @@ pub struct SensitiveTransactionMetadata {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_generation: Option<TxHash>,
 }
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
@@ -52,6 +54,8 @@ pub struct ScriptSequence<N: Network> {
     pub timestamp: u128,
     pub chain: u64,
     pub commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_generation: Option<TxHash>,
 }
 
 impl<N: Network> Default for ScriptSequence<N> {
@@ -66,6 +70,7 @@ impl<N: Network> Default for ScriptSequence<N> {
             timestamp: Default::default(),
             chain: Default::default(),
             commit: Default::default(),
+            recovery_generation: Default::default(),
         }
     }
 }
@@ -78,6 +83,7 @@ impl<N: Network> From<&ScriptSequence<N>> for SensitiveScriptSequence {
                 .iter()
                 .map(|tx| SensitiveTransactionMetadata { rpc: tx.rpc.clone() })
                 .collect(),
+            recovery_generation: sequence.recovery_generation,
         }
     }
 }
@@ -104,7 +110,9 @@ impl<N: Network> ScriptSequence<N> {
         )
         .wrap_err(format!("Deployment's sensitive details not found for chain `{chain_id}`."))?;
 
-        script_sequence.fill_sensitive(&sensitive_script_sequence);
+        script_sequence.fill_sensitive(&sensitive_script_sequence).wrap_err(format!(
+            "Deployment's sensitive details are out of sync with the broadcast file for chain `{chain_id}`; restore matching broadcast and sensitive-cache files before resuming."
+        ))?;
 
         script_sequence.paths = Some((path, sensitive_path));
 
@@ -141,7 +149,7 @@ impl<N: Network> ScriptSequence<N> {
 
         // cache folder writes
         //../run-latest.json
-        fs::write_pretty_json_file(sensitive_path, &sensitive_script_sequence)?;
+        fs::write_sensitive_json_file(sensitive_path, &sensitive_script_sequence)?;
         if save_ts {
             //../run-[timestamp].json
             fs::copy(sensitive_path, sensitive_path.with_file_name(&ts_name))?;
@@ -233,11 +241,26 @@ impl<N: Network> ScriptSequence<N> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 
-    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
-        self.transactions
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, tx)| tx.rpc.clone_from(&sensitive.transactions[i].rpc));
+    /// Copies RPC URLs from a matching sensitive-cache sequence.
+    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
+        if self.recovery_generation != sensitive.recovery_generation {
+            eyre::bail!(
+                "the broadcast file and its sensitive-cache counterpart belong to different recovery generations"
+            );
+        }
+        let transactions_len = self.transactions.len();
+        let sensitive_len = sensitive.transactions.len();
+        if transactions_len != sensitive_len {
+            eyre::bail!(
+                "sensitive-cache entry count ({sensitive_len}) does not match transaction count \
+                 ({transactions_len}); the broadcast file and its sensitive-cache counterpart are \
+                 out of sync"
+            );
+        }
+        for (i, tx) in self.transactions.iter_mut().enumerate() {
+            tx.rpc.clone_from(&sensitive.transactions[i].rpc);
+        }
+        Ok(())
     }
 }
 
@@ -250,7 +273,7 @@ pub fn sig_to_file_name(sig: &str) -> String {
         return name.to_string();
     }
     // assume calldata if `sig` is hex
-    if let Ok(calldata) = hex::decode(sig.strip_prefix("0x").unwrap_or(sig)) {
+    if let Ok(calldata) = hex::decode(sig) {
         // in which case we return the function selector if available
         if let Some(selector) = calldata.get(..SELECTOR_LEN) {
             return hex::encode(selector);
@@ -269,6 +292,75 @@ pub fn now() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::Ethereum;
+
+    fn sequence_with_two_transactions() -> ScriptSequence<Ethereum> {
+        let mut sequence = ScriptSequence::default();
+        for rpc in ["first", "second"] {
+            let mut tx = TransactionWithMetadata::from_tx_request(
+                TransactionMaybeSigned::Unsigned(Default::default()),
+            );
+            tx.rpc = rpc.to_string();
+            sequence.transactions.push_back(tx);
+        }
+        sequence
+    }
+
+    #[test]
+    fn fill_sensitive_rejects_mismatched_counts_without_mutation() {
+        for count in [1, 3] {
+            let mut sequence = sequence_with_two_transactions();
+            let sensitive = SensitiveScriptSequence {
+                transactions: (0..count)
+                    .map(|_| SensitiveTransactionMetadata { rpc: "replacement".to_string() })
+                    .collect(),
+                recovery_generation: None,
+            };
+            assert_eq!(
+                sequence.fill_sensitive(&sensitive).unwrap_err().to_string(),
+                format!(
+                    "sensitive-cache entry count ({count}) does not match transaction count (2); \
+                     the broadcast file and its sensitive-cache counterpart are out of sync"
+                )
+            );
+            assert_eq!(
+                sequence.transactions.iter().map(|tx| tx.rpc.as_str()).collect::<Vec<_>>(),
+                ["first", "second"]
+            );
+        }
+    }
+
+    #[test]
+    fn fill_sensitive_restores_matching_cache() {
+        let mut sequence = sequence_with_two_transactions();
+        let sensitive = SensitiveScriptSequence {
+            transactions: ["restored-first", "restored-second"]
+                .into_iter()
+                .map(|rpc| SensitiveTransactionMetadata { rpc: rpc.to_string() })
+                .collect(),
+            recovery_generation: None,
+        };
+        sequence.fill_sensitive(&sensitive).unwrap();
+        assert_eq!(
+            sequence.transactions.iter().map(|tx| tx.rpc.as_str()).collect::<Vec<_>>(),
+            ["restored-first", "restored-second"]
+        );
+    }
+
+    #[test]
+    fn fill_sensitive_rejects_a_different_recovery_generation() {
+        let mut sequence = sequence_with_two_transactions();
+        sequence.recovery_generation = Some(TxHash::ZERO);
+        let sensitive = SensitiveScriptSequence {
+            transactions: Default::default(),
+            recovery_generation: Some(TxHash::with_last_byte(1)),
+        };
+
+        assert_eq!(
+            sequence.fill_sensitive(&sensitive).unwrap_err().to_string(),
+            "the broadcast file and its sensitive-cache counterpart belong to different recovery generations"
+        );
+    }
 
     #[test]
     fn can_convert_sig() {

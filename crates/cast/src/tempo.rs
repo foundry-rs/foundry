@@ -2,6 +2,7 @@
 
 use crate::tx::fill_transaction_gas_fees;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_primitives::{Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_client::BuiltInConnectionString;
 use alloy_transport::{BoxTransport, TransportConnect, TransportError};
@@ -11,17 +12,120 @@ use foundry_cli::{
     opts::{EthereumOpts, TempoOpts},
     utils::{LoadConfig, get_chain},
 };
-use foundry_common::{provider::ProviderBuilder, shell};
-use foundry_config::{Chain, Eip1559FeeEstimatePreset};
+use foundry_common::{
+    FoundryTransactionBuilder,
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
+    tempo::{is_tempo_hardfork_active, maybe_print_fee_token, resolve_and_set_fee_token},
+};
+use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
+use foundry_evm::hardfork::TempoHardfork;
+use foundry_evm_networks::NetworkVariant;
 use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
 use serde_json::Value;
 use std::str::FromStr;
 use tempo_alloy::{
     TempoNetwork,
+    rpc::TempoTransactionRequest,
     transport::{RelayConnector, SponsorshipMode},
 };
 
-pub use foundry_common::tempo::{TempoSponsor, TempoSponsorPreview, resolve_tempo_sponsor_signer};
+pub use foundry_common::tempo::TempoSponsor;
+
+/// Loads the config for `opts` and builds a Tempo provider from it.
+pub(crate) fn tempo_provider(
+    opts: &impl LoadConfig,
+) -> Result<(Config, RetryProvider<TempoNetwork>)> {
+    let config = opts.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    Ok((config, provider))
+}
+
+/// Attaches the fee payment to a built transaction: the sponsor signature when a sponsor is
+/// configured, otherwise the resolved fee token for `payer` (printing it when it was resolved).
+pub(crate) async fn apply_fee_payment<N, P>(
+    sponsor: Option<&TempoSponsor>,
+    provider: Option<&P>,
+    tx: &mut N::TransactionRequest,
+    payer: Address,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    if tx.gas_price().is_some() {
+        eyre::ensure!(
+            sponsor.is_none() && !tx.is_tempo_aa(),
+            "Tempo transaction options cannot be combined with a legacy transaction"
+        );
+        return Ok(());
+    }
+
+    if sponsor.is_some() {
+        maybe_attach_sponsor(sponsor, provider, tx, payer).await
+    } else {
+        resolve_and_print_fee_token(provider, tx, Some(payer)).await
+    }
+}
+
+/// Resolves the sponsored fee token and attaches the sponsor signature preview for `payer` when a
+/// sponsor is configured.
+pub(crate) async fn maybe_attach_sponsor<N, P>(
+    sponsor: Option<&TempoSponsor>,
+    provider: Option<&P>,
+    tx: &mut N::TransactionRequest,
+    payer: Address,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    if let Some(sponsor) = sponsor {
+        let provider = provider.map(|p| p as &dyn Provider<N>);
+        sponsor.resolve_and_set_fee_token(provider, tx).await?;
+        sponsor.attach_and_print::<N>(tx, payer).await?;
+    }
+    Ok(())
+}
+
+/// Resolves and sets the fee token paid by `fee_payer`, printing it when it was resolved.
+pub(crate) async fn resolve_and_print_fee_token<N, P>(
+    provider: Option<&P>,
+    tx: &mut N::TransactionRequest,
+    fee_payer: Option<Address>,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
+    let fee_token = resolve_and_set_fee_token(dyn_provider, tx, fee_payer).await?;
+    maybe_print_fee_token(provider, fee_token).await
+}
+
+/// Computes the sponsor hash of a built transaction, resolving the fee token for `fee_payer` first
+/// when one is configured. Used by `--tempo.print-sponsor-hash`.
+pub(crate) async fn sponsor_hash<N, P>(
+    provider: Option<&P>,
+    tx: &mut N::TransactionRequest,
+    from: Address,
+    fee_payer: Option<Address>,
+) -> Result<B256>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    if fee_payer.is_some() {
+        let provider = provider.map(|p| p as &dyn Provider<N>);
+        resolve_and_set_fee_token(provider, tx, fee_payer).await?;
+    }
+    tx.compute_sponsor_hash(from)
+        .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))
+}
 
 /// Prints a command result: the raw payload in JSON mode, the human rendering otherwise.
 pub(crate) fn print_payload<F>(payload: Value, human: F) -> Result<()>
@@ -53,16 +157,53 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
-    match tempo.session_signer_for_wallet(wallet, chain_id)? {
-        Some(session) => Ok((None, Some(session.access_key))),
-        None => wallet.maybe_signer_for_chain(chain_id).await,
+    let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
+        Some(session) => (None, Some(session.access_key)),
+        None => wallet.maybe_signer_for_chain(chain_id).await?,
+    };
+    if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match Tempo account {}",
+            access_key.account()
+        );
     }
+    Ok((signer, access_key))
 }
 
 pub(crate) fn ensure_session_not_browser(tempo: &TempoOpts, browser: bool) -> Result<()> {
     if browser && tempo.session_id()?.is_some() {
         eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --browser");
     }
+    Ok(())
+}
+
+/// Fails with `message` unless `hardfork` is active on the RPC.
+pub(crate) async fn require_hardfork<P: Provider<TempoNetwork>>(
+    provider: &P,
+    hardfork: TempoHardfork,
+    message: &str,
+) -> Result<()> {
+    if !is_tempo_hardfork_active(provider, hardfork).await? {
+        eyre::bail!("{message}");
+    }
+    Ok(())
+}
+
+/// Fails early with `requirement` when a Tempo precompile is not active yet: a pre-fork call
+/// would succeed as a silent no-op instead of reverting. Prefers the hardfork query and falls
+/// back to checking the precompile's code when the RPC lacks the method.
+pub(crate) async fn ensure_tempo_precompile_active<P: Provider<TempoNetwork>>(
+    provider: &P,
+    hardfork: TempoHardfork,
+    precompile: Address,
+    requirement: &str,
+) -> Result<()> {
+    let active = match is_tempo_hardfork_active(provider, hardfork).await {
+        Ok(active) => active,
+        Err(_) => !provider.get_code_at(precompile).await?.is_empty(),
+    };
+    eyre::ensure!(active, "{requirement}");
     Ok(())
 }
 
@@ -102,48 +243,58 @@ pub(crate) fn sponsor_relay_connector<N: Network>(
 /// Accounts store change ordinary Ethereum commands.
 ///
 /// Explicit signer options are resolved with `from` cleared so the store fallback is not consulted.
-/// The fallback is only enabled when a Tempo transaction option is present or the RPC chain is a
-/// known Tempo chain.
+/// The fallback is only enabled after selecting Tempo from transaction options, configuration,
+/// or the RPC chain.
 pub(crate) async fn resolve_transaction_network_and_signer(
     tempo: &TempoOpts,
     eth: &EthereumOpts,
-) -> Result<(bool, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    let config = eth.load_config()?;
+    let has_session = tempo.session_id()?.is_some();
+    let requires_tempo = tempo.is_tempo() || has_session;
+    crate::cmd::validate_tempo_network(&config, requires_tempo)?;
+    if has_session {
+        return Ok((NetworkVariant::Tempo, None, None));
+    }
+
     let mut explicit_wallet = eth.wallet.clone();
     explicit_wallet.from = None;
     let (signer, access_key) = explicit_wallet.maybe_signer().await?;
-
-    if access_key.is_some() {
-        return Ok((true, signer, access_key));
+    let network =
+        crate::cmd::resolve_transaction_network(&config, requires_tempo || access_key.is_some())
+            .await?;
+    if let (Some(from), Some(access_key)) = (eth.wallet.from, &access_key) {
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match Tempo account {}",
+            access_key.account()
+        );
+    }
+    if !network.is_tempo() || signer.is_some() || access_key.is_some() || eth.wallet.from.is_none()
+    {
+        return Ok((network, signer, access_key));
     }
 
-    if tempo.is_tempo() {
-        if signer.is_some() || eth.wallet.from.is_none() {
-            return Ok((true, signer, None));
-        }
-        let (signer, access_key) = eth.wallet.maybe_signer().await?;
-        return Ok((true, signer, access_key));
-    }
-
-    if signer.is_some() || eth.wallet.from.is_none() {
-        return Ok((false, signer, None));
-    }
-
-    let config = eth.load_config()?;
+    // Only consult the Accounts store after selecting Tempo.
     let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
-    if !chain.is_tempo() {
-        return Ok((false, None, None));
-    }
-
     let (signer, access_key) = eth.wallet.maybe_signer_for_chain(chain.id()).await?;
-    Ok((true, signer, access_key))
+    if let Some(access_key) = &access_key {
+        let from = eth.wallet.from.expect("checked above");
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match active Tempo account {}",
+            access_key.account()
+        );
+    }
+    Ok((network, signer, access_key))
 }
 
 /// Fills a Tempo transaction request that was built outside [`crate::tx::CastTxBuilder`] before
 /// access-key signing.
 pub(crate) async fn fill_access_key_transaction<P>(
     provider: &P,
-    tx: &mut <TempoNetwork as Network>::TransactionRequest,
+    tx: &mut TempoTransactionRequest,
     access_key: &TempoAccountsWallet,
     chain: Chain,
     eip1559_fee_estimate: Eip1559FeeEstimatePreset,
@@ -170,6 +321,25 @@ mod tests {
     use super::*;
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
+
+    #[tokio::test]
+    async fn legacy_fee_payment_skips_stored_token_and_rejects_tempo_fields() {
+        let asserter = Asserter::new();
+        let provider =
+            AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
+        let payer = Address::repeat_byte(0x11);
+        let mut tx = TempoTransactionRequest::default();
+        tx.set_gas_price(1);
+
+        apply_fee_payment(None, Some(&provider), &mut tx, payer).await.unwrap();
+        assert!(tx.fee_token().is_none());
+
+        tx.set_fee_token(Address::repeat_byte(0x22));
+        assert_eq!(
+            apply_fee_payment(None, Some(&provider), &mut tx, payer).await.unwrap_err().to_string(),
+            "Tempo transaction options cannot be combined with a legacy transaction"
+        );
+    }
 
     #[tokio::test]
     async fn sponsor_relay_reuses_existing_default_transport() {

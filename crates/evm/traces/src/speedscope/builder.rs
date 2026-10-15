@@ -4,31 +4,12 @@
 //! Gas consumption is used as the value unit, so flame graph widths represent gas usage.
 
 use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
-use alloy_primitives::hex::ToHexExt;
+use alloy_primitives::{hex::ToHexExt, map::HashMap};
 use revm_inspectors::tracing::{
     CallTraceArena,
     types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
-use std::{borrow::Cow, collections::HashMap};
-
-/// Builds a speedscope profile from a call trace arena.
-///
-/// Walks the trace arena directly so the Time Order view preserves execution order.
-pub fn build<'a>(
-    arena: &CallTraceArena,
-    test_name: &str,
-    contract_name: &str,
-    isolate: bool,
-) -> SpeedscopeFile<'a> {
-    let name = format!("{contract_name}::{test_name}");
-    let mut builder = SpeedscopeBuilder::new(name);
-
-    if !arena.nodes().is_empty() {
-        builder.process_call_node(arena.nodes(), 0, isolate);
-    }
-
-    builder.build()
-}
+use std::borrow::Cow;
 
 struct SpeedscopeBuilder<'a> {
     file: SpeedscopeFile<'a>,
@@ -42,7 +23,7 @@ impl<'a> SpeedscopeBuilder<'a> {
         Self {
             file: SpeedscopeFile::new(name.clone()),
             profile: EventedProfile::new(name, ValueUnit::None),
-            frame_cache: HashMap::new(),
+            frame_cache: HashMap::default(),
             cumulative_gas: 0,
         }
     }
@@ -131,6 +112,25 @@ struct StepExit {
     frame_idx: usize,
 }
 
+/// Builds a speedscope profile from a call trace arena.
+///
+/// Walks the trace arena directly so the Time Order view preserves execution order.
+pub fn build<'a>(
+    arena: &CallTraceArena,
+    test_name: &str,
+    contract_name: &str,
+    isolate: bool,
+) -> SpeedscopeFile<'a> {
+    let name = format!("{contract_name}::{test_name}");
+    let mut builder = SpeedscopeBuilder::new(name);
+
+    if !arena.nodes().is_empty() {
+        builder.process_call_node(arena.nodes(), 0, isolate);
+    }
+
+    builder.build()
+}
+
 fn call_frame_name(node: &CallTraceNode) -> String {
     if node.trace.kind.is_any_create() {
         let contract_name =
@@ -185,6 +185,9 @@ mod tests {
             gas_refund_counter: 0,
             gas_used: 0,
             gas_cost,
+            state_gas_cost: None,
+            state_gas_reservoir: None,
+            state_gas_spent: 0,
             storage_change: None,
             status: Some(InstructionResult::Stop),
             immediate_bytes: None,

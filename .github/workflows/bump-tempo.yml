@@ -10,11 +10,15 @@ on:
 
 jobs:
   bump-tempo:
+    if: github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: write
       pull-requests: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -35,6 +39,5 @@ jobs:
             Cargo.lock
           commit-message: "chore(deps): bump tempo dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
           title: "chore(deps): bump tempo dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
-          labels: L-ignore
           body-path: ${{ steps.bump.outputs.changelog }}
           branch: deps/bump-tempo

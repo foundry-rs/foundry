@@ -1,15 +1,19 @@
 use super::UninitializedLocal;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{
+        Severity, SolLint,
+        analysis::{branch_always_exits, for_each_lhs_var, loop_stmts},
+    },
 };
 use solar::{
+    ast::ElementaryType,
     interface::{Span, data_structures::Never},
     sema::{
-        Hir,
+        Gcx, Hir,
         hir::{
-            Expr, ExprKind, Function, ItemId, LoopSource, Res, Stmt, StmtKind, TypeKind, VarKind,
-            VariableId, Visit,
+            BinOpKind, Block, Expr, ExprKind, Function, LoopSource, Stmt, StmtKind, TypeKind,
+            UnOpKind, VarKind, VariableId, Visit,
         },
     },
 };
@@ -25,193 +29,174 @@ declare_forge_lint!(
     "local variable is read before being initialized"
 );
 
-impl<'hir> LateLintPass<'hir> for UninitializedLocal {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let Some(body) = func.body else { return };
-
-        let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashMap::new() };
+        let mut checker =
+            Checker { gcx, hir: &gcx.hir, uninitialized: HashSet::new(), findings: HashMap::new() };
         for stmt in body.stmts {
             let _ = checker.visit_stmt(stmt);
         }
-
-        for (_vid, read_span) in checker.findings {
-            ctx.emit(&UNINITIALIZED_LOCAL, read_span);
+        for span in checker.findings.into_values() {
+            ctx.emit(&UNINITIALIZED_LOCAL, span);
         }
     }
 }
 
-struct Checker<'hir> {
-    hir: &'hir Hir<'hir>,
-    /// Locals declared without an initializer that have not yet been written.
+struct Checker<'gcx> {
+    gcx: Gcx<'gcx>,
+    hir: &'gcx Hir<'gcx>,
+    /// Value-type locals declared without an initializer that have not yet been written on
+    /// every path.
     uninitialized: HashSet<VariableId>,
     /// First read span per variable that was read while uninitialized.
     findings: HashMap<VariableId, Span>,
 }
 
-impl<'hir> Visit<'hir> for Checker<'hir> {
+impl Checker<'_> {
+    fn mark_written(&mut self, lhs: &Expr<'_>) {
+        for_each_lhs_var(self.gcx, lhs, &mut |v| {
+            self.uninitialized.remove(&v);
+        });
+    }
+}
+
+/// The loop statement of a conventional `for (uint i; i < n; i++)` header whose counter relies on
+/// its implicit zero. The header lowers to `{ decl; loop { if cond { body } else break } }` with
+/// the update on the loop source; matching the wrapper's span keeps declarations outside the
+/// header distinct.
+fn defaulted_counter_loop<'gcx>(
+    gcx: Gcx<'gcx>,
+    block: &'gcx Block<'gcx>,
+) -> Option<&'gcx Stmt<'gcx>> {
+    if let [Stmt { kind: StmtKind::DeclSingle(vid), .. }, loop_stmt] = block.stmts
+        && block.span == loop_stmt.span
+        && let StmtKind::Loop(body, LoopSource::For { update: Some(update) }) = &loop_stmt.kind
+        && let var = gcx.hir.variable(*vid)
+        && var.initializer.is_none()
+        && matches!(var.ty.kind, TypeKind::Elementary(ElementaryType::UInt(_)))
+        && let [Stmt { kind: StmtKind::If(cond, _, Some(else_)), .. }] = body.stmts
+        && matches!(else_.kind, StmtKind::Break)
+        && let ExprKind::Binary(left, op, right) = &cond.peel_parens().kind
+        && ((matches!(op.kind, BinOpKind::Lt | BinOpKind::Le)
+            && gcx.resolved_variable(left) == Some(*vid))
+            || (matches!(op.kind, BinOpKind::Gt | BinOpKind::Ge)
+                && gcx.resolved_variable(right) == Some(*vid)))
+        && let StmtKind::Expr(update) = &update.kind
+        && let ExprKind::Unary(op, target) = &update.peel_parens().kind
+        && matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc)
+        && gcx.resolved_variable(target) == Some(*vid)
+    {
+        Some(loop_stmt)
+    } else {
+        None
+    }
+}
+
+impl<'gcx> Visit<'gcx> for Checker<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         match &stmt.kind {
+            StmtKind::Block(block) => {
+                if let Some(loop_stmt) = defaulted_counter_loop(self.gcx, block) {
+                    // Skip only the counter's declaration; all reads in the loop still run
+                    // through the ordinary checker, including reads of other locals.
+                    return self.visit_stmt(loop_stmt);
+                }
+            }
             StmtKind::DeclSingle(vid) => {
                 let v = self.hir.variable(*vid);
-                let is_value_type =
-                    matches!(v.ty.kind, TypeKind::Elementary(ty) if ty.is_value_type());
-                if matches!(v.kind, VarKind::Statement) && v.initializer.is_none() && is_value_type
+                if v.kind == VarKind::Statement
+                    && v.initializer.is_none()
+                    && self.gcx.type_of_item((*vid).into()).is_value_type()
                 {
                     self.uninitialized.insert(*vid);
                 }
-                // Walk initializer (if any) to catch reads of other uninitialized vars.
-                if let Some(init) = v.initializer {
-                    let _ = self.visit_expr(init);
-                }
-                return ControlFlow::Continue(());
             }
-
-            // For if/else: visit condition, then snapshot and walk each branch independently,
-            // then union the post-branch sets (conservative: still uninitialized if any path
-            // fails to write the variable).
+            // A variable stays uninitialized if any branch that falls through fails to write it.
             StmtKind::If(cond, then, else_) => {
-                let _ = self.visit_expr(cond);
-
+                self.visit_expr(cond)?;
                 let before = self.uninitialized.clone();
-
-                let _ = self.visit_stmt(then);
-                let after_then = self.uninitialized.clone();
-
-                self.uninitialized = before;
-                if let Some(else_stmt) = else_ {
-                    let _ = self.visit_stmt(else_stmt);
+                self.visit_stmt(then)?;
+                let after_then = std::mem::replace(&mut self.uninitialized, before);
+                if let Some(else_) = else_ {
+                    self.visit_stmt(else_)?;
                 }
-                let after_else = self.uninitialized.clone();
-
-                let then_exits = branch_always_exits(then);
-                let else_exits = else_.is_some_and(branch_always_exits);
-                self.uninitialized = match (then_exits, else_exits) {
-                    (true, _) => after_else,
-                    (_, true) => after_then,
-                    _ => after_then.union(&after_else).copied().collect(),
-                };
+                if branch_always_exits(self.gcx, then) {
+                    // Only the else path continues; keep its state.
+                } else if else_.is_some_and(|expr| branch_always_exits(self.gcx, expr)) {
+                    self.uninitialized = after_then;
+                } else {
+                    self.uninitialized.extend(after_then);
+                }
                 return ControlFlow::Continue(());
             }
-
-            // do-while always executes the body once, so writes are guaranteed.
-            // for/while may execute zero times, so writes must be discarded.
+            // `do-while` runs its body once, so its writes are guaranteed; `for`/`while` may run
+            // zero times, so theirs are discarded.
             StmtKind::Loop(block, source) => {
                 let before = self.uninitialized.clone();
-                for s in block.stmts {
-                    let _ = self.visit_stmt(s);
+                for s in loop_stmts(*block, *source) {
+                    self.visit_stmt(s)?;
                 }
                 if !matches!(source, LoopSource::DoWhile) {
                     self.uninitialized = before;
                 }
                 return ControlFlow::Continue(());
             }
-
-            // Each try/catch clause is an independent execution path; treat like if/else branches.
+            // Each clause is an independent path, like `if`/`else` branches.
             StmtKind::Try(t) => {
-                let _ = self.visit_expr(&t.expr);
-                let mut clause_states: Vec<HashSet<VariableId>> = Vec::new();
+                self.visit_expr(&t.expr)?;
+                let before = self.uninitialized.clone();
+                let mut merged = HashSet::new();
                 for clause in t.clauses {
-                    let before = self.uninitialized.clone();
+                    self.uninitialized = before.clone();
                     for s in clause.block.stmts {
-                        let _ = self.visit_stmt(s);
+                        self.visit_stmt(s)?;
                     }
-                    clause_states.push(self.uninitialized.clone());
-                    self.uninitialized = before;
+                    merged.extend(self.uninitialized.drain());
                 }
-                // Union across all clause post-states: variable stays uninitialized if any clause
-                // fails to write it.
-                self.uninitialized = clause_states
-                    .iter()
-                    .fold(HashSet::new(), |acc, s| acc.union(s).copied().collect());
+                self.uninitialized = merged;
                 return ControlFlow::Continue(());
             }
-
             _ => {}
         }
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
-            // Plain `=`: visit RHS first (catches `x = x`), then mark LHS as written.
-            ExprKind::Assign(lhs, None, rhs) => {
-                let _ = self.visit_expr(rhs);
-                mark_written(lhs, &mut self.uninitialized);
-                // Still walk lhs in case it's a complex expression (e.g. array index).
-                let _ = self.visit_expr(lhs);
-                return ControlFlow::Continue(());
+            // Compound `op=` reads the lhs first; plain `=` reads only the rhs (catches `x = x`).
+            // The lhs is still walked afterwards for reads inside e.g. an index expression.
+            ExprKind::Assign(lhs, op, rhs) => {
+                if op.is_some() {
+                    self.visit_expr(lhs)?;
+                }
+                self.visit_expr(rhs)?;
+                self.mark_written(lhs);
+                if op.is_none() {
+                    self.visit_expr(lhs)?;
+                }
+                ControlFlow::Continue(())
             }
-
-            // Compound `op=`: both sides are read first, then lhs is written.
-            ExprKind::Assign(lhs, Some(_), rhs) => {
-                let _ = self.visit_expr(lhs);
-                let _ = self.visit_expr(rhs);
-                mark_written(lhs, &mut self.uninitialized);
-                return ControlFlow::Continue(());
-            }
-
-            // `delete x` is an explicit write to the zero value — not a read.
+            // `delete x` is an explicit write to the zero value, not a read.
             ExprKind::Delete(target) => {
-                mark_written(target, &mut self.uninitialized);
-                let _ = self.visit_expr(target);
-                return ControlFlow::Continue(());
+                self.mark_written(target);
+                self.visit_expr(target)
             }
-
-            ExprKind::Ident(reses) => {
-                for res in *reses {
-                    if let Res::Item(ItemId::Variable(vid)) = res
-                        && self.uninitialized.contains(vid)
-                    {
-                        self.findings.entry(*vid).or_insert(expr.span);
-                        break;
-                    }
+            ExprKind::Ident(_) => {
+                if let Some(vid) =
+                    self.gcx.resolved_variable(expr).filter(|v| self.uninitialized.contains(v))
+                {
+                    self.findings.entry(vid).or_insert(expr.span);
                 }
+                ControlFlow::Continue(())
             }
-
-            _ => {}
+            _ => self.walk_expr(expr),
         }
-        self.walk_expr(expr)
-    }
-}
-
-fn branch_always_exits(stmt: &Stmt<'_>) -> bool {
-    match &stmt.kind {
-        StmtKind::Return(_) | StmtKind::Revert(_) => true,
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.last().is_some_and(branch_always_exits)
-        }
-        StmtKind::If(_, t, Some(e)) => branch_always_exits(t) && branch_always_exits(e),
-        _ => false,
-    }
-}
-
-/// Remove `expr` from `uninitialized` if it is a direct identifier or a tuple of identifiers.
-fn mark_written(expr: &Expr<'_>, uninitialized: &mut HashSet<VariableId>) {
-    match &expr.kind {
-        ExprKind::Ident(reses) => {
-            for res in *reses {
-                if let Res::Item(ItemId::Variable(vid)) = res {
-                    uninitialized.remove(vid);
-                }
-            }
-        }
-        ExprKind::Tuple(elems) => {
-            for elem in elems.iter().flatten() {
-                mark_written(elem, uninitialized);
-            }
-        }
-        _ => {}
     }
 }

@@ -5,6 +5,8 @@ set -euo pipefail
 # Exercises --from / --sender resolving a pending access key from store.json
 # without requiring a private key on each command.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Fee token address, defaults to native fee token
 FEE_TOKEN="${TEMPO_FEE_TOKEN:-0x20c0000000000000000000000000000000000000}"
 TEMPO_WALLET_TEST_HOME=""
@@ -90,7 +92,7 @@ cast tempo import-access-key \
   --account "$WALLET_ADDR" \
   --access-key "$ACCESS_PRIVATE_KEY" \
   --authorization "$AUTHORIZATION"
-unset ROOT_WALLET_JSON ACCESS_WALLET_JSON ROOT_PRIVATE_KEY ACCESS_PRIVATE_KEY AUTHORIZATION
+unset ROOT_WALLET_JSON ACCESS_WALLET_JSON ACCESS_PRIVATE_KEY AUTHORIZATION
 echo "Written to $TEMPO_HOME/wallet/store.json"
 
 echo "=== Wallet: $WALLET_ADDR ==="
@@ -100,9 +102,22 @@ echo "=== Fee:    $FEE_TOKEN ==="
 echo -e "\n=== FUND WALLET ==="
 fund_and_wait "$WALLET_ADDR"
 
+echo -e "\n=== DEPLOY COUNTER ==="
+PROJECT_DIR="$(mktemp -d)"
+cd "$PROJECT_DIR"
+forge init -n tempo tempo-wallet-test --quiet
+cd tempo-wallet-test
+cp "$SCRIPT_DIR/contracts/BatchCounter.sol" src/BatchCounter.sol
+# Use the root key so the first --from send still exercises the pending access key.
+COUNTER=$(forge create ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} src/BatchCounter.sol:BatchCounter \
+  --rpc-url "$ETH_RPC_URL" --private-key "$ROOT_PRIVATE_KEY" --broadcast --json --constructor-args 0 \
+  | jq -er '(.data // .).deployedTo | select(test("^0x[0-9a-fA-F]{40}$"))')
+unset ROOT_PRIVATE_KEY
+echo "Counter deployed at: $COUNTER"
+
 echo -e "\n=== CAST SEND WITH --from (Tempo Accounts store) ==="
 cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  "$COUNTER" 'increment()' \
   --from "$WALLET_ADDR"
 
 echo -e "\n=== CAST ERC20 TRANSFER WITH --from (Tempo Accounts store) ==="
@@ -112,10 +127,6 @@ cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} \
   --rpc-url "$ETH_RPC_URL" --from "$WALLET_ADDR"
 
 echo -e "\n=== FORGE SCRIPT WITH --sender (Tempo Accounts store) ==="
-PROJECT_DIR="$(mktemp -d)"
-cd "$PROJECT_DIR"
-forge init -n tempo tempo-wallet-test --quiet
-cd tempo-wallet-test
 
 cat > script/TempoAccounts.s.sol <<'SOL'
 // SPDX-License-Identifier: MIT

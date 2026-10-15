@@ -4,11 +4,11 @@ use super::BackendError;
 use crate::{
     FoundryInspectorExt,
     backend::{
-        Backend, ContextUpdate, DatabaseExt, JournaledState, LocalForkId,
-        RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
+        Backend, ContextUpdateFor, DatabaseExt, ForkAccountField, JournaledState, LocalForkId,
+        RevertStateSnapshotAction, diagnostic::RevertDiagnostic, existing_account,
     },
     evm::{
-        ChainContextFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
+        ChainFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
         HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId},
@@ -28,6 +28,17 @@ use revm::{
     state::{Account, AccountInfo, EvmState},
 };
 use std::{borrow::Cow, collections::BTreeMap, fmt::Debug};
+
+#[cfg(feature = "monad")]
+use crate::evm::MonadEvmNetwork;
+#[cfg(feature = "monad")]
+use alloy_evm::EvmEnv;
+#[cfg(feature = "monad")]
+use alloy_monad_evm::MonadEvmFactory;
+#[cfg(feature = "monad")]
+use monad_revm::{MonadChainContext, MonadHardfork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -97,7 +108,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
@@ -105,12 +116,8 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let mut evm = factory.create_foundry_evm_with_inspector(
-            self,
-            evm_env.clone(),
-            chain_context,
-            inspector,
-        );
+        let mut evm = factory.create_foundry_evm_with_inspector(self, evm_env.clone(), inspector);
+        *evm.chain_mut() = chain_context;
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
@@ -118,37 +125,6 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         *evm_env = evm.finish().1;
 
         Ok(res)
-    }
-
-    /// Executes a canonical replay transaction with explicit network-specific context.
-    #[instrument(name = "inspect_replay", level = "debug", skip_all)]
-    pub fn inspect_replay_with_context<
-        I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>,
-    >(
-        &mut self,
-        evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
-        inspector: I,
-    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
-        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
-
-        let factory = FEN::EvmFactory::default();
-        let is_protocol_system = factory.protocol_system_call(tx_env)?.is_some();
-        let mut evm = factory.create_foundry_evm_with_inspector(
-            self,
-            evm_env.clone(),
-            chain_context,
-            inspector,
-        );
-        let result = factory.transact_foundry_replay(&mut evm, tx_env.clone())?;
-
-        if !is_protocol_system {
-            *tx_env = evm.tx().clone();
-        }
-        *evm_env = evm.finish().1;
-
-        Ok(result)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
@@ -169,13 +145,38 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         }
         self.backend.to_mut()
     }
+}
 
-    /// Returns a mutable instance of the Backend if it is initialized.
-    fn initialized_backend_mut(&mut self) -> Option<&mut Backend<FEN>> {
-        if self.pending_init.is_none() {
-            return Some(self.backend.to_mut());
+#[cfg(feature = "monad")]
+impl CowBackend<'_, MonadEvmNetwork> {
+    /// Tries to execute a canonical system transaction with explicit network-specific context.
+    #[instrument(name = "inspect_system_replay", level = "debug", skip_all)]
+    pub fn try_inspect_system_replay_with_context<
+        I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, MonadEvmNetwork>>,
+    >(
+        &mut self,
+        evm_env: &mut EvmEnv<MonadHardfork>,
+        tx_env: &mut TxEnv,
+        chain_context: MonadChainContext,
+        inspector: &mut I,
+    ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
+        if crate::evm::protocol_system_call(tx_env)?.is_none() {
+            return Ok(None);
         }
-        None
+
+        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
+
+        let factory = MonadEvmFactory::default();
+        let mut evm = factory.create_nested_evm_with_inspector(self, evm_env.clone(), inspector);
+        *evm.chain_mut() = chain_context;
+        let result = evm.transact_raw(tx_env.clone())?;
+
+        // A successful specialized replay replaces the EVM transaction with its synthetic system
+        // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
+        // `inspect_with_context` above and copies inspector mutations back normally.
+        *evm_env = evm.to_evm_env();
+
+        Ok(Some(result))
     }
 }
 
@@ -183,7 +184,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     fn chain_context_for_synthetic_transaction(
         &self,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainContextFor<FEN>> {
+    ) -> eyre::Result<ChainFor<FEN>> {
         self.backend.chain_context_for_synthetic_transaction(tx)
     }
 
@@ -207,17 +208,19 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
-        // delete state snapshot requires a previous snapshot to be initialized
-        if let Some(backend) = self.initialized_backend_mut() {
-            return backend.delete_state_snapshot(id);
+        // Snapshots can predate initialization; avoid cloning when the snapshot is missing.
+        if self.backend.state_snapshots().get(id).is_none() {
+            return false;
         }
-        false
+        self.backend_mut().delete_state_snapshot(id)
     }
 
     fn delete_state_snapshots(&mut self) {
-        if let Some(backend) = self.initialized_backend_mut() {
-            backend.delete_state_snapshots()
+        // Avoid cloning when there are no snapshots.
+        if self.backend.state_snapshots().is_empty() {
+            return;
         }
+        self.backend_mut().delete_state_snapshots()
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
@@ -238,7 +241,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)
     }
 
@@ -249,7 +252,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().roll_fork(id, block_number, evm_env, tx_env, journaled_state)
     }
 
@@ -260,7 +263,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().roll_fork_to_transaction(
             id,
             transaction,
@@ -280,7 +283,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().transact(
             id,
             transaction,
@@ -309,6 +312,14 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
 
     fn active_fork_url(&self) -> Option<String> {
         self.backend.active_fork_url()
+    }
+
+    fn active_fork_options(&self) -> Option<CreateFork> {
+        self.backend.active_fork_options()
+    }
+
+    fn active_fork_source_chain_id(&self) -> Option<u64> {
+        self.backend.active_fork_source_chain_id()
     }
 
     fn active_fork_block_number(&self) -> Option<u64> {
@@ -348,12 +359,22 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.is_persistent(acc)
     }
 
-    fn invalidate_fork_cache_account(&mut self, address: Address) {
-        self.backend.to_mut().invalidate_fork_cache_account(address)
+    fn refresh_fork_account(
+        &mut self,
+        address: Address,
+        field: ForkAccountField,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend.to_mut().refresh_fork_account(address, field, journaled_state)
     }
 
-    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
-        self.backend.to_mut().invalidate_fork_cache_storage(address, slot)
+    fn refresh_fork_storage(
+        &mut self,
+        address: Address,
+        slot: U256,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend.to_mut().refresh_fork_storage(address, slot, journaled_state)
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {
@@ -405,7 +426,8 @@ impl<FEN: FoundryEvmNetwork> Database for CowBackend<'_, FEN> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        DatabaseRef::basic_ref(self, address)
+        let spec = self.pending_init.map_or(self.backend.inner.spec_id, |(spec, ..)| spec);
+        Ok(existing_account(spec, DatabaseRef::basic_ref(self, address)?))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {

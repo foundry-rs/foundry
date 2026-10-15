@@ -3,9 +3,12 @@ use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{B256, ChainId, Selector, U256};
+use alloy_primitives::{ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
-use foundry_config::NamedChain;
+use foundry_config::NamedChain::{
+    self, Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Polygon,
+    PolygonAmoy,
+};
 use foundry_evm_networks::NetworkConfigs;
 use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
@@ -21,6 +24,7 @@ pub const fn cold_path() {
 pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockHeader) -> BLOCK {
     let mut block = BLOCK::default();
     block.set_number(U256::from(header.number()));
+    block.set_slot_num(header.slot_number().unwrap_or_default());
     block.set_beneficiary(header.beneficiary());
     block.set_timestamp(U256::from(header.timestamp()));
     block.set_difficulty(header.difficulty());
@@ -85,29 +89,30 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
     source_chain_id: ChainId,
     configs: NetworkConfigs,
 ) {
-    use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
+    // The blob fee market is priced from the header's excess blob gas and the source chain's
+    // blob schedule at the block timestamp. Headers without the field (pre-Cancun blocks and
+    // chains without EIP-4844) keep the default blob environment.
+    if let Some(excess_blob_gas) = block.header().excess_blob_gas() {
+        evm_env.block_env.set_blob_excess_gas_and_price(
+            excess_blob_gas,
+            get_blob_base_fee_update_fraction(source_chain_id, block.header().timestamp()),
+        );
+    }
 
     if let Ok(chain) = NamedChain::try_from(source_chain_id) {
-        let block_number = block.header().number();
-
         match chain {
-            Mainnet => {
-                // after merge difficulty is supplanted with prevrandao EIP-4399
-                if block_number >= 15_537_351u64 {
-                    evm_env
-                        .block_env
-                        .set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
-                }
-
-                return;
-            }
-            BinanceSmartChain | BinanceSmartChainTestnet => {
+            BinanceSmartChain
+            | BinanceSmartChainTestnet
+            | Polygon
+            | PolygonAmoy
+            | Avalanche
+            | AvalancheFuji => {
                 // https://github.com/foundry-rs/foundry/issues/9942
                 // As far as observed from the source code of bnb-chain/bsc, the `difficulty` field
                 // is still in use and returned by the corresponding opcode but `prevrandao`
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
                 // specification. This will confuse revm and causes emulation
-                // failure.
+                // failure. Polygon and Avalanche behave the same way.
                 evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
                 return;
             }
@@ -123,14 +128,19 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
                 {
                     evm_env.block_env.set_number(l1_block_number);
                 }
+
+                // `mixHash` carries L1 metadata rather than randomness here, while the
+                // `PREVRANDAO` opcode returns `difficulty` like it does on the chains above.
+                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
             }
             _ => {}
         }
     }
 
     if configs.bypass_prevrandao(source_chain_id) && evm_env.block_env.prevrandao().is_none() {
+        // Chains without randomness keep the historical DIFFICULTY opcode semantics.
         // <https://github.com/foundry-rs/foundry/issues/4232>
-        evm_env.block_env.set_prevrandao(Some(B256::random()));
+        evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
     }
 
     // if difficulty is `0` we assume it's past merge
@@ -220,8 +230,18 @@ pub fn get_function<'a>(
 mod tests {
     use super::*;
     use alloy_network::{AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader};
+    use alloy_primitives::B256;
     use alloy_rpc_types::{Block, BlockTransactions};
     use revm::context::{BlockEnv, CfgEnv};
+
+    #[test]
+    fn block_env_preserves_slot_number() {
+        for slot_number in [None, Some(0), Some(42), Some(u64::MAX)] {
+            let header = AnyHeader { slot_number, ..Default::default() };
+            let block = block_env_from_header::<BlockEnv>(&header);
+            assert_eq!(block.slot_num, slot_number.unwrap_or_default());
+        }
+    }
 
     #[test]
     fn block_normalization_uses_source_chain() {
@@ -254,8 +274,110 @@ mod tests {
     }
 
     #[test]
-    fn block_normalization_sets_prevrandao_for_moonbeam() {
-        let header = AnyHeader { difficulty: U256::from(1), ..Default::default() };
+    fn block_normalization_sets_blob_excess_gas_from_header() {
+        // Mainnet block 22_000_000 (Cancun): 22_151_168 excess blob gas prices blobs at 761 wei.
+        let header = AnyHeader {
+            timestamp: 1_741_410_875,
+            excess_blob_gas: Some(22_151_168),
+            ..Default::default()
+        };
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        let mut evm_env = EvmEnv::new(CfgEnv::<SpecId>::default(), BlockEnv::default());
+        // The execution chain id can be overridden; the blob schedule follows the source chain.
+        evm_env.cfg_env.chain_id = 1337;
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Mainnet as u64,
+            NetworkConfigs::default(),
+        );
+
+        let blob = evm_env.block_env.blob_excess_gas_and_price.unwrap();
+        assert_eq!(blob.excess_blob_gas, 22_151_168);
+        assert_eq!(blob.blob_gasprice, 761);
+    }
+
+    #[test]
+    fn block_normalization_keeps_default_blob_env_without_header_field() {
+        let header = AnyHeader { excess_blob_gas: None, ..Default::default() };
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        let mut evm_env = EvmEnv::new(CfgEnv::<SpecId>::default(), BlockEnv::default());
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Mainnet as u64,
+            NetworkConfigs::default(),
+        );
+
+        assert_eq!(
+            evm_env.block_env.blob_excess_gas_and_price,
+            BlockEnv::default().blob_excess_gas_and_price
+        );
+    }
+
+    #[test]
+    fn block_normalization_handles_missing_prevrandao_deterministically() {
+        for (chain, configs, bypass) in [
+            (NamedChain::Moonbeam as u64, NetworkConfigs::default(), true),
+            (NamedChain::Gnosis as u64, NetworkConfigs::default(), true),
+            (NamedChain::Rsk as u64, NetworkConfigs::default(), true),
+            (98_765_432, NetworkConfigs::default(), false),
+            (
+                98_765_432,
+                serde_json::from_str(r#"{"bypass_prevrandao":true,"celo":false}"#).unwrap(),
+                true,
+            ),
+        ] {
+            for difficulty in [U256::ZERO, U256::from(42)] {
+                let header = AnyHeader { difficulty, mix_hash: None, ..Default::default() };
+                let block = AnyRpcBlock::new(
+                    Block::new(
+                        AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                        BlockTransactions::Full(Vec::new()),
+                    )
+                    .into(),
+                );
+                let mut previous = None;
+                for _ in 0..2 {
+                    let mut evm_env = EvmEnv::new(
+                        CfgEnv::<SpecId>::default(),
+                        block_env_from_header::<BlockEnv>(block.header()),
+                    );
+                    apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+                        &mut evm_env,
+                        &block,
+                        chain,
+                        configs,
+                    );
+                    assert_eq!(evm_env.block_env.prevrandao, bypass.then(|| difficulty.into()));
+                    assert_eq!(evm_env.block_env.difficulty, difficulty);
+                    if let Some(previous) = &previous {
+                        assert_eq!(&evm_env.block_env, previous);
+                    }
+                    previous = Some(evm_env.block_env);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn block_normalization_preserves_header_prevrandao() {
+        let randao = B256::repeat_byte(0xab);
+        let header = AnyHeader { mix_hash: Some(randao), ..Default::default() };
         let block = AnyRpcBlock::new(
             Block::new(
                 AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
@@ -265,17 +387,92 @@ mod tests {
         );
         let mut evm_env = EvmEnv::new(
             CfgEnv::<SpecId>::default(),
-            BlockEnv { prevrandao: None, ..Default::default() },
+            block_env_from_header::<BlockEnv>(block.header()),
         );
-
         apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
             &mut evm_env,
             &block,
-            NamedChain::Moonbeam as u64,
+            NamedChain::Gnosis as u64,
             NetworkConfigs::default(),
         );
+        assert_eq!(evm_env.block_env.prevrandao, Some(randao));
+    }
 
-        assert!(evm_env.block_env.prevrandao.is_some());
+    #[test]
+    fn block_normalization_preserves_mainnet_merge_boundary() {
+        let randao = B256::repeat_byte(0xab);
+        for number in [15_537_350, 15_537_351, 15_537_393, 15_537_394] {
+            let difficulty = if number < 15_537_394 { U256::from(42) } else { U256::ZERO };
+            let header =
+                AnyHeader { number, difficulty, mix_hash: Some(randao), ..Default::default() };
+            let block = AnyRpcBlock::new(
+                Block::new(
+                    AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                    BlockTransactions::Full(Vec::new()),
+                )
+                .into(),
+            );
+            let mut evm_env = EvmEnv::new(
+                CfgEnv::<SpecId>::default(),
+                block_env_from_header::<BlockEnv>(block.header()),
+            );
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+                &mut evm_env,
+                &block,
+                NamedChain::Mainnet as u64,
+                NetworkConfigs::default(),
+            );
+            let expected = if difficulty.is_zero() { randao.into() } else { difficulty };
+            assert_eq!(evm_env.block_env.difficulty, expected, "block {number}");
+            assert_eq!(evm_env.block_env.prevrandao, Some(randao));
+        }
+    }
+
+    #[test]
+    fn block_normalization_uses_difficulty_as_prevrandao() {
+        // These chains keep using `difficulty` and return it from `PREVRANDAO`, so a header
+        // `mixHash` of zero (or, on Arbitrum, packed L1 metadata) must not reach the block env.
+        for (chain, mix_hash) in [
+            (NamedChain::BinanceSmartChain, B256::ZERO),
+            (NamedChain::Polygon, B256::ZERO),
+            (NamedChain::PolygonAmoy, B256::ZERO),
+            (NamedChain::Avalanche, B256::ZERO),
+            (NamedChain::AvalancheFuji, B256::ZERO),
+            (NamedChain::Arbitrum, B256::repeat_byte(0xab)),
+            (NamedChain::ArbitrumNova, B256::repeat_byte(0xab)),
+            (NamedChain::ArbitrumSepolia, B256::repeat_byte(0xab)),
+        ] {
+            let header =
+                AnyHeader { difficulty: U256::ONE, mix_hash: Some(mix_hash), ..Default::default() };
+            let block = AnyRpcBlock::new(
+                Block::new(
+                    AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                    BlockTransactions::Full(Vec::new()),
+                )
+                .into(),
+            );
+            let mut evm_env = EvmEnv::new(
+                CfgEnv::<SpecId>::default(),
+                BlockEnv {
+                    difficulty: U256::ONE,
+                    prevrandao: Some(mix_hash),
+                    ..Default::default()
+                },
+            );
+
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+                &mut evm_env,
+                &block,
+                chain as u64,
+                NetworkConfigs::default(),
+            );
+
+            assert_eq!(
+                evm_env.block_env.prevrandao,
+                Some(B256::with_last_byte(1)),
+                "{chain:?} should expose `difficulty` as `PREVRANDAO`"
+            );
+        }
     }
 
     #[test]

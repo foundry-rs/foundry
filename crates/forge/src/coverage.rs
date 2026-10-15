@@ -3,10 +3,11 @@
 use crate::result::{TestKind, TestOutcome, TestResult, TestStatus};
 use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{
-    Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Attribute, Cell, Color, Row, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
-use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
+use foundry_evm::core::bytecode::InstIter;
 use semver::Version;
 use serde::{Serialize, ser::SerializeSeq};
 use std::{
@@ -43,9 +44,9 @@ impl Default for CoverageSummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_FULL.with_rounded_corners());
         }
 
         table.set_header(vec![
@@ -56,7 +57,7 @@ impl Default for CoverageSummaryReporter {
             Cell::new("% Funcs"),
         ]);
 
-        Self { table, total: CoverageSummary::default() }
+        Self { table, total: CoverageSummary::new() }
     }
 }
 
@@ -102,19 +103,6 @@ fn format_cell(hits: usize, total: usize) -> Cell {
         _ if percentage < 0.75 => Color::Yellow,
         _ => Color::Green,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_summary_cell_is_not_applicable() {
-        assert_eq!(
-            format_cell(0, 0),
-            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
-        );
-    }
 }
 
 /// Writes the coverage report in [LCOV]'s [tracefile format].
@@ -195,7 +183,7 @@ impl CoverageReporter for LcovReporter {
                     CoverageItemKind::Line | CoverageItemKind::Statement
                         if recorded_lines.insert(line) =>
                     {
-                        writeln!(out, "DA:{line},{hits}")?;
+                        writeln!(out, "DA:{line},{}", line_hits[&line])?;
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         // Per LCOV spec: "-" means the expression was never evaluated (line not
@@ -472,14 +460,15 @@ impl CoverageReporter for DebugReporter {
         }
 
         for (contract_id, (cta, rta)) in &report.anchors {
-            if cta.is_empty() && rta.is_empty() {
+            if cta.anchors.is_empty() && rta.anchors.is_empty() {
                 continue;
             }
 
             let anchors = cta
+                .anchors
                 .iter()
                 .map(|anchor| (false, anchor))
-                .chain(rta.iter().map(|anchor| (true, anchor)))
+                .chain(rta.anchors.iter().map(|anchor| (true, anchor)))
                 .filter_map(|(is_runtime, anchor)| {
                     let item = report
                         .analyses
@@ -538,22 +527,20 @@ impl CoverageReporter for BytecodeReporter {
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
         for (contract_id, hits) in &report.bytecode_hits {
-            let ops = disassemble_bytes(hits.bytecode().to_vec())?;
             let mut formatted = String::new();
 
             let source_elements =
                 report.source_maps.get(contract_id).map(|sm| &sm.1).unwrap_or(&no_source_elements);
 
-            for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
-                let hits = hits
-                    .get(code.offset)
-                    .map(|h| format!("[{h:03}]"))
-                    .unwrap_or("     ".to_owned());
+            let ops = InstIter::new(hits.bytecode()).with_pc();
+            for ((pc, inst), source_element) in std::iter::zip(ops, source_elements) {
+                let hits =
+                    hits.get(pc as u32).map(|h| format!("[{h:03}]")).unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
                 let source_path = source_id
                     .and_then(|i| report.get_source_path(&contract_id.build_id, i as usize));
 
-                let code = format!("{code:?}");
+                let code = format!("{pc:08x}: {inst}");
                 let start = source_element.offset() as usize;
                 let end = (source_element.offset() + source_element.length()) as usize;
 
@@ -619,5 +606,18 @@ impl LineNumberCache {
         };
         let pos = offset - line_offsets.get(lo).unwrap() + 1;
         Ok((lo, pos))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_summary_cell_is_not_applicable() {
+        assert_eq!(
+            format_cell(0, 0),
+            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
+        );
     }
 }

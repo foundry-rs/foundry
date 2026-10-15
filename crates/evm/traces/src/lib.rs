@@ -15,8 +15,11 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
 };
+use foundry_config::{Chain, Config};
+use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+use foundry_evm_networks::NetworkConfigs;
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
+use revm_inspectors::tracing::OpcodeFilter;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -28,12 +31,67 @@ use std::{
 use alloy_primitives::{Address, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
+/// Network context used to identify and decode execution traces.
+#[derive(Clone, Copy, Debug)]
+pub struct TraceContext {
+    chain: Chain,
+    networks: NetworkConfigs,
+    hardfork: Option<FoundryHardfork>,
+}
+
+impl TraceContext {
+    pub const fn new(
+        chain: Chain,
+        networks: NetworkConfigs,
+        hardfork: Option<FoundryHardfork>,
+    ) -> Self {
+        Self { chain, networks, hardfork }
+    }
+
+    pub const fn chain(self) -> Chain {
+        self.chain
+    }
+
+    pub const fn networks(self) -> NetworkConfigs {
+        self.networks
+    }
+
+    pub const fn hardfork(self) -> Option<FoundryHardfork> {
+        self.hardfork
+    }
+
+    pub const fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+        self.hardfork = hardfork;
+        self
+    }
+
+    /// Completes metadata for a remotely executed trace before decoding.
+    /// Locally executed traces must use [`Self::hardfork`] directly, including `None`, so a
+    /// configured hardfork cannot replace an explicit execution-spec override.
+    pub fn decoding_hardfork(self, config: &Config) -> Option<FoundryHardfork> {
+        let execution_network = self.networks.execution_network();
+        let mut hardfork = self
+            .hardfork
+            .or(config.hardfork)
+            .filter(|hardfork| hardfork.namespace() == execution_network.hardfork_namespace());
+        if hardfork.is_none() && execution_network.is_tempo() {
+            hardfork = Some(config.evm_spec_id::<TempoHardfork>().into());
+        }
+        #[cfg(feature = "monad")]
+        if hardfork.is_none() && execution_network.is_monad() {
+            hardfork = Some(config.evm_spec_id::<foundry_evm_hardforks::MonadHardfork>().into());
+        }
+        hardfork
+    }
+}
+
 pub use revm_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
-        CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
-        DecodedCallTrace, TraceMemberOrder,
+        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, DecodedCallData,
+        DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep, RecordedMemory,
+        StorageChange, StorageChangeReason, TraceMemberOrder,
     },
 };
 
@@ -44,7 +102,7 @@ pub mod identifier;
 use identifier::LocalTraceIdentifier;
 
 mod decoder;
-pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder, DecodedEvent};
 
 pub mod debug;
 pub use debug::DebugTraceIdentifier;
@@ -53,6 +111,8 @@ pub mod folded_stack_trace;
 
 pub mod backtrace;
 pub mod speedscope;
+
+pub mod erc8021;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
@@ -428,8 +488,8 @@ fn format_channel_state(value: U256) -> String {
 }
 
 fn decode_channel_state(value: U256) -> (U256, U256, u32) {
-    let mask96 = (U256::from(1) << 96) - U256::from(1);
-    let mask32 = (U256::from(1) << 32) - U256::from(1);
+    let mask96 = (U256::ONE << 96) - U256::ONE;
+    let mask32 = (U256::ONE << 32) - U256::ONE;
     let settled: U256 = value & mask96;
     let deposit: U256 = (value >> 96usize) & mask96;
     let close_requested_at_word: U256 = (value >> 192usize) & mask32;
@@ -544,6 +604,7 @@ pub struct TraceRequirements {
     returndata_snapshots: bool,
     immediate_bytes: bool,
     state_diff: bool,
+    bytecode: bool,
 }
 
 impl TraceRequirements {
@@ -556,6 +617,7 @@ impl TraceRequirements {
             returndata_snapshots: false,
             immediate_bytes: false,
             state_diff: false,
+            bytecode: false,
         }
     }
 
@@ -572,6 +634,7 @@ impl TraceRequirements {
         self.returndata_snapshots |= other.returndata_snapshots;
         self.immediate_bytes |= other.immediate_bytes;
         self.state_diff |= other.state_diff;
+        self.bytecode |= other.bytecode;
         self
     }
 
@@ -599,6 +662,7 @@ impl TraceRequirements {
             self.returndata_snapshots = true;
             self.immediate_bytes = true;
             self.state_diff = true;
+            self.bytecode = true;
         }
         self
     }
@@ -646,6 +710,9 @@ impl TraceRequirements {
         let steps = if self.state_diff { StepRecording::All } else { self.steps };
         TracingInspectorConfig {
             record_steps: steps != StepRecording::None,
+            record_inputs: true,
+            record_bytecode: self.bytecode,
+            step_limit: None,
             record_memory_snapshots: self.memory_snapshots,
             record_stack_snapshots: if self.stack_snapshots {
                 StackSnapshotType::Full
@@ -663,6 +730,7 @@ impl TraceRequirements {
             },
             exclude_precompile_calls: false,
             record_immediate_bytes: self.immediate_bytes,
+            record_step_deltas: false,
         }
         .into()
     }
@@ -673,7 +741,19 @@ mod tests {
     use super::*;
     use alloy_primitives::Bytes;
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
+
+    #[test]
+    fn trace_context_uses_the_execution_network_hardfork_namespace() {
+        let config = Config {
+            hardfork: Some(FoundryHardfork::Ethereum(
+                foundry_evm_hardforks::EthereumHardfork::Cancun,
+            )),
+            ..Default::default()
+        };
+        let context = TraceContext::new(Chain::tempo_mainnet(), NetworkConfigs::with_tempo(), None);
+
+        assert!(matches!(context.decoding_hardfork(&config), Some(FoundryHardfork::Tempo(_))));
+    }
 
     #[test]
     fn trace_depth_projection_removes_and_reindexes_nodes() {
@@ -754,10 +834,13 @@ mod tests {
                 gas_refund_counter: 0,
                 gas_used: 0,
                 gas_cost: 0,
+                state_gas_cost: None,
+                state_gas_reservoir: None,
+                state_gas_spent: 0,
                 storage_change: Some(Box::new(StorageChange {
-                    key: U256::from(1),
+                    key: U256::ONE,
                     value: U256::from(2),
-                    had_value: Some(U256::from(1)),
+                    had_value: Some(U256::ONE),
                     reason: StorageChangeReason::SSTORE,
                 })),
                 status: Some(InstructionResult::Stop),

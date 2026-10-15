@@ -111,10 +111,10 @@ fn classify_verifier_credential_response(
     }
 }
 
-fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
-    let url = Url::parse(url).wrap_err_with(|| format!("invalid {label} URL `{url}`"))?;
+pub(crate) fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
+    let url = Url::parse(url).wrap_err_with(|| format!("invalid {label} URL"))?;
     if !matches!(url.scheme(), "http" | "https") {
-        eyre::bail!("invalid {label} URL `{url}`: URL scheme must be http or https");
+        eyre::bail!("invalid {label} URL: URL scheme must be http or https");
     }
     Ok(url)
 }
@@ -414,9 +414,9 @@ pub struct VerifyArgs {
     #[arg(long, help_heading = "Compiler options")]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, or a path to a local solc, to build with.
+    /// Specify the solc version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
     #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
     pub use_solc: Option<String>,
 
@@ -563,8 +563,8 @@ enum RunContext {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        let config = self.load_config()?;
         let context = self.resolve_context().await?;
+        let config = context.config.clone();
         self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
     }
 
@@ -808,7 +808,7 @@ impl VerifyArgs {
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
-        let mut config = self.load_config()?;
+        let mut config = self.load_config_with_dependencies()?;
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;
@@ -934,7 +934,9 @@ impl VerifyArgs {
                 output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
             );
 
-            let Some((artifact_id, _)) = contracts.find_by_deployed_code_exact(&code) else {
+            let Some((artifact_id, _)) =
+                contracts.find_by_deployed_code_exact_unambiguous(&code)?
+            else {
                 eyre::bail!(format!(
                     "Bytecode at {} does not match any local contracts",
                     self.address
@@ -993,7 +995,9 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
+        self.etherscan.key =
+            self.verifier.resolve_api_key(self.etherscan.key.as_deref()).map(str::to_owned);
         sh_status!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default())?;
         self.verifier
             .effective_type()
@@ -1243,10 +1247,7 @@ mod tests {
         assert!(parse_http_verifier_url("http://example.com/api", "verifier").is_ok());
 
         let err = parse_http_verifier_url("gopher://example.com/api", "verifier").unwrap_err();
-        assert!(
-            err.to_string().contains("URL scheme must be http or https"),
-            "unexpected error: {err:?}"
-        );
+        assert_eq!(err.to_string(), "invalid verifier URL: URL scheme must be http or https");
     }
 
     #[test]

@@ -3,10 +3,6 @@
 **Severity**: `Med`
 **ID**: `locked-ether`
 
-Flags contracts that can receive Ether (via `payable` functions, `receive()`, or a payable
-`fallback()`) but expose no code path that can send Ether out. Any Ether sent to such a contract is
-permanently trapped.
-
 ## What it does
 
 For each concrete or abstract contract that has a payable entry point (`receive()`, payable
@@ -19,7 +15,8 @@ the lint looks for an expression that can move Ether out:
 - `addr.delegatecall(...)` / `addr.callcode(...)`.
 - `selfdestruct(addr)`.
 
-If none is found, the contract is reported as locked at the contract's name.
+If no such expression is found, the contract is reported. Finding one does not prove that
+a withdrawal is reachable or authorized correctly.
 
 ## Why is this bad?
 
@@ -30,8 +27,6 @@ because each individual function looks correct.
 
 ## Example
 
-### Bad
-
 ```solidity
 contract Vault {
     // Accepts ETH...
@@ -41,7 +36,7 @@ contract Vault {
 }
 ```
 
-### Good
+Use instead:
 
 ```solidity
 contract Vault {

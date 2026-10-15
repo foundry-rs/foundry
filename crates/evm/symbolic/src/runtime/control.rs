@@ -1,13 +1,6 @@
 use super::*;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum ShiftKind {
-    Shl,
-    Shr,
-    Sar,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub(crate) enum CallKind {
     Call,
     CallCode,
@@ -27,6 +20,7 @@ pub(crate) enum StepOutcome {
     Forked,
     Halt,
     Revert,
+    ExceptionalHalt,
     Failure,
     AssumeRejected,
 }

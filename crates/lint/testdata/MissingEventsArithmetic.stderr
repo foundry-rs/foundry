@@ -38,6 +38,14 @@ LL │         buyPrice = newBuyPrice;
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
 
+warning[missing-events-arithmetic]: `buyPrice` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         buyPrice = newBuyPrice;
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
 warning[missing-events-arithmetic]: `conditionallyEmittedValue` is changed without an event but is used in arithmetic
    ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
    │
@@ -131,6 +139,62 @@ warning[missing-events-arithmetic]: `rate` is changed without an event but is us
    │
 LL │         rate = newRate;
    │         ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `baseRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         baseRate += delta;
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `abstractFee` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         abstractFee = newFee;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `returnHookFee` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         returnHookFee = newFee;
+   │         ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `superFee` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         superFee = newFee;
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `baseFee` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         baseFee = newFee;
+   │         ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `concreteFee` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         concreteFee = newFee;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `fee` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         fee = next;
+   │         ━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
 
