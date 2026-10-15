@@ -126,4 +126,6 @@ allow-git = [
     # Temporary: OP crates until upstream optimism bumps to revm 40.
     "https://github.com/foundry-rs/optimism",
     "https://github.com/foundry-rs/op-revm",
+    # EVM2 migration.
+    "https://github.com/mablr/evm2",
 ]

@@ -888,6 +888,34 @@ impl CoverageSummary {
     }
 }
 
+/// Which coverage bitmap(s) to dump.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum ShowmapDomain {
+    #[default]
+    Evm,
+    Sancov,
+    Both,
+}
+
+impl ShowmapDomain {
+    pub const fn includes_evm(self) -> bool {
+        matches!(self, Self::Evm | Self::Both)
+    }
+    pub const fn includes_sancov(self) -> bool {
+        matches!(self, Self::Sancov | Self::Both)
+    }
+}
+
+impl fmt::Display for ShowmapDomain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Evm => f.write_str("evm"),
+            Self::Sancov => f.write_str("sancov"),
+            Self::Both => f.write_str("both"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -929,33 +957,5 @@ mod tests {
         assert_eq!(anchors.hits(&hit_map).count(), 0);
         hit_map.hits(20, 3);
         assert_eq!(anchors.hits(&hit_map).next().unwrap().1.get(), 3);
-    }
-}
-
-/// Which coverage bitmap(s) to dump.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum ShowmapDomain {
-    #[default]
-    Evm,
-    Sancov,
-    Both,
-}
-
-impl ShowmapDomain {
-    pub const fn includes_evm(self) -> bool {
-        matches!(self, Self::Evm | Self::Both)
-    }
-    pub const fn includes_sancov(self) -> bool {
-        matches!(self, Self::Sancov | Self::Both)
-    }
-}
-
-impl fmt::Display for ShowmapDomain {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Evm => f.write_str("evm"),
-            Self::Sancov => f.write_str("sancov"),
-            Self::Both => f.write_str("both"),
-        }
     }
 }
