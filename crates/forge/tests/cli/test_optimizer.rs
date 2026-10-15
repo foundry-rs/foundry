@@ -1,6 +1,10 @@
 //! Tests for commands using the preprocessed cache.
 
-use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
+use alloy_primitives::keccak256;
+use foundry_common::fs::read_json_file;
+use foundry_compilers::artifacts::{
+    ConfigurableContractArtifact, EvmVersion, remappings::Remapping,
+};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 #[cfg(unix)]
@@ -4123,6 +4127,31 @@ Traces:
 }
 
 #[forgetest]
+fn preprocess_bytecode_is_stable_across_build_scopes(prj: _, cmd: _) {
+    prj.add_source("Target.sol", "contract Target { constructor(uint256 value) {} }");
+    prj.add_test("A.t.sol", "contract ATest { function test_other() public {} }");
+    prj.add_test(
+        "Z.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+contract Mock { function value() public pure returns (uint256) { return 42; } }
+contract ZTest { function test_deploy() public { new Target(42); } }
+"#,
+    );
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    cmd.args(["build", "test/Z.t.sol"]).assert_success();
+    let artifact_path = prj.artifacts().join("Z.t.sol/Mock.json");
+    let narrow = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+    let bytecode = narrow.deployed_bytecode.unwrap().bytecode.unwrap().object;
+
+    for args in [vec!["test"], vec!["test", "--force"], vec!["build", "test/Z.t.sol", "--force"]] {
+        cmd.forge_fuse().args(args).assert_success();
+        let artifact = read_json_file::<ConfigurableContractArtifact>(&artifact_path).unwrap();
+        assert_eq!(bytecode, artifact.deployed_bytecode.unwrap().bytecode.unwrap().object);
+    }
+}
+
+#[forgetest]
 fn preprocess_generated_interface_name_collision(prj: _, cmd: _) {
     let target = r#"
 contract Target {
@@ -4132,7 +4161,10 @@ contract Target {
     prj.add_source("Target.sol", target);
     prj.add_source(
         "ImportedNames.sol",
-        "interface VmContractHelper2 {} interface VmContractHelper2_ {}",
+        &"interface VmContractHelper2 {} interface VmContractHelper2_ {}".replace(
+            "VmContractHelper2",
+            &format!("VmContractHelper{:x}", keccak256("test/Collision.t.sol:CollisionTest")),
+        ),
     );
     prj.add_test(
         "Collision.t.sol",
@@ -4166,12 +4198,14 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn preprocess_generated_constructor_helper_name_collision(prj: _, cmd: _) {
+    let identifier = format!("{:x}", keccak256("src/Target.sol:Target"));
     let base = r#"
 contract Base {
     struct FoundryPpConstructorArgs { uint256 unused; }
     function encodeArgs0() public pure returns (uint256) { return 0; }
 }
-"#;
+"#
+    .replace("encodeArgs0", &format!("encodeArgs{identifier}"));
     let target = r#"
 import {Base} from "./Base.sol";
 contract Target is Base {
@@ -4182,12 +4216,14 @@ contract Target is Base {
 }
 contract DeployHelper0 {}
 function encodeArgs0() pure returns (uint256) { return 0; }
-"#;
-    prj.add_source("Base.sol", base);
-    prj.add_source("Target.sol", target);
+"#
+    .replace("DeployHelper0", &format!("DeployHelper{identifier}"))
+    .replace("encodeArgs0", &format!("encodeArgs{identifier}"));
+    prj.add_source("Base.sol", &base);
+    prj.add_source("Target.sol", &target);
     prj.add_test(
         "Collision.t.sol",
-        r#"
+        &r#"
 import {Target} from "../src/Target.sol";
 
 contract DeployHelper0_ {}
@@ -4198,13 +4234,15 @@ contract CollisionTest {
         require(new Target(0, 1).value() == 111, "changed value");
     }
 }
-"#,
+"#
+        .replace("DeployHelper0", &format!("DeployHelper{identifier}"))
+        .replace("encodeArgs0", &format!("encodeArgs{identifier}")),
     );
 
     for dynamic_test_linking in [false, true] {
         prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
-        prj.add_source("Base.sol", base);
-        prj.add_source("Target.sol", target);
+        prj.add_source("Base.sol", &base);
+        prj.add_source("Target.sol", &target);
         cmd.forge_fuse().args(["test", "--force"]).assert_success();
         cmd.forge_fuse().arg("test").assert_success();
         prj.add_source("Target.sol", &target.replace("+ 110", "+ 220"));
