@@ -1,8 +1,9 @@
 use super::{
-    data::{ContractData, PreprocessorData, deploy_helper_path},
+    data::{ContractData, PreprocessorData, deploy_helper_path, reserved_identifiers},
     span_to_range,
 };
 use crate::fs::{canonicalize_path, normalize_path};
+use alloy_primitives::keccak256;
 use foundry_compilers::{
     ProjectPathsConfig, Updates,
     artifacts::{SolcLanguage, remappings::Remapping},
@@ -237,7 +238,7 @@ impl PreprocessorDependencies {
                     source_units,
                     remappings,
                     has_constructor_args,
-                    dependency_id,
+                    dependency.name.as_str(),
                 ) {
                     true
                 } else {
@@ -599,7 +600,7 @@ fn can_rewrite(
     source_units: &[PathBuf],
     remappings: &[Remapping],
     has_constructor_args: bool,
-    contract_id: ContractId,
+    contract_name: &str,
 ) -> bool {
     let generated_path = path.strip_prefix(root_dir).unwrap_or(path);
     if !source_units.iter().any(|source_unit| source_unit == generated_path)
@@ -620,7 +621,8 @@ fn can_rewrite(
         return true;
     }
 
-    let helper_path = deploy_helper_path(contract_id.index(), source_units);
+    let identifier = keccak256(format!("{}:{contract_name}", generated_path.to_slash_lossy()));
+    let helper_path = deploy_helper_path(&format!("{identifier:x}"), source_units);
     !remappings.iter().any(|remapping| {
         // The test imports the generated helper, which in turn imports the dependency.
         remapping_applies(remapping, &helper_path, source_path, root_dir)
@@ -863,14 +865,9 @@ pub(crate) fn remove_bytecode_dependencies(
     gcx: Gcx<'_>,
     deps: &PreprocessorDependencies,
     data: &PreprocessorData,
+    root_dir: &Path,
 ) -> Updates {
     let mut updates = Updates::default();
-    let reserved_identifiers = gcx
-        .hir
-        .source_ids()
-        .map(|source_id| gcx.hir.source(source_id).file.src.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
     for (contract_id, deps) in &deps.preprocessed_contracts {
         let contract = gcx.hir.contract(*contract_id);
         let source = gcx.hir.source(contract.source);
@@ -878,13 +875,17 @@ pub(crate) fn remove_bytecode_dependencies(
             continue;
         };
 
+        let reserved_identifiers = reserved_identifiers(gcx, contract.source);
+        let identifier = keccak256(format!(
+            "{}:{}",
+            path.strip_prefix(root_dir).unwrap_or(path).to_slash_lossy(),
+            contract.name,
+        ));
         let updates = updates.entry(path.clone()).or_default();
         let mut used_helpers = BTreeSet::new();
 
-        let vm_interface_name = unique_identifier(
-            &reserved_identifiers,
-            format!("VmContractHelper{}", contract_id.index()),
-        );
+        let vm_interface_name =
+            unique_identifier(&reserved_identifiers, format!("VmContractHelper{identifier:x}"));
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
         for dep in deps {
@@ -975,6 +976,7 @@ pub(crate) fn remove_bytecode_dependencies(
                 let helper_path = constructor.helper_path.to_slash_lossy();
                 format!("import {{{helper_import}, {encoder_import}}} from \"{helper_path}\";",)
             })
+            .sorted()
             .join("\n");
         updates.insert((
             source.file.src.len(),
