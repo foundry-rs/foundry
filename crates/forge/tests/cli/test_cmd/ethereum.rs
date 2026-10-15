@@ -4504,3 +4504,48 @@ contract RejectedCallInvariantTest is Test {
 "#]]);
     }
 }
+
+#[forgetest]
+fn ethereum_native_compute_create_addresses(prj: _, cmd: _) {
+    prj.add_test(
+        "ComputeCreateAddresses.t.sol",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/default/cheats/ComputeCreateAddresses.t.sol"
+        )),
+    );
+
+    for network in [
+        "ethereum",
+        #[cfg(feature = "optimism")]
+        "optimism",
+    ] {
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--network",
+                network,
+                "--match-contract",
+                "^ComputeCreateAddressesTest$",
+            ])
+            .assert_success()
+            .stderr_eq("")
+            .stdout_eq(str![[r#"
+...
+Ran 9 tests for test/ComputeCreateAddresses.t.sol:ComputeCreateAddressesTest
+[PASS] testCreate2CustomDeployerNonzeroSalt() ([GAS])
+[PASS] testCreate2CustomDeployerZeroSalt() ([GAS])
+[PASS] testCreate2DefaultDeployerNonzeroFields() ([GAS])
+[PASS] testCreate2DefaultDeployerZeroFields() ([GAS])
+[PASS] testCreateNonceMax() ([GAS])
+[PASS] testCreateNonceNormal() ([GAS])
+[PASS] testCreateNonceOverflow() ([GAS])
+[PASS] testCreateNonceUint256Max() ([GAS])
+[PASS] testCreateNonceZero() ([GAS])
+Suite result: ok. 9 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 9 tests passed, 0 failed, 0 skipped (9 total tests)
+
+"#]]);
+    }
+}

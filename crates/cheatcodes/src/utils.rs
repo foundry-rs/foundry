@@ -3,22 +3,23 @@
 use crate::{Cheatcode, Result, Vm::*};
 use alloy_dyn_abi::TypedData;
 use alloy_ens::namehash;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, U256};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_sol_types::SolValue;
+use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 
 #[cfg(feature = "revm")]
 use crate::{CheatcodesCore, CheatcodesExecutor, CheatsCtxt};
 #[cfg(feature = "revm")]
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
 #[cfg(feature = "revm")]
-use alloy_primitives::{B64, I256, U256, aliases::B32, keccak256, map::HashMap};
+use alloy_primitives::{B64, I256, aliases::B32, keccak256, map::HashMap};
 #[cfg(feature = "revm")]
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
 #[cfg(feature = "revm")]
 use foundry_config::fs_permissions::FsAccessKind;
 #[cfg(feature = "revm")]
-use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, evm::FoundryEvmNetwork};
+use foundry_evm_core::evm::FoundryEvmNetwork;
 #[cfg(feature = "revm")]
 use foundry_evm_fuzz::strategies::BoundMutator;
 #[cfg(feature = "revm")]
@@ -65,7 +66,6 @@ impl Cheatcode for getLabelCall {
     }
 }
 
-#[cfg(feature = "revm")]
 impl Cheatcode for computeCreateAddressCall {
     fn apply_context_free(&self) -> Result {
         let Self { nonce, deployer } = self;
@@ -74,7 +74,6 @@ impl Cheatcode for computeCreateAddressCall {
     }
 }
 
-#[cfg(feature = "revm")]
 impl Cheatcode for computeCreate2Address_0Call {
     fn apply_context_free(&self) -> Result {
         let Self { salt, initCodeHash, deployer } = self;
@@ -82,7 +81,6 @@ impl Cheatcode for computeCreate2Address_0Call {
     }
 }
 
-#[cfg(feature = "revm")]
 impl Cheatcode for computeCreate2Address_1Call {
     fn apply_context_free(&self) -> Result {
         let Self { salt, initCodeHash } = self;

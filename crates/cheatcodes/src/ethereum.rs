@@ -29,8 +29,8 @@ use foundry_common::fmt::ConsoleFmt;
 use foundry_evm_core::{
     abi::console,
     constants::{
-        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODEHASH,
-        GLOBAL_FAIL_SLOT, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME, MAGIC_SKIP,
+        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH, GLOBAL_FAIL_SLOT,
+        HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME, MAGIC_SKIP,
     },
     ethereum::FoundryEvmTypes,
     state_snapshot::StateSnapshots,
@@ -476,21 +476,6 @@ impl Cheatcodes {
             Vm::VmCalls::isPersistent(call) => {
                 return Ok(self.forks.persistent.contains(&call.account).abi_encode().into());
             }
-            Vm::VmCalls::computeCreateAddress(call) => {
-                if call.nonce > U256::from(u64::MAX) {
-                    return Err(Error::from("nonce must be less than 2^64").into());
-                }
-                return Ok(call.deployer.create(call.nonce.to()).abi_encode().into());
-            }
-            Vm::VmCalls::computeCreate2Address_0(call) => {
-                return Ok(call.deployer.create2(call.salt, call.initCodeHash).abi_encode().into());
-            }
-            Vm::VmCalls::computeCreate2Address_1(call) => {
-                return Ok(DEFAULT_CREATE2_DEPLOYER
-                    .create2(call.salt, call.initCodeHash)
-                    .abi_encode()
-                    .into());
-            }
             Vm::VmCalls::getCode(call) => {
                 return Ok(crate::fs::get_artifact_code(&self.config, &call.artifactPath, false)?
                     .abi_encode()
@@ -801,6 +786,9 @@ impl Cheatcodes {
                 }
                 return dispatch!(
                     context_free: [
+                        computeCreate2Address_0,
+                        computeCreate2Address_1,
+                        computeCreateAddress,
                         contains,
                         createEd25519Key,
                         deriveKey_0,
