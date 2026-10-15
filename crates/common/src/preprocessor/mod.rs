@@ -40,7 +40,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        9
     }
 
     fn preprocess(
@@ -141,6 +141,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             // Collect data of source contracts referenced in tests and scripts.
             let data = collect_preprocessor_data(
                 gcx,
+                constructor_context,
                 &deps.referenced_contracts,
                 &paths.root,
                 source_units,
@@ -186,7 +187,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        <Self as Preprocessor<SolcCompiler>>::cache_version(self)
     }
 
     fn preprocess(
@@ -773,5 +774,61 @@ mod tests {
             Some("error: boom".to_string())
         );
         assert_eq!(solar_error_summary("solar reported 1 error"), None);
+    }
+
+    #[test]
+    fn deploy_helper_preserves_target_abi_coder() {
+        for (minor, patch, pragma, needs_v2) in [
+            (7, 6, "", false),
+            (7, 6, "pragma abicoder v2;", true),
+            (7, 6, "pragma experimental ABIEncoderV2;", true),
+            (8, 0, "", false),
+            (8, 37, "", false),
+            (8, 37, "pragma abicoder v2;", false),
+            (8, 37, "pragma experimental ABIEncoderV2;", false),
+            (8, 37, "pragma abicoder v1;", false),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.version = Version::new(0, minor, patch);
+            input.input.sources = [
+                ("src/Dep.sol", format!("{pragma} contract Dep {{ constructor(uint256 n) {{}} }}")),
+                ("test/Deploy.sol", "pragma experimental ABIEncoderV2; import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep(7); } }".to_string()),
+            ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let helpers = input
+                .input
+                .sources
+                .iter()
+                .filter(|(path, _)| is_deploy_helper_path(path))
+                .collect::<Vec<_>>();
+            assert_eq!(helpers.len(), 1);
+            assert_eq!(
+                helpers[0].1.content.matches("pragma experimental ABIEncoderV2;").count(),
+                usize::from(needs_v2),
+                "0.{minor}.{patch} {pragma}"
+            );
+            let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+            assert_eq!(source.matches("new Dep(7)").count(), 0);
+            assert_eq!(source.matches(".deployCode({").count(), 1);
+        }
+    }
+
+    #[test]
+    fn preprocessor_cache_versions_match() {
+        assert_eq!(
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::cache_version(
+                &DynamicTestLinkingPreprocessor
+            ),
+            <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::cache_version(
+                &DynamicTestLinkingPreprocessor
+            )
+        );
     }
 }

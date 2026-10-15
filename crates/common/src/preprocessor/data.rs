@@ -1,4 +1,4 @@
-use super::span_to_range;
+use super::{deps::ConstructorContext, span_to_range};
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
 use solar::sema::{
@@ -35,6 +35,8 @@ pub struct ContractConstructorData {
 /// Keeps data about a single contract definition.
 #[derive(Debug)]
 pub(crate) struct ContractData {
+    /// Whether the helper needs an explicit ABI coder v2 pragma.
+    needs_abi_coder_v2: bool,
     /// Path of the source file.
     path: PathBuf,
     /// Name of the contract
@@ -51,10 +53,11 @@ impl ContractData {
         contract_id: ContractId,
         contract: &Contract<'_>,
         path: &Path,
-        source: &solar::sema::hir::Source<'_>,
+        constructor_context: ConstructorContext,
         reserved_identifiers: &str,
         source_units: &[PathBuf],
     ) -> Self {
+        let source = gcx.hir.source(contract.source);
         let artifact =
             solidity_string_content(&format!("{}:{}", path.to_slash_lossy(), contract.name));
 
@@ -106,6 +109,8 @@ impl ContractData {
             });
 
         Self {
+            needs_abi_coder_v2: !constructor_context.abi_coder_v2
+                && constructor_context.for_source(gcx, contract.source).abi_coder_v2,
             path: path.to_path_buf(),
             name: contract.name.to_string(),
             constructor_data,
@@ -157,7 +162,7 @@ impl ContractData {
     /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs({name: name, symbol: symbol})))
     /// ```
     pub fn build_helper(&self) -> Option<String> {
-        let Self { path, name, constructor_data, artifact: _ } = self;
+        let Self { path, name, constructor_data, needs_abi_coder_v2, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };
         let struct_fields = &constructor_details.struct_fields;
@@ -167,10 +172,14 @@ impl ContractData {
         let encode_function = &constructor_details.encode_function;
 
         let path = solidity_string_content(path.to_slash_lossy().as_ref());
+        // ABI coder selection is local to each source unit, including derived helpers.
+        // Do not emit the deprecated pragma when the compiler already defaults to v2.
+        let abi_pragma = if *needs_abi_coder_v2 { "pragma experimental ABIEncoderV2;" } else { "" };
         let helper = format!(
             r#"
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.4.0;
+{abi_pragma}
 
 import "{path}";
 
@@ -214,6 +223,7 @@ fn solidity_string_content(value: &str) -> String {
 /// Collects preprocessor data from referenced contracts.
 pub(crate) fn collect_preprocessor_data(
     gcx: Gcx<'_>,
+    constructor_context: ConstructorContext,
     referenced_contracts: &HashSet<ContractId>,
     root_dir: &Path,
     source_units: &[PathBuf],
@@ -240,7 +250,7 @@ pub(crate) fn collect_preprocessor_data(
             *contract_id,
             contract,
             path,
-            source,
+            constructor_context,
             &reserved_identifiers,
             source_units,
         );

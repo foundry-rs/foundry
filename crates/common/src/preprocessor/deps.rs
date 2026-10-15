@@ -38,7 +38,7 @@ pub(super) struct ConstructorContext {
 }
 
 impl ConstructorContext {
-    fn for_source(mut self, gcx: Gcx<'_>, source: SourceId) -> Self {
+    pub(super) fn for_source(mut self, gcx: Gcx<'_>, source: SourceId) -> Self {
         let ast = gcx
             .sources
             .get_file(&gcx.hir.source(source).file)
