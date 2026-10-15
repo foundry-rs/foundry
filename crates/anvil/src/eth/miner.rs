@@ -183,7 +183,7 @@ impl<T> Miner<T> {
     }
 
     /// Returns `true` if automatic block production is paused.
-    pub fn is_paused(&self) -> bool {
+    pub(crate) fn is_paused(&self) -> bool {
         self.paused.load(Ordering::SeqCst)
     }
 }
@@ -313,7 +313,7 @@ impl MiningMode {
     /// any transactions.
     fn poll_paused(&mut self, cx: &mut Context<'_>) {
         if let Self::Auto(miner) | Self::Mixed(miner, _) = self {
-            miner.poll_paused(cx);
+            miner.poll_notifications(cx);
         }
         if let Self::FixedBlockTime(miner) | Self::Mixed(_, miner) = self {
             miner.poll_paused(cx);
@@ -390,19 +390,11 @@ impl ReadyTransactionMiner {
         pool: &Arc<Pool<T>>,
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
-        // always drain the notification stream so that we're woken up as soon as there's a new tx
-        let mut saw_new_ready = false;
-        while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
-            saw_new_ready = true;
-        }
-
         // Arm the coalescing window only on fresh notifications to avoid delaying
         // consecutive chunks when draining a backlog larger than `max_transactions`.
-        if saw_new_ready {
-            self.has_pending_txs = Some(true);
-            if self.coalesce.is_none() && !self.coalesce_window.is_zero() {
-                self.coalesce = Some(Box::pin(tokio::time::sleep(self.coalesce_window)));
-            }
+        if self.poll_notifications(cx) && self.coalesce.is_none() && !self.coalesce_window.is_zero()
+        {
+            self.coalesce = Some(Box::pin(tokio::time::sleep(self.coalesce_window)));
         }
 
         if self.has_pending_txs == Some(false) {
@@ -430,11 +422,16 @@ impl ReadyTransactionMiner {
         Poll::Ready(transactions)
     }
 
-    /// Drains ready notifications while paused, so they are mined once mining resumes.
-    fn poll_paused(&mut self, cx: &mut Context<'_>) {
+    /// Drains ready notifications and reports whether any arrived.
+    fn poll_notifications(&mut self, cx: &mut Context<'_>) -> bool {
+        let mut saw_new_ready = false;
         while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
+            saw_new_ready = true;
+        }
+        if saw_new_ready {
             self.has_pending_txs = Some(true);
         }
+        saw_new_ready
     }
 }
 
