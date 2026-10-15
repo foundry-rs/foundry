@@ -147,10 +147,11 @@ the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retry
 consuming the retry budget while the selected RPC still returns the transaction. If that endpoint
 returns no transaction, the durable attempt remains the source of identity: signed bytes may be
 replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
-while unknown outcomes remain blocked until explicitly resolved. A broadcast that ends with a
-submitted operation still lacking a receipt exits successfully, since a lagging or load-balanced
-endpoint can briefly return no transaction, but it replaces the success message with a warning on
-stderr that lists those operations.
+while unknown outcomes remain blocked until explicitly resolved. Removing a hash from `pending`
+this way prints an immediate `--resume` warning, so the guidance survives a later batch failure.
+An ordinary broadcast that otherwise succeeds while a submitted operation still lacks a receipt
+exits successfully, since a lagging or load-balanced endpoint can briefly return no transaction,
+but it replaces the success message with a warning on stderr that lists those operations.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and can
 also remove the compatibility hash from `pending`. Neither that incomplete receipt nor one endpoint

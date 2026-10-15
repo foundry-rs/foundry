@@ -1295,6 +1295,7 @@ contract InvisibleSubmission is Script {
 
 "#]])
         .stderr_eq(str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 Warning: ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:
 chain 31337: 0x[..]
 Add `--resume` to your command to check them again and replay dropped signed transactions.
@@ -1326,6 +1327,55 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     assert_eq!(sequence["receipts"][0]["transactionHash"], hash);
     assert!(sequence["pending"].as_array().unwrap().is_empty());
     assert_eq!(submissions.lock().unwrap().len(), 1);
+}
+
+#[forgetest_init]
+async fn broadcast_reports_submission_without_receipt_before_later_failure(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "InvisibleSubmission.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InvisibleSubmissionTarget {}
+
+contract InvisibleSubmission is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InvisibleSubmissionTarget();
+        new InvisibleSubmissionTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = spawn_rpc_proxy_mapping_method(
+        handle.http_endpoint(),
+        "eth_getTransactionByHash",
+        |_, _| Value::Null,
+    )
+    .await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    // The second batch fails after the first hash lost visibility, so the guidance must already
+    // be on stderr.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InvisibleSubmission",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--slow",
+        "--json",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+Error: After 5 attempts, provider nonce (0) is still behind expected nonce (1).
+
+"#]]);
 }
 
 #[forgetest]
