@@ -57,6 +57,8 @@ explicitly or is documented as different; none falls back to REVM.
 | Base | base-evm2 registers no EIP-8130 handler; stateful Beryl/Cobalt precompiles are missing. | Executing an EIP-8130 transaction fails as an unsupported transaction type. | base-evm2 handlers. |
 | Tempo | Foundry's RPC types and Tempo's evm2 integration pin different Tempo revisions. | Envelopes cross over as their exact EIP-2718 encoding. | Single Tempo pin. |
 | Fork cache | `foundry-fork-db` stores REVM-typed accounts. | `ForkDb` converts at the read boundary. | evm2-typed fork cache in `foundry-core`. |
+| Fuzz | The evm2 accepted overlay holds only committed changes, while REVM's fork `CacheDB` also cached every account `setUp` read. | `EvmFuzzState::new` seeds the dictionary from accounts, code and storage `setUp` accepted; accounts it only read from a fork are not seeded. | Seed from the fork cache as well. |
+| Fuzz | evm2 reports account changes, not REVM's touched flag. | Contracts are discovered from accounts a call changed; an account it only called without changing is not rediscovered. | None needed. |
 
 ## Dependencies
 

@@ -1,15 +1,11 @@
 use crate::invariant::RandomCallGenerator;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-use foundry_common::mapping_slots::{
-    MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
-    record_hash as record_mapping_hash, step as mapping_step,
+use evm2::{
+    EvmTypes, EvmTypesHost, Inspector,
+    interpreter::{Interpreter, Message, MessageKind, MessageResult, op},
 };
+use foundry_common::mapping_slots::{MappingSlots, PendingMappingHash};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
-use revm::{
-    Inspector,
-    context::{ContextTr, JournalTr, Transaction},
-    interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
-};
 
 /// A sub-call observed by the [`Fuzzer`] inspector.
 ///
@@ -50,9 +46,9 @@ pub struct Fuzzer {
     extra_cheatcode_addresses: &'static [Address],
 }
 
-impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
+impl<T: EvmTypes> Inspector<T> for Fuzzer {
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
+    fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         self.capture_mapping_hash(interp);
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
@@ -61,24 +57,28 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     }
 
     #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         self.record_mapping_hash(interp);
     }
 
-    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        message: &mut Message<T>,
+    ) -> Option<MessageResult<T>> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() && ecx.tx().caller() != inputs.transfer_from() {
-            self.override_call(ecx, inputs);
+        if self.call_generator.is_some() && interp.tx_env().origin != message.caller {
+            self.override_call(interp, message);
         }
 
         self.call_depth = self.call_depth.saturating_add(1);
-        if self.should_record_observed_call(inputs.scheme) {
+        if self.should_record_observed_call(message.kind) {
             self.observed_calls.push(ObservedCall {
                 depth: self.call_depth - 1,
-                caller: inputs.transfer_from(),
-                target: inputs.transfer_to(),
-                calldata: inputs.input.bytes(ecx),
-                value: inputs.transfer_value().filter(|value| !value.is_zero()),
+                caller: message.caller,
+                target: message.destination,
+                calldata: message.input.clone(),
+                value: (!message.value.is_zero()).then_some(message.value),
             });
         }
 
@@ -89,7 +89,12 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         None
     }
 
-    fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, _outcome: &mut CallOutcome) {
+    fn call_end(
+        &mut self,
+        _interp: &mut Interpreter<'_, '_, T>,
+        _message: &Message<T>,
+        _result: &mut MessageResult<T>,
+    ) {
         if let Some(ref mut call_generator) = self.call_generator {
             // Decrement depth when any call ends while inside an override
             if call_generator.override_depth > 0 {
@@ -106,19 +111,42 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
 }
 
 impl Fuzzer {
-    fn capture_mapping_hash(&mut self, interpreter: &Interpreter) {
-        if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping_step(mapping_slots, interpreter);
-            self.pending_mapping_hash = capture_mapping_hash(interpreter);
+    /// Records mapping slots written by `SSTORE` and captures a 64-byte `KECCAK256` operation
+    /// before it executes.
+    fn capture_mapping_hash<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
+        let Some(mapping_slots) = &mut self.mapping_slots else { return };
+        let address = interp.message().destination;
+        let stack = interp.stack();
+        let op = interp.opcode();
+        if op == op::SSTORE
+            && let Some(slots) = mapping_slots.get_mut(&address)
+            && let Some(slot) = stack.peek(0)
+        {
+            slots.insert(slot.into());
         }
+        self.pending_mapping_hash = if op == op::KECCAK256
+            && stack.peek(1) == Some(U256::from(0x40))
+            && let Some(offset) = stack.peek(0).and_then(|offset| offset.try_into().ok())
+        {
+            Some(PendingMappingHash { address, offset })
+        } else {
+            None
+        };
     }
 
-    fn record_mapping_hash(&mut self, interpreter: &Interpreter) {
+    /// Records a successfully executed 64-byte `KECCAK256` operation after memory expansion.
+    fn record_mapping_hash<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         if let Some(pending) = self.pending_mapping_hash.take()
-            && interpreter.bytecode.action.is_none()
+            && interp.result().is_ok()
             && let Some(mapping_slots) = &mut self.mapping_slots
+            && let Some(result) = interp.stack().peek(0)
         {
-            record_mapping_hash(mapping_slots, interpreter, pending);
+            let data = interp.memory().slice(pending.offset, 0x40);
+            mapping_slots.entry(pending.address).or_default().record_hash(
+                result.into(),
+                B256::from_slice(&data[..0x20]),
+                B256::from_slice(&data[0x20..]),
+            );
         }
     }
 
@@ -170,9 +198,9 @@ impl Fuzzer {
         target: Address,
         calldata: Bytes,
         value: Option<U256>,
-        scheme: CallScheme,
+        kind: MessageKind,
     ) {
-        if self.should_record_observed_call(scheme) {
+        if self.should_record_observed_call(kind) {
             self.observed_calls.push(ObservedCall {
                 depth: self.call_depth - 1,
                 caller,
@@ -184,8 +212,8 @@ impl Fuzzer {
     }
 
     #[inline]
-    const fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
-        self.record_calls && self.call_depth > 1 && scheme.is_call()
+    const fn should_record_observed_call(&self, kind: MessageKind) -> bool {
+        self.record_calls && self.call_depth > 1 && matches!(kind, MessageKind::Call)
     }
 
     #[inline]
@@ -195,10 +223,10 @@ impl Fuzzer {
 
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
-    fn collect_data(&mut self, interpreter: &Interpreter) {
+    fn collect_data<T: EvmTypesHost>(&mut self, interp: &Interpreter<'_, '_, T>) {
         let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
         self.collected_values
-            .extend(interpreter.stack.data().iter().take(remaining).copied().map(B256::from));
+            .extend(interp.stack().iter().take(remaining).copied().map(B256::from));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {
@@ -224,8 +252,12 @@ impl Fuzzer {
     /// - Replaces the call entirely with a reentrant callback
     ///
     /// This simulates malicious contracts that immediately reenter when called.
-    fn override_call<CTX: ContextTr>(&mut self, ecx: &mut CTX, call: &mut CallInputs) {
-        let target_is_cheatcode = self.is_cheatcode_address(call.transfer_to());
+    fn override_call<T: EvmTypes>(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, T>,
+        call: &mut Message<T>,
+    ) {
+        let target_is_cheatcode = self.is_cheatcode_address(call.destination);
         let Some(ref mut call_generator) = self.call_generator else {
             return;
         };
@@ -240,8 +272,8 @@ impl Fuzzer {
         // We override calls when either the caller OR target is a handler. This covers:
         // 1. EtherStore pattern: handler sends ETH out, attacker reenters handler
         // 2. Rari pattern: external protocol sends ETH to handler, handler reenters protocol
-        if call.transfer_from() == call_generator.test_address
-            || !call.scheme.is_call()
+        if call.caller == call_generator.test_address
+            || !matches!(call.kind, MessageKind::Call)
             || call_generator.override_depth > 0
             || target_is_cheatcode
         {
@@ -249,43 +281,38 @@ impl Fuzzer {
         }
         {
             let handlers = call_generator.handler_addresses.read();
-            if !handlers.contains(&call.transfer_from()) && !handlers.contains(&call.transfer_to())
-            {
+            if !handlers.contains(&call.caller) && !handlers.contains(&call.destination) {
                 return;
             }
         }
 
         // There's only a ~27% chance that an override happens (90% * 30% from strategy).
-        let Some(tx) = call_generator.next(call.transfer_from(), call.transfer_to()) else {
+        let Some(tx) = call_generator.next(call.caller, call.destination) else {
             return;
         };
 
         // For value transfers, perform the ETH transfer before injecting the callback.
         // This simulates a malicious receive() that gets the ETH and then reenters.
-        let value = call.transfer_value().unwrap_or_default();
-        let has_value = !value.is_zero() && call.gas_limit > 2300;
-        if has_value
-            && ecx.journal_mut().transfer(call.transfer_from(), call.transfer_to(), value).is_err()
-        {
+        let state = interp.host().state_mut();
+        let has_value = !call.value.is_zero() && call.gas_limit > 2300;
+        if has_value && state.transfer(&call.caller, &call.destination, &call.value).is_err() {
             return;
         }
 
-        // Replace the call with a reentrant callback
-        call.input = CallInput::Bytes(tx.call_details.calldata);
-        call.caller = tx.sender;
-        call.target_address = tx.call_details.target;
-        call.bytecode_address = tx.call_details.target;
-        let target = ecx
-            .journal_mut()
-            .load_account_with_code(tx.call_details.target)
+        // Replace the call with a reentrant callback. The message carries the code it runs, so
+        // load the new target's code instead of running the original target's.
+        let target = tx.call_details.target;
+        call.code = state
+            .account(&target)
+            .and_then(|mut account| account.load_code())
             .expect("failed to load account");
-        // Clear known_bytecode to force REVM to load bytecode from the new target.
-        // Without this, REVM uses cached bytecode from the original target (e.g., empty
-        // bytecode for EOA), causing the call to short-circuit before executing any code.
-        call.known_bytecode =
-            (target.info.code_hash(), target.info.code.clone().unwrap_or_default());
+        call.input = tx.call_details.calldata;
+        call.caller = tx.sender;
+        call.destination = target;
+        call.call_target = target;
+        call.code_address = target;
         // Clear value since ETH was already transferred above
-        call.value = CallValue::Transfer(alloy_primitives::U256::ZERO);
+        call.value = U256::ZERO;
 
         // Track that we're inside an overridden call to avoid recursive overrides
         call_generator.override_depth = 1;
@@ -295,9 +322,162 @@ impl Fuzzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::keccak256;
-    use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
-    use revm::bytecode::Bytecode;
+    use crate::{BasicTxDetails, CallDetails};
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::{keccak256, map::AddressSet};
+    use evm2::{
+        Evm,
+        bytecode::Bytecode,
+        evm::{AccountInfo, InMemoryDB},
+    };
+    use foundry_evm_core::{
+        constants::MONAD_CHEATCODE_ADDRESS,
+        evm2::{
+            EvmEnv, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
+            TransactionRequestFor, TypesFor,
+        },
+    };
+    use parking_lot::RwLock;
+    use proptest::{strategy::Just, test_runner::TestRunner};
+    use std::sync::Arc;
+
+    const CALLER: Address = Address::with_last_byte(0xCA);
+    const HANDLER: Address = Address::with_last_byte(0xA1);
+    const VICTIM: Address = Address::with_last_byte(0xA2);
+    const REENTRANT: Address = Address::with_last_byte(0xA3);
+
+    /// `call(gas(), VICTIM, 0, 0, 0, 0, 0); stop`.
+    fn handler_code() -> Vec<u8> {
+        let mut code = [0x60, 0x00].repeat(5);
+        code.push(0x73);
+        code.extend_from_slice(VICTIM.as_slice());
+        code.extend([0x5a, 0xf1, 0x00]);
+        code
+    }
+
+    /// `mstore(0, 7); mstore(32, 1); sstore(keccak256(0, 64), 2); stop`.
+    const VICTIM_CODE: &[u8] = &[
+        0x60, 0x07, 0x60, 0x00, 0x52, 0x60, 0x01, 0x60, 0x20, 0x52, 0x60, 0x40, 0x60, 0x00, 0x20,
+        0x60, 0x02, 0x90, 0x55, 0x00,
+    ];
+
+    /// `sstore(0, 1); stop`.
+    const REENTRANT_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x55, 0x00];
+
+    /// Calls `HANDLER` from `CALLER` with `fuzzer` on `FEN`'s default spec.
+    fn run<FEN: FoundryEvmNetwork>(fuzzer: Fuzzer) -> (Evm<'static, TypesFor<FEN>>, Fuzzer)
+    where
+        TransactionRequestFor<FEN>: Default,
+    {
+        let chain_id = 31337;
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(&CALLER, AccountInfo::default().with_balance(U256::from(1e18)));
+        for (address, code) in
+            [(HANDLER, &handler_code()[..]), (VICTIM, VICTIM_CODE), (REENTRANT, REENTRANT_CODE)]
+        {
+            let code = Bytecode::new_legacy(Bytes::copy_from_slice(code));
+            db.insert_account_info(&address, AccountInfo::default().with_code(code));
+        }
+        let factory = EvmFactoryFor::<FEN>::default();
+        let spec = SpecFor::<FEN>::default();
+        let env = EvmEnv::new(spec, factory.version(spec, chain_id), Default::default());
+        let mut evm = factory.create_evm(db, env);
+        evm.set_inspector(fuzzer);
+        let request = TransactionRequestFor::<FEN>::default()
+            .with_from(CALLER)
+            .with_to(HANDLER)
+            .with_nonce(0)
+            .with_chain_id(chain_id)
+            .with_gas_limit(1_000_000)
+            .with_max_fee_per_gas(0)
+            .with_max_priority_fee_per_gas(0);
+        let tx = FEN::tx_from_request(request).unwrap();
+        assert!(evm.transact(&tx).unwrap().commit().status);
+        let fuzzer = *evm.clear_inspector_as::<Fuzzer>().unwrap();
+        (evm, fuzzer)
+    }
+
+    fn slot<T: EvmTypes>(evm: &mut Evm<'_, T>, address: Address, slot: U256) -> U256 {
+        evm.state_mut().storage_slot_untracked(&address, &slot).unwrap()
+    }
+
+    fn fuzzer_suite<FEN: FoundryEvmNetwork>()
+    where
+        TransactionRequestFor<FEN>: Default,
+    {
+        // Observation: the sub-call, the stack after it returns and the mapping slot it writes.
+        let fuzzer = Fuzzer::new(16, Some(AddressMap::default())).with_call_recording(true);
+        let (mut evm, mut fuzzer) = run::<FEN>(fuzzer);
+        let mapping_slot = keccak256([B256::with_last_byte(7), B256::with_last_byte(1)].concat());
+        assert_eq!(slot(&mut evm, VICTIM, mapping_slot.into()), U256::from(2));
+        assert_eq!(
+            fuzzer.take_observed_calls(),
+            [ObservedCall {
+                depth: 1,
+                caller: HANDLER,
+                target: VICTIM,
+                calldata: Bytes::new(),
+                value: None,
+            }]
+        );
+        assert_eq!(fuzzer.collected_values, [B256::with_last_byte(1)]);
+        let slots = &fuzzer.mapping_slots.unwrap()[&VICTIM];
+        assert_eq!(
+            slots.seen_sha3[&mapping_slot],
+            (B256::with_last_byte(7), B256::with_last_byte(1))
+        );
+        assert_eq!(slots.keys[&mapping_slot], B256::with_last_byte(7));
+
+        // Override: the handler's call to the victim reenters through `REENTRANT` instead.
+        let callback = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: VICTIM,
+            call_details: CallDetails { target: REENTRANT, calldata: Bytes::new(), value: None },
+        };
+        let mut generator = RandomCallGenerator::new(
+            Address::with_last_byte(0x7E),
+            AddressSet::from_iter([HANDLER]),
+            TestRunner::deterministic(),
+            Just(callback.call_details.clone()),
+            Arc::new(RwLock::new(Address::ZERO)),
+        );
+        generator.last_sequence.write().push(Some(callback));
+        generator.set_replay(true);
+        let mut fuzzer = Fuzzer::new(16, None);
+        fuzzer.call_generator = Some(generator);
+        let (mut evm, _) = run::<FEN>(fuzzer);
+        assert_eq!(slot(&mut evm, REENTRANT, U256::ZERO), U256::ONE);
+        assert_eq!(slot(&mut evm, VICTIM, mapping_slot.into()), U256::ZERO);
+    }
+
+    #[test]
+    fn fuzzer_eth() {
+        fuzzer_suite::<foundry_evm_core::evm::EthEvmNetwork>();
+    }
+
+    #[test]
+    fn fuzzer_tempo() {
+        fuzzer_suite::<foundry_evm_core::evm::TempoEvmNetwork>();
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn fuzzer_op() {
+        fuzzer_suite::<foundry_evm_core::evm::OpEvmNetwork>();
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn fuzzer_base() {
+        fuzzer_suite::<foundry_evm_core::evm::BaseEvmNetwork>();
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn fuzzer_monad() {
+        fuzzer_suite::<foundry_evm_core::evm::MonadEvmNetwork>();
+    }
 
     fn fuzzer(record_calls: bool) -> Fuzzer {
         Fuzzer::new(16, None).with_call_recording(record_calls)
@@ -314,34 +494,6 @@ mod tests {
     }
 
     #[test]
-    fn mapping_hashes_are_recorded_outside_dictionary_collection() {
-        let key = B256::with_last_byte(1);
-        let parent = B256::with_last_byte(2);
-        let preimage = [key.as_slice(), parent.as_slice()].concat();
-        let result = keccak256(&preimage);
-        let mut interpreter =
-            Interpreter::default().with_bytecode(Bytecode::new_raw(Bytes::from_static(&[
-                revm::bytecode::opcode::KECCAK256,
-            ])));
-        interpreter.memory.resize(64);
-        interpreter.memory.set(0, &preimage);
-        assert!(interpreter.stack.push(U256::from(64)));
-        assert!(interpreter.stack.push(U256::ZERO));
-
-        let mut fuzzer = Fuzzer::new(16, Some(AddressMap::default()));
-        fuzzer.collect = false;
-        fuzzer.capture_mapping_hash(&interpreter);
-
-        interpreter.stack.pop().unwrap();
-        interpreter.stack.pop().unwrap();
-        assert!(interpreter.stack.push(result.into()));
-        fuzzer.record_mapping_hash(&interpreter);
-
-        let slots = fuzzer.mapping_slots.unwrap();
-        assert_eq!(slots[&Address::ZERO].seen_sha3.get(&result), Some(&(key, parent)));
-    }
-
-    #[test]
     fn observed_calls_are_disabled_by_default() {
         let mut fuzzer = Fuzzer::new(16, None);
         fuzzer.call_depth = 2;
@@ -351,7 +503,7 @@ mod tests {
             Address::repeat_byte(0x11),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             Some(U256::ONE),
-            CallScheme::Call,
+            MessageKind::Call,
         );
 
         assert!(fuzzer.take_observed_calls().is_empty());
@@ -367,7 +519,7 @@ mod tests {
             Address::repeat_byte(0x11),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             None,
-            CallScheme::Call,
+            MessageKind::Call,
         );
 
         assert!(fuzzer.take_observed_calls().is_empty());
@@ -382,7 +534,7 @@ mod tests {
         let value = Some(U256::from(7));
         fuzzer.call_depth = 3;
 
-        fuzzer.record_observed_call(caller, target, calldata.clone(), value, CallScheme::Call);
+        fuzzer.record_observed_call(caller, target, calldata.clone(), value, MessageKind::Call);
 
         assert_eq!(
             fuzzer.take_observed_calls(),
@@ -400,7 +552,7 @@ mod tests {
             Address::repeat_byte(0x22),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             None,
-            CallScheme::DelegateCall,
+            MessageKind::DelegateCall,
         );
 
         assert!(fuzzer.take_observed_calls().is_empty());
@@ -415,7 +567,7 @@ mod tests {
             Address::repeat_byte(0x33),
             Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
             None,
-            CallScheme::Call,
+            MessageKind::Call,
         );
 
         assert_eq!(fuzzer.take_observed_calls().len(), 1);

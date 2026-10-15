@@ -16,9 +16,9 @@ pub use call_override::RandomCallGenerator;
 
 mod filters;
 use crate::BasicTxDetails;
+use evm2::evm::AccountChanges;
 pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::utils::StateChangeset;
 
 type DynamicTargetArtifactMatchCache =
     Rc<RefCell<HashMap<(Address, B256), Option<CachedTargetContract>>>>;
@@ -85,9 +85,12 @@ impl FuzzRunIdentifiedContracts {
 
     /// If targets are updatable, collect all contracts created during an invariant run (which
     /// haven't been discovered yet).
-    pub fn collect_created_contracts(
+    ///
+    /// `state_changes` are the call's [`AccountChanges`], as returned by
+    /// `ExecutedTx::account_changes` or `PendingState::account_changes`.
+    pub fn collect_created_contracts<'a>(
         &self,
-        state_changeset: &StateChangeset,
+        state_changes: impl IntoIterator<Item = AccountChanges<'a>>,
         project_contracts: &ContractsByArtifact,
         setup_contracts: &ContractsByAddress,
         artifact_filters: &ArtifactFilters,
@@ -98,33 +101,31 @@ impl FuzzRunIdentifiedContracts {
         }
 
         let mut targets_changed = false;
-        for (address, account) in state_changeset {
-            if setup_contracts.contains_key(address) {
+        for changes in state_changes {
+            let address = changes.address;
+            if setup_contracts.contains_key(&address) || !changes.is_changed() {
                 continue;
             }
-            if !account.is_touched() {
-                continue;
-            }
-            let Some(code) = &account.info.code else {
+            let Some((code_hash, code)) = changes.code.or_else(|| {
+                changes.current.and_then(|info| Some((info.code_hash, info.code.as_ref()?)))
+            }) else {
                 continue;
             };
             if code.is_empty() {
                 continue;
             }
-            let code_hash = code.hash_slow();
-            let code = code.original_byte_slice();
             let Some(contract) = self.target_contract_for_code(
-                *address,
+                address,
                 code_hash,
-                code,
+                code.original_byte_slice(),
                 project_contracts,
                 artifact_filters,
             )?
             else {
                 continue;
             };
-            created_contracts.push(*address);
-            self.targets.borrow_mut().insert(*address, contract.into_targeted_contract());
+            created_contracts.push(address);
+            self.targets.borrow_mut().insert(address, contract.into_targeted_contract());
             targets_changed = true;
         }
         if targets_changed {
@@ -682,14 +683,16 @@ pub fn is_optimization_invariant(func: &Function) -> bool {
 mod tests {
     use super::*;
     use crate::CallDetails;
-    use alloy_primitives::U256;
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{AccountInfo, PendingState},
+    };
     use foundry_compilers::{
         ArtifactId,
         artifacts::{
             BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
         },
     };
-    use revm::{bytecode::Bytecode, state::Account};
 
     fn abi_with_functions(functions: &[&str]) -> JsonAbi {
         let mut abi = JsonAbi::new();
@@ -758,12 +761,10 @@ mod tests {
         ContractsByArtifact::new([(artifact_id(name), artifact)])
     }
 
-    fn touched_account_with_code(code: Bytes) -> Account {
-        let mut account = Account::default();
-        account.info.balance = U256::ZERO;
-        account.info.code = Some(Bytecode::new_raw(code));
-        account.mark_touch();
-        account
+    /// Records an account created with `code` by the transaction.
+    fn insert_created_account(state: &mut PendingState, address: Address, code: Bytes) {
+        let info = AccountInfo::default().with_code(Bytecode::new_raw(code));
+        state.insert_account(address, None, Some(info));
     }
 
     #[test]
@@ -863,18 +864,19 @@ mod tests {
         }
         let identified = FuzzRunIdentifiedContracts::new(targets, true);
 
-        let mut state_changeset = StateChangeset::default();
-        state_changeset.insert(existing, touched_account_with_code(runtime_code.clone()));
-        state_changeset.insert(setup, touched_account_with_code(runtime_code.clone()));
-        state_changeset.insert(untouched, Account::default());
-        state_changeset.insert(created, touched_account_with_code(runtime_code));
+        let mut state = PendingState::default();
+        insert_created_account(&mut state, existing, runtime_code.clone());
+        insert_created_account(&mut state, setup, runtime_code.clone());
+        let loaded = AccountInfo::default().with_code(Bytecode::new_raw(runtime_code.clone()));
+        state.insert_account(untouched, Some(loaded.clone()), Some(loaded));
+        insert_created_account(&mut state, created, runtime_code);
         let mut created_contracts = Vec::new();
         let setup_contracts =
             ContractsByAddress::from([(setup, ("Setup".to_string(), JsonAbi::new()))]);
 
         identified
             .collect_created_contracts(
-                &state_changeset,
+                state.account_changes(),
                 &project_contracts,
                 &setup_contracts,
                 &ArtifactFilters::default(),
@@ -893,7 +895,7 @@ mod tests {
 
         identified
             .collect_created_contracts(
-                &state_changeset,
+                state.account_changes(),
                 &Default::default(),
                 &setup_contracts,
                 &ArtifactFilters::default(),
@@ -928,13 +930,13 @@ mod tests {
         assert_eq!(initial, vec![(existing, Function::parse("existing()").unwrap().selector())]);
         assert_eq!(identified.fuzzed_functions_generation(), 0);
 
-        let mut state_changeset = StateChangeset::default();
-        state_changeset.insert(created, touched_account_with_code(runtime_code));
+        let mut state = PendingState::default();
+        insert_created_account(&mut state, created, runtime_code);
         let mut created_contracts = Vec::new();
 
         identified
             .collect_created_contracts(
-                &state_changeset,
+                state.account_changes(),
                 &project_contracts,
                 &ContractsByAddress::default(),
                 &ArtifactFilters::default(),
