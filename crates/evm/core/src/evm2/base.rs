@@ -1,16 +1,16 @@
 //! Base on evm2, using `base-evm2`.
 
 use super::{
-    DepositTxExt, EvmEnv, FoundryBlockExt, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory,
-    FoundryEvmNetwork, FoundryTxEnv, FoundryTxResultExt, build_eth_tx,
+    EvmEnv, FoundryBlockExt, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
+    FoundryTxResultExt, TxPayload,
 };
 use crate::{constants::SYSTEM_PRECOMPILE_STUB, evm::BaseEvmNetwork};
 use alloy_consensus::transaction::Recovered;
-use alloy_primitives::{Bytes, KECCAK256_EMPTY};
+use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_network::Base;
 use base_evm2::{
     BaseBlockEnvExt, BaseEvmExt, BaseEvmFactory, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
-    BaseTxResultExt, TxDeposit, base_tx_registry, base_version,
+    BaseTxResultExt, base_tx_registry, base_version,
     precompiles::activation_admin_address_for_upgrade_by_chain_id,
 };
 use evm2::{
@@ -21,7 +21,7 @@ use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_acti
 
 impl FoundryBlockExt for BaseBlockEnvExt {}
 
-impl FoundryEvmExt<DepositTxExt> for BaseEvmExt {
+impl FoundryEvmExt<BaseTxEnvelope> for BaseEvmExt {
     fn clear_transaction_fee_cache(&mut self) {
         self.clear_tx_l1_cost();
     }
@@ -36,11 +36,24 @@ impl FoundryTxResultExt for BaseTxResultExt {
 impl FoundryEvmNetwork for BaseEvmNetwork {
     type Network = Base;
     type EvmFactory = BaseEvmFactory;
+
+    fn evm_tx(
+        envelope: base_common_consensus::BaseTxEnvelope,
+        sender: Address,
+        payload: TxPayload,
+    ) -> eyre::Result<Recovered<BaseTxEnvelope>> {
+        let mut tx = BaseTxEnvelope::from(envelope);
+        // The L1 data and operator fees are priced over the signed encoding; simulations of
+        // unsigned requests price them at zero, like `eth_call`.
+        if payload.is_simulated() {
+            tx.set_enveloped(Bytes::new());
+        }
+        Ok(tx.with_signer(sender))
+    }
 }
 
 impl FoundryEvmFactory for BaseEvmFactory {
     type Types = BaseEvmTypes;
-    type TxExt = DepositTxExt;
 
     fn version(&self, spec: BaseSpecId, chain_id: u64) -> Version {
         base_version(spec, chain_id)
@@ -70,27 +83,6 @@ impl FoundryEvmFactory for BaseEvmFactory {
             activation_admin_address_for_upgrade_by_chain_id(chain_id, env.spec.upgrade())
         });
         self.clone().with_activation_admin_address(admin)
-    }
-
-    fn build_tx(&self, tx: &FoundryTxEnv<DepositTxExt>) -> eyre::Result<Recovered<BaseTxEnvelope>> {
-        let envelope = if tx.is_deposit() {
-            BaseTxEnvelope::deposit(TxDeposit {
-                source_hash: tx.ext.source_hash,
-                from: tx.caller,
-                to: tx.kind,
-                mint: tx.ext.mint.unwrap_or_default(),
-                value: tx.value,
-                gas_limit: tx.gas_limit,
-                is_system_transaction: tx.ext.is_system_transaction,
-                input: tx.data.clone(),
-            })
-        } else {
-            BaseTxEnvelope::standard(
-                build_eth_tx(tx)?,
-                tx.ext.enveloped_tx.clone().unwrap_or_default(),
-            )
-        };
-        Ok(Recovered::new_unchecked(envelope, tx.caller))
     }
 
     fn initialize_evm(&self, evm: &mut Evm<'_, BaseEvmTypes>, _is_forked: bool) {

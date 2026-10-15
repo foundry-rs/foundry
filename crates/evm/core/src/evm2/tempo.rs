@@ -1,20 +1,19 @@
 //! Tempo on evm2, using Tempo's own evm2 integration (tempoxyz/tempo#7871).
 
 use super::{
-    EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork, FoundryTxEnv,
-    FoundryTxExt, FoundryTxResultExt, build_eth_tx,
+    EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
+    FoundryTxResultExt, TransactionRequestFor, TxEnvelopeFor, TxPayload, placeholder_signature,
 };
 use crate::{
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
     evm::TempoEvmNetwork,
     tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS},
 };
-use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, transaction::Recovered};
-use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
-use evm2::{
-    Evm, TxResult, Version, ethereum::TxEnvelope, evm::precompile::PrecompileProvider,
-    registry::TxRegistry,
-};
+use alloy_consensus::{SignableTransaction, transaction::Recovered};
+use alloy_eips::{Decodable2718, Encodable2718};
+use alloy_network::{NetworkTransactionBuilder, TransactionBuilder};
+use alloy_primitives::{Address, Bytes, U256};
+use evm2::{Evm, TxResult, Version, evm::precompile::PrecompileProvider, registry::TxRegistry};
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::{
@@ -35,49 +34,7 @@ use tempo_precompiles_evm2::{
     tip20_factory::TIP20Factory,
     validator_config,
 };
-use tempo_primitives_evm2::{
-    AASigned, TempoTransaction, TempoTxEnvelope,
-    transaction::{Call, PrimitiveSignature, TempoSignature},
-};
-
-/// Tempo-only fields of a [`FoundryTxEnv`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TempoTxExt {
-    /// Fee token for Tempo AA transactions.
-    pub fee_token: Option<Address>,
-    /// Sponsored fee payer: `Some(Some(payer))` sponsors, `Some(None)` pays from the sender.
-    pub fee_payer: Option<Option<Address>>,
-    /// Tempo AA transaction template. Its first call, gas, nonce and fees follow the flat fields.
-    pub aa: Option<Box<TempoTransaction>>,
-}
-
-impl FoundryTxExt for TempoTxExt {
-    fn fee_token(&self) -> Option<Address> {
-        self.fee_token
-    }
-
-    fn set_fee_token(&mut self, token: Option<Address>) {
-        self.fee_token = token;
-    }
-
-    fn fee_payer(&self) -> Option<Option<Address>> {
-        self.fee_payer
-    }
-
-    fn set_fee_payer(&mut self, payer: Option<Option<Address>>) {
-        self.fee_payer = payer;
-    }
-
-    fn call_count(&self) -> usize {
-        self.aa.as_ref().map_or(1, |aa| aa.calls.len())
-    }
-
-    fn on_call_change(&mut self, kind: TxKind, value: U256, data: &Bytes) {
-        if let Some(call) = self.aa.as_mut().and_then(|aa| aa.calls.first_mut()) {
-            *call = Call { to: kind, value, input: data.clone() };
-        }
-    }
-}
+use tempo_primitives_evm2::TempoTxEnvelope;
 
 impl FoundryBlockExt for TempoBlockExt {
     fn timestamp_millis_part(&self) -> u64 {
@@ -89,18 +46,61 @@ impl FoundryBlockExt for TempoBlockExt {
     }
 }
 
-impl FoundryEvmExt<TempoTxExt> for TempoEvmExt {}
+/// Tempo envelope of Foundry's RPC types.
+type TempoNetworkTxEnvelope = TxEnvelopeFor<TempoEvmNetwork>;
+
+impl FoundryEvmExt<TempoTxEnv> for TempoEvmExt {}
 
 impl FoundryTxResultExt for TempoTxResultExt {}
 
 impl FoundryEvmNetwork for TempoEvmNetwork {
     type Network = TempoNetwork;
     type EvmFactory = TempoEvmFactory;
+
+    fn evm_tx(
+        envelope: TempoNetworkTxEnvelope,
+        sender: Address,
+        payload: TxPayload,
+    ) -> eyre::Result<Recovered<TempoTxEnv>> {
+        tempo_tx(envelope, sender, payload, None)
+    }
+
+    fn tx_from_request(
+        request: TransactionRequestFor<Self>,
+    ) -> eyre::Result<Recovered<TempoTxEnv>> {
+        let sender =
+            request.from().ok_or_else(|| eyre::eyre!("transaction request has no sender"))?;
+        // The access key only prices simulations; the signed envelope carries its own key.
+        let key_id = request.key_id;
+        let unsigned =
+            request.build_unsigned().map_err(|err| eyre::eyre!(err.error.to_string()))?;
+        let envelope = TempoNetworkTxEnvelope::from(unsigned.into_signed(placeholder_signature()));
+        tempo_tx(envelope, sender, TxPayload::Simulated, key_id)
+    }
+}
+
+/// Converts a Tempo network envelope into Tempo's evm2 transaction.
+///
+/// Foundry's RPC types and Tempo's evm2 integration are pinned to different Tempo revisions, so the
+/// envelope crosses over as its exact EIP-2718 encoding.
+fn tempo_tx(
+    envelope: TempoNetworkTxEnvelope,
+    sender: Address,
+    payload: TxPayload,
+    key_id: Option<Address>,
+) -> eyre::Result<Recovered<TempoTxEnv>> {
+    let encoded = envelope.encoded_2718();
+    let envelope = TempoTxEnvelope::decode_2718_exact(&encoded)?;
+    let mut tx = TempoTxEnv::from(Recovered::new_unchecked(envelope, sender));
+    if payload.is_simulated() {
+        let id = tx.unique_tx_identifier();
+        tx = tx.with_simulation_overrides(id, None, key_id);
+    }
+    Ok(Recovered::new_unchecked(tx, sender))
 }
 
 impl FoundryEvmFactory for TempoEvmFactory {
     type Types = TempoEvmTypes;
-    type TxExt = TempoTxExt;
 
     fn version(&self, spec: TempoHardfork, chain_id: u64) -> Version {
         *tempo_execution_config(spec, chain_id).version()
@@ -125,33 +125,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
         ))
     }
 
-    fn build_tx(&self, tx: &FoundryTxEnv<TempoTxExt>) -> eyre::Result<Recovered<TempoTxEnv>> {
-        let envelope = match &tx.ext.aa {
-            Some(aa) => TempoTxEnvelope::AA(AASigned::new_unhashed(
-                TempoTransaction {
-                    chain_id: tx.chain_id.unwrap_or(aa.chain_id),
-                    fee_token: tx.ext.fee_token.or(aa.fee_token),
-                    max_priority_fee_per_gas: tx.gas_priority_fee.unwrap_or_default(),
-                    max_fee_per_gas: tx.gas_price,
-                    gas_limit: tx.gas_limit,
-                    access_list: tx.access_list.clone(),
-                    nonce: tx.nonce,
-                    ..(**aa).clone()
-                },
-                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(
-                    Signature::test_signature(),
-                )),
-            )),
-            None => eth_to_tempo_envelope(build_eth_tx(tx)?)?,
-        };
-        let mut env = TempoTxEnv::from(Recovered::new_unchecked(envelope, tx.caller));
-        if let Some(Some(payer)) = tx.ext.fee_payer {
-            let id = env.unique_tx_identifier();
-            env = env.with_simulation_overrides(id, Some(payer), None);
-        }
-        Ok(Recovered::new_unchecked(env, tx.caller))
-    }
-
     fn initialize_evm(&self, evm: &mut Evm<'_, TempoEvmTypes>, is_forked: bool) {
         let result = StorageCtx::enter_evm(evm, || {
             let mut ctx = StorageCtx;
@@ -169,41 +142,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
         result.expect("tempo genesis initialization failed");
         evm.state_mut().commit_transaction();
     }
-}
-
-/// Wraps an Ethereum transaction in Tempo's envelope with a placeholder signature.
-fn eth_to_tempo_envelope(tx: TxEnvelope) -> eyre::Result<TempoTxEnvelope> {
-    fn signed<T>(tx: T) -> Signed<T> {
-        Signed::new_unhashed(tx, Signature::test_signature())
-    }
-    Ok(match tx {
-        TxEnvelope::Legacy(tx) => TempoTxEnvelope::Legacy(signed::<TxLegacy>(tx)),
-        TxEnvelope::Eip2930(tx) => TempoTxEnvelope::Eip2930(signed::<TxEip2930>(tx)),
-        TxEnvelope::Eip1559(tx) => TempoTxEnvelope::Eip1559(signed::<TxEip1559>(tx)),
-        TxEnvelope::Eip7702(tx) => {
-            let authorization_list = tx
-                .authorization_list
-                .iter()
-                .map(|auth| match auth {
-                    evm2::ethereum::LazyAuthorization::Signed(auth) => auth.clone(),
-                    auth => auth.inner().clone().into_signed(Signature::test_signature()),
-                })
-                .collect();
-            TempoTxEnvelope::Eip7702(signed::<TxEip7702>(TxEip7702 {
-                chain_id: tx.chain_id,
-                nonce: tx.nonce,
-                gas_limit: tx.gas_limit,
-                max_fee_per_gas: tx.max_fee_per_gas,
-                max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
-                to: tx.to,
-                value: tx.value,
-                access_list: tx.access_list,
-                authorization_list,
-                input: tx.input,
-            }))
-        }
-        TxEnvelope::Eip4844(_) => eyre::bail!("Tempo does not support blob transactions"),
-    })
 }
 
 /// Seeds Forge's local Tempo genesis: precompile sentinels, fee tokens and standard contracts.

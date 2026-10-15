@@ -11,25 +11,27 @@
 //! | `EvmFactory::{Spec, BlockEnv, Tx, HaltReason}`  | [`FoundryEvmFactory::Types`] (`EvmTypesHost`)    |
 //! | `PrecompilesMap`                                | [`FoundryEvmFactory::precompiles`]               |
 //! | `FoundryContextExt` and `CfgEnv`                | [`evm2::Evm`], [`EvmEnv`] and [`evm2::Version`]  |
-//! | `FoundryTransaction` on network `TxEnv`s        | [`FoundryTxEnv`] + [`FoundryEvmFactory::build_tx`] |
+//! | `FoundryTransaction` on network `TxEnv`s        | native requests + [`FoundryEvmNetwork::evm_tx`]  |
 //! | `FoundryChain`                                  | `EvmTypesHost::EvmExt` + [`FoundryEvmExt`]       |
 //! | `FoundryJournal` / `JournaledState`             | evm2 `State`, reached through [`evm2::Evm`]      |
-//! | `NestedEvm` trait objects                       | [`evm2::Evm`], identical for every network       |
+//! | `NestedEvm` trait objects                       | [`ExecutionLifecycle::nested_transaction`]       |
 //! | `IntoInstructionResult` for halt reasons        | `TxResult::stop` + [`FoundryTxResultExt`]        |
-//! | `DatabaseExt` as seen by the factory            | [`FoundryDatabase`]                              |
+//! | `DatabaseExt` reads                             | [`FoundryDatabase`] and [`BackingDb`]            |
+//! | `DatabaseExt` forks and persistent accounts     | [`ForkRegistry`]                                 |
+//! | `DatabaseExt` snapshots and nested execution    | [`ExecutionLifecycle`] and [`nested_frame`]      |
 
 use alloy_consensus::{
     SignableTransaction, Signed,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_eips::Typed2718;
-use alloy_network::Network;
-use alloy_primitives::Signature;
+use alloy_eips::{Decodable2718, Typed2718};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_primitives::{Address, Signature};
 use alloy_rlp::Decodable;
 use evm2::{
     Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version,
     env::BlockEnv,
-    evm::{DynDatabase, EmptyDB, InMemoryDB, precompile::PrecompileProvider},
+    evm::precompile::PrecompileProvider,
     registry::{HandlerError, TxRegistry},
 };
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
@@ -37,8 +39,20 @@ use foundry_evm_hardforks::ExecutionSpec;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+mod db;
+pub use db::*;
+
 mod env;
 pub use env::*;
+
+mod fork;
+pub use fork::*;
+
+mod lifecycle;
+pub use lifecycle::*;
+
+mod snapshot;
+pub use snapshot::*;
 
 mod inspector;
 pub use inspector::FoundryInspectorExt;
@@ -56,12 +70,14 @@ pub mod op;
 pub mod tempo;
 
 pub use eth::*;
-pub use tempo::*;
 
 #[cfg(test)]
 mod tests;
 
 /// Successor of [`crate::evm::FoundryEvmNetwork`]: binds an Alloy network to an evm2 factory.
+///
+/// The network owns the only conversion from its native Alloy transactions to its evm2
+/// transaction, so requests and signed envelopes stay network-native until execution.
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     /// Alloy network used for RPC, signing and broadcasting.
     type Network: Network<
@@ -80,6 +96,42 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
 
     /// evm2 factory executing this network.
     type EvmFactory: FoundryEvmFactory;
+
+    /// Converts a network envelope sent by `sender` into the evm2 transaction, once, right before
+    /// execution.
+    fn evm_tx(
+        envelope: TxEnvelopeFor<Self>,
+        sender: Address,
+        payload: TxPayload,
+    ) -> eyre::Result<Recovered<TxFor<Self>>>;
+
+    /// Converts a complete unsigned request into a simulated evm2 transaction.
+    ///
+    /// The request must name its sender and carry every field its transaction type needs; Foundry
+    /// fills defaults through [`TransactionBuilder`] before converting, never afterwards.
+    fn tx_from_request(
+        request: TransactionRequestFor<Self>,
+    ) -> eyre::Result<Recovered<TxFor<Self>>> {
+        let sender =
+            request.from().ok_or_else(|| eyre::eyre!("transaction request has no sender"))?;
+        let unsigned =
+            request.build_unsigned().map_err(|err| eyre::eyre!(err.error.to_string()))?;
+        let envelope = TxEnvelopeFor::<Self>::from(unsigned.into_signed(placeholder_signature()));
+        Self::evm_tx(envelope, sender, TxPayload::Simulated)
+    }
+
+    /// Converts a signed envelope into an evm2 transaction sent by its recovered signer.
+    fn tx_from_signed(envelope: TxEnvelopeFor<Self>) -> eyre::Result<Recovered<TxFor<Self>>> {
+        let sender = envelope.recover_signer()?;
+        Self::evm_tx(envelope, sender, TxPayload::Signed)
+    }
+
+    /// Decodes exactly the EIP-2718 bytes that were signed and converts them for execution.
+    fn decode_tx(mut bytes: &[u8]) -> eyre::Result<Recovered<TxFor<Self>>> {
+        let envelope = TxEnvelopeFor::<Self>::decode_2718(&mut bytes)?;
+        eyre::ensure!(bytes.is_empty(), "trailing bytes after the encoded transaction");
+        Self::tx_from_signed(envelope)
+    }
 }
 
 /// Successor of [`crate::evm::FoundryEvmFactory`], built around an evm2 [`EvmTypesHost`] family.
@@ -91,15 +143,12 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     /// evm2 type family: spec, transaction, block, EVM and result extensions.
     type Types: EvmTypes
         + EvmTypesHost<
-            SpecId: ExecutionSpec + Default + Debug + Send + Sync + Unpin,
+            SpecId: ExecutionSpec + Default + Debug + PartialEq + Send + Sync + Unpin,
             Tx: Typed2718 + Clone + Debug + Send + Sync,
             BlockEnvExt: FoundryBlockExt,
-            EvmExt: FoundryEvmExt<Self::TxExt>,
+            EvmExt: FoundryEvmExt<<Self::Types as EvmTypesHost>::Tx>,
             TxResultExt: FoundryTxResultExt,
         >;
-
-    /// Network-specific fields of [`FoundryTxEnv`].
-    type TxExt: FoundryTxExt;
 
     /// Returns the default runtime version for `spec` on `chain_id`.
     fn version(&self, spec: SpecOf<Self>, chain_id: u64) -> Version;
@@ -128,12 +177,6 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         Default::default()
     }
 
-    /// Builds the network transaction described by `tx`, recovered to its caller.
-    fn build_tx(
-        &self,
-        tx: &FoundryTxEnv<Self::TxExt>,
-    ) -> eyre::Result<Recovered<<Self::Types as EvmTypesHost>::Tx>>;
-
     /// Returns this factory configured for an EVM over `db`, such as Base's activation admin for
     /// the fork's source chain.
     fn configure_for<D: FoundryDatabase + ?Sized>(
@@ -155,10 +198,24 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     ) -> Evm<'a, Self::Types> {
         let factory = self.configure_for(&db, &env);
         let is_forked = db.is_forked_mode();
+        let mut evm = factory.new_evm(db, env);
+        factory.initialize_evm(&mut evm, is_forked);
+        evm
+    }
+
+    /// Creates a Foundry-configured EVM without seeding network state.
+    ///
+    /// Use this when the EVM's state is replaced right away, as for nested transactions.
+    fn new_evm<'a>(
+        &self,
+        db: impl FoundryDatabase + 'a,
+        env: EvmEnv<Self::Types>,
+    ) -> Evm<'a, Self::Types> {
+        let factory = self.configure_for(&db, &env);
         let ext = factory.evm_ext(&env);
         let precompiles = factory.precompiles(&env, &ext);
         let EvmEnv { spec, version, block } = env;
-        let mut evm = Evm::new_with_execution_config_and_ext(
+        Evm::new_with_execution_config_and_ext(
             factory.execution_config(spec, version),
             spec,
             block,
@@ -166,9 +223,7 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
             db,
             precompiles,
             ext,
-        );
-        factory.initialize_evm(&mut evm, is_forked);
-        evm
+        )
     }
 
     /// Creates a Foundry-configured EVM with the given inspector.
@@ -210,13 +265,24 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     /// precompiles, so opcode and precompile availability follows the new spec. It must not be
     /// called while `evm` is executing.
     fn set_execution_spec(&self, evm: &mut Evm<'_, Self::Types>, spec: SpecOf<Self>) {
+        let env = EvmEnv::new(spec, *evm.version(), *evm.block());
+        self.set_env(evm, env);
+    }
+
+    /// Switches `evm` to `env`: its block, spec and chain ID, keeping Foundry's execution toggles
+    /// and limits.
+    ///
+    /// Like [`Self::set_execution_spec`], this must not be called while `evm` is executing.
+    fn set_env(&self, evm: &mut Evm<'_, Self::Types>, env: EvmEnv<Self::Types>) {
         let current = *evm.version();
         let current_default = self.version(evm.config_spec_id(), current.chain_id);
-        let next = self.version(spec, current.chain_id);
-        let version = carry_execution_policy(&current_default, &current, next);
-        let env = EvmEnv::new(spec, version, *evm.block());
-        let precompiles = self.precompiles(&env, evm.ext());
-        evm.set_execution_config(
+        let next = self.version(env.spec, env.chain_id());
+        let mut version = carry_execution_policy(&current_default, &current, next);
+        version.chain_id = env.chain_id();
+        let EvmEnv { spec, block, .. } = env;
+        let precompiles = self.precompiles(&EvmEnv::new(spec, version, block), evm.ext());
+        evm.set_block_and_execution_config(
+            block,
             self.execution_config(spec, version),
             spec,
             self.tx_registry(spec),
@@ -230,44 +296,13 @@ pub const fn evm_env<T: EvmTypes>(evm: &Evm<'_, T>) -> EvmEnv<T> {
     EvmEnv::new(evm.config_spec_id(), *evm.version(), *evm.block())
 }
 
-/// Database view the factory needs at construction time.
-///
-/// This is the slice of [`DatabaseExt`](crate::backend::DatabaseExt) that EVM construction reads;
-/// fork and snapshot ownership move to the accepted-state backend separately.
-pub trait FoundryDatabase: DynDatabase {
-    /// Whether the database is currently in forked mode.
-    fn is_forked_mode(&self) -> bool {
-        false
-    }
-
-    /// Returns the source chain ID of the active fork, independent of execution overrides.
-    fn active_fork_source_chain_id(&self) -> Option<u64> {
-        None
-    }
-}
-
-impl<D: FoundryDatabase + ?Sized> FoundryDatabase for &mut D {
-    fn is_forked_mode(&self) -> bool {
-        (**self).is_forked_mode()
-    }
-
-    fn active_fork_source_chain_id(&self) -> Option<u64> {
-        (**self).active_fork_source_chain_id()
-    }
-}
-
-impl FoundryDatabase for EmptyDB {}
-
-impl FoundryDatabase for InMemoryDB {}
-
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
 pub type EvmFactoryFor<FEN> = <FEN as FoundryEvmNetwork>::EvmFactory;
 pub type TypesFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::Types;
 pub type SpecOf<F> = <<F as FoundryEvmFactory>::Types as EvmTypesHost>::SpecId;
 pub type SpecFor<FEN> = <TypesFor<FEN> as EvmTypesHost>::SpecId;
 pub type BlockEnvFor<FEN> = BlockEnv<TypesFor<FEN>>;
-pub type TxExtFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::TxExt;
-pub type TxEnvFor<FEN> = FoundryTxEnv<TxExtFor<FEN>>;
+pub type TxFor<FEN> = <TypesFor<FEN> as EvmTypesHost>::Tx;
 pub type EvmEnvFor<FEN> = EvmEnv<TypesFor<FEN>>;
 pub type ChainFor<FEN> = <TypesFor<FEN> as EvmTypesHost>::EvmExt;
 pub type TxResultFor<FEN> = TxResult<TypesFor<FEN>>;

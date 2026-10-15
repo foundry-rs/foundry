@@ -1,6 +1,6 @@
 //! Execution environments and network extension state.
 
-use super::FoundryTxEnv;
+use alloy_consensus::transaction::Recovered;
 use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
 use alloy_primitives::U256;
 use evm2::{EvmFeatures, EvmTypesHost, Version, env::BlockEnv};
@@ -121,15 +121,15 @@ impl FoundryBlockExt for () {}
 
 /// Successor of [`crate::FoundryChain`]: per-EVM network state such as OP L1 block info or Monad's
 /// reserve-balance tracker.
-pub trait FoundryEvmExt<TxExt>: Clone + Debug + Default + 'static {
+pub trait FoundryEvmExt<Tx>: Clone + Debug + Default + 'static {
     /// Prepares the state for a standalone synthetic transaction.
-    fn for_transaction(&mut self, _tx: &FoundryTxEnv<TxExt>) {}
+    fn for_transaction(&mut self, _tx: &Recovered<Tx>) {}
 
     /// Clears cached per-transaction protocol fees after a synthetic transaction restores state.
     fn clear_transaction_fee_cache(&mut self) {}
 }
 
-impl<TxExt> FoundryEvmExt<TxExt> for () {}
+impl<Tx> FoundryEvmExt<Tx> for () {}
 
 /// Successor of `IntoInstructionResult` for halt reasons.
 ///

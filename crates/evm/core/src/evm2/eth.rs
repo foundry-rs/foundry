@@ -1,9 +1,10 @@
 //! Ethereum on evm2.
 
-use super::{FoundryEvmFactory, FoundryEvmNetwork, FoundryTxEnv, build_eth_tx};
+use super::{EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, TxPayload, eth_tx};
 use crate::evm::EthEvmNetwork;
 use alloy_consensus::transaction::Recovered;
 use alloy_network::Ethereum;
+use alloy_primitives::Address;
 use evm2::{
     BaseEvmTypes, Precompiles, SpecId, TxResult, Version, ethereum::TxEnvelope,
     evm::precompile::PrecompileProvider, registry::TxRegistry,
@@ -16,11 +17,18 @@ pub struct EthEvmFactory;
 impl FoundryEvmNetwork for EthEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = EthEvmFactory;
+
+    fn evm_tx(
+        envelope: alloy_consensus::TxEnvelope,
+        sender: Address,
+        _payload: TxPayload,
+    ) -> eyre::Result<Recovered<TxEnvelope>> {
+        Ok(Recovered::new_unchecked(eth_tx(envelope), sender))
+    }
 }
 
 impl FoundryEvmFactory for EthEvmFactory {
     type Types = BaseEvmTypes;
-    type TxExt = ();
 
     fn version(&self, spec: SpecId, chain_id: u64) -> Version {
         let mut version = Version::new(spec);
@@ -34,13 +42,9 @@ impl FoundryEvmFactory for EthEvmFactory {
 
     fn precompiles(
         &self,
-        env: &super::EvmEnv<BaseEvmTypes>,
+        env: &EvmEnv<BaseEvmTypes>,
         _ext: &(),
     ) -> Box<dyn PrecompileProvider<BaseEvmTypes>> {
         Box::new(Precompiles::base(env.spec))
-    }
-
-    fn build_tx(&self, tx: &FoundryTxEnv) -> eyre::Result<Recovered<TxEnvelope>> {
-        Ok(Recovered::new_unchecked(build_eth_tx(tx)?, tx.caller))
     }
 }
