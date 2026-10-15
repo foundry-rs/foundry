@@ -28,7 +28,7 @@ use alloy_primitives::{KECCAK256_EMPTY, Log, U256};
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, TxResult,
     bytecode::Bytecode,
-    evm::{Cache, DbResult, State},
+    evm::{Cache, DbResult, PrewarmSet, State},
 };
 use std::mem;
 
@@ -144,9 +144,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if id == self.forks.active() {
             return Ok(EnvTransition::Applied);
         }
-        let (source, logs) = self.suspend(evm);
+        let suspended = self.suspend(evm);
         self.forks.active = id;
-        Ok(self.resume(evm, logs, &source, phase))
+        Ok(self.resume(evm, suspended, phase))
     }
 
     /// Moves fork `id`, or the running context for `None`, onto a new backing database and
@@ -171,10 +171,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if id != active {
             return Ok(EnvTransition::Applied);
         }
-        let (source, logs) = self.suspend(evm);
+        let suspended = self.suspend(evm);
         // Suspending saved the running state into the context being replaced; drop it.
         self.forks.context_mut(id).expect("active context exists").cache = None;
-        Ok(self.resume(evm, logs, &source, phase))
+        Ok(self.resume(evm, suspended, phase))
     }
 
     /// Applies an environment change deferred by an in-flight operation. Call before every
@@ -266,27 +266,29 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active
-    /// context. Returns the accepted state and the in-flight transaction's logs.
-    fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> (Cache, Vec<Log>) {
+    /// context. Returns what the running transaction carries into the next context.
+    fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
         let state = evm.state_mut();
         state.commit_transaction();
         let logs = mem::take(state.logs_mut());
+        let prewarm = state.prewarm_set().clone();
         let cache = state.overlay_db().cache.clone();
         let context = self.forks.context_mut(self.forks.active()).expect("active context exists");
         context.cache = Some(cache.clone());
         context.env = evm_env(evm);
         context.ext = evm.ext().clone();
-        (cache, logs)
+        Suspended { cache, logs, prewarm }
     }
 
-    /// Installs the active context into `evm`, carrying persistent accounts from `source`.
+    /// Installs the active context into `evm`, carrying persistent accounts, logs and base warmth
+    /// over from the suspended context.
     fn resume(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
-        logs: Vec<Log>,
-        source: &Cache,
+        suspended: Suspended,
         phase: ExecutionPhase,
     ) -> EnvTransition {
+        let Suspended { cache: source, logs, prewarm } = suspended;
         let active = self.forks.active();
         let context = self.forks.context_mut(active).expect("active context exists");
         let fresh = context.cache.is_none();
@@ -295,11 +297,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let db = context.db.clone_backing();
         let env = context.env;
         let ext = context.ext.clone();
-        self.forks.merge_persistent(source, &mut cache);
+        self.forks.merge_persistent(&source, &mut cache);
 
         let mut state = State::new(db.clone_backing());
         state.overlay_db_mut().cache = cache;
         *state.logs_mut() = logs;
+        state.set_prewarm_set(prewarm);
         *evm.state_mut() = state;
         *evm.ext_mut() = ext;
 
@@ -343,6 +346,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             }
         }
     }
+}
+
+/// What a running transaction carries from a suspended context into the next one.
+struct Suspended {
+    /// The suspended context's accepted state, the source of persistent accounts.
+    cache: Cache,
+    /// Logs of the running transaction.
+    logs: Vec<Log>,
+    /// Base warmth of the running transaction, such as its access list.
+    prewarm: PrewarmSet,
 }
 
 /// Runs `f` as a nested frame of the running transaction: its writes are rolled back if it fails.

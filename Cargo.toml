@@ -659,6 +659,12 @@ tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 
+## evm2 — Foundry lifecycle extensions (suspended state, warmth restoration), applied to every
+## evm2 dependent, including Tempo and evm2-networks.
+[patch."https://github.com/alloy-rs/evm2"]
+evm2 = { git = "https://github.com/mablr/evm2", rev = "17c92c1efeee6f15f631861486be41a7a961aca4" }
+evm2-macros = { git = "https://github.com/mablr/evm2", rev = "17c92c1efeee6f15f631861486be41a7a961aca4" }
+
 ## tempo-nitro-attestation — see patches/tempo-nitro-attestation/Cargo.toml.
 [patch."https://github.com/tempoxyz/tempo"]
 tempo-nitro-attestation = { path = "patches/tempo-nitro-attestation" }
