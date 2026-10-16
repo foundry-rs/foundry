@@ -1789,7 +1789,7 @@ fn install_reports_missing_gitmodules_branch(prj: _, cmd: _) {
     cmd.arg("install").assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
 [UPDATING_DEPENDENCIES]
 Error: Failed to check out `missing` for dependency `lib/dep`
-Branch `missing` comes from the `branch` setting for `lib/dep` in .gitmodules. Make sure it exists on the dependency's remote, or update .gitmodules.
+Branch `missing` comes from the `branch` setting for `lib/dep` in .gitmodules. If it no longer exists on the dependency's remote, update .gitmodules; if it does, the local clone may be missing it, for example after a `--shallow` install.
 
 Context:
 - git checkout exited with code 128: fatal: [..]

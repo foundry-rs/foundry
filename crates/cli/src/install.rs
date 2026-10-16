@@ -158,8 +158,10 @@ impl DependencyInstallOpts {
                                     } else if let DepIdentifier::Branch { name, .. } = dep_id {
                                         format!(
                                             "\nBranch `{name}` comes from the `branch` setting for \
-                                             `{dep}` in .gitmodules. Make sure it exists on the \
-                                             dependency's remote, or update .gitmodules."
+                                             `{dep}` in .gitmodules. If it no longer exists on the \
+                                             dependency's remote, update .gitmodules; if it does, \
+                                             the local clone may be missing it, for example after \
+                                             a `--shallow` install."
                                         )
                                     } else {
                                         String::new()
