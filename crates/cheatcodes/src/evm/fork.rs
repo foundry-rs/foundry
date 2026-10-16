@@ -480,6 +480,15 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
+    // The switch defers the target's chain ID to the next transaction; `CHAINID` reads it at once,
+    // like after `vm.chainId`.
+    if let Some(chain_id) = ccx.db().lifecycle().pending_env().map(|env| env.chain_id())
+        && chain_id != ccx.evm.version().chain_id
+    {
+        ccx.state.env_overrides.update(target_fork_id, |o| {
+            o.chain_id.get_or_insert(chain_id);
+        });
+    }
 }
 
 fn record_fork_roll<FEN: FoundryEvmNetwork>(
