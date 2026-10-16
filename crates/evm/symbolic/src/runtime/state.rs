@@ -123,11 +123,11 @@ impl PathState {
         executor: &Executor<FEN>,
     ) {
         self.block = SymbolicBlock::from_executor(cx, executor);
-        let gas_price = executor
-            .inspector()
-            .cheatcodes
-            .as_ref()
-            .and_then(|cheats| cheats.gas_price)
+        let cheats = executor.inspector().cheatcodes.as_ref();
+        let gas_price = cheats
+            .and_then(|cheats| cheats.env_overrides.get(executor.backend().active_fork_id()))
+            .and_then(|overrides| overrides.gas_price_override())
+            .or_else(|| cheats.and_then(|cheats| cheats.gas_price))
             .unwrap_or_else(|| {
                 let tx = executor.tx();
                 tx.gas_price().or_else(|| tx.max_fee_per_gas()).unwrap_or_default()
@@ -2439,18 +2439,29 @@ impl SymbolicBlock {
         } else {
             block.difficulty
         };
+        // Environment cheatcodes the running transaction cannot apply override their opcodes.
+        let overrides = executor
+            .inspector()
+            .cheatcodes
+            .as_ref()
+            .and_then(|cheats| cheats.env_overrides.get(executor.backend().active_fork_id()));
+        let chain_id = overrides.and_then(|overrides| overrides.chain_id);
+        let basefee = overrides.and_then(|overrides| overrides.basefee_override());
+        let blob_hashes = overrides.and_then(|overrides| overrides.blob_hashes.clone());
 
         Self {
-            chain_id: SymExpr::constant(cx, U256::from(evm_env.chain_id())),
+            chain_id: SymExpr::constant(cx, U256::from(chain_id.unwrap_or(evm_env.chain_id()))),
             coinbase: block.beneficiary,
             timestamp: SymExpr::constant(cx, block.timestamp),
             number: SymExpr::constant(cx, block.number),
             difficulty: SymExpr::constant(cx, difficulty),
             gaslimit: SymExpr::constant(cx, block.gas_limit),
-            basefee: SymExpr::constant(cx, block.basefee),
+            basefee: SymExpr::constant(cx, basefee.map_or(block.basefee, U256::from)),
             blob_basefee: SymExpr::constant(cx, block.blob_basefee),
             block_hashes: HashMap::default(),
-            blob_hashes: executor.tx().blob_versioned_hashes().unwrap_or_default().to_vec(),
+            blob_hashes: blob_hashes.unwrap_or_else(|| {
+                executor.tx().blob_versioned_hashes().unwrap_or_default().to_vec()
+            }),
         }
     }
 
