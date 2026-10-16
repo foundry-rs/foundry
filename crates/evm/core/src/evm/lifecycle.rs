@@ -398,7 +398,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let mut state = state.into_state(db.clone_backing());
         *state.logs_mut() = logs;
         *evm.state_mut() = state;
-        *evm.ext_mut() = ext.into_inner();
+        evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
         Some((extra, transition))
@@ -611,7 +611,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         *state.logs_mut() = logs;
         state.set_prewarm_set(prewarm);
         *evm.state_mut() = state;
-        *evm.ext_mut() = ext;
+        evm.ext_mut().replace_while_executing(ext);
 
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);

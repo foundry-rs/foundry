@@ -26,9 +26,10 @@ use foundry_evm_core::{
     backend::Backend,
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor,
-        TypesFor, evm_env, merge_nested_changes, merge_pending_changes, release_inspector,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
+        InterpreterFor, MessageFor, MessageResultFor, TransactionRequestFor, TxEnvFor, TxFor,
+        TxResultFor, TypesFor, evm_env, merge_nested_changes, merge_pending_changes,
+        release_inspector,
     },
     precompiles::P256_VERIFY,
 };
@@ -1205,7 +1206,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok());
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
-            *evm.ext_mut() = child.ext().clone();
+            evm.ext_mut().replace_while_executing(child.ext().clone());
             merged
         };
         let mut block = *evm.block();

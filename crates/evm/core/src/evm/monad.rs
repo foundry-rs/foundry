@@ -54,6 +54,14 @@ impl FoundryEvmExt<TxEnvelope> for MonadEvmExt {
             ..Default::default()
         };
     }
+
+    fn replace_while_executing(&mut self, ext: Self) {
+        // The pooled memory offset counts the memory of the suspended frames, which each release
+        // their share when they return.
+        let memory_pool_offset = self.memory_pool_offset;
+        *self = ext;
+        self.memory_pool_offset = memory_pool_offset;
+    }
 }
 
 /// Returns the EIP-7702 authorities of `tx`.
