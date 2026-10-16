@@ -1815,7 +1815,10 @@ mod tests {
     use alloy_eips::eip4788::SYSTEM_ADDRESS;
     use alloy_rpc_types::TransactionRequest;
     use evm2::SpecId;
-    use foundry_cheatcodes::{CheatsConfig, Vm::mockCallRevert_1Call};
+    use foundry_cheatcodes::{
+        CheatsConfig,
+        Vm::{loadCall, mockCallRevert_1Call, storeCall},
+    };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
     use foundry_evm_traces::InternalTraceMode;
@@ -2348,5 +2351,23 @@ mod tests {
             before,
             "EIP-4788 system calls must not persist the system caller account",
         );
+    }
+
+    #[test]
+    fn storage_stored_on_absent_account_survives_commit() {
+        let mut executor = eth_executor(
+            ExecutorBuilder::default()
+                .inspectors(|stack| stack.cheatcodes(cheats_config()))
+                .gas_limit(1_000_000),
+        );
+        let target = Address::with_last_byte(0x31);
+        let value = B256::with_last_byte(1);
+        let store = storeCall { target, slot: B256::ZERO, value }.abi_encode();
+        let stored = executor.transact_raw(CALLER, CHEATCODE_ADDRESS, store.into(), U256::ZERO);
+        assert!(!stored.unwrap().reverted);
+
+        let load = loadCall { target, slot: B256::ZERO }.abi_encode();
+        let loaded = executor.call_raw(CALLER, CHEATCODE_ADDRESS, load.into(), U256::ZERO).unwrap();
+        assert_eq!(loaded.result, Bytes::from(value.0));
     }
 }

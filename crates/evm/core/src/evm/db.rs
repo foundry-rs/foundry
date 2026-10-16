@@ -191,10 +191,23 @@ impl AcceptedView {
 
 impl DynDatabase for AcceptedView {
     fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
-        match self.cache.accounts.get(address) {
-            Some(account) => Ok(account.clone()),
-            None => self.backing.get_account(address),
+        let account = match self.cache.accounts.get(address) {
+            Some(account) => account.clone(),
+            None => self.backing.get_account(address)?,
+        };
+        // Storage written to an absent account, such as by `vm.store`, is accepted without the
+        // account. evm2 reads no storage for an absent account, so report it as an empty one, as
+        // the REVM cache kept it.
+        if account.is_none()
+            && self
+                .cache
+                .storage
+                .get(address)
+                .is_some_and(|storage| storage.slots.values().any(|value| !value.is_zero()))
+        {
+            return Ok(Some(AccountInfo::default()));
         }
+        Ok(account)
     }
 
     fn get_code_by_hash(&mut self, hash: &B256) -> DbResult<Bytecode> {
