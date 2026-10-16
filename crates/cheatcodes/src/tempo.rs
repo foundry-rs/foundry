@@ -5,8 +5,8 @@ use std::str::FromStr;
 use alloy_sol_types::SolValue;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use spec::Vm::{assumeImplicitApprovalCall, isImplicitlyApprovedCall};
-use tempo_hardfork::TempoHardfork;
-use tempo_precompiles::address_registry;
+use tempo_hardfork_evm2::TempoHardfork;
+use tempo_precompiles_evm2::address_registry;
 
 use crate::{Cheatcode, CheatsCtxt, Error, Result};
 use foundry_config::ExecutionSpec;

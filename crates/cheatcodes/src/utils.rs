@@ -12,7 +12,6 @@ use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, evm::FoundryEvmNetwo
 use foundry_evm_fuzz::strategies::BoundMutator;
 use proptest::prelude::Strategy;
 use rand::{Rng, RngCore, seq::SliceRandom};
-use revm::context::{ContextTr, JournalTr};
 use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
@@ -256,15 +255,14 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
-        if let Ok(from_account) = ccx.ecx.journal_mut().load_account(*from) {
-            let from_storage = from_account.storage.clone();
-            if ccx.ecx.journal_mut().load_account(*to).is_ok() {
-                // SAFETY: We ensured the account was already loaded.
-                ccx.ecx.journal_mut().evm_state_mut().get_mut(to).unwrap().storage = from_storage;
-                if let Some(arbitrary_storage) = &mut ccx.state.arbitrary_storage {
-                    arbitrary_storage.mark_copy(from, to);
-                }
-            }
+        let state = ccx.evm.state_mut();
+        state.account(to)?.touch();
+        for slot in crate::evm::loaded_slots(state, from) {
+            let value = state.storage_slot_untracked(from, &slot)?;
+            state.storage_slot(to, slot)?.set(value);
+        }
+        if let Some(arbitrary_storage) = &mut ccx.state.arbitrary_storage {
+            arbitrary_storage.mark_copy(from, to);
         }
 
         Ok(Default::default())

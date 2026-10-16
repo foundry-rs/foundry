@@ -8,7 +8,6 @@ use foundry_evm_core::{
     evm::FoundryEvmNetwork,
 };
 use itertools::Itertools;
-use revm::context::{ContextTr, JournalTr};
 use std::{borrow::Cow, fmt};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = uint!(18_U256);
@@ -214,7 +213,7 @@ fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
         Err(msg.into_owned().into())
     } else {
         executor.console_log(&msg);
-        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ONE)?;
+        ccx.evm.state_mut().storage_slot(&CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)?.set(U256::ONE);
         Ok(Default::default())
     }
 }

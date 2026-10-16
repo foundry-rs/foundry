@@ -726,11 +726,11 @@ mod tests {
     use alloy_sol_types::SolCall;
     use k256::elliptic_curve::Curve;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
-    use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
-    use tempo_hardfork::TempoHardfork;
-    use tempo_precompiles::{
+    use tempo_contracts::precompiles::ISignatureVerifier;
+    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_precompiles_evm2::{
         Precompile,
-        account_keychain::{AccountKeychain, KeyRestrictions, SignatureType},
+        account_keychain::{AccountKeychain, IAccountKeychain, KeyRestrictions, SignatureType},
         signature_verifier::SignatureVerifier,
         storage::{StorageCtx, hashmap::HashMapStorageProvider},
     };
@@ -991,8 +991,7 @@ mod tests {
                 .abi_encode();
 
         let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(!output.is_revert(), "verifyKeychain reverted: {:?}", output.bytes);
-        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(&output.bytes).unwrap()
+        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(output.bytes()).unwrap()
     }
 
     fn verify_keychain_admin(account: Address, hash: B256, signature: Vec<u8>) -> bool {
@@ -1004,8 +1003,7 @@ mod tests {
         .abi_encode();
 
         let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(!output.is_revert(), "verifyKeychainAdmin reverted: {:?}", output.bytes);
-        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(&output.bytes).unwrap()
+        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(output.bytes()).unwrap()
     }
 
     fn assert_keychain_signature_reverts(account: Address, hash: B256, signature: Vec<u8>) {
@@ -1013,8 +1011,11 @@ mod tests {
             ISignatureVerifier::verifyKeychainCall { account, hash, signature: signature.into() }
                 .abi_encode();
 
-        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
-        assert!(output.is_revert(), "malformed keychain signature should revert");
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO);
+        assert!(
+            matches!(output, Err(evm2::precompiles::PrecompileError::Revert(_))),
+            "malformed keychain signature should revert"
+        );
     }
 
     #[test]
