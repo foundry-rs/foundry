@@ -25,7 +25,7 @@ use evm2::{
 use foundry_cheatcodes::CheatcodesBackend;
 use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
-    backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT},
+    backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT, handler_error},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
@@ -1110,8 +1110,7 @@ fn execute<FEN: FoundryEvmNetwork>(
         evm.transact(tx).map(|executed| executed.detach())
     };
     let mut evm: Evm<'_, _> = release_inspector(evm);
-    let TxResultWithState { result, pending_state, .. } =
-        executed.map_err(|err| eyre::eyre!("EVM error: {err:?}"))?;
+    let TxResultWithState { result, pending_state, .. } = executed.map_err(handler_error)?;
 
     // A spec or chain ID change deferred by a cheatcode applies from the next transaction.
     let mut env = evm_env(&evm);

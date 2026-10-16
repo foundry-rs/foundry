@@ -69,7 +69,7 @@ pub use diagnostic::RevertDiagnostic;
 mod bal;
 
 mod error;
-pub use error::{BackendError, BackendResult, DatabaseError, DatabaseResult};
+pub use error::{BackendError, BackendResult, DatabaseError, DatabaseResult, handler_error};
 
 mod cow;
 pub use cow::CowBackend;
@@ -1356,10 +1356,6 @@ fn context_account<T: evm2::EvmTypesHost>(
 fn is_contract(account: Option<AccountInfo>) -> bool {
     account
         .is_some_and(|account| account.code_hash != KECCAK256_EMPTY && !account.code_hash.is_zero())
-}
-
-fn handler_error(err: evm2::registry::HandlerError) -> eyre::Report {
-    eyre::eyre!("EVM error: {err}")
 }
 
 /// Returns `account` as execution at `spec` loads it.

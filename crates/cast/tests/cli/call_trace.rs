@@ -531,7 +531,10 @@ Transaction successfully executed.
             .args(fee_args)
             .assert_failure()
             .stderr_eq(str![[r#"
-Error: EVM error: PriorityFeeGreaterThanMaxFee
+Error: EVM error
+
+Context:
+- transaction validation error: priority fee is greater than max fee
 
 "#]]);
     }
