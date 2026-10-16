@@ -16,6 +16,7 @@ pub fn find_anchors(
     analysis: &SourceAnalysis,
 ) -> ItemAnchors {
     let mut anchors = ItemAnchors::default();
+    let index = SourceMapIndex::new(source_map);
     let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
         0 => (fallthrough, None),
         1 => (taken, Some(fallthrough.instruction - 1)),
@@ -36,7 +37,8 @@ pub fn find_anchors(
                 CoverageItemKind::Branch { path_id: 1, is_first_opcode: true, .. }
                     if item.anchor_loc.is_some() =>
                 {
-                    find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
+                    index
+                        .find_anchor(ic_pc_map, item_id, anchor_loc)
                         .map(|anchor| (anchor, None))
                         .or_else(|_| {
                             find_anchor_branch(bytecode, source_map, item_id, &item.loc)
@@ -48,8 +50,7 @@ pub fn find_anchors(
                     find_anchor_branch_inner(bytecode, source_map, item_id, anchor_loc, exact)
                         .map(|anchors| select_branch(anchors, path_id))
                 }
-                _ => find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
-                    .map(|anchor| (anchor, None)),
+                _ => index.find_anchor(ic_pc_map, item_id, anchor_loc).map(|anchor| (anchor, None)),
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
@@ -92,17 +93,8 @@ pub fn find_anchor_simple(
     item_id: u32,
     loc: &SourceLocation,
 ) -> eyre::Result<ItemAnchor> {
-    let instruction =
-        source_map.iter().position(|element| is_in_source_range(element, loc)).ok_or_else(
-            || eyre::eyre!("Could not find anchor: No matching instruction in range {loc}"),
-        )?;
-
-    Ok(ItemAnchor {
-        instruction: ic_pc_map.get(instruction as u32).ok_or_else(|| {
-            eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
-        })?,
-        item_id,
-    })
+    let instruction = source_map.iter().position(|element| is_in_source_range(element, loc));
+    anchor_at(instruction, ic_pc_map, item_id, loc)
 }
 
 /// Finds the anchor corresponding to a branch item.
@@ -225,6 +217,63 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     start_of_ranges <= end_of_ranges
 }
 
+/// Source positions sorted separately from the bytecode's instruction order.
+struct SourceMapIndex<'a> {
+    source_map: &'a SourceMap,
+    entries: Vec<(i32, u32, usize)>,
+}
+
+impl<'a> SourceMapIndex<'a> {
+    fn new(source_map: &'a SourceMap) -> Self {
+        let mut entries = source_map
+            .iter()
+            .enumerate()
+            .map(|(instruction, element)| (element.index_i32(), element.offset(), instruction))
+            .collect::<Vec<_>>();
+        entries.sort_unstable();
+        Self { source_map, entries }
+    }
+
+    fn find_anchor(
+        &self,
+        ic_pc_map: &IcPcMap,
+        item_id: u32,
+        loc: &SourceLocation,
+    ) -> eyre::Result<ItemAnchor> {
+        let source = loc.source_id as i32;
+        let start = self
+            .entries
+            .partition_point(|&(id, offset, _)| (id, offset) < (source, loc.bytes.start));
+        let end = self.entries.partition_point(|&(id, offset, _)| {
+            (id, offset) <= (source, loc.bytes.start + loc.len())
+        });
+        // Keep the original range predicate and instruction order, including endpoint matches.
+        let instruction = self.entries[start..end]
+            .iter()
+            .map(|&(_, _, instruction)| instruction)
+            .filter(|&instruction| is_in_source_range(&self.source_map[instruction], loc))
+            .min();
+        anchor_at(instruction, ic_pc_map, item_id, loc)
+    }
+}
+
+fn anchor_at(
+    instruction: Option<usize>,
+    ic_pc_map: &IcPcMap,
+    item_id: u32,
+    loc: &SourceLocation,
+) -> eyre::Result<ItemAnchor> {
+    let instruction = instruction.ok_or_else(|| {
+        eyre::eyre!("Could not find anchor: No matching instruction in range {loc}")
+    })?;
+    Ok(ItemAnchor {
+        instruction: ic_pc_map.get(instruction as u32).ok_or_else(|| {
+            eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
+        })?,
+        item_id,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,5 +287,33 @@ mod tests {
         // A contained inner span must never substitute for the missing outer decision.
         let inner_only = sourcemap::parse("15:5:0;;;").unwrap();
         assert!(find_anchor_branch_inner(&bytecode, &inner_only, 0, &loc, true).is_err());
+    }
+
+    #[test]
+    fn indexed_anchors_preserve_instruction_order_and_ranges() {
+        let source_map =
+            sourcemap::parse("30:4:0;10:5:0;20:0:1;10:0:0;0:40:0;20:5:0;5:0:-1;40:0:0").unwrap();
+        let index = SourceMapIndex::new(&source_map);
+        let ic_pc_map = IcPcMap::new(&[opcode::STOP; 8]);
+        for source_id in 0..3 {
+            for start in 0..=42 {
+                for end in start..=42 {
+                    let loc = SourceLocation {
+                        source_id,
+                        contract_name: "T".into(),
+                        bytes: start..end,
+                        lines: 1..2,
+                    };
+                    let expected = find_anchor_simple(&source_map, &ic_pc_map, 7, &loc)
+                        .map(|anchor| (anchor.instruction, anchor.item_id))
+                        .ok();
+                    let actual = index
+                        .find_anchor(&ic_pc_map, 7, &loc)
+                        .map(|anchor| (anchor.instruction, anchor.item_id))
+                        .ok();
+                    assert_eq!(actual, expected, "{loc}");
+                }
+            }
+        }
     }
 }
