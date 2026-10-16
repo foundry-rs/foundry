@@ -1,8 +1,5 @@
 use alloy_primitives::U256;
-use revm::{
-    Inspector,
-    interpreter::{Interpreter, interpreter_types::Jumps},
-};
+use evm2::{EvmTypesHost, Inspector, interpreter::Interpreter};
 
 /// An inspector for Chisel
 #[derive(Clone, Debug, Default)]
@@ -21,16 +18,14 @@ impl ChiselState {
     }
 }
 
-impl<CTX> Inspector<CTX> for ChiselState {
+impl<T: EvmTypesHost> Inspector<T> for ChiselState {
     #[cold]
-    fn step_end(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         // If we are at the final pc of the REPL contract execution, set the state.
         // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.
-        if self.final_pc == interpreter.bytecode.pc() - 1 {
-            self.state = Some((
-                interpreter.stack.data().clone(),
-                interpreter.memory.context_memory().to_vec(),
-            ))
+        if self.final_pc == interp.pc() - 1 {
+            self.state =
+                Some((interp.stack().as_slice().to_vec(), interp.memory().as_slice().to_vec()))
         }
     }
 }

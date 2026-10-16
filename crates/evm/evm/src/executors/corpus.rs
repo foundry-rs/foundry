@@ -43,12 +43,13 @@ use crate::{
         campaign::{CampaignCallKind, execute_invariant_replay_tx},
         invariant::execute_tx,
     },
-    inspectors::{CmpOperands, EdgeIndexMap, MAX_EDGE_COUNT},
+    inspectors::{CmpOperands, EdgeIndexMap},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
 use alloy_sol_types::SolCall;
+use evm2::{SpecId, evm::PendingState};
 use eyre::{Result, eyre};
 use foundry_cheatcodes::Vm::{
     revertToAndDeleteCall, revertToCall, revertToStateAndDeleteCall, revertToStateCall, rollCall,
@@ -59,8 +60,8 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS},
     evm::FoundryEvmNetwork,
-    utils::StateChangeset,
 };
+use foundry_evm_coverage::MAX_EDGE_COUNT;
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
     invariant::{
@@ -70,7 +71,6 @@ use foundry_evm_fuzz::{
     sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
 use proptest::test_runner::TestRunner;
-use revm::{context::Block, primitives::hardfork::SpecId};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -703,7 +703,7 @@ pub struct DynamicTargetCtx<'a> {
 /// Registers contracts created by the last tx so subsequent txs in the same replayed sequence
 /// can target them.
 pub(crate) fn register_replay_created(
-    state_changeset: &StateChangeset,
+    state_changeset: &PendingState,
     dynamic: Option<&DynamicTargetCtx<'_>>,
     fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     created: &mut Vec<Address>,
@@ -712,7 +712,7 @@ pub(crate) fn register_replay_created(
         return;
     };
     if let Err(error) = fuzzed_contracts.collect_created_contracts(
-        state_changeset,
+        state_changeset.account_changes(),
         dynamic.project_contracts,
         dynamic.setup_contracts,
         dynamic.artifact_filters,
@@ -1243,7 +1243,7 @@ impl WorkerCorpus {
                     .cheatcodes
                     .as_ref()
                     .and_then(|cheatcodes| cheatcodes.block.as_ref())
-                    .unwrap_or(&executor.evm_env().block_env);
+                    .unwrap_or(&executor.evm_env().block);
                 let spec_id = executor
                     .inspector()
                     .cheatcodes
@@ -1254,8 +1254,8 @@ impl WorkerCorpus {
                     &observed,
                     &targets,
                     senders,
-                    block.timestamp(),
-                    block.number(),
+                    block.timestamp,
+                    block.number,
                     spec_id.into(),
                 )
             }) else {
@@ -1930,14 +1930,13 @@ mod tests {
         inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey},
     };
     use alloy_dyn_abi::DynSolValue;
-    use alloy_evm::EvmEnv;
+    use evm2::{bytecode::Bytecode, evm::InMemoryDB};
     use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
-    use foundry_evm_core::{backend::Backend, constants::MAGIC_ASSUME, evm::EthEvmNetwork};
+    use foundry_evm_core::{constants::MAGIC_ASSUME, evm::EthEvmNetwork};
     use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
-    use revm::{DatabaseRef, bytecode::Bytecode, context::TxEnv, database::InMemoryDB};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -2033,10 +2032,8 @@ mod tests {
     }
 
     fn sync_test_executor(corpus_root: PathBuf, target: Address) -> Executor<EthEvmNetwork> {
-        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24).build(
-            EvmEnv::default(),
-            TxEnv::default(),
-            Backend::spawn(None).unwrap(),
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24),
             Default::default(),
         );
         executor.inspector_mut().collect_edge_coverage_with_config(&corpus_config(corpus_root));
@@ -2154,9 +2151,8 @@ mod tests {
                 Some(Box::new(Cheatcodes::new(Arc::new(CheatsConfig::default()))));
             executor.inspector_mut().collect_evm_cmp_log(true);
             executor.set_code(target, Bytecode::new_raw(code.clone().into())).unwrap();
-            let initial_block = executor.evm_env().block_env.clone();
-            let initial_cheatcode_block =
-                executor.inspector().cheatcodes.as_ref().unwrap().block.clone();
+            let initial_block = executor.evm_env().block;
+            let initial_cheatcode_block = executor.inspector().cheatcodes.as_ref().unwrap().block;
             let mut history_map = Vec::new();
             let mut edge_indices = EdgeIndexMap::default();
             let mut sancov_history_map = Vec::new();
@@ -2189,20 +2185,17 @@ mod tests {
             assert!(outcome.new_coverage);
             assert!(history_map.iter().any(|&hit| hit != 0));
             if accept_last {
-                let timestamp = initial_block.timestamp() + U256::from(3);
-                assert_eq!(executor.evm_env().block_env.timestamp(), timestamp);
-                assert_eq!(
-                    executor.evm_env().block_env.number(),
-                    initial_block.number() + U256::from(2)
-                );
-                assert_eq!(executor.backend().storage_ref(target, U256::ZERO).unwrap(), timestamp);
+                let timestamp = initial_block.timestamp + U256::from(3);
+                assert_eq!(executor.evm_env().block.timestamp, timestamp);
+                assert_eq!(executor.evm_env().block.number, initial_block.number + U256::from(2));
+                assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), timestamp);
             } else {
-                assert_eq!(executor.evm_env().block_env, initial_block);
+                assert_eq!(executor.evm_env().block, initial_block);
                 assert_eq!(
                     executor.inspector().cheatcodes.as_ref().unwrap().block,
                     initial_cheatcode_block
                 );
-                assert_eq!(executor.backend().storage_ref(target, U256::ZERO).unwrap(), U256::ZERO);
+                assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), U256::ZERO);
             }
         }
     }
