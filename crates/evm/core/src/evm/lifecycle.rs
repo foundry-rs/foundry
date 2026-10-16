@@ -34,11 +34,9 @@ use crate::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, KECCAK256_EMPTY, Log, U256};
 use evm2::{
-    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, ExecutionError, Inspector, TxResult,
+    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
-    env::TxEnv,
     evm::{Cache, DbResult, EmptyDB, PrewarmSet, State},
-    interpreter::{Host, Message, MessageResult},
 };
 use std::{mem, sync::Arc};
 
@@ -341,6 +339,19 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
     }
 
+    /// Switches `evm` to `env`. The block applies at once; a spec or chain ID change applies at
+    /// once between transactions and is deferred to the next transaction while one is in flight.
+    pub fn set_env(
+        &mut self,
+        evm: &mut Evm<'_, F::Types>,
+        env: EvmEnv<F::Types>,
+        phase: ExecutionPhase,
+    ) -> EnvTransition {
+        let db = self.forks.active_db();
+        let factory = self.factory.configure_for(&db, &env);
+        self.apply_env(&factory, evm, env, phase)
+    }
+
     /// Captures the running context, every fork, and `extra`, and returns the snapshot ID.
     pub fn snapshot(&mut self, evm: &mut Evm<'_, F::Types>, extra: C) -> U256 {
         self.materialize(evm);
@@ -462,37 +473,35 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         executor
     }
 
-    /// Executes `message` as a nested frame of the transaction `evm` is running, such as for
-    /// `deployCode`, with `inspector` observing it.
+    /// Moves the transaction `evm` is running onto a separate frame EVM, such as to execute a
+    /// nested message for `deployCode` with an inspector that must not re-enter `evm`'s own.
     ///
-    /// The frame runs on a separate EVM that takes over the running state for its duration, so the
-    /// running EVM's own inspector is not re-entered. Its writes, logs, block and network extension
-    /// state are handed back to `evm`; a failed frame rolls its writes back like any other frame.
-    pub fn nested_message(
-        &self,
-        evm: &mut Evm<'_, F::Types>,
-        tx_env: &TxEnv<F::Types>,
-        message: &mut Message<F::Types>,
-        inspector: Option<&mut dyn Inspector<F::Types>>,
-    ) -> Result<MessageResult<F::Types>, ExecutionError> {
+    /// Execute messages on the returned EVM with [`Host::execute_message`] and hand its state back
+    /// with [`Self::end_frame_evm`]; `evm` must not execute in between.
+    ///
+    /// [`Host::execute_message`]: evm2::interpreter::Host::execute_message
+    pub fn begin_frame_evm<'a>(&self, evm: &mut Evm<'_, F::Types>) -> Evm<'a, F::Types> {
         let env = evm_env(evm);
         let db = self.forks.active_db();
         let factory = self.factory.configure_for(&db, &env);
         let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
-        *frame.state_mut() = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
-        if let Some(inspector) = inspector {
-            frame.set_inspector(inspector);
-        }
-        let result = Host::execute_message(&mut frame, tx_env, message);
+        let state = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
+        // SAFETY: `State`'s lifetime only bounds its backing database, and every database the
+        // lifecycle installs is owned (`'static`), so the state outlives both EVMs.
+        *frame.state_mut() = unsafe { mem::transmute::<State<'_>, State<'a>>(state) };
+        frame
+    }
+
+    /// Hands the state, block and network extension state of a frame EVM created with
+    /// [`Self::begin_frame_evm`] back to `evm`.
+    pub fn end_frame_evm(evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
         frame.clear_inspector();
         let state = mem::replace(frame.state_mut(), State::new(EmptyDB::default()));
-        // SAFETY: `State`'s lifetime only bounds its backing database. The frame's state is the
-        // running state moved in above, whose database outlives `evm`; the frame only ever
-        // installs `'static` backing databases, such as on a fork switch.
+        // SAFETY: See `begin_frame_evm`; the frame only ever installs owned backing databases,
+        // such as on a fork switch.
         *evm.state_mut() = unsafe { mem::transmute::<State<'_>, State<'_>>(state) };
         *evm.ext_mut() = frame.ext().clone();
         evm.set_block(*frame.block());
-        result
     }
 
     /// Executes `tx` on the inactive fork `id`, or the local context for `None`, and accepts its

@@ -33,10 +33,8 @@ use alloy_network::{
 use alloy_primitives::{Address, Signature};
 use alloy_rlp::Decodable;
 use evm2::{
-    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version,
-    env::BlockEnv,
-    evm::precompile::PrecompileProvider,
-    registry::{HandlerError, TxRegistry},
+    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version, env::BlockEnv,
+    evm::precompile::PrecompileProvider, registry::TxRegistry,
 };
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_evm_hardforks::ExecutionSpec;
@@ -358,16 +356,13 @@ pub type EvmEnvFor<FEN> = EvmEnv<TypesFor<FEN>>;
 pub type ChainFor<FEN> = <TypesFor<FEN> as EvmTypesHost>::EvmExt;
 pub type TxResultFor<FEN> = TxResult<TypesFor<FEN>>;
 pub type FoundryEvmFor<'a, FEN> = Evm<'a, TypesFor<FEN>>;
+pub type InterpreterFor<'frame, 'host, FEN> =
+    evm2::interpreter::Interpreter<'frame, 'host, TypesFor<FEN>>;
+pub type MessageFor<FEN> = evm2::interpreter::Message<TypesFor<FEN>>;
+pub type MessageResultFor<FEN> = evm2::interpreter::MessageResult<TypesFor<FEN>>;
+pub type TxEnvFor<FEN> = evm2::env::TxEnv<TypesFor<FEN>>;
 pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
 pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
 pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionRequest;
 pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
 pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
-
-/// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
-pub type NestedEvmClosure<'a, F> = &'a mut dyn for<'e> FnMut(
-    &mut Evm<'e, <F as FoundryEvmFactory>::Types>,
-) -> Result<(), HandlerError>;
-
-/// Nested EVM closure for a Foundry EVM network.
-pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<'a, EvmFactoryFor<FEN>>;

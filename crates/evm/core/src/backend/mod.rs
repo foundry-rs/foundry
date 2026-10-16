@@ -47,14 +47,12 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use evm2::{
-    EvmFeatures, ExecutionError, Inspector,
+    EvmFeatures, Inspector,
     bytecode::Bytecode,
-    env::TxEnv,
     evm::{
         AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState,
         bal::{Bal, BlockAccessIndex},
     },
-    interpreter::{Message, MessageResult},
 };
 use eyre::WrapErr;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
@@ -460,6 +458,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let account = self.lifecycle.accepted_mut().storage.entry(address).or_default();
         account.wipe();
         account.slots.extend(storage);
+    }
+
+    /// Switches the running `evm` to `env`, such as for `vm.chainId` or `vm.setEvmVersion`. See
+    /// [`ExecutionLifecycle::set_env`].
+    pub fn set_env(
+        &mut self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        env: EvmEnvFor<FEN>,
+        phase: ExecutionPhase,
+    ) -> EnvTransition {
+        self.lifecycle.set_env(evm, env, phase)
     }
 
     /// Accepts a detached transaction's state, such as a call's, into the active context's
@@ -873,16 +882,15 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.lifecycle.nested_evm(evm, tx, env, None)
     }
 
-    /// Executes `message` as a nested frame of the running transaction. See
-    /// [`ExecutionLifecycle::nested_message`].
-    pub fn nested_message(
-        &self,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        tx_env: &TxEnv<TypesFor<FEN>>,
-        message: &mut Message<TypesFor<FEN>>,
-        inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
-    ) -> Result<MessageResult<TypesFor<FEN>>, ExecutionError> {
-        self.lifecycle.nested_message(evm, tx_env, message, inspector)
+    /// Moves the running transaction onto a separate frame EVM. See
+    /// [`ExecutionLifecycle::begin_frame_evm`].
+    pub fn begin_frame_evm<'a>(&self, evm: &mut FoundryEvmFor<'_, FEN>) -> FoundryEvmFor<'a, FEN> {
+        self.lifecycle.begin_frame_evm(evm)
+    }
+
+    /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].
+    pub fn end_frame_evm(evm: &mut FoundryEvmFor<'_, FEN>, frame: FoundryEvmFor<'_, FEN>) {
+        ExecutionLifecycle::<EvmFactoryFor<FEN>>::end_frame_evm(evm, frame);
     }
 
     // ---- Running-state operations ----
