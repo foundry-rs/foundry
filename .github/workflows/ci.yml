@@ -274,6 +274,8 @@ jobs:
       id-token: write
     with:
       pinact: true
+      # Keep below Dependabot's cooldown to allow for date-only tag metadata.
+      pin-min-age: 7
       ensure-secure-runner: false
 
   ci-success:

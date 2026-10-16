@@ -32,7 +32,9 @@ updates:
       time: "09:00"
       timezone: UTC
     cooldown:
-      default-days: 7
+      # Dependabot truncates git tag timestamps to dates. Allow an extra day
+      # beyond workflow-validation's seven-day commit-age minimum.
+      default-days: 8
     groups:
       ci-weekly:
         patterns:
