@@ -19,15 +19,15 @@ use tempo_primitives::{
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
-use super::get_deposit_tx_parts;
+use super::DepositTransactionParts;
 #[cfg(any(feature = "base", feature = "optimism"))]
-use op_revm::transaction::deposit::DepositTransactionParts;
+use super::get_deposit_tx_parts;
 
 #[cfg(any(test, feature = "base", feature = "optimism"))]
 use alloy_serde::OtherFields;
 
 #[cfg(feature = "base")]
-use base_common_evm::EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
 use base_common_rpc_types::BaseTransactionRequest;
 
