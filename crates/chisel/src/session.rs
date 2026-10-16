@@ -127,34 +127,43 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         }
         Self::secure_cache_dir(cache_dir)?;
 
-        let cache_file_name = match self.id.as_ref() {
-            Some(id) => {
-                // ID is already set- use the existing cache file.
-                format!("{cache_dir}chisel-{id}.json")
-            }
-            None => {
-                // Get the next session cache ID / file
-                let (id, file_name) = Self::next_cached_session_in(cache_dir)?;
-                // Set the session's ID
-                self.id = Some(id);
-                // Return the new session's cache file name
-                file_name
-            }
-        };
+        // ID is already set- replace the existing cache file.
+        if let Some(id) = &self.id {
+            let cache_file_name = format!("{cache_dir}chisel-{id}.json");
+            self.write_temp_file(cache_dir)?.persist(&cache_file_name).map_err(|err| err.error)?;
+            return Ok(cache_file_name);
+        }
 
-        // The temporary file is private from creation, and replacement does not follow a
-        // destination symlink or retain the permissions of an older session.
+        // Claim the next session ID without replacing a session that another process saved
+        // after the ID was chosen, and retry past an ID that turned out to be taken.
+        let mut taken = None;
+        loop {
+            let (id, cache_file_name) = Self::next_cached_session_in(cache_dir, taken)?;
+            self.id = Some(id.to_string());
+            match self.write_temp_file(cache_dir)?.persist_noclobber(&cache_file_name) {
+                // Return the full cache file path
+                // Ex: /home/user/.foundry/cache/chisel/chisel-0.json
+                Ok(_) => return Ok(cache_file_name),
+                Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    taken = Some(id);
+                }
+                Err(err) => return Err(err.error.into()),
+            }
+        }
+    }
+
+    /// Serializes the session into a private temporary file in the cache directory.
+    ///
+    /// The temporary file is private from creation, and persisting it does not follow a
+    /// destination symlink or retain the permissions of an older session.
+    fn write_temp_file(&self, cache_dir: &str) -> Result<tempfile::NamedTempFile> {
         let mut file = tempfile::NamedTempFile::new_in(cache_dir)?;
         #[cfg(unix)]
         file.as_file().set_permissions(fs::Permissions::from_mode(0o600))?;
         serde_json::to_writer_pretty(&mut file, self)?;
         file.flush()?;
         file.as_file().sync_all()?;
-        file.persist(&cache_file_name).map_err(|err| err.error)?;
-
-        // Return the full cache file path
-        // Ex: /home/user/.foundry/cache/chisel/chisel-0.json
-        Ok(cache_file_name)
+        Ok(file)
     }
 
     /// Get the next default session cache file name
@@ -165,10 +174,13 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Uses one past the highest numeric ID to avoid collisions after deletion.
     pub fn next_cached_session() -> Result<(String, String)> {
-        Self::next_cached_session_in(&Self::cache_dir()?)
+        let (id, file_name) = Self::next_cached_session_in(&Self::cache_dir()?, None)?;
+        Ok((id.to_string(), file_name))
     }
 
-    fn next_cached_session_in(cache_dir: &str) -> Result<(String, String)> {
+    /// Returns one past the highest numeric ID in the cache directory or `taken`, an ID already
+    /// known to be occupied even if the directory listing does not show it.
+    fn next_cached_session_in(cache_dir: &str, taken: Option<usize>) -> Result<(usize, String)> {
         let next_id = std::fs::read_dir(cache_dir)?
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| {
@@ -180,11 +192,12 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
                     .parse::<usize>()
                     .ok()
             })
+            .chain(taken)
             .max()
             .map_or(Some(0), |max| max.checked_add(1))
             .ok_or_else(|| eyre::eyre!("no unused chisel session id available"))?;
 
-        Ok((format!("{next_id}"), format!("{cache_dir}chisel-{next_id}.json")))
+        Ok((next_id, format!("{cache_dir}chisel-{next_id}.json")))
     }
 
     /// The Chisel Cache Directory
@@ -384,10 +397,10 @@ mod tests {
         std::fs::write(format!("{cache_dir}chisel-2.json"), "{\"id\":\"2\"}").unwrap();
 
         let (next_id, next_file) =
-            ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir).unwrap();
+            ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir, None).unwrap();
 
         // Counting entries would select the occupied ID 2.
-        assert_eq!(next_id, "3", "must skip past the gap instead of reusing the occupied id 2");
+        assert_eq!(next_id, 3, "must skip past the gap instead of reusing the occupied id 2");
         assert_eq!(next_file, format!("{cache_dir}chisel-3.json"));
 
         assert_eq!(
@@ -406,8 +419,64 @@ mod tests {
         let cache_dir = format!("{}/", dir.path().to_str().unwrap());
         std::fs::write(format!("{cache_dir}chisel-{}.json", usize::MAX), "{}").unwrap();
 
-        let result = ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir);
+        let result = ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir, None);
         assert!(result.is_err(), "must error instead of panicking or wrapping to a reused id");
+    }
+
+    /// Concurrent automatic saves must each claim a distinct ID instead of overwriting each other.
+    #[test]
+    fn concurrent_saves_claim_distinct_ids() {
+        const SAVES: usize = 16;
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+        let barrier = std::sync::Barrier::new(SAVES);
+
+        let saved = std::thread::scope(|scope| {
+            let handles = (0..SAVES)
+                .map(|i| {
+                    let (cache_dir, barrier) = (&cache_dir, &barrier);
+                    scope.spawn(move || {
+                        let mut session = session_for_normalization_tests();
+                        session.source.run_code = format!("uint256 marker{i} = {i};");
+                        barrier.wait();
+                        let file = session.write_to(cache_dir).unwrap();
+                        (session.id.unwrap(), file, session.source.run_code)
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect::<Vec<_>>()
+        });
+
+        let mut ids = saved.iter().map(|(id, ..)| id.as_str()).collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), SAVES, "automatic saves reused an ID: {saved:?}");
+        assert_eq!(
+            ChiselSession::<EthEvmNetwork>::cached_session_files(&cache_dir).unwrap().len(),
+            SAVES
+        );
+        for (id, file, run_code) in saved {
+            assert_eq!(file, format!("{cache_dir}chisel-{id}.json"));
+            let saved: ChiselSession<EthEvmNetwork> =
+                serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+            assert_eq!(saved.id, Some(id));
+            assert_eq!(saved.source.run_code, run_code);
+        }
+    }
+
+    /// An occupied destination that the ID scan does not recognize, such as a differently cased
+    /// name on a case-insensitive filesystem, must not be retried forever or replaced.
+    #[test]
+    fn automatic_save_skips_occupied_ids_hidden_from_the_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+        let foreign = dir.path().join("CHISEL-0.JSON");
+        std::fs::write(&foreign, "foreign").unwrap();
+        let mut session = session_for_normalization_tests();
+
+        session.write_to(&cache_dir).unwrap();
+
+        assert_eq!(std::fs::read_to_string(foreign).unwrap(), "foreign");
     }
 
     #[test]
