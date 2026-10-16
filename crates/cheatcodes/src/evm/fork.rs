@@ -518,7 +518,12 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let _ = executor.transact(ccx.backend, ccx.evm, ccx.depth as u16, fork_id, transaction)?;
+    let result = executor.transact(ccx.backend, ccx.evm, ccx.depth as u16, fork_id, transaction)?;
+    // Cheatcodes do not run inside the replayed transaction; let `expectEmit` and `recordLogs`
+    // see its logs.
+    for log in &result.logs {
+        ccx.state.log_hook(log);
+    }
     ccx.state.state_epoch += 1;
     Ok(Default::default())
 }
