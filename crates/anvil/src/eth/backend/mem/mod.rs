@@ -163,7 +163,7 @@ use std::{
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
-use tempo_hardfork_evm2::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles_evm2::{
     NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     nonce::NonceManager,

@@ -17,11 +17,11 @@ use alloy_primitives::{Address, Bytes};
 use evm2::{Evm, TxResult, Version, evm::precompile::PrecompileProvider, registry::TxRegistry};
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use tempo_alloy::{TempoNetwork, primitives::TEMPO_TX_TYPE_ID};
-use tempo_evm2::{
+use tempo_evm::{
     TempoBlockExt, TempoEvmExt, TempoEvmFactory, TempoEvmTypes, TempoTxEnv, TempoTxResultExt,
     tempo_execution_config, tempo_tx_registry,
 };
-use tempo_hardfork_evm2::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles_evm2::{TempoPrecompiles, storage::StorageCtx};
 use tempo_primitives_evm2::TempoTxEnvelope;
 

@@ -986,7 +986,7 @@ mod tests {
     use super::*;
     use foundry_evm_hardforks::EthereumHardfork;
     use std::{env, net::Ipv4Addr};
-    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;

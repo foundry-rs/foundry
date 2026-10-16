@@ -24,7 +24,7 @@ use std::{
 };
 use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
-use tempo_hardfork_evm2::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoTxEnvelope;
 
 /// Anvil test accounts (standard mnemonic).
@@ -583,7 +583,7 @@ fn key_authorization_inspect_account_mismatch_rejected(cmd: _) {
 // On-chain (T6): authorize an admin key, then confirm it via `keychain is-admin --json`.
 #[casttest]
 async fn keychain_authorize_admin_then_is_admin(cmd: _) {
-    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1094,7 +1094,7 @@ async fn keychain_verify_admin_accepts_admin_signature(cmd: _) {
     use alloy_primitives::{Address, B256, hex};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
 
     let (_, handle) =
@@ -1152,7 +1152,7 @@ async fn keychain_verify_admin_accepts_admin_signature(cmd: _) {
 // On-chain (T6): `keychain authorize --admin` rejects spending limits before submitting.
 #[casttest]
 async fn keychain_authorize_admin_rejects_limits(cmd: _) {
-    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -1181,7 +1181,7 @@ async fn keychain_authorize_admin_rejects_limits(cmd: _) {
 // `UnauthorizedCaller()` on the pinned Tempo build.
 #[casttest]
 async fn keychain_access_key_cannot_submit_admin_mutator(cmd: _) {
-    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();

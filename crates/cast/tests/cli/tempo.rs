@@ -17,7 +17,7 @@ use tempo_contracts::precompiles::{
     ITIP20Factory, ITIP403Registry, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
     TIP403_REGISTRY_ADDRESS,
 };
-use tempo_hardfork_evm2::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoTxEnvelope;
 
 fn json_success_data(output: &str) -> serde_json::Value {

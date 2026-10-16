@@ -62,7 +62,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tempo_hardfork_evm2::{
+use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };

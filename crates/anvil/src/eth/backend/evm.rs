@@ -362,14 +362,14 @@ impl AnvilEvmNetwork for BaseEvmNetwork {
 impl AnvilEvmNetwork for TempoEvmNetwork {
     const FAMILY: EvmFamily = EvmFamily::Tempo;
 
-    fn spec(hardfork: FoundryHardfork) -> tempo_hardfork_evm2::TempoHardfork {
+    fn spec(hardfork: FoundryHardfork) -> tempo_hardfork::TempoHardfork {
         hardfork.into()
     }
 
     fn apply_tempo_simulation(
-        tx: tempo_evm2::TempoTxEnv,
+        tx: tempo_evm::TempoTxEnv,
         simulation: &TempoSimulation,
-    ) -> tempo_evm2::TempoTxEnv {
+    ) -> tempo_evm::TempoTxEnv {
         tx.with_simulation_overrides(
             simulation.unique_tx_identifier,
             simulation.fee_payer,

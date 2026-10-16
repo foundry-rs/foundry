@@ -11,7 +11,7 @@ use tempo_contracts::{
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE, precompiles::VALIDATOR_CONFIG_ADDRESS,
 };
-use tempo_hardfork_evm2::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles_evm2::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},

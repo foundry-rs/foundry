@@ -36,7 +36,7 @@ use foundry_evm_hardforks::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt};
-use tempo_hardfork_evm2::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 
 use std::{
     str::FromStr,

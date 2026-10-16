@@ -19,7 +19,7 @@ use alloy_chains::NamedChain;
 use op_evm2::OpSpecId;
 
 pub use alloy_hardforks::EthereumHardfork;
-pub use tempo_hardfork_evm2::TempoHardfork;
+pub use tempo_hardfork::TempoHardfork;
 
 #[cfg(feature = "base")]
 pub use base_common_genesis::BaseUpgrade;
@@ -733,7 +733,7 @@ pub fn ethereum_hardfork_from_block_tag(block: impl Into<BlockNumberOrTag>) -> E
 mod tests {
     use super::*;
     use alloy_hardforks::ethereum::mainnet::*;
-    use tempo_hardfork_evm2::constants::{mainnet::*, moderato::*};
+    use tempo_hardfork::constants::{mainnet::*, moderato::*};
 
     #[test]
     fn test_ethereum_spec_id_mapping() {

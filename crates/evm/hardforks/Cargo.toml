@@ -24,7 +24,7 @@ serde = { workspace = true, features = ["derive"] }
 
 # evm2
 evm2.workspace = true
-tempo-hardfork-evm2.workspace = true
+tempo-hardfork.workspace = true
 op-evm2 = { workspace = true, optional = true }
 base-evm2 = { workspace = true, optional = true }
 monad-evm2 = { workspace = true, optional = true }

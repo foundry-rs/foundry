@@ -86,7 +86,7 @@ mod vaddr_e2e {
         time::{Duration, Instant},
     };
     use tempo_contracts::precompiles::DEFAULT_FEE_TOKEN;
-    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     /// `cast vaddr` exercises TIP-1022, which is enabled after `TempoHardfork::T3`.
     fn tempo_t3_config() -> anvil::NodeConfig {
