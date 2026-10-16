@@ -1464,7 +1464,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
     fn log(&mut self, log: &Log, host: &mut FoundryEvmFor<'_, FEN>) {
         let inner = &mut *self.inner;
-        call_inspectors!([&mut inner.tracer, &mut inner.log_collector], |inspector| {
+        // Network post-transaction hooks, such as Tempo's fee settlement, emit logs after the root
+        // frame has ended, when the tracer has no call to attach them to.
+        let tracer = inner.tracer.as_mut().filter(|tracer| {
+            tracer.traces().nodes().first().is_none_or(|root| root.trace.status.is_none())
+        });
+        call_inspectors!([tracer, &mut inner.log_collector], |inspector| {
             Inspector::<TypesFor<FEN>>::log(&mut **inspector, log, host)
         });
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
