@@ -67,6 +67,9 @@ mod monad;
 mod script;
 pub use script::{Wallets, WalletsInner};
 
+mod state;
+pub use state::CheatcodesCore;
+
 mod string;
 
 mod tempo;
@@ -83,7 +86,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode to the given state.
     ///
     /// Implement this function if you need cheatcode state but no access to the EVM context.
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, _state: &mut CheatcodesCore) -> Result {
         self.apply_context_free()
     }
 
@@ -92,7 +95,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        self.apply_context(ccx.state)
+        self.apply_context(&mut ccx.state.core)
     }
 
     /// Applies this cheatcode to the given context and executor.
@@ -117,7 +120,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
 }
 
 /// The cheatcode context.
-pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
+pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes<FEN>,
     /// The EVM context.

@@ -867,7 +867,8 @@ interface Vm {
     /// `target` contract from `callee`.
     /// Can be used to substitute a call to a function with another implementation that captures
     /// the primary logic of the original function but is easier to reason about.
-    /// If calldata is not a strict match then partial match by selector is attempted.
+    /// If no exact calldata match exists, a mock registered with only the 4-byte selector is
+    /// attempted.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockFunction(address callee, address target, bytes calldata data) external;
 

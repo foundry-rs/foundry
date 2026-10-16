@@ -7778,7 +7778,7 @@
     {
       "func": {
         "id": "mockFunction",
-        "description": "Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls\n`target` with the same calldata. This functionality is similar to a delegate call made to\n`target` contract from `callee`.\nCan be used to substitute a call to a function with another implementation that captures\nthe primary logic of the original function but is easier to reason about.\nIf calldata is not a strict match then partial match by selector is attempted.",
+        "description": "Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls\n`target` with the same calldata. This functionality is similar to a delegate call made to\n`target` contract from `callee`.\nCan be used to substitute a call to a function with another implementation that captures\nthe primary logic of the original function but is easier to reason about.\nIf no exact calldata match exists, a mock registered with only the 4-byte selector is\nattempted.",
         "declaration": "function mockFunction(address callee, address target, bytes calldata data) external;",
         "visibility": "external",
         "mutability": "",

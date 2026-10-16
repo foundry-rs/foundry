@@ -40,7 +40,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        10
     }
 
     fn preprocess(
@@ -93,6 +93,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         let mut compiler =
             foundry_compilers::resolver::parse::SolParser::new(parser_paths.with_language_ref())
                 .into_compiler();
+        // Solc validates the input version; Solar only analyzes deployment dependencies.
+        compiler.dcx().set_allowed_diagnostic_codes(["5333".into()]);
         let result = compiler.enter_mut(|compiler| -> solar::interface::Result {
             let mut pcx = compiler.parse();
 
@@ -145,10 +147,10 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             );
 
             // Extend existing sources with preprocessor deploy helper sources.
-            sources.extend(create_deploy_helpers(&data));
+            sources.extend(create_deploy_helpers(gcx, constructor_context, &data));
 
             // Generate and apply preprocessor source updates.
-            apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data));
+            apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data, &paths.root));
 
             Ok(())
         });
@@ -184,7 +186,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        <Self as Preprocessor<SolcCompiler>>::cache_version(self)
     }
 
     fn preprocess(
@@ -306,6 +308,7 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::keccak256;
     use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
     use semver::Version;
 
@@ -357,6 +360,35 @@ mod tests {
             "immutable creation code was not rewritten"
         );
         assert!(mocks.contains(&paths.root.join("test/Mock.sol")));
+    }
+
+    #[test]
+    fn helper_sources_are_stable_across_compiler_jobs() {
+        let (_root, paths, mut input) = input();
+        input.input.sources = [
+            ("src/Dep.sol", "contract Dep { constructor(uint256 value) {} }".to_string()),
+            ("test/Deploy.sol", "import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep(7); } }".to_string()),
+        ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
+        let mut wider = input.clone();
+        // These declarations would also affect collision avoidance if it inspected unrelated files.
+        let dep_id = format!("{:x}", keccak256("src/Dep.sol:Dep"));
+        let test_id = format!("{:x}", keccak256("test/Deploy.sol:Deploy"));
+        wider.input.sources.insert(PathBuf::from("test/AAA.sol"), Source::new(format!(
+            "contract Extra {{}} interface VmContractHelper{test_id} {{}} contract DeployHelper{dep_id} {{}} function encodeArgs{dep_id}() pure {{}}"
+        )));
+        for input in [&mut input, &mut wider] {
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+        }
+        for (path, source) in &input.input.sources {
+            assert_eq!(source.content, wider.input.sources[path].content, "{path:?}");
+        }
     }
 
     #[test]
@@ -771,5 +803,61 @@ mod tests {
             Some("error: boom".to_string())
         );
         assert_eq!(solar_error_summary("solar reported 1 error"), None);
+    }
+
+    #[test]
+    fn deploy_helper_preserves_target_abi_coder() {
+        for (minor, patch, pragma, needs_v2) in [
+            (7, 6, "", false),
+            (7, 6, "pragma abicoder v2;", true),
+            (7, 6, "pragma experimental ABIEncoderV2;", true),
+            (8, 0, "", false),
+            (8, 37, "", false),
+            (8, 37, "pragma abicoder v2;", false),
+            (8, 37, "pragma experimental ABIEncoderV2;", false),
+            (8, 37, "pragma abicoder v1;", false),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.version = Version::new(0, minor, patch);
+            input.input.sources = [
+                ("src/Dep.sol", format!("{pragma} contract Dep {{ constructor(uint256 n) {{}} }}")),
+                ("test/Deploy.sol", "pragma experimental ABIEncoderV2; import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep(7); } }".to_string()),
+            ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor,
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let helpers = input
+                .input
+                .sources
+                .iter()
+                .filter(|(path, _)| is_deploy_helper_path(path))
+                .collect::<Vec<_>>();
+            assert_eq!(helpers.len(), 1);
+            assert_eq!(
+                helpers[0].1.content.matches("pragma experimental ABIEncoderV2;").count(),
+                usize::from(needs_v2),
+                "0.{minor}.{patch} {pragma}"
+            );
+            let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+            assert_eq!(source.matches("new Dep(7)").count(), 0);
+            assert_eq!(source.matches(".deployCode({").count(), 1);
+        }
+    }
+
+    #[test]
+    fn preprocessor_cache_versions_match() {
+        assert_eq!(
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::cache_version(
+                &DynamicTestLinkingPreprocessor
+            ),
+            <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::cache_version(
+                &DynamicTestLinkingPreprocessor
+            )
+        );
     }
 }
