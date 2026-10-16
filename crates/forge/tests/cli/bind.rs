@@ -1187,3 +1187,203 @@ Error: Cached compiler settings for [..]src/Foo.sol:Foo and profile `default` do
 "#]]);
     assert!(!prj.root().join("out/bindings").exists());
 }
+
+#[cfg(unix)]
+#[forgetest]
+fn bind_skip_build_offline_ignores_unrelated_installed_compiler(prj: _, cmd: _) {
+    let compiler_home = tempfile::tempdir().unwrap();
+    let svm = compiler_home.path().join(".svm");
+    fs::create_dir_all(&svm).unwrap();
+    let mut forge = |args: &[&str]| {
+        cmd.forge_fuse();
+        cmd.env("HOME", compiler_home.path());
+        cmd.env("XDG_DATA_HOME", compiler_home.path().join("data"));
+        cmd.args(args).assert_success()
+    };
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+    });
+
+    // Install the unrelated compiler in the isolated home without retaining its artifacts.
+    prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    forge(&["build", "--use", "0.8.21"]);
+    prj.clear();
+    prj.add_source(
+        "Foo.sol",
+        "pragma solidity =0.8.20; contract Foo { function value() external pure returns (uint256) { return 42; } }",
+    );
+    forge(&["build", "--use", "0.8.20"]);
+    forge(&["bind", "--skip-build", "--use", "0.8.20", "--select", "^Foo$"]);
+    let binding = prj.root().join("out/bindings/src/foo.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+    let artifact =
+        read_json_file::<ConfigurableContractArtifact>(&prj.artifacts().join("Foo.sol/Foo.json"))
+            .unwrap();
+    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
+    assert!(!bytecode.is_empty());
+    let embedded_bytecode = expected
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("///0x"))
+        .expect("binding should include creation bytecode");
+    assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(bytecode));
+
+    fs::remove_dir_all(svm.join("0.8.20")).unwrap();
+    let unrelated = compiler_home.path().join("unrelated-solc");
+    fs::rename(svm.join("0.8.21"), &unrelated).unwrap();
+    let args = ["bind", "--skip-build", "--offline", "--overwrite", "--select", "^Foo$"];
+
+    // Cached bindings must work both without compilers and with only an incompatible compiler.
+    forge(&args).stdout_eq("");
+    assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+    fs::rename(&unrelated, svm.join("0.8.21")).unwrap();
+    forge(&args).stdout_eq("");
+    assert_data_eq!(fs::read_to_string(binding).unwrap(), expected.as_str().raw());
+}
+
+#[forgetest]
+fn bind_skip_build_select_ignores_unrelated_compiler_requirements(prj: _, cmd: _) {
+    prj.add_source("A.sol", "pragma solidity =0.8.20; contract A {}");
+    prj.add_source(
+        "Selected.sol",
+        "pragma solidity =0.8.21; contract B { function value() external pure returns (uint256) { return 42; } }",
+    );
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+    });
+    cmd.arg("build").assert_success();
+
+    cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^B$"]).assert_success();
+    let binding = prj.root().join("out/bindings/src/b.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--use", "0.8.21", "--select", "^B$", "--overwrite"])
+        .assert_success()
+        .stdout_eq("");
+    assert_data_eq!(fs::read_to_string(binding).unwrap(), expected.as_str().raw());
+    assert!(!prj.root().join("out/bindings/src/a.rs").exists());
+}
+
+#[forgetest]
+fn bind_skip_build_selected_dependency_preserves_importer_context(prj: _, cmd: _) {
+    prj.add_lib(
+        "dep/Common.sol",
+        "pragma solidity ^0.8.0; contract Common { function value() external pure returns (uint256) { return 42; } }",
+    );
+    prj.add_source(
+        "A.sol",
+        "pragma solidity =0.8.20; import {Common} from '../lib/dep/Common.sol'; contract A is Common {}",
+    );
+    prj.add_source("B.sol", "pragma solidity =0.8.21; contract B {}");
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "via-ir".into(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/A.sol".parse().unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    cmd.arg("build").assert_success();
+
+    let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
+    let artifact = cache.files[Path::new("lib/dep/Common.sol")]
+        .find_artifact("Common", &"0.8.20".parse().unwrap(), "via-ir")
+        .expect("dependency should inherit its importer's compiler and profile");
+    let artifact =
+        read_json_file::<ConfigurableContractArtifact>(&prj.artifacts().join(&artifact.path))
+            .unwrap();
+    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
+    assert!(!bytecode.is_empty());
+
+    // Selecting a library must preserve its importer's context without including unrelated roots.
+    for version in [None, Some("0.8.20")] {
+        let mut args = vec!["bind", "--skip-build", "--select", "^Common$", "--overwrite"];
+        if let Some(version) = version {
+            args.extend(["--use", version]);
+        }
+        cmd.forge_fuse().args(args).assert_success().stdout_eq("");
+        let binding = fs::read_to_string(prj.root().join("out/bindings/src/common.rs")).unwrap();
+        let embedded_bytecode = binding
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("///0x"))
+            .expect("binding should include creation bytecode");
+        assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(&bytecode));
+    }
+}
+
+#[forgetest]
+fn bind_skip_build_select_keeps_required_dependencies(prj: _, cmd: _) {
+    prj.add_lib("dep/Common.sol", "pragma solidity ^0.8.0; contract Common {}");
+    prj.add_source(
+        "B.sol",
+        "pragma solidity =0.8.21; import {Common} from '../lib/dep/Common.sol'; contract B is Common {}",
+    );
+    prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
+    cmd.args(["build", "--use", "0.8.21"]).assert_success();
+
+    prj.add_lib("dep/Common.sol", "pragma solidity =0.8.20; contract Common {}");
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--use", "0.8.21", "--select", "^B$"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: Encountered invalid compiler version in lib/dep/Common.sol: No compiler version exists that matches the version requirement: =0.8.20
+
+"#]]);
+}
+
+#[forgetest]
+fn bind_skip_build_select_preserves_shared_compiler_version(prj: _, cmd: _) {
+    prj.add_source(
+        "B.sol",
+        "pragma solidity ^0.8.0; contract B { function value() external pure returns (uint256) { return 42; } }",
+    );
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+    });
+    // Make a newer compiler available before the project chooses one shared version.
+    cmd.args(["build", "--use", "0.8.21"]).assert_success();
+    prj.clear();
+    prj.add_source("A.sol", "pragma solidity =0.8.20; contract A {}");
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
+    let artifact = cache.files[Path::new("src/B.sol")]
+        .find_artifact("B", &"0.8.20".parse().unwrap(), "default")
+        .expect("compatible sources should share the same compiler version");
+    let artifact =
+        read_json_file::<ConfigurableContractArtifact>(&prj.artifacts().join(&artifact.path))
+            .unwrap();
+    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
+    assert!(!bytecode.is_empty());
+
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^B$"])
+        .assert_success()
+        .stdout_eq("");
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/b.rs")).unwrap();
+    let embedded_bytecode = binding
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("///0x"))
+        .expect("binding should include creation bytecode");
+    assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(bytecode));
+}

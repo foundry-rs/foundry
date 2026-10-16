@@ -150,7 +150,7 @@ impl BindArgs {
         } else {
             let mut project = config.project()?;
             // Compilation may install compiler versions and change subsequent auto-detection.
-            let contexts = resolved_artifact_contexts(&project)?;
+            let contexts = resolved_artifact_contexts(&project, None)?;
             let output = compile_abi_project(
                 &mut project,
                 ProjectCompiler::new().external_compilers(&config),
@@ -216,9 +216,15 @@ impl BindArgs {
             let paths: ProjectPathsConfig = config.project_paths();
             if let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&paths) {
                 let filter = self.get_filter()?;
-                if !cache.entries().any(|entry| {
-                    entry.artifacts.keys().any(|name| filter.is_match(&binding_name(name)))
-                }) {
+                let selected = cache
+                    .files
+                    .iter()
+                    .filter(|(_, entry)| {
+                        entry.artifacts.keys().any(|name| filter.is_match(&binding_name(name)))
+                    })
+                    .map(|(source, _)| source.clone())
+                    .collect::<HashSet<_>>();
+                if selected.is_empty() {
                     return self.filter_artifact_paths(json_files(&artifacts.join(".external")));
                 }
                 let compiler = CachedCompiler::new(config, &cache);
@@ -226,7 +232,10 @@ impl BindArgs {
                 project.update_output_selection(|selection| {
                     *selection = OutputSelection::common_output_selection(["abi".to_string()]);
                 });
-                let contexts = resolved_artifact_contexts(&project)?;
+                // Preserve compiler versions shared by compatible inputs. If unrelated sources
+                // cannot resolve, only the selected inputs and their dependencies need to agree.
+                let contexts = resolved_artifact_contexts(&project, None)
+                    .or_else(|_| resolved_artifact_contexts(&project, Some(&selected)))?;
                 let mut files = Vec::new();
                 for (source, contexts) in contexts {
                     if let Some(entry) = cache.entry(&source) {
@@ -509,6 +518,7 @@ impl Filter {
 /// Resolves source/compiler/profile identities using the same graph as compilation.
 fn resolved_artifact_contexts<C>(
     project: &Project<C>,
+    selected: Option<&HashSet<PathBuf>>,
 ) -> Result<BTreeMap<PathBuf, BTreeSet<(Version, String)>>>
 where
     C: Compiler<
@@ -521,6 +531,32 @@ where
     let mut sources = project.paths.read_input_files()?;
     if let Some(filter) = &project.sparse_output {
         sources.retain(|source, _| filter.is_match(source));
+    }
+    if let Some(selected) = selected {
+        let dependencies = selected
+            .iter()
+            .filter(|source| !sources.contains_key(*source))
+            .map(PathBuf::as_path)
+            .collect::<HashSet<_>>();
+        let mut roots = selected.clone();
+        if !dependencies.is_empty() {
+            // Libraries inherit their importers' compiler versions and profiles. Keep those
+            // inputs instead of treating selected libraries as standalone compilation roots.
+            let graph =
+                Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources.clone())?;
+            roots.extend(
+                graph
+                    .input_nodes()
+                    .filter(|node| {
+                        graph
+                            .imports(node.path())
+                            .iter()
+                            .any(|import| dependencies.contains(import))
+                    })
+                    .map(|node| node.path().to_path_buf()),
+            );
+        }
+        sources.retain(|source, _| roots.contains(source));
     }
     let graph = Graph::resolve_sources(&project.paths, sources)?;
     let resolved = graph.into_sources_by_version(project)?;
@@ -588,6 +624,8 @@ impl CachedCompiler {
                     cached_versions(false)
                 }
             }
+            // Offline bindings consume existing artifacts without requiring installed compilers.
+            None if config.offline => cached_versions(false),
             None => {
                 let available =
                     SolcCompiler::AutoDetect.available_versions(&SolcLanguage::Solidity);
