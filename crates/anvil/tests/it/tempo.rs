@@ -37,7 +37,7 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
 use anvil_core::eth::block::Block;
 use foundry_common::FoundryTransactionBuilder;
-use foundry_evm::core::tempo::{
+use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
@@ -51,7 +51,7 @@ use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
 };
-use tempo_precompiles::{
+use tempo_precompiles_evm2::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
     NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS,
     TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
@@ -831,7 +831,7 @@ async fn test_tempo_precompiles_have_code() {
     );
 
     // Tempo precompiles should have sentinel bytecode (0xef)
-    for addr in active_tempo_precompile_addresses(TempoHardfork::T5) {
+    for addr in active_tempo_precompile_addresses(tempo_hardfork::TempoHardfork::T5) {
         let code = api.get_code(addr, None).await.unwrap();
         assert!(!code.is_empty(), "Precompile {addr} should have code");
     }

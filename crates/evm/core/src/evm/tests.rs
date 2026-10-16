@@ -229,8 +229,8 @@ fn eth_lifecycle() {
 #[test]
 fn tempo_lifecycle() {
     lifecycle_suite::<crate::evm::TempoEvmNetwork>(
-        tempo_evm2::TempoEvmFactory::default(),
-        tempo_hardfork_evm2::TempoHardfork::default(),
+        tempo_evm::TempoEvmFactory::default(),
+        tempo_hardfork::TempoHardfork::default(),
     );
 }
 
@@ -335,8 +335,8 @@ fn spec_changes_keep_foundry_policy() {
 
 #[test]
 fn tempo_factory_seeds_local_genesis() {
-    let factory = tempo_evm2::TempoEvmFactory::default();
-    let spec = tempo_hardfork_evm2::TempoHardfork::default();
+    let factory = tempo_evm::TempoEvmFactory::default();
+    let spec = tempo_hardfork::TempoHardfork::default();
     let env = EvmEnv::new(spec, factory.version(spec, 31337), Default::default());
     let mut evm = FoundryEvmFactory::create_evm(&factory, InMemoryDB::default(), env);
 

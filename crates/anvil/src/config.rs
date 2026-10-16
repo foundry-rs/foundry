@@ -2,7 +2,11 @@ use crate::{
     FeeManager, PrecompileFactory,
     eth::{
         backend::{
-            db::{Db, SerializableState},
+            db::{BlockchainDb, BlockchainDbMeta, Db, SerializableState, SharedBackend},
+            env::{
+                BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
+                apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
+            },
             fork::{
                 ClientFork, ClientForkConfig, ForkEndpointIdentity, ensure_fork_network_supported,
             },
@@ -19,7 +23,6 @@ use crate::{
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{
@@ -40,26 +43,17 @@ use foundry_common::{
     provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
 };
 use foundry_config::Config;
-use foundry_evm::{
-    backend::{
-        BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend, account_fetch_policy_for_source,
-    },
+use foundry_evm_core::{
+    backend::account_fetch_policy_for_source,
     constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::FoundryHardfork,
-    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
-    utils::{
-        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
-        get_blob_params, get_blob_params_by_hardfork,
-    },
+    utils::{get_blob_params, get_blob_params_by_hardfork},
 };
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_evm_traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_fork_db::ForkBlock;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
-use revm::{
-    context::{BlockEnv, CfgEnv},
-    context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
-};
 use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
@@ -72,7 +66,7 @@ use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };
-use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
+use tempo_precompiles_evm2::TIP_FEE_MANAGER_ADDRESS;
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
@@ -111,7 +105,7 @@ pub(crate) fn source_hardfork(
     #[cfg(feature = "base")]
     if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::Base | NamedChain::BaseSepolia)) {
         #[cfg(feature = "optimism")]
-        return foundry_evm::hardfork::OpHardfork::from_chain_and_timestamp(
+        return foundry_evm_hardforks::OpHardfork::from_chain_and_timestamp(
             Chain::from_id(chain_id),
             timestamp,
         )
@@ -724,7 +718,7 @@ impl Default for NodeConfig {
 impl NodeConfig {
     /// Applies Tempo's safe default beneficiary for forked nodes while preserving
     /// explicit coinbase selections.
-    pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
+    pub(crate) fn apply_tempo_fork_beneficiary_default(&self, evm_env: &mut EvmEnv) {
         if self.networks.is_tempo()
             && !self.fork_urls.is_empty()
             && evm_env.block_env.beneficiary.is_zero()
@@ -2104,7 +2098,7 @@ latest block number: {latest_block}"
 
         // Cache identity must describe the remote fork block, not local execution overrides that
         // can change after mining (for example, the locally advanced base fee).
-        let cache_block_env: BlockEnv = block_env_from_header(&block.header);
+        let cache_block_env = block_env_from_header(&block.header);
 
         evm_env.block_env = BlockEnv {
             gas_limit,
@@ -2210,7 +2204,7 @@ latest block number: {latest_block}"
         let block_hash = block.header.hash;
 
         // Apply changes such as difficulty -> prevrandao for the remote source chain.
-        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
             evm_env,
             &block,
             source_chain_id,
@@ -2671,16 +2665,16 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
+    use foundry_evm_hardforks::{EthereumHardfork, latest_active_tempo_hardfork};
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     #[cfg(feature = "base")]
-    use foundry_evm::hardforks::BaseUpgrade;
+    use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
-    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm_hardforks::OpHardfork;
 
     #[cfg(not(feature = "base"))]
     use alloy_chains::NamedChain;
@@ -2993,7 +2987,7 @@ mod tests {
         assert_eq!(config.get_chain_id(), 1);
         assert_eq!(
             config.get_hardfork(),
-            FoundryHardfork::Monad(foundry_evm::hardfork::MonadHardfork::MonadEight)
+            FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight)
         );
     }
 

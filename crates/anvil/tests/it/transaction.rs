@@ -3,6 +3,7 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_consensus::{Header, Transaction};
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA as TX_GAS_LIMIT_CAP;
 use alloy_network::{
     AnyRpcTransaction, EthereumWallet, Network, ReceiptResponse, TransactionBuilder,
     TransactionResponse, eip2718::Decodable2718,
@@ -23,10 +24,9 @@ use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
 use eyre::Ok;
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::{FutureExt, StreamExt, future::join_all};
-use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 

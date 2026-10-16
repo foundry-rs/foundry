@@ -1,10 +1,8 @@
 //! Genesis settings
 
-use crate::eth::backend::db::Db;
+use crate::eth::backend::db::{AccountInfo, Bytecode, DatabaseResult, Db, KECCAK_EMPTY};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, U256};
-use foundry_evm::backend::DatabaseResult;
-use revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
 
 /// Genesis settings
 #[derive(Clone, Debug, Default)]
@@ -25,14 +23,8 @@ impl GenesisConfig {
     /// Returns fresh `AccountInfo`s for the configured `accounts`
     pub fn account_infos(&self) -> impl Iterator<Item = (Address, AccountInfo)> + '_ {
         self.accounts.iter().copied().map(|address| {
-            let info = AccountInfo {
-                balance: self.balance,
-                code_hash: KECCAK_EMPTY,
-                // we set this to empty so `Database::code_by_hash` doesn't get called
-                code: Some(Default::default()),
-                nonce: 0,
-                account_id: None,
-            };
+            // The empty code is set so `code_by_hash` doesn't get called.
+            let info = AccountInfo::new(self.balance, 0, KECCAK_EMPTY, Some(Default::default()));
             (address, info)
         })
     }
@@ -57,12 +49,11 @@ impl GenesisConfig {
     fn genesis_to_account_info(&self, acc: &GenesisAccount) -> AccountInfo {
         let GenesisAccount { code, balance, nonce, .. } = acc.clone();
         let code = code.map(Bytecode::new_raw);
-        AccountInfo {
+        AccountInfo::new(
             balance,
-            nonce: nonce.unwrap_or_default(),
-            code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
+            nonce.unwrap_or_default(),
+            code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,
-            account_id: None,
-        }
+        )
     }
 }

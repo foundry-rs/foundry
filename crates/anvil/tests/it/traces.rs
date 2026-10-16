@@ -36,9 +36,8 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::AccountInfo;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
-use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
-use revm::context_interface::block::BlobExcessGasAndPrice;
+use anvil::{NodeConfig, eth::backend::env::BlobExcessGasAndPrice, spawn};
+use foundry_evm_hardforks::EthereumHardfork;
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]

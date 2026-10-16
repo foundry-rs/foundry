@@ -3,7 +3,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_primitives::Bytes;
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 use op_alloy_consensus::{
     decode_holocene_extra_data, decode_jovian_extra_data, encode_holocene_extra_data,
     encode_jovian_extra_data,

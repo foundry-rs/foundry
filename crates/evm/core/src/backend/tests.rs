@@ -191,7 +191,7 @@ fn eth_backend() {
 
 #[test]
 fn tempo_backend() {
-    backend_suite::<crate::evm::TempoEvmNetwork>(tempo_hardfork_evm2::TempoHardfork::default());
+    backend_suite::<crate::evm::TempoEvmNetwork>(tempo_hardfork::TempoHardfork::default());
 }
 
 #[cfg(feature = "optimism")]

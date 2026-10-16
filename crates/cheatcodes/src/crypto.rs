@@ -727,7 +727,7 @@ mod tests {
     use k256::elliptic_curve::Curve;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use tempo_contracts::precompiles::ISignatureVerifier;
-    use tempo_hardfork_evm2::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     use tempo_precompiles_evm2::{
         Precompile,
         account_keychain::{AccountKeychain, IAccountKeychain, KeyRestrictions, SignatureType},

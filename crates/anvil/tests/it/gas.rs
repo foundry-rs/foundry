@@ -14,14 +14,14 @@ use alloy_serde::WithOtherFields;
 use anvil::{
     EthereumHardfork, NodeConfig,
     eth::{
+        backend::env::BlobExcessGasAndPrice,
         error::{BlockchainError, InvalidTransactionError},
         fees::INITIAL_BASE_FEE,
     },
     spawn,
 };
-use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
 use foundry_evm_networks::arbitrum;
-use revm::context_interface::block::BlobExcessGasAndPrice;
 
 const GAS_TRANSFER: u64 = 21_000;
 
