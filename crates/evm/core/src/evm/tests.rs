@@ -151,19 +151,19 @@ where
     evm.state_mut().clear_transaction_state();
     assert_eq!(slot(&mut evm), U256::from(8));
 
-    // A nested transaction sees in-flight writes and merges its own only on success, as
-    // journaled writes of the running transaction.
+    // A nested transaction sees in-flight writes and merges its changes as journaled writes of
+    // the running transaction; a failed one only keeps its nonce increment and fee payment.
     let checkpoint = evm.state().checkpoint();
     evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(50));
     let other = Address::with_last_byte(0xC1);
     let tx =
         FEN::tx_from_request(store_request::<FEN>(other, REVERT_ADDRESS, 0, 51, chain_id)).unwrap();
     assert!(!lifecycle.nested_transaction(&mut evm, &tx).unwrap().status);
-    assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(50), 0));
+    assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(50), 1));
     let tx =
-        FEN::tx_from_request(store_request::<FEN>(other, STORE_ADDRESS, 0, 52, chain_id)).unwrap();
+        FEN::tx_from_request(store_request::<FEN>(other, STORE_ADDRESS, 1, 52, chain_id)).unwrap();
     assert!(lifecycle.nested_transaction(&mut evm, &tx).unwrap().status);
-    assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(52), 1));
+    assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(52), 2));
     let features = evm.version().features;
     evm.state_mut().rollback(checkpoint, features);
     assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(8), 0));

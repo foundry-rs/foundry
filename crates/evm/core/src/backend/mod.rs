@@ -860,7 +860,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Executes `tx` as a nested transaction of the running one, in `env` or the running
-    /// environment for `None`, and merges its changes into the running transaction on success.
+    /// environment for `None`, and merges its changes into the running transaction.
     pub fn transact_from_tx(
         &mut self,
         tx: &Recovered<TxFor<FEN>>,

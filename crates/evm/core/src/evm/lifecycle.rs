@@ -418,10 +418,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     }
 
     /// Executes `tx` as a separate transaction over the running transaction's current state, such
-    /// as for `vm.transact`, and merges its state changes into the running transaction on success.
+    /// as for `vm.transact`, and merges its state changes into the running transaction.
     ///
     /// The merged writes are journaled, so they revert with the enclosing call. A failed
-    /// transaction changes nothing.
+    /// transaction only keeps its nonce increment and fee payment.
     pub fn nested_transaction(
         &self,
         evm: &mut Evm<'_, F::Types>,
@@ -444,11 +444,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             executor.set_inspector(inspector);
         }
         let executed = executor.transact(tx).map_err(transaction_error)?;
-        let result = executed.result().clone();
-        if result.status {
-            merge_nested_changes(evm.state_mut(), &executed)?;
-        }
-        Ok(result)
+        merge_nested_changes(evm.state_mut(), &executed)?;
+        Ok(executed.result().clone())
     }
 
     /// Builds the EVM a nested transaction of the running one executes on: a copy of the running
@@ -693,8 +690,8 @@ pub fn nested_frame<T: EvmTypes, R, E>(
     result
 }
 
-/// Applies a successful nested transaction's changes to the running transaction's `state` as
-/// journaled writes, so they revert with the enclosing call.
+/// Applies a nested transaction's changes to the running transaction's `state` as journaled
+/// writes, so they revert with the enclosing call.
 pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
