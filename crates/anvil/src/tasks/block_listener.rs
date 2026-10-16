@@ -91,7 +91,7 @@ mod tests {
         task::noop_waker,
     };
     use parking_lot::Mutex;
-    use std::sync::Arc;
+    use std::{pin::pin, sync::Arc};
 
     #[test]
     fn waits_for_active_task_before_processing_latest_block() {
@@ -102,7 +102,7 @@ mod tests {
         let processed = Arc::new(Mutex::new(Vec::new()));
         let task_release_rx = release_rx;
         let task_processed = processed.clone();
-        let mut listener = Box::pin(BlockListener::new(shutdown, rx, move |block| {
+        let mut listener = pin!(BlockListener::new(shutdown, rx, move |block| {
             let release_rx = task_release_rx.clone();
             let processed = task_processed.clone();
             async move {
