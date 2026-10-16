@@ -143,6 +143,37 @@ added 1 generated test file(s):
     assert!(!prj.root().join("cache/properties/baseline").exists());
 }
 
+// A kept property must keep its imported helper, while an unrelated proposal file can be dropped.
+#[forgetest_init]
+fn properties_keeps_imported_candidate_helpers(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "the fee is one percent",
+  "files": [
+    {"path": "test/generated/Helper.sol", "content": "pragma solidity ^0.8.20;\nlibrary Helper { function fee(uint256 amount) internal pure returns (uint256) { return amount / 100; } }\n"},
+    {"path": "test/generated/Property.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\nimport {Helper} from \"./Helper.sol\";\ncontract PropertyTest { function testFee() public pure { require(Fee.fee(199) == Helper.fee(199)); } }\n"},
+    {"path": "test/generated/Unused.sol", "content": "pragma solidity ^0.8.20;\nlibrary Unused {}\n"}
+  ]
+}
+JSON
+"#,
+    );
+    cmd.args(args).args(["--target", "src/Fee.sol"]).assert_success().stdout_eq(str![[r#"
+added 2 generated test file(s):
+  test/generated/Helper.sol
+  test/generated/Property.t.sol
+
+"#]]);
+
+    assert!(!prj.root().join("test/generated/Unused.sol").exists());
+    cmd.forge_fuse().args(["test", "--match-contract", "PropertyTest"]).assert_success();
+}
+
 // A failing test that a generator check saw and the generator then removed is still reported.
 #[forgetest_init]
 fn properties_reports_removed_check_failures(prj: _, cmd: _) {
@@ -470,6 +501,10 @@ fn properties_check_reports_candidate_result(prj: _, cmd: _) {
 }
 
 "#]]);
+    // The resolved workspace test path must win over an absolute inherited environment path.
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_TEST", prj.root().join("test"));
+    cmd.args(check("passing.json")).assert_success();
     // A config file chosen with `FOUNDRY_CONFIG` is resolved in the project, not in the copy.
     fs::copy(&foundry_toml, prj.root().join("custom.toml")).unwrap();
     cmd.forge_fuse().env("FOUNDRY_CONFIG", "custom.toml");
@@ -540,6 +575,14 @@ Error: candidate check failed
 
 "#]]);
     cmd.forge_fuse().args(check("seeded.json")).assert_failure().stderr_eq(str![[r#"
+Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
+
+"#]]);
+    write_candidate(
+        "seeded-table.json",
+        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz = { seed = \"0x3\", runs = 1 }\n    function testFuzzFee(uint256 amount) public pure {}\n}\n",
+    );
+    cmd.forge_fuse().args(check("seeded-table.json")).assert_failure().stderr_eq(str![[r#"
 Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
 
 "#]]);

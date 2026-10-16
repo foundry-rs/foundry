@@ -691,7 +691,7 @@ impl Campaign<'_> {
         let run = self.run_tests(workspace.path(), &candidate)?;
         record.reasons = run.reasons;
         record.possible_bugs = run.possible_bugs;
-        let mut kept = proposal
+        let passing_files = proposal
             .files
             .iter()
             .filter(|file| {
@@ -699,7 +699,17 @@ impl Campaign<'_> {
                     && run.passing.iter().any(|test| test_path(test) == file.path)
             })
             .map(|file| file.path.clone())
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
+        let mut kept = required_candidate_files(
+            self.config,
+            workspace.path(),
+            &candidate.files,
+            &passing_files,
+        )?;
+        ensure!(
+            kept.iter().all(|path| !run.failing_files.contains(path)),
+            "a passing test imports a candidate file with a failing test"
+        );
         let tests = run
             .passing
             .into_iter()
@@ -781,6 +791,14 @@ impl Campaign<'_> {
                 })
             })
             .collect();
+        for path in self.baseline_tests.iter().map(test_path).collect::<HashSet<_>>() {
+            let source = fs::read_to_string(self.config.root.join(&path))?;
+            ensure!(
+                !has_inline_fuzz_seed(&source),
+                "test {} sets a seed in inline config",
+                path.display()
+            );
+        }
         let files = self.current.as_ref().map_or(&[][..], |current| &current.files);
         let workspace = candidate_workspace(self.config, files, &self.targets)?;
         let selection =
@@ -1045,7 +1063,8 @@ impl Campaign<'_> {
             // Internal runs must not replace the project's own `--rerun` state.
             .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"))
             // A workspace has its own resolved `foundry.toml`.
-            .env_remove("FOUNDRY_CONFIG");
+            .env_remove("FOUNDRY_CONFIG")
+            .env_remove("FOUNDRY_TEST");
         command
     }
 }
@@ -1110,6 +1129,46 @@ fn candidate_workspace(
         fs::write(path, &file.content)?;
     }
     Ok(workspace)
+}
+
+/// Keeps the imported candidate files needed by passing tests.
+fn required_candidate_files(
+    config: &Config,
+    workspace: &Path,
+    files: &[CandidateFile],
+    passing: &HashSet<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    if passing.is_empty() || passing.len() == files.len() {
+        return Ok(files
+            .iter()
+            .filter(|file| passing.contains(&file.path))
+            .map(|file| file.path.clone())
+            .collect());
+    }
+    let rebased = workspace::rebase_config_paths(config, workspace);
+    let graph =
+        Graph::<MultiCompilerParser>::resolve(&rebased.project_paths::<MultiCompilerLanguage>())
+            .wrap_err("failed to resolve generated test imports")?;
+    let mut required = passing.clone();
+    for path in passing {
+        let index = graph
+            .nodes
+            .iter()
+            .position(|node| workspace::relative_to_root(workspace, node.path()) == *path)
+            .ok_or_else(|| {
+                eyre!("passing test file {} is absent from the import graph", path.display())
+            })?;
+        required.extend(
+            graph
+                .all_imported_nodes(index)
+                .map(|index| workspace::relative_to_root(workspace, graph.node(index).path())),
+        );
+    }
+    Ok(files
+        .iter()
+        .filter(|file| required.contains(&file.path))
+        .map(|file| file.path.clone())
+        .collect())
 }
 
 /// Returns every test result in Forge's JSON output, with one result per invariant predicate of a
@@ -1532,14 +1591,24 @@ fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<(
         );
         ensure!(paths.insert(&file.path), "candidate contains duplicate file paths");
         // The seeds must decide every run, so a generated test cannot pin its own seed.
-        let sets_seed = file.content.lines().any(|line| {
-            line.split_once("forge-config:")
-                .and_then(|(_, setting)| setting.split_once('='))
-                .is_some_and(|(key, _)| key.trim().ends_with(".seed"))
-        });
-        ensure!(!sets_seed, "candidate {} sets a seed in inline config", file.path.display());
+        ensure!(
+            !has_inline_fuzz_seed(&file.content),
+            "candidate {} sets a seed in inline config",
+            file.path.display()
+        );
     }
     Ok(())
+}
+
+/// Checks both dotted and inline-table forms of a NatSpec fuzz seed override.
+fn has_inline_fuzz_seed(source: &str) -> bool {
+    source.lines().filter_map(|line| line.split_once("forge-config:")).any(|(_, setting)| {
+        setting.trim().parse::<toml_edit::DocumentMut>().is_ok_and(|config| {
+            config
+                .iter()
+                .any(|(_, profile)| profile.get("fuzz").and_then(|fuzz| fuzz.get("seed")).is_some())
+        })
+    })
 }
 
 /// Returns the directory for one seed's builds and persisted state in a workspace.
