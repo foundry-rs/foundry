@@ -422,9 +422,6 @@ op-alloy-network = "2.0.0"
 op-alloy-rpc-types = "2.0.0"
 op-alloy-flz = "0.13.1"
 
-## alloy-evm
-alloy-evm = "0.39.0"
-
 # revm
 revm = { version = "43.0.2", default-features = false }
 
@@ -546,13 +543,6 @@ tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c
 ] }
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26", default-features = false }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
-
-# Monad
-monad-revm = { version = "0.8.0", default-features = false, features = [
-    "std",
-    "serde",
-    "memory_limit",
-] }
 
 # Base
 base-common-chains = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }

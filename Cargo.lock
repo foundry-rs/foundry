@@ -4943,6 +4943,7 @@ dependencies = [
  "k256 0.14.0",
  "once_cell",
  "p256 0.14.0",
+ "paste",
  "phf 0.14.0",
  "ripemd 0.2.0",
  "ruint",
@@ -5227,6 +5228,7 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "dunce",
+ "evm2",
  "eyre",
  "flate2",
  "forge-doc",
@@ -5264,7 +5266,6 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest 0.13.5",
- "revm",
  "rexpect",
  "rustix",
  "semver 1.0.28",
@@ -10353,7 +10354,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d38e16b72ec1c836ec8490562bfb21003165ea8bc496086bf345680a6e6c41"
 dependencies = [
  "bitvec",
- "paste",
  "phf 0.14.0",
  "revm-primitives 43.0.0",
  "serde",

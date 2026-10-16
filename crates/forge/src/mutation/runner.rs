@@ -663,7 +663,7 @@ fn compile_and_test<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env) = evm.backend.env(evm_opts).await?;
+        let (evm_env, tx) = evm.backend.env(evm_opts).await?;
 
         // Build test runner mirroring the canonical `forge test` runner: same
         // isolation flag, same fail-fast semantics for mutation, and same
@@ -679,7 +679,7 @@ fn compile_and_test<FEN: FoundryEvmNetwork>(
             .build::<FEN, MultiCompiler>(
                 &compile_output,
                 evm_env,
-                tx_env,
+                tx,
                 evm_opts.clone(),
                 evm.backend.clone_with_fork_scope()?,
                 evm.executor_builder.clone(),
@@ -725,7 +725,11 @@ mod tests {
             let config = Arc::new(config);
             let evm = MutationEvmConfig {
                 opts: EvmOpts::default(),
-                backend: Backend::<EthEvmNetwork>::spawn(None).unwrap(),
+                backend: Backend::<EthEvmNetwork>::spawn(
+                    None,
+                    EvmOpts::default().local_evm_env::<EthEvmNetwork>(),
+                )
+                .unwrap(),
                 executor_builder: ExecutorBuilder::<EthEvmNetwork>::new(),
                 create2_deployer_available: false,
             };
