@@ -4,8 +4,9 @@ use foundry_compilers::{
     multi::MultiCompilerSettings,
     utils::read_json_file,
 };
-use foundry_config::{CompilationRestrictions, SettingsOverrides, SolcReq};
+use foundry_config::SolcReq;
 use foundry_test_utils::{TestProject, cargo_profile_dir, snapbox::IntoData};
+use serde_json::json;
 use std::{fs, path::Path, process::Command};
 
 // Keep each generated crate isolated while reusing its dependencies across binding tests.
@@ -966,30 +967,18 @@ contract Foo { function value() external pure returns (uint256) { return 42; } }
     prj.update_config(|config| {
         config.solc = Some(SolcReq::Version("0.8.21".parse().unwrap()));
         config.evm_version = "paris".parse().unwrap();
-        config.additional_compiler_profiles = vec![SettingsOverrides {
-            name: "no-metadata".into(),
-            via_ir: None,
-            evm_version: None,
-            optimizer: None,
-            optimizer_runs: None,
-            bytecode_hash: Some(BytecodeHash::None),
-        }];
+        config.additional_compiler_profiles = serde_json::from_value(
+            json!([{ "name": "no-metadata", "bytecode_hash": BytecodeHash::None }]),
+        )
+        .unwrap();
     });
     let select_profile = |restricted| {
         prj.update_config(|config| {
             config.compilation_restrictions = if restricted {
-                vec![CompilationRestrictions {
-                    paths: "src/Foo.sol".parse().unwrap(),
-                    version: None,
-                    via_ir: None,
-                    bytecode_hash: Some(BytecodeHash::None),
-                    min_optimizer_runs: None,
-                    optimizer_runs: None,
-                    max_optimizer_runs: None,
-                    min_evm_version: None,
-                    evm_version: None,
-                    max_evm_version: None,
-                }]
+                serde_json::from_value(
+                    json!([{ "paths": "src/Foo.sol", "bytecode_hash": BytecodeHash::None }]),
+                )
+                .unwrap()
             } else {
                 Vec::new()
             };
@@ -1291,26 +1280,10 @@ fn bind_skip_build_selected_dependency_preserves_importer_context(prj: _, cmd: _
     prj.update_config(|config| {
         config.solc = None;
         config.evm_version = "paris".parse().unwrap();
-        config.additional_compiler_profiles = vec![SettingsOverrides {
-            name: "via-ir".into(),
-            via_ir: Some(true),
-            evm_version: None,
-            optimizer: None,
-            optimizer_runs: None,
-            bytecode_hash: None,
-        }];
-        config.compilation_restrictions = vec![CompilationRestrictions {
-            paths: "src/A.sol".parse().unwrap(),
-            version: None,
-            via_ir: Some(true),
-            bytecode_hash: None,
-            min_optimizer_runs: None,
-            optimizer_runs: None,
-            max_optimizer_runs: None,
-            min_evm_version: None,
-            evm_version: None,
-            max_evm_version: None,
-        }];
+        config.additional_compiler_profiles =
+            serde_json::from_value(json!([{ "name": "via-ir", "via_ir": true }])).unwrap();
+        config.compilation_restrictions =
+            serde_json::from_value(json!([{ "paths": "src/A.sol", "via_ir": true }])).unwrap();
     });
     cmd.arg("build").assert_success();
 

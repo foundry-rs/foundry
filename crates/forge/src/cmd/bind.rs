@@ -357,7 +357,6 @@ impl BindArgs {
             })
             .collect::<Vec<_>>();
         files.sort_by(|a, b| a.1.cmp(&b.1));
-        files.dedup_by(|a, b| a.1 == b.1);
         Ok(files)
     }
 
