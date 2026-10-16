@@ -122,7 +122,11 @@ impl SymbolicExecutor {
             let spec_id: SpecId = executor.spec_id().into();
             let mut rejected_runtime = false;
             if matches!(outcome.status, CallStatus::Success) {
-                if runtime_exceeds_code_size_limit(&executor.evm_env().cfg_env, spec_id, runtime) {
+                if runtime_exceeds_code_size_limit(
+                    executor.evm_env().version.max_code_size,
+                    spec_id,
+                    runtime,
+                ) {
                     outcome.status = CallStatus::Revert;
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
                 } else if runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)? {
@@ -200,13 +204,13 @@ impl SymbolicExecutor {
 }
 
 fn runtime_exceeds_code_size_limit(
-    cfg: &impl Cfg,
+    max_code_size: usize,
     spec_id: SpecId,
     runtime: &SymReturnData,
 ) -> bool {
     spec_id >= SpecId::SPURIOUS_DRAGON
         && runtime.len_word.as_const().is_some()
-        && runtime.len() > cfg.max_code_size()
+        && runtime.len() > max_code_size
 }
 
 fn runtime_has_rejected_prefix(

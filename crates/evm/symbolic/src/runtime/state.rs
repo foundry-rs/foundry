@@ -1,5 +1,5 @@
 use super::*;
-use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
+use evm2::interpreter::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -128,7 +128,10 @@ impl PathState {
             .cheatcodes
             .as_ref()
             .and_then(|cheats| cheats.gas_price)
-            .unwrap_or_else(|| executor.tx_env().gas_price());
+            .unwrap_or_else(|| {
+                let tx = executor.tx();
+                tx.gas_price().or_else(|| tx.max_fee_per_gas()).unwrap_or_default()
+            });
         self.gas_price = SymExpr::constant(cx, U256::from(gas_price));
         if let Some(cheats) = executor.inspector().cheatcodes.as_ref() {
             for (target, overwrite) in cheats.arbitrary_storage_target_overwrite_modes() {
@@ -1159,8 +1162,8 @@ impl ExpectedCall {
     ) -> Self {
         let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
             (
-                gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
-                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
+                gas.map(|gas| gas.saturating_add(CALL_STIPEND.into())),
+                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND.into())),
             )
         } else {
             (gas, min_gas)
@@ -1821,14 +1824,14 @@ impl SymbolicWorld {
         if let Some(key) = concrete_key {
             return executor
                 .backend()
-                .storage_ref(address, key)
+                .storage(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         if let Some(key) = key.as_const() {
             executor
                 .backend()
-                .storage_ref(address, key)
+                .storage(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
@@ -1860,7 +1863,7 @@ impl SymbolicWorld {
             if preserve_nonzero_slot {
                 let concrete = executor
                     .backend()
-                    .storage_ref(address, slot)
+                    .storage(address, slot)
                     .map_err(|err| SymbolicError::Backend(err.to_string()))?;
                 if !concrete.is_zero() {
                     return Ok(Some(SymExpr::constant(cx, concrete)));
@@ -1963,7 +1966,7 @@ impl SymbolicWorld {
     ) -> U256 {
         executor
             .backend()
-            .basic_ref(address)
+            .basic(address)
             .ok()
             .flatten()
             .map(|account| account.balance)
@@ -2052,7 +2055,7 @@ impl SymbolicWorld {
         }
         executor
             .backend()
-            .basic_ref(address)
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))
             .map(|account| account.map(|account| account.nonce).unwrap_or_default())
     }
@@ -2181,7 +2184,7 @@ impl SymbolicWorld {
 
         let Some(account) = executor
             .backend()
-            .basic_ref(address)
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
         else {
             return Ok(false);
@@ -2226,7 +2229,7 @@ impl SymbolicWorld {
         }
         let account = executor
             .backend()
-            .basic_ref(address)
+            .basic(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         if let Some(account) = account.as_ref()
             && (account.nonce != 0
@@ -2359,9 +2362,8 @@ impl SymbolicWorld {
         let mut addresses = HashSet::<Address>::default();
         addresses.extend(self.code_cache.keys().copied());
         addresses.extend(self.existing_accounts.iter().copied());
-        addresses.extend(executor.backend().mem_db().cache.accounts.keys().copied());
-        if let Some(db) = executor.backend().active_fork_db() {
-            addresses.extend(db.cache.accounts.keys().copied());
+        if let Some(cache) = &executor.backend().lifecycle().active().cache {
+            addresses.extend(cache.accounts.keys().copied());
         }
         let mut addresses = addresses.into_iter().collect::<Vec<_>>();
         addresses.sort_unstable();
@@ -2431,23 +2433,24 @@ impl SymbolicBlock {
             .cheatcodes
             .as_ref()
             .and_then(|cheats| cheats.block.as_ref())
-            .unwrap_or(evm_env.block_env());
-        let difficulty = block.prevrandao().map(Into::into).unwrap_or_else(|| block.difficulty());
+            .unwrap_or(&evm_env.block);
+        let difficulty = if evm_env.version.feature(EvmFeatures::EIP4399) {
+            block.prevrandao
+        } else {
+            block.difficulty
+        };
 
         Self {
-            chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),
-            coinbase: block.beneficiary(),
-            timestamp: SymExpr::constant(cx, block.timestamp()),
-            number: SymExpr::constant(cx, block.number()),
+            chain_id: SymExpr::constant(cx, U256::from(evm_env.chain_id())),
+            coinbase: block.beneficiary,
+            timestamp: SymExpr::constant(cx, block.timestamp),
+            number: SymExpr::constant(cx, block.number),
             difficulty: SymExpr::constant(cx, difficulty),
-            gaslimit: SymExpr::constant(cx, U256::from(block.gas_limit())),
-            basefee: SymExpr::constant(cx, U256::from(block.basefee())),
-            blob_basefee: SymExpr::constant(
-                cx,
-                U256::from(block.blob_gasprice().unwrap_or_default()),
-            ),
+            gaslimit: SymExpr::constant(cx, block.gas_limit),
+            basefee: SymExpr::constant(cx, block.basefee),
+            blob_basefee: SymExpr::constant(cx, block.blob_basefee),
             block_hashes: HashMap::default(),
-            blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
+            blob_hashes: executor.tx().blob_versioned_hashes().unwrap_or_default().to_vec(),
         }
     }
 
@@ -2476,12 +2479,9 @@ impl SymbolicBlock {
         if let Some(hash) = self.block_hashes.get(&block_number) {
             return Ok(hash.clone());
         }
-        let Ok(block_number) = u64::try_from(block_number) else {
-            return Ok(SymExpr::zero(cx));
-        };
         let hash = executor
             .backend()
-            .block_hash_ref(block_number)
+            .block_hash(block_number)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         Ok(SymExpr::constant(cx, U256::from_be_slice(hash.as_slice())))
     }
