@@ -243,6 +243,13 @@ contract MockFunctionTest is Test {
         my_proxy.mocked_args_function(500);
         assertEq(my_proxy.a(), 321 + 500, "after reset, original args function should be called");
     }
+
+    function test_mock_function_expect_call_observes_target() public {
+        bytes memory data = abi.encodeWithSelector(MockFunctionContract.mocked_function.selector);
+        vm.mockFunction(address(my_contract), address(model_contract), data);
+        vm.expectCall(address(model_contract), data);
+        my_contract.mocked_function();
+    }
 }
 
 contract MockFunctionTarget {

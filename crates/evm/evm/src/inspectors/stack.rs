@@ -1971,6 +1971,8 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
                 .account(&target)
                 .and_then(|mut account| account.load_code())
                 .expect("failed to load account");
+            // Like the callee address, so cheatcodes such as `expectCall` observe the target.
+            message.call_target = target;
             message.code_address = target;
             message.code = code;
         }
