@@ -1207,7 +1207,7 @@ Error: Cached compiler settings for [..]src/Foo.sol:Foo and profile `default` do
 
 #[cfg(unix)]
 #[forgetest]
-fn bind_skip_build_offline_ignores_unrelated_installed_compiler(prj: _, cmd: _) {
+fn bind_skip_build_ignores_installed_compiler_versions(prj: _, cmd: _) {
     let compiler_home = tempfile::tempdir().unwrap();
     let svm = compiler_home.path().join(".svm");
     fs::create_dir_all(&svm).unwrap();
@@ -1222,31 +1222,54 @@ fn bind_skip_build_offline_ignores_unrelated_installed_compiler(prj: _, cmd: _) 
         config.evm_version = "paris".parse().unwrap();
     });
 
-    // Install the unrelated compiler in the isolated home without retaining its artifacts.
+    // Install the newer compiler without retaining its artifacts or exposing it during the build.
     prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
     forge(&["build", "--use", "0.8.21"]);
-    prj.clear();
-    prj.add_source(
-        "Foo.sol",
-        "pragma solidity =0.8.20; contract Foo { function value() external pure returns (uint256) { return 42; } }",
-    );
-    forge(&["build", "--use", "0.8.20"]);
-    forge(&["bind", "--skip-build", "--use", "0.8.20", "--select", "^Foo$"]);
-    let binding = prj.root().join("out/bindings/src/foo.rs");
-    let expected = fs::read_to_string(&binding).unwrap();
-    assert_binding_bytecode(&expected, &prj.artifacts().join("Foo.sol/Foo.json"));
+    let newer = compiler_home.path().join("newer-solc");
+    let cached = compiler_home.path().join("cached-solc");
+    fs::rename(svm.join("0.8.21"), &newer).unwrap();
 
-    fs::remove_dir_all(svm.join("0.8.20")).unwrap();
-    let unrelated = compiler_home.path().join("unrelated-solc");
-    fs::rename(svm.join("0.8.21"), &unrelated).unwrap();
-    let args = ["bind", "--skip-build", "--offline", "--overwrite", "--select", "^Foo$"];
+    for requirement in ["^0.8.0", "=0.8.20"] {
+        prj.clear();
+        prj.add_source(
+            "Foo.sol",
+            &format!(
+                "pragma solidity {requirement}; contract Foo {{ function value() external pure returns (uint256) {{ return 42; }} }}"
+            ),
+        );
+        forge(&["build", "--use", "0.8.20"]);
+        forge(&["bind", "--skip-build", "--select", "^Foo$"]);
+        let binding = prj.root().join("out/bindings/src/foo.rs");
+        let expected = fs::read_to_string(&binding).unwrap();
+        assert_binding_bytecode(&expected, &prj.artifacts().join("Foo.sol/Foo.json"));
+        let cache = fs::read(prj.cache()).unwrap();
 
-    // Cached bindings must work both without compilers and with only an incompatible compiler.
-    forge(&args).stdout_eq("");
-    assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
-    fs::rename(&unrelated, svm.join("0.8.21")).unwrap();
-    forge(&args).stdout_eq("");
-    assert_data_eq!(fs::read_to_string(binding).unwrap(), expected.as_str().raw());
+        // Adding a compatible compiler after the build must not change cached bindings.
+        // Also cover absent compilers and an installed compiler incompatible with the pragma.
+        for cached_installed in [true, false] {
+            if !cached_installed {
+                fs::rename(svm.join("0.8.20"), &cached).unwrap();
+            }
+            for newer_installed in [false, true] {
+                if newer_installed {
+                    fs::rename(&newer, svm.join("0.8.21")).unwrap();
+                }
+                for offline in [false, true] {
+                    let mut args = vec!["bind", "--skip-build", "--overwrite", "--select", "^Foo$"];
+                    if offline {
+                        args.push("--offline");
+                    }
+                    forge(&args).stdout_eq("");
+                    assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+                    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+                }
+                if newer_installed {
+                    fs::rename(svm.join("0.8.21"), &newer).unwrap();
+                }
+            }
+        }
+        fs::rename(&cached, svm.join("0.8.20")).unwrap();
+    }
 }
 
 #[forgetest]

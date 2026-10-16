@@ -10,12 +10,11 @@ use foundry_common::{
 };
 use foundry_compilers::{
     Graph, Project,
-    artifacts::{Contract, SolcLanguage, output_selection::OutputSelection},
+    artifacts::{Contract, output_selection::OutputSelection},
     cache::CompilerCache,
     compilers::{Compiler, CompilerOutput, CompilerSettings, CompilerVersion},
     error::SolcError,
     multi::{MultiCompiler, MultiCompilerParser, MultiCompilerSettings},
-    solc::SolcCompiler,
 };
 use foundry_config::{Config, impl_figment_convert};
 use regex::Regex;
@@ -617,17 +616,8 @@ impl CachedCompiler {
                     cached_versions(false)
                 }
             }
-            // Offline bindings consume existing artifacts without requiring installed compilers.
-            None if config.offline => cached_versions(false),
-            None => {
-                let available =
-                    SolcCompiler::AutoDetect.available_versions(&SolcLanguage::Solidity);
-                if available.iter().any(CompilerVersion::is_installed) {
-                    available
-                } else {
-                    cached_versions(false)
-                }
-            }
+            // Cached bindings must not change when another compiler is installed after the build.
+            None => cached_versions(false),
         };
         let mut vyper_unknown = false;
         let vyper = if let Ok(Some(compiler)) = config.vyper_compiler() {
