@@ -486,7 +486,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
         // record any changes made to the block's environment during setup
         self.evm_env_mut().block = res.evm_env.block;
-        // and also the chainid, which can be set manually
+        // and also the spec and chain ID, which can be set manually
+        if res.evm_env.spec != self.spec_id() {
+            self.set_spec_id(res.evm_env.spec);
+        }
         self.evm_env_mut().set_chain_id(res.evm_env.chain_id());
 
         let success = self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res);
@@ -1122,6 +1125,11 @@ fn execute<FEN: FoundryEvmNetwork>(
     let mut env = evm_env(&evm);
     if let Some(pending) = backend.backend().lifecycle().pending_env() {
         env = EvmEnv::new(pending.spec, pending.version, env.block);
+    }
+    if let Some(spec) = stack.cheatcodes.as_deref().and_then(|cheats| cheats.execution_evm_version)
+        && spec != env.spec
+    {
+        env = EvmFactoryFor::<FEN>::default().env_with_spec(env, spec);
     }
     if commit {
         evm.commit_source(&pending_state);
