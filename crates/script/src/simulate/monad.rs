@@ -51,19 +51,17 @@ impl MonadSimulation {
         Ok(Self { runner, cursor })
     }
 
-    /// Converts `tx` and returns it with the extension state at the cursor's next position.
-    fn convert(
+    /// Returns the extension state for `tx` at the cursor's next position, if positioned.
+    fn ext(
         &self,
         env: &EvmEnvFor<MonadEvmNetwork>,
-        tx: TransactionRequest,
-    ) -> Result<(Recovered<TxFor<MonadEvmNetwork>>, Option<ChainFor<MonadEvmNetwork>>)> {
-        let tx = MonadEvmNetwork::tx_from_request(tx)?;
-        let ext = self.cursor.as_ref().map(|cursor| {
+        tx: &Recovered<TxFor<MonadEvmNetwork>>,
+    ) -> Option<ChainFor<MonadEvmNetwork>> {
+        self.cursor.as_ref().map(|cursor| {
             let mut ext = EvmFactoryFor::<MonadEvmNetwork>::default().evm_ext(env);
-            cursor.prepare_next(&mut ext, &tx);
+            cursor.prepare_next(&mut ext, tx);
             ext
-        });
-        Ok((tx, ext))
+        })
     }
 
     /// Executes `tx` without committing it.
@@ -72,8 +70,8 @@ impl MonadSimulation {
         env: EvmEnvFor<MonadEvmNetwork>,
         tx: TransactionRequest,
     ) -> Result<RawCallResult<MonadEvmNetwork>> {
-        let (tx, ext) = self.convert(&env, tx)?;
-        self.runner.executor.call_tx(env, &tx, ext)
+        let tx = MonadEvmNetwork::tx_from_request(tx)?;
+        self.runner.executor.call_tx(env, &tx, self.ext(&env, &tx))
     }
 
     /// Executes and commits `tx`, and records it at the cursor's position.
@@ -85,8 +83,8 @@ impl MonadSimulation {
         env: EvmEnvFor<MonadEvmNetwork>,
         tx: TransactionRequest,
     ) -> Result<RawCallResult<MonadEvmNetwork>> {
-        let (tx, ext) = self.convert(&env, tx)?;
-        let result = self.runner.executor.transact_tx(env, &tx, ext)?;
+        let tx = MonadEvmNetwork::tx_from_request(tx)?;
+        let result = self.runner.executor.transact_tx(env, &tx, self.ext(&env, &tx))?;
         if let Some(cursor) = &mut self.cursor {
             cursor.record_transaction(tx);
         }
