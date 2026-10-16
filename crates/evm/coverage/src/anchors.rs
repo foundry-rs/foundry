@@ -16,7 +16,7 @@ pub fn find_anchors(
     analysis: &SourceAnalysis,
 ) -> ItemAnchors {
     let mut anchors = ItemAnchors::default();
-    let index = SourceMapIndex::new(source_map);
+    let index = SourceMapIndex::new(bytecode, source_map);
     let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
         0 => (fallthrough, None),
         1 => (taken, Some(fallthrough.instruction - 1)),
@@ -41,13 +41,15 @@ pub fn find_anchors(
                         .find_anchor(ic_pc_map, item_id, anchor_loc)
                         .map(|anchor| (anchor, None))
                         .or_else(|_| {
-                            find_anchor_branch(bytecode, source_map, item_id, &item.loc)
+                            index
+                                .find_branch(item_id, &item.loc, false)
                                 .map(|anchors| select_branch(anchors, 1))
                         })
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
                     let exact = analysis.is_ternary_branch(item.loc.source_id as u32, branch_id);
-                    find_anchor_branch_inner(bytecode, source_map, item_id, anchor_loc, exact)
+                    index
+                        .find_branch(item_id, anchor_loc, exact)
                         .map(|anchors| select_branch(anchors, path_id))
                 }
                 _ => index.find_anchor(ic_pc_map, item_id, anchor_loc).map(|anchor| (anchor, None)),
@@ -158,7 +160,6 @@ fn find_anchor_branch_inner(
             // Check if we are in the source range we are interested in, and if the next opcode
             // is a JUMPI
             let next_pc = pc + inst.immediate.len() + 1;
-            let push_size = inst.immediate.len();
             if bytecode.get(next_pc).copied() == Some(opcode::JUMPI)
                 && if exact {
                     source_map.get(ic + 1).is_some_and(|jump| {
@@ -170,21 +171,7 @@ fn find_anchor_branch_inner(
                     is_in_source_range(element, loc)
                 }
             {
-                // We do not support program counters bigger than u32.
-                ensure!(push_size <= 4, "jump destination overflow");
-
-                // Convert the push bytes for the second branch's PC to a u32.
-                let mut pc_bytes = [0u8; 4];
-                pc_bytes[4 - push_size..].copy_from_slice(inst.immediate);
-                let pc_jump = u32::from_be_bytes(pc_bytes);
-                let found = (
-                    ItemAnchor {
-                        item_id,
-                        // The first branch is the opcode directly after JUMPI
-                        instruction: (next_pc + 1).try_into()?,
-                    },
-                    ItemAnchor { item_id, instruction: pc_jump },
-                );
+                let found = branch_anchors(item_id, next_pc, inst.immediate)?;
                 if exact {
                     // Generated branch code can contain later jumps mapped to the ternary span.
                     return Ok(found);
@@ -217,21 +204,36 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     start_of_ranges <= end_of_ranges
 }
 
-/// Source positions sorted separately from the bytecode's instruction order.
+/// Source positions sorted for range lookups and branch candidates in bytecode order.
 struct SourceMapIndex<'a> {
     source_map: &'a SourceMap,
     entries: Vec<(i32, u32, usize)>,
+    // PUSH instruction index, JUMPI program counter, and PUSH immediate bytes.
+    branches: Vec<(usize, usize, &'a [u8])>,
 }
 
 impl<'a> SourceMapIndex<'a> {
-    fn new(source_map: &'a SourceMap) -> Self {
+    fn new(bytecode: &'a [u8], source_map: &'a SourceMap) -> Self {
         let mut entries = source_map
             .iter()
             .enumerate()
             .map(|(instruction, element)| (element.index_i32(), element.offset(), instruction))
             .collect::<Vec<_>>();
         entries.sort_unstable();
-        Self { source_map, entries }
+        let mut branches = Vec::new();
+        for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+            if (opcode::PUSH1..=opcode::PUSH32).contains(&inst.opcode.get()) {
+                // Match the linear lookup's stopping point for short source maps.
+                if source_map.get(ic).is_none() {
+                    break;
+                }
+                let next_pc = pc + inst.immediate.len() + 1;
+                if bytecode.get(next_pc).copied() == Some(opcode::JUMPI) {
+                    branches.push((ic, next_pc, inst.immediate));
+                }
+            }
+        }
+        Self { source_map, entries, branches }
     }
 
     fn find_anchor(
@@ -255,6 +257,33 @@ impl<'a> SourceMapIndex<'a> {
             .min();
         anchor_at(instruction, ic_pc_map, item_id, loc)
     }
+
+    fn find_branch(
+        &self,
+        item_id: u32,
+        loc: &SourceLocation,
+        exact: bool,
+    ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
+        let mut anchors = None;
+        for &(ic, next_pc, immediate) in &self.branches {
+            if if exact {
+                self.source_map.get(ic + 1).is_some_and(|jump| {
+                    jump.index() == Some(loc.source_id as u32)
+                        && jump.offset() == loc.bytes.start
+                        && jump.length() == loc.len()
+                })
+            } else {
+                is_in_source_range(&self.source_map[ic], loc)
+            } {
+                let found = branch_anchors(item_id, next_pc, immediate)?;
+                if exact {
+                    return Ok(found);
+                }
+                anchors = Some(found);
+            }
+        }
+        anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
+    }
 }
 
 fn anchor_at(
@@ -272,6 +301,22 @@ fn anchor_at(
         })?,
         item_id,
     })
+}
+
+fn branch_anchors(
+    item_id: u32,
+    next_pc: usize,
+    immediate: &[u8],
+) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
+    // We do not support program counters bigger than u32.
+    ensure!(immediate.len() <= 4, "jump destination overflow");
+    let mut pc_bytes = [0u8; 4];
+    pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
+    let pc_jump = u32::from_be_bytes(pc_bytes);
+    Ok((
+        ItemAnchor { item_id, instruction: (next_pc + 1).try_into()? },
+        ItemAnchor { item_id, instruction: pc_jump },
+    ))
 }
 
 #[cfg(test)]
@@ -293,7 +338,7 @@ mod tests {
     fn indexed_anchors_preserve_instruction_order_and_ranges() {
         let source_map =
             sourcemap::parse("30:4:0;10:5:0;20:0:1;10:0:0;0:40:0;20:5:0;5:0:-1;40:0:0").unwrap();
-        let index = SourceMapIndex::new(&source_map);
+        let index = SourceMapIndex::new(&[opcode::STOP; 8], &source_map);
         let ic_pc_map = IcPcMap::new(&[opcode::STOP; 8]);
         for source_id in 0..3 {
             for start in 0..=42 {
@@ -312,6 +357,67 @@ mod tests {
                         .map(|anchor| (anchor.instruction, anchor.item_id))
                         .ok();
                     assert_eq!(actual, expected, "{loc}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_branches_preserve_selection_and_errors() {
+        let cases: &[(&[u8], &str)] = &[
+            (
+                &[
+                    opcode::PUSH1,
+                    10,
+                    opcode::JUMPI,
+                    opcode::PUSH2,
+                    0,
+                    20,
+                    opcode::JUMPI,
+                    opcode::PUSH1,
+                    30,
+                    opcode::JUMPI,
+                    opcode::STOP,
+                ],
+                "10:5:0;20:0:0;12:3:1;20:0:0;10:8:0;20:0:0;",
+            ),
+            (
+                &[opcode::PUSH5, 0, 0, 0, 0, 10, opcode::JUMPI, opcode::PUSH1, 20, opcode::JUMPI],
+                "10:0:0;20:0:0;10:0:0;20:0:0",
+            ),
+            (
+                &[opcode::PUSH1, 10, opcode::JUMPI, opcode::PUSH1, 20, opcode::JUMPI],
+                "10:0:0;20:0:0",
+            ),
+            (&[opcode::PUSH1, 10, opcode::JUMPI], ""),
+            (&[opcode::PUSH0, opcode::JUMPI, opcode::PUSH2, opcode::JUMPI], "10:0:0;;;"),
+        ];
+        for &(bytecode, source) in cases {
+            let source_map = sourcemap::parse(source).unwrap();
+            let index = SourceMapIndex::new(bytecode, &source_map);
+            for source_id in 0..2 {
+                for start in 0..=24 {
+                    for end in start..=24 {
+                        for exact in [false, true] {
+                            let loc = SourceLocation {
+                                source_id,
+                                contract_name: "T".into(),
+                                bytes: start..end,
+                                lines: 1..2,
+                            };
+                            let expected =
+                                find_anchor_branch_inner(bytecode, &source_map, 7, &loc, exact)
+                                    .map(|(a, b)| {
+                                        (a.instruction, b.instruction, a.item_id, b.item_id)
+                                    })
+                                    .map_err(|err| err.to_string());
+                            let actual = index
+                                .find_branch(7, &loc, exact)
+                                .map(|(a, b)| (a.instruction, b.instruction, a.item_id, b.item_id))
+                                .map_err(|err| err.to_string());
+                            assert_eq!(actual, expected, "{loc}, exact: {exact}, map: {source}");
+                        }
+                    }
                 }
             }
         }
