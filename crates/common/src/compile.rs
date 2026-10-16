@@ -296,13 +296,14 @@ impl ProjectCompiler {
                 project.paths.read_input_files()?
             };
 
+            let preprocessor = DynamicTestLinkingPreprocessor::default();
             let compile = |preprocess| -> Result<ProjectCompileOutput<C>> {
                 let compile_sources = |sources| {
                     let mut compiler = foundry_compilers::project::ProjectCompiler::with_sources(
                         project, sources,
                     )?;
                     if preprocess {
-                        compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+                        compiler = compiler.with_preprocessor(preprocessor.clone());
                     }
                     if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
                 };
@@ -317,7 +318,8 @@ impl ProjectCompiler {
                 Ok(output)
             };
             let mut output = compile(preprocess)?;
-            if preprocess
+            // A retry can only help if DTL changed the compiler input.
+            if preprocessor.rewrote_sources()
                 && let Some(reason) = dynamic_test_linking_failure(&output.output().errors)
             {
                 sh_warn!(
