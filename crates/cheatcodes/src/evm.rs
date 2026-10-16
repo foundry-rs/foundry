@@ -1395,7 +1395,7 @@ impl Cheatcode for executeTransactionCall {
         }
 
         let res = executor
-            .nested_transaction(ccx.state, ccx.backend, ccx.evm, &tx, Some(env))
+            .nested_transaction(ccx.state, ccx.backend, ccx.evm, ccx.depth as u16, &tx, Some(env))
             .map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
         // Return output bytes.

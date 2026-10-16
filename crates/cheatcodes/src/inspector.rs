@@ -90,11 +90,15 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     /// Executes `tx` as a nested transaction of the transaction `evm` is running, with `env` or
     /// the running environment, and merges its changes on success, such as for
     /// `executeTransaction`.
+    ///
+    /// `depth` is the depth of the cheatcode call; the nested transaction's root frame duplicates
+    /// it, so its children run one level deeper.
     fn nested_transaction(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>>;
@@ -173,6 +177,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        _depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
@@ -291,7 +296,7 @@ macro_rules! try_or_return {
 }
 
 /// Returns the result of a message that did not execute, keeping its whole gas budget.
-pub(crate) fn message_result<M, E: Default>(
+pub fn message_result<M, E: Default>(
     message: &MessageExt<M>,
     stop: InstrStop,
     output: Bytes,
@@ -306,7 +311,7 @@ pub(crate) fn message_result<M, E: Default>(
 
 /// Stops the running frame with a revert carrying `output`, before its current instruction runs
 /// or after it ran.
-pub(crate) fn revert_frame<T: EvmTypesHost>(interp: &mut Interpreter<'_, '_, T>, output: &[u8]) {
+pub fn revert_frame<T: EvmTypesHost>(interp: &mut Interpreter<'_, '_, T>, output: &[u8]) {
     let offset = interp.memory().len();
     if interp.memory_mut().resize(offset, output.len()).is_err() {
         interp.set_stop(InstrStop::MemoryLimitOOG);
@@ -712,8 +717,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// The gas price.
     ///
-    /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
-    /// in the execution environment.
+    /// Executions run fee-less, so the `GASPRICE` opcode reads this value instead, unless
+    /// `vm.txGasPrice` overrides it.
     pub gas_price: Option<u128>,
 
     /// The fee token of the executed transactions, recorded in broadcast requests.
@@ -728,6 +733,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Whether the executing `ORIGIN` opcode reads [`Self::origin_override`].
     pending_origin_override: bool,
+
+    /// Whether the executing `GASPRICE` opcode reads [`Self::gas_price`].
+    pending_gas_price: bool,
 
     /// An `expectEmit` mismatch observed by the log hook, which reverts the emitting frame once
     /// its `LOG` instruction finishes.
@@ -908,6 +916,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fee_token: Default::default(),
             origin_override: Default::default(),
             pending_origin_override: Default::default(),
+            pending_gas_price: Default::default(),
             pending_emit_failure: Default::default(),
             state_epoch: Default::default(),
             root_call_target: Default::default(),
@@ -1830,6 +1839,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.has_active_env_overrides()
             || self.origin_override.is_some()
+            || self.gas_price.is_some()
             || self.has_storage_hooks()
     }
 
@@ -1841,6 +1851,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.core.mapping_slots.is_some()
             || self.has_active_env_overrides()
             || self.pending_origin_override
+            || self.pending_gas_price
             || self.pending_emit_failure.is_some()
             || self.has_storage_hooks()
     }
@@ -1984,6 +1995,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // `prank`/`broadcast` with an origin: the `ORIGIN` opcode reads the overridden origin.
         self.pending_origin_override = opcode == op::ORIGIN && self.origin_override.is_some();
+        self.pending_gas_price = opcode == op::GASPRICE && self.gas_price.is_some();
 
         // Capture the opcode for `step_end` to use, since by the time
         // `step_end` runs the PC has already advanced past it. Also peek the
@@ -2081,6 +2093,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && let Some(origin) = self.origin_override
         {
             Self::replace_top_of_stack(interp, origin.into_word().into());
+        }
+        // `vm.txGasPrice` overrides below take precedence.
+        if std::mem::take(&mut self.pending_gas_price)
+            && !opcode_failed
+            && let Some(gas_price) = self.gas_price
+        {
+            Self::replace_top_of_stack(interp, U256::from(gas_price));
         }
         if !self.env_overrides.is_empty() {
             let fork_id = backend.backend().active_fork_id();
