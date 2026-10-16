@@ -101,23 +101,16 @@ impl BroadcastReader {
 
     /// Attempts read the latest broadcast file in the broadcast directory.
     ///
-    /// This may be the `run-latest.json` file or the broadcast file with the latest timestamp.
+    /// This is the first broadcast in the order returned by [`Self::read`].
     pub fn read_latest<N: Network>(&self) -> eyre::Result<ScriptSequence<N>>
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
-        let broadcasts = self.read()?;
-
-        // Find the broadcast with the latest timestamp
-        let target = broadcasts
-            .into_iter()
-            .max_by_key(|broadcast| broadcast.timestamp)
-            .ok_or_else(|| eyre::eyre!("No broadcasts found"))?;
-
-        Ok(target)
+        self.read()?.into_iter().next().ok_or_else(|| eyre::eyre!("No broadcasts found"))
     }
 
-    /// Applies the filters and sorts the broadcasts by descending timestamp.
+    /// Applies the filters and sorts the broadcasts by descending timestamp, then by their latest
+    /// matching receipt.
     pub fn filter_and_sort<N: Network>(
         &self,
         broadcasts: Vec<ScriptSequence<N>>,
@@ -134,8 +127,8 @@ impl BroadcastReader {
             })
             .collect::<Vec<_>>();
 
-        // Sort by descending timestamp
-        seqs.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
+        // Multichain sequences and copies of a resumed multichain run can share a timestamp.
+        seqs.sort_by_cached_key(|s| std::cmp::Reverse((s.timestamp, self.latest_receipt(s))));
 
         seqs
     }
@@ -170,6 +163,23 @@ impl BroadcastReader {
         targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number()));
 
         targets
+    }
+
+    /// Returns the block number and index of the latest receipt for a matching transaction.
+    fn latest_receipt<N: Network>(
+        &self,
+        broadcast: &ScriptSequence<N>,
+    ) -> Option<(Option<u64>, Option<u64>)> {
+        broadcast
+            .transactions
+            .iter()
+            .filter(|tx| self.matches_filters(tx))
+            .filter_map(|tx| {
+                let hash = tx.hash?;
+                broadcast.receipts.iter().find(|r| r.transaction_hash() == hash)
+            })
+            .map(|r| (r.block_number(), r.transaction_index()))
+            .max()
     }
 }
 

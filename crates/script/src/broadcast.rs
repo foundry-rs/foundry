@@ -1068,7 +1068,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     let (durable_hashes, replayable_hashes) = self.sequence.submission_hashes(i);
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                    progress
+                    let result = progress
                         .wait_for_pending(
                             i,
                             sequence,
@@ -1077,11 +1077,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             self.args.confirmations,
                             (&durable_hashes, &replayable_hashes),
                         )
-                        .await?;
-                    self.sequence.ensure_delegated_outcomes_known(i)?;
-
-                    // Checkpoint save
+                        .await;
                     self.sequence.save(true, false)?;
+                    result?;
+                    self.sequence.ensure_delegated_outcomes_known(i)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }
@@ -1110,7 +1109,18 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
-            sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+            // Resume continues past persisted reverts, so completion does not imply success.
+            if self
+                .sequence
+                .sequences()
+                .iter()
+                .flat_map(|sequence| &sequence.receipts)
+                .any(|receipt| !receipt.status())
+            {
+                sh_println!("\nONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS.")?;
+            } else {
+                sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+            }
         }
 
         Ok(BroadcastedState {
@@ -1620,21 +1630,13 @@ impl BundledState<TempoEvmNetwork> {
         batch_start: usize,
         resumed: bool,
     ) -> Result<()> {
-        if receipt.status() {
-            sh_println!(
-                "Batch transaction confirmed in block {}",
-                receipt.block_number.unwrap_or(0)
-            )?;
-        } else {
-            bail!("Batch transaction failed (reverted)");
-        }
-
+        let success = receipt.status();
         let sequence = sequences.sequences_mut().get_mut(0).unwrap();
         sequence.remove_pending(tx_hash);
 
         // Receipts are pushed 1:1 with the remaining (not-yet-receipted) transactions.
         let remaining_len = sequence.transactions.len() - batch_start;
-        // Only carry through contract_address for actual deployments; plain calls also
+        // Only carry through contract_address for successful deployments; plain calls also
         // store the callee in `contract_address`, which would otherwise be copied into
         // the receipt and treated as a fresh deployment by downstream consumers
         // (broadcast JSON, verifier).
@@ -1643,18 +1645,13 @@ impl BundledState<TempoEvmNetwork> {
             .iter()
             .skip(batch_start)
             .map(|tx| match tx.call_kind {
-                CallKind::Create | CallKind::Create2 => tx.contract_address,
+                CallKind::Create | CallKind::Create2 if success => tx.contract_address,
                 _ => None,
             })
             .collect();
 
-        for (idx, addr) in per_tx_addresses.iter().enumerate() {
-            if let Some(addr) = addr {
-                sh_println!("  call[{idx}] deployed at: {addr:#x}")?;
-            }
-        }
-
         // gasUsed reflects the whole batch; per-call attribution is unavailable from the receipt.
+        // A reverted receipt is persisted too, as the terminal outcome of every batch member.
         for addr in &per_tx_addresses {
             let mut tx_receipt = receipt.clone();
             tx_receipt.contract_address = *addr;
@@ -1665,6 +1662,16 @@ impl BundledState<TempoEvmNetwork> {
         let _ = sequence;
 
         sequences.save(true, false)?;
+
+        if !success {
+            bail!("Batch transaction {tx_hash:#x} failed (reverted)");
+        }
+        sh_println!("Batch transaction confirmed in block {}", receipt.block_number.unwrap_or(0))?;
+        for (idx, addr) in per_tx_addresses.iter().enumerate() {
+            if let Some(addr) = addr {
+                sh_println!("  call[{idx}] deployed at: {addr:#x}")?;
+            }
+        }
 
         let total_gas = receipt.gas_used();
         let gas_price = receipt.effective_gas_price();

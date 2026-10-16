@@ -8,7 +8,7 @@ use crate::{
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{Bytes, FixedBytes, U256, hex, map::Entry};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
@@ -1018,6 +1018,7 @@ impl Cheatcode for getBroadcastCall {
             *chainId,
             &ccx.state.core.config.broadcast,
             vec![map_broadcast_tx_type(*txType)],
+            false,
         )?;
 
         Ok(latest_broadcast.abi_encode())
@@ -1077,6 +1078,7 @@ impl Cheatcode for getDeployment_0Call {
             chain_id,
             &ccx.state.core.config.broadcast,
             vec![CallKind::Create, CallKind::Create2],
+            true,
         )?;
 
         Ok(latest_broadcast.contractAddress.abi_encode())
@@ -1092,6 +1094,7 @@ impl Cheatcode for getDeployment_1Call {
             *chainId,
             &ccx.state.core.config.broadcast,
             vec![CallKind::Create, CallKind::Create2],
+            true,
         )?;
 
         Ok(latest_broadcast.contractAddress.abi_encode())
@@ -1102,23 +1105,11 @@ impl Cheatcode for getDeploymentsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader =
-            BroadcastReader::new(contractName.clone(), *chainId, &ccx.state.core.config.broadcast)?
-                .with_tx_type(CallKind::Create)
-                .with_tx_type(CallKind::Create2);
-
-        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
-
-        let summaries = broadcasts
-            .into_iter()
-            .flat_map(|broadcast| {
-                let results = reader.into_tx_receipts(broadcast);
-                parse_broadcast_results(results)
-            })
-            .collect::<Vec<_>>();
-
-        let deployed_addresses =
-            summaries.into_iter().map(|summary| summary.contractAddress).collect::<Vec<_>>();
+        let deployed_addresses = deployed_addresses::<<FEN as FoundryEvmNetwork>::Network>(
+            contractName,
+            *chainId,
+            &ccx.state.core.config.broadcast,
+        )?;
 
         Ok(deployed_addresses.abi_encode())
     }
@@ -1158,6 +1149,7 @@ fn latest_broadcast<N: Network>(
     chain_id: u64,
     broadcast_path: &Path,
     filters: Vec<CallKind>,
+    successful_only: bool,
 ) -> Result<BroadcastTxSummary>
 where
     N::TxEnvelope: for<'d> serde::Deserialize<'d>,
@@ -1168,16 +1160,35 @@ where
         reader = reader.with_tx_type(filter);
     }
 
-    let broadcast = reader.read_latest::<N>()?;
+    let broadcasts =
+        if successful_only { reader.read::<N>()? } else { vec![reader.read_latest::<N>()?] };
 
-    let results = reader.into_tx_receipts(broadcast);
-
-    let summaries = parse_broadcast_results(results);
-
-    summaries
-        .first()
+    broadcasts
+        .into_iter()
+        .flat_map(|broadcast| parse_broadcast_results(reader.into_tx_receipts(broadcast)))
+        .find(|summary| !successful_only || summary.success)
         .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
-        .cloned()
+}
+
+fn deployed_addresses<N: Network>(
+    contract_name: &str,
+    chain_id: u64,
+    broadcast_path: &Path,
+) -> Result<Vec<Address>>
+where
+    N::TxEnvelope: for<'d> serde::Deserialize<'d>,
+{
+    let reader = BroadcastReader::new(contract_name.to_string(), chain_id, broadcast_path)?
+        .with_tx_type(CallKind::Create)
+        .with_tx_type(CallKind::Create2);
+
+    Ok(reader
+        .read::<N>()?
+        .into_iter()
+        .flat_map(|broadcast| parse_broadcast_results(reader.into_tx_receipts(broadcast)))
+        .filter(|summary| summary.success)
+        .map(|summary| summary.contractAddress)
+        .collect())
 }
 
 #[cfg(test)]
@@ -1695,6 +1706,7 @@ mod tests {
             31337,
             &broadcast_path,
             vec![CallKind::Create],
+            false,
         )
         .unwrap();
 
@@ -1706,6 +1718,120 @@ mod tests {
         assert!(matches!(latest.txType, BroadcastTxType::Create));
         assert_eq!(latest.contractAddress, address!("20c0000000000000000000000000000000000000"));
         assert!(latest.success);
+
+        // A later reverted deployment is a broadcast result but not a deployment.
+        let mut sequence = sequence;
+        let reverted_hash = "0x14548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f";
+        let mut reverted_tx = sequence["transactions"][0].clone();
+        reverted_tx["hash"] = reverted_hash.into();
+        reverted_tx["contractAddress"] = "0x20c0000000000000000000000000000000000001".into();
+        let mut reverted_receipt = sequence["receipts"][0].clone();
+        reverted_receipt["status"] = "0x0".into();
+        reverted_receipt["transactionHash"] = reverted_hash.into();
+        reverted_receipt["blockNumber"] = "0x8".into();
+        sequence["transactions"].as_array_mut().unwrap().push(reverted_tx);
+        sequence["receipts"].as_array_mut().unwrap().push(reverted_receipt);
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+
+        let latest = |successful_only| {
+            latest_broadcast::<TempoNetwork>(
+                &"Counter".to_owned(),
+                31337,
+                &broadcast_path,
+                vec![CallKind::Create],
+                successful_only,
+            )
+            .unwrap()
+        };
+        let broadcast = latest(false);
+        assert_eq!(broadcast.blockNumber, 8);
+        assert!(!broadcast.success);
+        let deployment = latest(true);
+        assert_eq!(deployment.blockNumber, 7);
+        assert_eq!(
+            deployment.contractAddress,
+            address!("20c0000000000000000000000000000000000000")
+        );
+
+        let outcomes = || {
+            let reader =
+                BroadcastReader::new("Counter".to_owned(), 31337, &broadcast_path).unwrap();
+            (
+                deployed_addresses::<TempoNetwork>("Counter", 31337, &broadcast_path).unwrap(),
+                reader
+                    .read::<TempoNetwork>()
+                    .unwrap()
+                    .into_iter()
+                    .flat_map(|broadcast| {
+                        parse_broadcast_results(reader.into_tx_receipts(broadcast))
+                    })
+                    .map(|summary| summary.success)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            outcomes(),
+            (vec![address!("20c0000000000000000000000000000000000000")], vec![false, true])
+        );
+
+        // When every deployment reverted, broadcasts still expose the failed outcomes.
+        sequence["receipts"][0]["status"] = "0x0".into();
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+        assert_eq!(outcomes(), (vec![], vec![false, false]));
+
+        // A newer all-reverted run must not hide the older successful deployment.
+        sequence["receipts"][0]["status"] = "0x1".into();
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+        sequence["timestamp"] = 2.into();
+        sequence["receipts"][0]["status"] = "0x0".into();
+        fs::write_json_file(&sequence_dir.join("run-2.json"), &sequence).unwrap();
+        assert!(!latest(false).success);
+        assert_eq!(latest(true).blockNumber, 7);
+        assert_eq!(
+            latest(true).contractAddress,
+            address!("20c0000000000000000000000000000000000000")
+        );
+
+        // Multichain sequences can share a timestamp; the latest receipt wins, not file order.
+        let deployment = |hash: &str, address: &str, block: &str| {
+            let mut deployment = sequence.clone();
+            deployment["timestamp"] = 3.into();
+            deployment["transactions"] = vec![sequence["transactions"][0].clone()].into();
+            deployment["transactions"][0]["hash"] = hash.into();
+            deployment["transactions"][0]["contractAddress"] = address.into();
+            deployment["receipts"] = vec![sequence["receipts"][0].clone()].into();
+            deployment["receipts"][0]["status"] = "0x1".into();
+            deployment["receipts"][0]["transactionHash"] = hash.into();
+            deployment["receipts"][0]["blockNumber"] = block.into();
+            deployment
+        };
+        let older = deployment(
+            "0x24548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f",
+            "0x20c0000000000000000000000000000000000002",
+            "0x64",
+        );
+        let newer = deployment(
+            "0x34548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f",
+            "0x20c0000000000000000000000000000000000003",
+            "0x65",
+        );
+        let multi_dir = broadcast_path.join("multi").join("Counter.s.sol-3");
+        stdfs::create_dir_all(&multi_dir).unwrap();
+        for deployments in [[&older, &newer], [&newer, &older]] {
+            fs::write_json_file(
+                &multi_dir.join("run.json"),
+                &serde_json::json!({ "deployments": deployments }),
+            )
+            .unwrap();
+            for successful_only in [false, true] {
+                let latest = latest(successful_only);
+                assert_eq!(latest.blockNumber, 101);
+                assert_eq!(
+                    latest.contractAddress,
+                    address!("20c0000000000000000000000000000000000003")
+                );
+            }
+        }
 
         stdfs::remove_dir_all(root).unwrap();
     }
