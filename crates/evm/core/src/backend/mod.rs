@@ -827,6 +827,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         } else {
             self.lifecycle.forks().context(Some(id)).expect("fork exists").env
         };
+        // The mined transaction is signed for its source chain, whatever chain ID the running
+        // transaction or the fork's environment uses.
+        env.set_chain_id(source_chain_id);
         env.block = crate::utils::block_env_from_header::<TypesFor<FEN>>(&target.block.header);
         apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _>(
             &mut env,
