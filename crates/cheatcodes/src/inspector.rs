@@ -335,8 +335,11 @@ pub fn revert_frame<T: EvmTypesHost>(interp: &mut Interpreter<'_, '_, T>, output
 }
 
 /// Returns the value a call message transfers, if it transfers one.
+///
+/// Like REVM, a static call transfers zero value, while a delegate call transfers none.
 pub(crate) fn transfer_value<E>(message: &MessageExt<E>) -> Option<U256> {
-    matches!(message.kind, MessageKind::Call | MessageKind::CallCode).then_some(message.value)
+    matches!(message.kind, MessageKind::Call | MessageKind::CallCode | MessageKind::StaticCall)
+        .then_some(message.value)
 }
 
 /// Returns whether a message executes in a static context.
