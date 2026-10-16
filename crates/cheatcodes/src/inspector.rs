@@ -88,8 +88,8 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     ) -> Result<MessageResultFor<FEN>, ExecutionError>;
 
     /// Executes `tx` as a nested transaction of the transaction `evm` is running, with `env` or
-    /// the running environment, and merges its changes on success, such as for
-    /// `executeTransaction`.
+    /// the running environment, and merges its changes, such as for `executeTransaction`. A
+    /// failed transaction only keeps its nonce increment.
     ///
     /// `depth` is the depth of the cheatcode call; the nested transaction's root frame duplicates
     /// it, so its children run one level deeper.
@@ -189,11 +189,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let mut child = backend.backend().nested_evm(evm, tx, env);
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
-        let result = executed.result().clone();
-        if result.status {
-            foundry_evm_core::evm::merge_nested_changes(evm.state_mut(), &executed)?;
-        }
-        Ok(result)
+        // A failed transaction keeps its nonce increment.
+        foundry_evm_core::evm::merge_nested_changes(evm.state_mut(), &executed)?;
+        Ok(executed.result().clone())
     }
 
     fn transact(

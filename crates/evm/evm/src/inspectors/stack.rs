@@ -530,11 +530,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         });
         let result = match child.transact(tx) {
             Ok(executed) => {
-                let result = executed.result().clone();
-                if result.status {
-                    merge_nested_changes(evm.state_mut(), &executed)?;
-                }
-                Ok(result)
+                // A failed transaction keeps its nonce increment.
+                merge_nested_changes(evm.state_mut(), &executed)?;
+                Ok(executed.result().clone())
             }
             Err(err) => Err(transaction_error(err)),
         };
