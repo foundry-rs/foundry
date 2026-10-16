@@ -328,6 +328,12 @@ fn spec_changes_keep_foundry_policy() {
     assert_eq!(evm.version().chain_id, 31337);
     assert_eq!(evm.version().memory_limit, 1 << 20);
 
+    // A cap disabled before the cap existed stays disabled at Osaka.
+    let mut env = evm_env(&evm);
+    env.version.tx_gas_limit_cap = u64::MAX;
+    assert_eq!(factory.env_with_spec(env, SpecId::OSAKA).version.tx_gas_limit_cap, u64::MAX);
+    assert_ne!(factory.version(SpecId::OSAKA, 31337).tx_gas_limit_cap, u64::MAX);
+
     let request = store_request::<EthEvmNetwork>(caller, STORE_ADDRESS, 9, 1, 31337);
     let result = evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit();
     assert!(result.status, "a wrong nonce executes with the nonce check off");

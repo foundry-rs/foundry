@@ -4,6 +4,7 @@ use crate::{
 };
 use alloy_network::TransactionBuilder;
 use alloy_primitives::Address;
+use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
     backend::Backend,
     evm::{
@@ -128,7 +129,12 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         if let Some(spec) = spec {
             evm_env = EvmFactoryFor::<FEN>::default().env_with_spec(evm_env, spec);
         }
-        Executor::new(db, evm_env, tx, stack.build(), networks, gas_limit, legacy_assertions)
+        let mut inspector = stack.build();
+        if let Some(cheats) = inspector.cheatcodes.as_mut() {
+            // Broadcast requests record the fee token of the executor's transactions.
+            cheats.fee_token = tx.fee_token();
+        }
+        Executor::new(db, evm_env, tx, inspector, networks, gas_limit, legacy_assertions)
     }
 }
 

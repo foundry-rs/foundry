@@ -25,7 +25,7 @@ use evm2::{
 use foundry_cheatcodes::CheatcodesBackend;
 use foundry_common::FoundryTransactionBuilder;
 use foundry_evm_core::{
-    backend::{Backend, BackendError, BackendResult, CowBackend, GLOBAL_FAIL_SLOT},
+    backend::{Backend, BackendResult, CowBackend, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
@@ -273,10 +273,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
-        let create2_deployer_account = self
-            .backend()
-            .basic(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or(BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+        // evm2's local database reports unknown accounts as absent.
+        let create2_deployer_account = self.account(DEFAULT_CREATE2_DEPLOYER)?;
 
         // If the deployer is not currently deployed, deploy the default one.
         if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {

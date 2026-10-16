@@ -14,7 +14,7 @@ extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::Network;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -1204,6 +1204,9 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         if let Some(fee_token) = self.tempo.fee_token {
             tx.set_fee_token(fee_token);
+            // A fee token makes calls Tempo AA transactions, which are priced with EIP-1559 fees.
+            tx.set_max_fee_per_gas(0);
+            tx.set_max_priority_fee_per_gas(0);
         }
 
         let mut runner = ScriptRunner::new(

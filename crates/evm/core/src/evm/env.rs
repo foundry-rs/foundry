@@ -109,6 +109,11 @@ pub fn carry_execution_policy(
         )*};
     }
     carry_overridden!(tx_gas_limit_cap, memory_limit, max_code_size, max_initcode_size);
+    // Foundry disables the EIP-7825 cap with `u64::MAX`, which is also the default of specs
+    // before the cap, so a disabled cap survives moving to a spec that has one.
+    if current.tx_gas_limit_cap == u64::MAX {
+        next.tx_gas_limit_cap = u64::MAX;
+    }
     next
 }
 

@@ -536,11 +536,15 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             TransactionMaybeSigned::Unsigned(request) => request.clone(),
         };
         tx.set_from(from);
+        // Requests and envelopes of creations can leave the kind unset.
+        if tx.kind().is_none() && !tx.has_tempo_call_list() {
+            tx.set_kind(kind);
+        }
         if tx.nonce().is_none() {
             tx.set_nonce(defaults.nonce().unwrap_or_default());
         }
         // Retain the synthetic call's fee and chain normalization.
-        if tx.max_fee_per_gas().is_some() || tx.authorization_list().is_some() {
+        if tx.max_fee_per_gas().is_some() || tx.authorization_list().is_some() || tx.is_tempo_aa() {
             tx.set_max_fee_per_gas(0);
             tx.set_max_priority_fee_per_gas(0);
         } else {
