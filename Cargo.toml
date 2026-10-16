@@ -538,11 +538,11 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "965692a8a5457896b2269
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e4acf9caee36bbfe63e161ee1e02a7be947cabb4", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26", default-features = false }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e4acf9caee36bbfe63e161ee1e02a7be947cabb4", default-features = false }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e4acf9caee36bbfe63e161ee1e02a7be947cabb4" }
 
 # Base
 base-common-chains = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
@@ -567,10 +567,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "48903767664c4ea33bd9316db52b34bdb80ceed1" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3ef5d82ff0449472ba6b1c98e4a2a30f56" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3ef5d82ff0449472ba6b1c98e4a2a30f56" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3ef5d82ff0449472ba6b1c98e4a2a30f56" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3ef5d82ff0449472ba6b1c98e4a2a30f56" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "39c03a49ade2f74a6e97e2af308283a42d78d302" }
@@ -633,9 +633,9 @@ op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "20
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "206d26cedb9d861b983d89fc71e1122187dfa877" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e4acf9caee36bbfe63e161ee1e02a7be947cabb4" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e4acf9caee36bbfe63e161ee1e02a7be947cabb4" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e4acf9caee36bbfe63e161ee1e02a7be947cabb4" }
 
 ## evm2 — Foundry lifecycle extensions (suspended state, warmth restoration), applied to every
 ## evm2 dependent, including Tempo and evm2-networks.

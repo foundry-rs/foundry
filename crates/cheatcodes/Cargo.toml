@@ -78,7 +78,6 @@ tempo-precompiles-evm2.workspace = true
 monad-evm2 = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempo-alloy.workspace = true
 tempfile.workspace = true
 tempo-precompiles-evm2 = { workspace = true, features = ["test-utils"] }
 

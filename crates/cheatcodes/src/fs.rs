@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_network::{Network, ReceiptResponse};
+use alloy_network::{AnyNetwork, Network, ReceiptResponse};
 use alloy_primitives::{B256, Bytes, FixedBytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
@@ -1011,13 +1011,13 @@ fn prompt(
 }
 
 impl Cheatcode for getBroadcastCall {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
+        let latest_broadcast = latest_broadcast::<AnyNetwork>(
             contractName,
             *chainId,
-            &ccx.state.core.config.broadcast,
+            &state.config.broadcast,
             vec![map_broadcast_tx_type(*txType)],
         )?;
 
@@ -1026,14 +1026,13 @@ impl Cheatcode for getBroadcastCall {
 }
 
 impl Cheatcode for getBroadcasts_0Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader =
-            BroadcastReader::new(contractName.clone(), *chainId, &ccx.state.core.config.broadcast)?
-                .with_tx_type(map_broadcast_tx_type(*txType));
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(map_broadcast_tx_type(*txType));
 
-        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
+        let broadcasts = reader.read::<AnyNetwork>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -1048,13 +1047,12 @@ impl Cheatcode for getBroadcasts_0Call {
 }
 
 impl Cheatcode for getBroadcasts_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader =
-            BroadcastReader::new(contractName.clone(), *chainId, &ccx.state.core.config.broadcast)?;
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
-        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
+        let broadcasts = reader.read::<AnyNetwork>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -1073,7 +1071,7 @@ impl Cheatcode for getDeployment_0Call {
         let Self { contractName } = self;
         let chain_id = ccx.chain_id();
 
-        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
+        let latest_broadcast = latest_broadcast::<AnyNetwork>(
             contractName,
             chain_id,
             &ccx.state.core.config.broadcast,
@@ -1085,13 +1083,13 @@ impl Cheatcode for getDeployment_0Call {
 }
 
 impl Cheatcode for getDeployment_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { contractName, chainId } = self;
 
-        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
+        let latest_broadcast = latest_broadcast::<AnyNetwork>(
             contractName,
             *chainId,
-            &ccx.state.core.config.broadcast,
+            &state.config.broadcast,
             vec![CallKind::Create, CallKind::Create2],
         )?;
 
@@ -1100,15 +1098,14 @@ impl Cheatcode for getDeployment_1Call {
 }
 
 impl Cheatcode for getDeploymentsCall {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader =
-            BroadcastReader::new(contractName.clone(), *chainId, &ccx.state.core.config.broadcast)?
-                .with_tx_type(CallKind::Create)
-                .with_tx_type(CallKind::Create2);
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(CallKind::Create)
+            .with_tx_type(CallKind::Create2);
 
-        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
+        let broadcasts = reader.read::<AnyNetwork>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -1195,7 +1192,6 @@ mod tests {
     };
     use std::{env, fs as stdfs, str::FromStr, sync::Arc};
     use tempfile::TempDir;
-    use tempo_alloy::TempoNetwork;
 
     fn cheats() -> CheatcodesCore {
         let config = CheatsConfig {
@@ -1691,7 +1687,7 @@ mod tests {
 
         fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
 
-        let latest = latest_broadcast::<TempoNetwork>(
+        let latest = latest_broadcast::<AnyNetwork>(
             &"Counter".to_owned(),
             31337,
             &broadcast_path,

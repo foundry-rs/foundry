@@ -1,4 +1,4 @@
-use super::span_to_range;
+use super::{deps::ConstructorContext, span_to_range};
 use alloy_primitives::keccak256;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
@@ -51,11 +51,11 @@ impl ContractData {
         gcx: Gcx<'_>,
         contract_id: ContractId,
         path: &Path,
-        source: &solar::sema::hir::Source<'_>,
         reserved_identifiers: &str,
         source_units: &[PathBuf],
     ) -> Self {
         let contract = gcx.hir.contract(contract_id);
+        let source = gcx.hir.source(contract.source);
         let artifact =
             solidity_string_content(&format!("{}:{}", path.to_slash_lossy(), contract.name));
 
@@ -157,7 +157,7 @@ impl ContractData {
     /// ```solidity
     /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs({name: name, symbol: symbol})))
     /// ```
-    pub fn build_helper(&self) -> Option<String> {
+    pub fn build_helper(&self, abi_pragma: &str) -> Option<String> {
         let Self { path, name, constructor_data, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };
@@ -172,6 +172,7 @@ impl ContractData {
             r#"
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.4.0;
+{abi_pragma}
 
 import "{path}";
 
@@ -250,7 +251,6 @@ pub(crate) fn collect_preprocessor_data(
             gcx,
             *contract_id,
             path,
-            source,
             &reserved_identifiers(gcx, contract.source),
             source_units,
         );
@@ -262,10 +262,22 @@ pub(crate) fn collect_preprocessor_data(
 /// Creates helper libraries for contracts with a non-empty constructor.
 ///
 /// See [`ContractData::build_helper`] for more details.
-pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -> Sources {
+pub(crate) fn create_deploy_helpers(
+    gcx: Gcx<'_>,
+    constructor_context: ConstructorContext,
+    data: &BTreeMap<ContractId, ContractData>,
+) -> Sources {
     let mut deploy_helpers = Sources::new();
-    for contract in data.values() {
-        if let Some(code) = contract.build_helper() {
+    for (id, contract) in data {
+        // Helpers need their own pragma only when the compiler defaults to ABI coder v1.
+        let abi_pragma = if !constructor_context.abi_coder_v2
+            && constructor_context.for_source(gcx, gcx.hir.contract(*id).source).abi_coder_v2
+        {
+            "pragma experimental ABIEncoderV2;"
+        } else {
+            ""
+        };
+        if let Some(code) = contract.build_helper(abi_pragma) {
             let path = contract.constructor_data.as_ref().unwrap().helper_path.clone();
             deploy_helpers.insert(path, Source::new(code));
         }

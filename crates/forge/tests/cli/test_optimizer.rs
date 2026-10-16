@@ -12,6 +12,54 @@ use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection}
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
+#[forgetest]
+fn preprocess_abi_coder_v2_solc_07(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = EvmVersion::Istanbul;
+    });
+    prj.add_raw_source(
+        "Target.sol",
+        r#"
+pragma solidity 0.7.6;
+pragma experimental ABIEncoderV2;
+contract Target {
+    struct Value { uint256 n; }
+    uint256 public n;
+    constructor(Value memory value) { n = value.n; }
+    function echo(Value memory value) external pure returns (Value memory) { return value; }
+}
+"#,
+    );
+    prj.add_raw_test(
+        "Target.t.sol",
+        r#"
+pragma solidity 0.7.6;
+pragma experimental ABIEncoderV2;
+import {Target} from "../src/Target.sol";
+contract TargetTest {
+    function test_deploy() public {
+        Target target = new Target(Target.Value(42));
+        require(target.n() == 42, "constructor argument");
+        require(target.echo(Target.Value(7)).n == 7, "inherited ABI coder");
+    }
+}
+"#,
+    );
+    for dtl in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dtl);
+        cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Target.t.sol:TargetTest
+[PASS] test_deploy() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    }
+}
+
 // <https://github.com/foundry-rs/foundry/issues/16852>
 #[forgetest]
 fn preprocess_parenthesized_new(prj: _, cmd: _) {

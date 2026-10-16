@@ -848,9 +848,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
-    /// Addresses with arbitrary storage.
-    pub arbitrary_storage: Option<ArbitraryStorage>,
-
     /// SLOAD callbacks keyed by effective storage address.
     storage_load_hooks: AddressHashMap<StorageHook>,
     /// SSTORE callbacks keyed by effective storage address.
@@ -963,7 +960,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pc: Default::default(),
             breakpoints: Default::default(),
             ignored_traces: Default::default(),
-            arbitrary_storage: Default::default(),
             storage_load_hooks: Default::default(),
             storage_store_hooks: Default::default(),
             mapping_storage_store_hooks: Default::default(),
@@ -1652,15 +1648,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         None
     }
 
-    /// Returns existing or set a default `ArbitraryStorage` option.
-    /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
-    pub fn arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
-        self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
-    }
-
     /// Returns addresses explicitly marked with arbitrary storage.
     pub fn arbitrary_storage_targets(&self) -> impl Iterator<Item = Address> + '_ {
-        self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::targets)
+        self.core.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::targets)
     }
 
     /// Returns addresses explicitly marked with arbitrary storage and whether nonzero slots are
@@ -1668,7 +1658,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     pub fn arbitrary_storage_target_overwrite_modes(
         &self,
     ) -> impl Iterator<Item = (Address, bool)> + '_ {
-        self.arbitrary_storage
+        self.core
+            .arbitrary_storage
             .as_ref()
             .into_iter()
             .flat_map(ArbitraryStorage::target_overwrite_modes)
@@ -1676,14 +1667,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Returns addresses that copy storage from arbitrary-storage targets.
     pub fn arbitrary_storage_copied_targets(&self) -> impl Iterator<Item = Address> + '_ {
-        self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::copied_targets)
+        self.core.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::copied_targets)
     }
 
     /// Returns copied arbitrary-storage targets and their source address.
     pub fn arbitrary_storage_copied_target_sources(
         &self,
     ) -> impl Iterator<Item = (Address, Address)> + '_ {
-        self.arbitrary_storage
+        self.core
+            .arbitrary_storage
             .as_ref()
             .into_iter()
             .flat_map(ArbitraryStorage::copied_target_sources)
@@ -1691,31 +1683,34 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Caches a concrete replay value for a slot on an arbitrary-storage address or copied target.
     pub fn cache_arbitrary_storage_value(&mut self, address: Address, slot: U256, value: U256) {
-        if let Some(storage) = &mut self.arbitrary_storage {
+        if let Some(storage) = &mut self.core.arbitrary_storage {
             storage.cache_value(address, slot, value);
         }
     }
 
     /// Marks a slot as explicitly written with `vm.store`.
     pub fn mark_arbitrary_storage_slot_explicit(&mut self, address: Address, slot: U256) {
-        if let Some(storage) = &mut self.arbitrary_storage {
+        if let Some(storage) = &mut self.core.arbitrary_storage {
             storage.mark_explicit(address, slot);
         }
     }
 
     /// Returns whether a slot was explicitly written with `vm.store`.
     pub fn is_arbitrary_storage_slot_explicit(&self, address: Address, slot: U256) -> bool {
-        self.arbitrary_storage.as_ref().is_some_and(|storage| storage.is_explicit(address, slot))
+        self.core
+            .arbitrary_storage
+            .as_ref()
+            .is_some_and(|storage| storage.is_explicit(address, slot))
     }
 
     /// Returns a cached arbitrary-storage replay value for a slot.
     pub fn cached_arbitrary_storage_value(&self, address: Address, slot: U256) -> Option<U256> {
-        self.arbitrary_storage.as_ref().and_then(|storage| storage.cached_value(address, slot))
+        self.core.arbitrary_storage.as_ref().and_then(|storage| storage.cached_value(address, slot))
     }
 
     /// Whether the given address has arbitrary storage.
     pub fn has_arbitrary_storage(&self, address: &Address) -> bool {
-        match &self.arbitrary_storage {
+        match &self.core.arbitrary_storage {
             Some(storage) => storage.values.contains_key(address),
             None => false,
         }
@@ -1729,7 +1724,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         address: &Address,
         storage_slot: U256,
     ) -> bool {
-        match &self.arbitrary_storage {
+        match &self.core.arbitrary_storage {
             Some(storage) => {
                 storage.overwrites.contains(address)
                     && storage
@@ -1744,7 +1739,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Whether the given address is a copy of an address with arbitrary storage.
     pub fn is_arbitrary_storage_copy(&self, address: &Address) -> bool {
-        match &self.arbitrary_storage {
+        match &self.core.arbitrary_storage {
             Some(storage) => storage.copies.contains_key(address),
             None => false,
         }
@@ -1863,7 +1858,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     pub fn has_step_end_hooks(&self) -> bool {
         self.gas_metering.paused
             || self.gas_metering.touched
-            || self.arbitrary_storage.is_some()
+            || self.core.arbitrary_storage.is_some()
             || self.core.mapping_slots.is_some()
             || self.has_active_env_overrides()
             || self.pending_origin_override
@@ -2075,7 +2070,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
-        if self.arbitrary_storage.is_some() {
+        if self.core.arbitrary_storage.is_some() {
             self.arbitrary_storage_end(interp);
         }
 
@@ -2908,7 +2903,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let arbitrary_value = self
                     .cached_arbitrary_storage_value(target_address, key)
                     .unwrap_or_else(|| self.core.rng().random());
-                self.arbitrary_storage.as_mut().unwrap().save(
+                self.core.arbitrary_storage.as_mut().unwrap().save(
                     state,
                     target_address,
                     key,
@@ -2916,7 +2911,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 )
             } else if self.is_arbitrary_storage_copy(&target_address) {
                 let arbitrary_value = self.core.rng().random();
-                self.arbitrary_storage
+                self.core
+                    .arbitrary_storage
                     .as_mut()
                     .unwrap()
                     .copy(state, target_address, key, arbitrary_value)
@@ -3823,5 +3819,34 @@ mod tests {
         storage.cache_value(copied, slot, U256::ZERO);
 
         assert_eq!(storage.cached_value(source, slot), Some(U256::ZERO));
+    }
+
+    #[test]
+    fn set_arbitrary_storage_applies_through_core_context() {
+        let mut cheats = cheats(false, None);
+        let target = Address::repeat_byte(0x11);
+        let slot = U256::from(7);
+        assert!(!cheats.has_step_end_hooks());
+
+        Vm::setArbitraryStorage_1Call { target, overwrite: true }
+            .apply_context(&mut cheats.core)
+            .unwrap();
+        assert!(cheats.has_step_end_hooks());
+        assert!(cheats.has_arbitrary_storage(&target));
+        assert!(cheats.should_overwrite_arbitrary_storage(&target, slot));
+
+        cheats.mark_arbitrary_storage_slot_explicit(target, slot);
+        cheats.cache_arbitrary_storage_value(target, slot, U256::from(42));
+        assert!(cheats.is_arbitrary_storage_slot_explicit(target, slot));
+        assert_eq!(cheats.cached_arbitrary_storage_value(target, slot), Some(U256::from(42)));
+
+        // Re-registering clears the overwrite mode, explicit slots, and cached values.
+        Vm::setArbitraryStorage_0Call { target }.apply_context(&mut cheats.core).unwrap();
+        assert_eq!(
+            cheats.arbitrary_storage_target_overwrite_modes().collect_vec(),
+            [(target, false)]
+        );
+        assert!(!cheats.is_arbitrary_storage_slot_explicit(target, slot));
+        assert_eq!(cheats.cached_arbitrary_storage_value(target, slot), None);
     }
 }
