@@ -181,7 +181,8 @@ impl<T: EvmTypes> Inspector<T> for RevertDiagnostic {
         if let Ok(info) = host.state_mut().account_info_untracked(&target)
             && info.is_none_or(|info| info.code_hash == KECCAK256_EMPTY)
         {
-            self.non_contract_call = Some((target, message.kind, message.depth));
+            // The revert happens in the calling frame.
+            self.non_contract_call = Some((target, message.kind, interp.message().depth));
         }
         None
     }
