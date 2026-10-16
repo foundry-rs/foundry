@@ -30,7 +30,10 @@ use super::{
     AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt, FoundryEvmFactory,
     LifecycleSnapshot, Parked, StoredExt, evm_env,
 };
-use crate::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
+use crate::{
+    backend::{RevertStateSnapshotAction, transaction_error},
+    state_snapshot::StateSnapshots,
+};
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, KECCAK256_EMPTY, Log, U256};
 use evm2::{
@@ -440,7 +443,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
         }
-        let executed = executor.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        let executed = executor.transact(tx).map_err(transaction_error)?;
         let result = executed.result().clone();
         if result.status {
             merge_nested_changes(evm.state_mut(), &executed)?;
@@ -558,7 +561,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if let Some(inspector) = nested.inspector {
             executor.set_inspector(inspector);
         }
-        let executed = executor.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        let executed = executor.transact(tx).map_err(transaction_error)?;
         let persistent = &self.forks.persistent;
         merge_changes(evm.state_mut(), executed.account_changes(), |address| {
             persistent.contains(address)
