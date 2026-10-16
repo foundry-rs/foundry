@@ -1310,14 +1310,24 @@ impl Cheatcode for broadcastRawTransactionCall {
         };
 
         let evm_tx = FEN::evm_tx(tx.clone(), sender, TxPayload::Signed)?;
-        // The transaction validates with a chain ID `vm.chainId` set in the running one.
-        let env = ccx.state.env_overrides.get(ccx.active_fork_id()).and_then(|o| o.chain_id).map(
-            |chain_id| {
-                let mut env = evm_env(ccx.evm);
+        let overrides = ccx.state.env_overrides.get(ccx.active_fork_id());
+        let chain_id = overrides.and_then(|o| o.chain_id);
+        let env = (chain_id.is_some() || ccx.state.isolation_env.is_some()).then(|| {
+            let mut env = evm_env(ccx.evm);
+            // Inside an isolated call, the transaction pays fees as in the transaction the call
+            // runs in.
+            if let Some(outer) = &ccx.state.isolation_env {
+                env.version = outer.version;
+                env.block.basefee = overrides
+                    .and_then(|o| o.basefee_override())
+                    .map_or(outer.block.basefee, U256::from);
+            }
+            // The transaction validates with a chain ID `vm.chainId` set in the running one.
+            if let Some(chain_id) = chain_id {
                 env.set_chain_id(chain_id);
-                env
-            },
-        );
+            }
+            env
+        });
         let result =
             executor.transact_from_tx(ccx.backend, ccx.evm, ccx.depth as u16, &evm_tx, env)?;
         // Cheatcodes do not run inside the transaction; let `expectEmit` and `recordLogs` see its

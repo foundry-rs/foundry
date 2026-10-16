@@ -1107,6 +1107,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // boundary. evm2 rejects transactions whose gas limit is below the EIP-7623 calldata
         // floor, so the limit is raised to the floor; the floor is charged to the frame below.
         let mut env = evm_env(evm);
+        let outer_env = env;
         let regular_limit = message.gas_limit.saturating_add(intrinsic);
         let mut gas_limit = regular_limit;
         if version.feature(EvmFeatures::EIP8037) {
@@ -1171,6 +1172,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             let origin = previous.unwrap_or(tx_origin);
             cheats.origin_override = (origin != message.caller).then_some(origin);
             cheats.in_isolation_context = true;
+            cheats.isolation_env = Some(outer_env);
             previous
         });
         let previous_inner = self
@@ -1191,6 +1193,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let (Some(cheats), Some(previous)) = (self.cheatcodes.as_deref_mut(), previous_origin) {
             cheats.origin_override = previous;
             cheats.in_isolation_context = false;
+            cheats.isolation_env = None;
         }
 
         let Some(executed) = executed else {

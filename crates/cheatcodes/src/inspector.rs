@@ -893,6 +893,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// fee-accounting zeroing.
     pub in_isolation_context: bool,
 
+    /// Environment of the transaction an isolated call runs in, while it runs.
+    ///
+    /// The isolated call's own nested transaction pays no fees; transactions that cheatcodes
+    /// execute inside it start from this environment instead.
+    pub isolation_env: Option<EvmEnvFor<FEN>>,
+
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
 
@@ -974,6 +980,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             env_overrides: Default::default(),
             fork_block_number_override_snapshots: Default::default(),
             in_isolation_context: false,
+            isolation_env: None,
             deploy_code_depth: None,
         }
     }
