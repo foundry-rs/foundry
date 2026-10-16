@@ -9,15 +9,15 @@ use foundry_common::{
     fs::json_files,
 };
 use foundry_compilers::{
-    Graph, Project, ProjectPathsConfig,
+    Graph, Project,
     artifacts::{Contract, SolcLanguage, output_selection::OutputSelection},
     cache::CompilerCache,
     compilers::{Compiler, CompilerOutput, CompilerSettings, CompilerVersion},
     error::SolcError,
-    multi::{MultiCompiler, MultiCompilerLanguage, MultiCompilerParser, MultiCompilerSettings},
+    multi::{MultiCompiler, MultiCompilerParser, MultiCompilerSettings},
     solc::SolcCompiler,
 };
-use foundry_config::{Config, SolcReq, impl_figment_convert};
+use foundry_config::{Config, impl_figment_convert};
 use regex::Regex;
 use semver::Version;
 use solar::ast::{Item, ItemKind};
@@ -31,6 +31,8 @@ impl_figment_convert!(BindArgs, build);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 const DEFAULT_CRATE_VERSION: &str = "0.1.0";
+
+type BindingFiles = Vec<(String, PathBuf)>;
 
 /// CLI arguments for `forge bind`.
 #[derive(Clone, Debug, Parser)]
@@ -140,17 +142,11 @@ impl BindArgs {
         };
         let artifacts = config.out.clone();
         let (files, enum_definitions) = if self.skip_build {
-            let files = self.get_json_files(&config, &artifacts)?;
-            let definitions = cached_enum_definitions(
-                &config.project_paths(),
-                &artifacts,
-                files.iter().map(|(_, path)| path.clone()),
-            );
-            (files, definitions)
+            self.cached_bindings(&config)?
         } else {
             let mut project = config.project()?;
             // Compilation may install compiler versions and change subsequent auto-detection.
-            let contexts = resolved_artifact_contexts(&project, None)?;
+            let contexts = resolved_artifact_contexts(&project, artifact_graph(&project, None)?)?;
             let output = compile_abi_project(
                 &mut project,
                 ProjectCompiler::new().external_compilers(&config),
@@ -210,33 +206,55 @@ impl BindArgs {
         Ok(Filter::skip_default())
     }
 
-    /// Selects cached artifacts for the current compiler versions and settings profiles.
-    fn get_json_files(&self, config: &Config, artifacts: &Path) -> Result<Vec<(String, PathBuf)>> {
-        if config.cache {
-            let paths: ProjectPathsConfig = config.project_paths();
-            if let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&paths) {
-                let filter = self.get_filter()?;
-                let selected = cache
-                    .files
-                    .iter()
-                    .filter(|(_, entry)| {
-                        entry.artifacts.keys().any(|name| filter.is_match(&binding_name(name)))
-                    })
-                    .map(|(source, _)| source.clone())
-                    .collect::<HashSet<_>>();
-                if selected.is_empty() {
-                    return self.filter_artifact_paths(json_files(&artifacts.join(".external")));
-                }
-                let compiler = CachedCompiler::new(config, &cache);
+    /// Selects cached artifacts and enriches enums only from a fresh, complete source graph.
+    fn cached_bindings(
+        &self,
+        config: &Config,
+    ) -> Result<(BindingFiles, BTreeMap<String, Vec<String>>)> {
+        let paths = config.project_paths();
+        let cache = CompilerCache::<MultiCompilerSettings>::read_joined(&paths).ok();
+        let graph = Graph::<MultiCompilerParser>::resolve(&paths);
+        let mut definitions = if let (Some(cache), Ok(graph)) = (&cache, &graph)
+            && cache.all_artifacts_exist()
+            && graph.nodes.iter().all(|node| {
+                cache
+                    .entry(node.path())
+                    .is_some_and(|entry| entry.content_hash == node.unpack().1.content_hash())
+            }) {
+            enum_definitions(graph.parser())
+        } else {
+            BTreeMap::default()
+        };
+        let files = if let Some(cache) = cache.as_ref().filter(|_| config.cache) {
+            let filter = self.get_filter()?;
+            let selected = cache
+                .files
+                .iter()
+                .filter(|(_, entry)| {
+                    entry.artifacts.keys().any(|name| filter.is_match(&binding_name(name)))
+                })
+                .map(|(source, _)| source.clone())
+                .collect::<HashSet<_>>();
+            let mut files = Vec::new();
+            if !selected.is_empty() {
+                let compiler = CachedCompiler::new(config, cache);
                 let mut project = config.create_project_with_compiler(compiler, false, true)?;
                 project.update_output_selection(|selection| {
                     *selection = OutputSelection::common_output_selection(["abi".to_string()]);
                 });
-                // Preserve compiler versions shared by compatible inputs. If unrelated sources
-                // cannot resolve, only the selected inputs and their dependencies need to agree.
-                let contexts = resolved_artifact_contexts(&project, None)
-                    .or_else(|_| resolved_artifact_contexts(&project, Some(&selected)))?;
-                let mut files = Vec::new();
+                // Enum metadata always uses the full graph; artifact selection may be narrower.
+                let graph = if project.sparse_output.is_none() {
+                    graph.map_err(Into::into)
+                } else {
+                    artifact_graph(&project, None)
+                };
+                // Preserve shared compiler versions, falling back to selected inputs if needed.
+                let contexts = graph
+                    .and_then(|graph| resolved_artifact_contexts(&project, graph))
+                    .or_else(|_| {
+                        let graph = artifact_graph(&project, Some(&selected))?;
+                        resolved_artifact_contexts(&project, graph)
+                    })?;
                 for (source, contexts) in contexts {
                     if let Some(entry) = cache.entry(&source) {
                         for name in entry
@@ -289,21 +307,38 @@ impl BindArgs {
                         }
                     }
                 }
-                // External adapter artifacts are not part of the built-in compiler cache.
-                files.extend(json_files(&artifacts.join(".external")));
-                return self.filter_artifact_paths(files);
+            }
+            // External adapter artifacts are not part of the built-in compiler cache.
+            files.extend(json_files(&config.out.join(".external")));
+            files
+        } else {
+            // Artifact-only directories have no compiler manifest to resolve version/profile
+            // identity.
+            json_files(&config.out).collect()
+        };
+        let files = self.filter_artifact_paths(files)?;
+        if let Some(cache) = cache
+            && !definitions.is_empty()
+        {
+            let cached_artifacts = cache
+                .entries()
+                .flat_map(|entry| entry.artifacts())
+                .map(|artifact| &artifact.path)
+                .collect::<HashSet<_>>();
+            if files.iter().any(|(_, path)| {
+                !path.starts_with(config.out.join(".external")) && !cached_artifacts.contains(path)
+            }) {
+                definitions.clear();
             }
         }
-
-        // Artifact-only directories have no compiler manifest to resolve version/profile identity.
-        self.filter_artifact_paths(json_files(artifacts))
+        Ok((files, definitions))
     }
 
     /// Applies binding filters and preserves artifact-path precedence for duplicate names.
     fn filter_artifact_paths(
         &self,
         paths: impl IntoIterator<Item = PathBuf>,
-    ) -> Result<Vec<(String, PathBuf)>> {
+    ) -> Result<BindingFiles> {
         let filter = self.get_filter()?;
         let mut files = paths
             .into_iter()
@@ -400,41 +435,6 @@ impl BindArgs {
     }
 }
 
-fn cached_enum_definitions(
-    paths: &ProjectPathsConfig,
-    artifacts_root: &Path,
-    artifacts: impl Iterator<Item = PathBuf>,
-) -> BTreeMap<String, Vec<String>> {
-    let Ok(graph) = Graph::<MultiCompilerParser>::resolve(paths) else {
-        return BTreeMap::default();
-    };
-    let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(paths) else {
-        return BTreeMap::default();
-    };
-    let sources_are_fresh = graph.nodes.iter().all(|node| {
-        cache
-            .entry(node.path())
-            .is_some_and(|entry| entry.content_hash == node.unpack().1.content_hash())
-    });
-    if !sources_are_fresh || !cache.all_artifacts_exist() {
-        return BTreeMap::default();
-    }
-    let cached_artifacts = cache
-        .entries()
-        .flat_map(|entry| entry.artifacts.values())
-        .flat_map(|versions| versions.values())
-        .flat_map(|profiles| profiles.values())
-        .map(|artifact| artifact.path.clone())
-        .collect::<HashSet<_>>();
-    if artifacts.into_iter().any(|artifact| {
-        !artifact.starts_with(artifacts_root.join(".external"))
-            && !cached_artifacts.contains(&artifact)
-    }) {
-        return BTreeMap::default();
-    }
-    enum_definitions(graph.parser())
-}
-
 fn enum_definitions(parser: &MultiCompilerParser) -> BTreeMap<String, Vec<String>> {
     parser.solc().compiler().enter(|compiler| {
         let mut definitions = BTreeMap::default();
@@ -515,19 +515,11 @@ impl Filter {
     }
 }
 
-/// Resolves source/compiler/profile identities using the same graph as compilation.
-fn resolved_artifact_contexts<C>(
+/// Resolves compilation inputs, retaining importers of selected library dependencies.
+fn artifact_graph<C: Compiler<CompilerContract = Contract>>(
     project: &Project<C>,
     selected: Option<&HashSet<PathBuf>>,
-) -> Result<BTreeMap<PathBuf, BTreeSet<(Version, String)>>>
-where
-    C: Compiler<
-            Parser = MultiCompilerParser,
-            Settings = MultiCompilerSettings,
-            Language = MultiCompilerLanguage,
-            CompilerContract = Contract,
-        >,
-{
+) -> Result<Graph<C::Parser>> {
     let mut sources = project.paths.read_input_files()?;
     if let Some(filter) = &project.sparse_output {
         sources.retain(|source, _| filter.is_match(source));
@@ -542,8 +534,7 @@ where
         if !dependencies.is_empty() {
             // Libraries inherit their importers' compiler versions and profiles. Keep those
             // inputs instead of treating selected libraries as standalone compilation roots.
-            let graph =
-                Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources.clone())?;
+            let graph = Graph::<C::Parser>::resolve_sources(&project.paths, sources.clone())?;
             roots.extend(
                 graph
                     .input_nodes()
@@ -558,7 +549,14 @@ where
         }
         sources.retain(|source, _| roots.contains(source));
     }
-    let graph = Graph::resolve_sources(&project.paths, sources)?;
+    Ok(Graph::resolve_sources(&project.paths, sources)?)
+}
+
+/// Resolves source/compiler/profile identities using the same graph as compilation.
+fn resolved_artifact_contexts<C: Compiler<CompilerContract = Contract>>(
+    project: &Project<C>,
+    graph: Graph<C::Parser>,
+) -> Result<BTreeMap<PathBuf, BTreeSet<(Version, String)>>> {
     let resolved = graph.into_sources_by_version(project)?;
     let mut contexts = BTreeMap::<_, BTreeSet<_>>::new();
     for (version, sources, (profile, _)) in resolved.sources.into_values().flatten() {
@@ -607,12 +605,7 @@ impl CachedCompiler {
         };
         let mut solc_unknown = false;
         let solc = match &config.solc {
-            Some(SolcReq::Version(version)) => vec![CompilerVersion::Installed(Version::new(
-                version.major,
-                version.minor,
-                version.patch,
-            ))],
-            Some(request @ SolcReq::Local(_)) => {
+            Some(request) => {
                 if let Ok(version) = request.try_version() {
                     vec![CompilerVersion::Installed(Version::new(
                         version.major,

@@ -134,6 +134,18 @@ fn event_has_all_derives() {
     .unwrap();
 }
 
+fn assert_binding_bytecode(binding: &str, artifact: &Path) -> alloy_primitives::Bytes {
+    let artifact = read_json_file::<ConfigurableContractArtifact>(artifact).unwrap();
+    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
+    assert!(!bytecode.is_empty());
+    let embedded_bytecode = binding
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("///0x"))
+        .expect("binding should include creation bytecode");
+    assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(&bytecode));
+    bytecode
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9482>
 #[forgetest]
 fn bind_unlinked_bytecode(prj: _, cmd: _) {
@@ -206,9 +218,7 @@ contract BindTarget {
 // <https://github.com/foundry-rs/foundry/issues/10441>
 #[forgetest]
 fn bind_generates_enum_variants(prj: _, cmd: _) {
-    prj.add_source(
-        "EnumUser.sol",
-        r#"
+    let source = r#"
 contract EnumUser {
     enum Status { Pending, Active }
 
@@ -216,8 +226,9 @@ contract EnumUser {
         return status;
     }
 }
-"#,
-    );
+"#;
+    prj.add_source("EnumUser.sol", source);
+    prj.add_source("Unselected.sol", "contract Unselected {}");
 
     cmd.args(["bind", "--select", "^EnumUser$"]).assert_success();
 
@@ -237,19 +248,11 @@ fn enum_variants_are_typed() {
     assert_bindings_compile(&bindings_path);
 
     cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--no-cache", "--select", "^EnumUser$"])
+        .assert_success();
 
-    prj.add_source(
-        "EnumUser.sol",
-        r#"
-contract EnumUser {
-    enum Status { Active, Pending }
-
-    function echo(Status status) external pure returns (Status) {
-        return status;
-    }
-}
-"#,
-    );
+    prj.add_source("EnumUser.sol", &source.replace("Pending, Active", "Active, Pending"));
     cmd.forge_fuse()
         .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
         .assert_success();
@@ -257,6 +260,27 @@ contract EnumUser {
     let binding = fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap();
     assert!(binding.contains("pub struct Status"), "{binding}");
     assert!(!binding.contains("pub enum Status"), "{binding}");
+
+    // Enum metadata requires the full source graph and all cached artifacts to remain valid.
+    prj.add_source("EnumUser.sol", source);
+    prj.add_source("Unselected.sol", "contract Unselected { uint256 value; }");
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+    assert_data_eq!(
+        fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap(),
+        binding.as_str().raw()
+    );
+
+    prj.add_source("Unselected.sol", "contract Unselected {}");
+    fs::remove_file(prj.paths().artifacts.join("Unselected.sol/Unselected.json")).unwrap();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+    assert_data_eq!(
+        fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap(),
+        binding.as_str().raw()
+    );
 }
 
 #[forgetest]
@@ -304,6 +328,13 @@ contract EnumUser {
 
     let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
     assert!(binding.contains("pub enum Status"), "{binding}");
+
+    let external_binding = prj.root().join("out/bindings/src/external.rs");
+    let expected = fs::read_to_string(&external_binding).unwrap();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^External$", "--overwrite"])
+        .assert_success();
+    assert_data_eq!(fs::read_to_string(external_binding).unwrap(), expected.as_str().raw());
 }
 
 #[forgetest]
@@ -887,23 +918,14 @@ contract Foo { function value() external pure returns (uint256) { return 42; } }
     let expected = ["0.8.21", "0.8.20"].map(|version| {
         prj.clear();
         cmd.forge_fuse().args(["build", "--use", version]).assert_success();
-        let artifact = read_json_file::<ConfigurableContractArtifact>(
-            &prj.artifacts().join("Foo.sol/Foo.json"),
-        )
-        .unwrap();
-        let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
-        assert!(!bytecode.is_empty());
 
         // With one compiler artifact, capture the complete binding including deployment bytecode.
         cmd.forge_fuse()
             .args(["bind", "--skip-build", "--use", version, "--select", "^Foo$"])
             .assert_success();
         let expected = fs::read_to_string(&binding).unwrap();
-        let embedded_bytecode = expected
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("///0x"))
-            .expect("binding should include creation bytecode");
-        assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(&bytecode));
+        let bytecode =
+            assert_binding_bytecode(&expected, &prj.artifacts().join("Foo.sol/Foo.json"));
         (version, expected, bytecode)
     });
     assert_ne!(expected[0].2, expected[1].2);
@@ -1150,21 +1172,14 @@ fn bind_skip_build_resolves_multiple_compiler_versions(prj: _, cmd: _) {
         .assert_success()
         .stdout_eq("");
     for contract in ["A", "B"] {
-        let artifact = read_json_file::<ConfigurableContractArtifact>(
-            &prj.artifacts().join(format!("{contract}.sol/{contract}.json")),
-        )
-        .unwrap();
-        let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
-        assert!(!bytecode.is_empty());
         let binding = fs::read_to_string(
             prj.root().join(format!("out/bindings/src/{}.rs", contract.to_lowercase())),
         )
         .unwrap();
-        let embedded_bytecode = binding
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("///0x"))
-            .expect("binding should include creation bytecode");
-        assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(bytecode));
+        assert_binding_bytecode(
+            &binding,
+            &prj.artifacts().join(format!("{contract}.sol/{contract}.json")),
+        );
     }
 }
 
@@ -1217,16 +1232,7 @@ fn bind_skip_build_offline_ignores_unrelated_installed_compiler(prj: _, cmd: _) 
     forge(&["bind", "--skip-build", "--use", "0.8.20", "--select", "^Foo$"]);
     let binding = prj.root().join("out/bindings/src/foo.rs");
     let expected = fs::read_to_string(&binding).unwrap();
-    let artifact =
-        read_json_file::<ConfigurableContractArtifact>(&prj.artifacts().join("Foo.sol/Foo.json"))
-            .unwrap();
-    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
-    assert!(!bytecode.is_empty());
-    let embedded_bytecode = expected
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("///0x"))
-        .expect("binding should include creation bytecode");
-    assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(bytecode));
+    assert_binding_bytecode(&expected, &prj.artifacts().join("Foo.sol/Foo.json"));
 
     fs::remove_dir_all(svm.join("0.8.20")).unwrap();
     let unrelated = compiler_home.path().join("unrelated-solc");
@@ -1243,10 +1249,10 @@ fn bind_skip_build_offline_ignores_unrelated_installed_compiler(prj: _, cmd: _) 
 
 #[forgetest]
 fn bind_skip_build_select_ignores_unrelated_compiler_requirements(prj: _, cmd: _) {
-    prj.add_source("A.sol", "pragma solidity =0.8.20; contract A {}");
+    prj.add_source("A.sol", "pragma solidity =0.8.20; enum Status { A } contract A {}");
     prj.add_source(
         "Selected.sol",
-        "pragma solidity =0.8.21; contract B { function value() external pure returns (uint256) { return 42; } }",
+        "pragma solidity =0.8.21; enum Status { B } contract B { function value() external pure returns (uint256) { return 42; } function status(Status value) external pure returns (Status) { return value; } }",
     );
     prj.update_config(|config| {
         config.solc = None;
@@ -1254,15 +1260,20 @@ fn bind_skip_build_select_ignores_unrelated_compiler_requirements(prj: _, cmd: _
     });
     cmd.arg("build").assert_success();
 
-    cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^B$"]).assert_success();
+    cmd.forge_fuse().args(["bind", "--select", "^B$"]).assert_success();
     let binding = prj.root().join("out/bindings/src/b.rs");
     let expected = fs::read_to_string(&binding).unwrap();
 
-    cmd.forge_fuse()
-        .args(["bind", "--skip-build", "--use", "0.8.21", "--select", "^B$", "--overwrite"])
-        .assert_success()
-        .stdout_eq("");
-    assert_data_eq!(fs::read_to_string(binding).unwrap(), expected.as_str().raw());
+    // Scoped compiler resolution must retain enum ambiguity from the full source graph.
+    for skip in [false, true] {
+        let mut args =
+            vec!["bind", "--skip-build", "--use", "0.8.21", "--select", "^B$", "--overwrite"];
+        if skip {
+            args.extend(["--skip", "A.sol"]);
+        }
+        cmd.forge_fuse().args(args).assert_success().stdout_eq("");
+        assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+    }
     assert!(!prj.root().join("out/bindings/src/a.rs").exists());
 }
 
@@ -1307,11 +1318,6 @@ fn bind_skip_build_selected_dependency_preserves_importer_context(prj: _, cmd: _
     let artifact = cache.files[Path::new("lib/dep/Common.sol")]
         .find_artifact("Common", &"0.8.20".parse().unwrap(), "via-ir")
         .expect("dependency should inherit its importer's compiler and profile");
-    let artifact =
-        read_json_file::<ConfigurableContractArtifact>(&prj.artifacts().join(&artifact.path))
-            .unwrap();
-    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
-    assert!(!bytecode.is_empty());
 
     // Selecting a library must preserve its importer's context without including unrelated roots.
     for version in [None, Some("0.8.20")] {
@@ -1321,11 +1327,7 @@ fn bind_skip_build_selected_dependency_preserves_importer_context(prj: _, cmd: _
         }
         cmd.forge_fuse().args(args).assert_success().stdout_eq("");
         let binding = fs::read_to_string(prj.root().join("out/bindings/src/common.rs")).unwrap();
-        let embedded_bytecode = binding
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("///0x"))
-            .expect("binding should include creation bytecode");
-        assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(&bytecode));
+        assert_binding_bytecode(&binding, &prj.artifacts().join(&artifact.path));
     }
 }
 
@@ -1370,20 +1372,11 @@ fn bind_skip_build_select_preserves_shared_compiler_version(prj: _, cmd: _) {
     let artifact = cache.files[Path::new("src/B.sol")]
         .find_artifact("B", &"0.8.20".parse().unwrap(), "default")
         .expect("compatible sources should share the same compiler version");
-    let artifact =
-        read_json_file::<ConfigurableContractArtifact>(&prj.artifacts().join(&artifact.path))
-            .unwrap();
-    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
-    assert!(!bytecode.is_empty());
 
     cmd.forge_fuse()
         .args(["bind", "--skip-build", "--select", "^B$"])
         .assert_success()
         .stdout_eq("");
     let binding = fs::read_to_string(prj.root().join("out/bindings/src/b.rs")).unwrap();
-    let embedded_bytecode = binding
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("///0x"))
-        .expect("binding should include creation bytecode");
-    assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(bytecode));
+    assert_binding_bytecode(&binding, &prj.artifacts().join(&artifact.path));
 }
