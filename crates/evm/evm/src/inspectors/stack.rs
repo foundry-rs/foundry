@@ -520,8 +520,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut child = backend.backend().nested_evm(evm, tx, env);
         let previous = self.enter_inner_context(InnerRoot { depth, caller: tx.signer() });
+        // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
+        // transaction runs in.
+        let origin_override = cheats.origin_override.take();
         child.set_inspector(InspectorStackRefMut {
-            cheatcodes: Some(cheats),
+            cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
             backend: Some(&mut *backend),
         });
@@ -536,6 +539,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
         result
     }
