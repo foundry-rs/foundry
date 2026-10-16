@@ -600,7 +600,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// <https://eips.ethereum.org/EIPS/eip-4788>
     pub fn apply_beacon_root(&mut self, parent_beacon_block_root: B256) -> eyre::Result<()> {
         let mut evm = self.backend().create_evm();
-        install_env::<FEN>(&mut evm, self.evm_env);
+        install_env::<FEN>(self.backend(), &mut evm, self.evm_env);
         let pending = evm
             .system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, parent_beacon_block_root.into()))
             .map_err(|err| eyre::eyre!("beacon root system call failed: {err:?}"))?
@@ -728,7 +728,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             }
             let backend = self.backend_mut();
             let mut evm = backend.create_evm();
-            install_env::<FEN>(&mut evm, evm_env);
+            install_env::<FEN>(backend, &mut evm, evm_env);
             prepare_ext::<FEN>(&mut evm, tx, context.as_mut(), &factory);
             let result = evm.transact(tx).map(|executed| executed.commit()).map_err(|err| {
                 eyre::eyre!(
@@ -1029,8 +1029,14 @@ fn with_authorization_list<B: FoundryTransactionBuilder<N> + TransactionBuilder,
     tx.set_max_priority_fee_per_gas(0);
 }
 
-/// Installs `env` on a freshly created `evm`, which starts with its backend's environment.
-fn install_env<FEN: FoundryEvmNetwork>(evm: &mut FoundryEvmFor<'_, FEN>, env: EvmEnvFor<FEN>) {
+/// Installs `env` on `evm`, freshly created over `backend`, which starts with the backend's
+/// environment.
+fn install_env<FEN: FoundryEvmNetwork>(
+    backend: &Backend<FEN>,
+    evm: &mut FoundryEvmFor<'_, FEN>,
+    env: EvmEnvFor<FEN>,
+) {
+    backend.lifecycle().active().db.set_eip161(env.version.feature(evm2::EvmFeatures::EIP161));
     let current = evm_env(evm);
     let version = &env.version;
     let same_config = current.spec == env.spec
@@ -1098,7 +1104,7 @@ fn execute<FEN: FoundryEvmNetwork>(
     let sancov_edges = stack.inner.sancov_edges;
     let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
     let mut evm = backend.backend().create_evm();
-    install_env::<FEN>(&mut evm, env);
+    install_env::<FEN>(backend.backend(), &mut evm, env);
     match ext {
         Some(ext) => *evm.ext_mut() = ext,
         None => evm.ext_mut().for_transaction(tx),

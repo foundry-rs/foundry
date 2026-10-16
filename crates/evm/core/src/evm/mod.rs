@@ -255,6 +255,7 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         env: EvmEnv<Self::Types>,
         ext: <Self::Types as EvmTypesHost>::EvmExt,
     ) -> Evm<'a, Self::Types> {
+        db.set_eip161(env.version.feature(evm2::EvmFeatures::EIP161));
         let precompiles = self.precompiles(&env, &ext);
         let EvmEnv { spec, version, block } = env;
         Evm::new_with_execution_config_and_ext(

@@ -14,7 +14,13 @@ use evm2::{
 };
 use foundry_fork_db::{ForkBlockEnv, SharedBackend};
 use revm::DatabaseRef;
-use std::{any::TypeId, sync::Arc};
+use std::{
+    any::TypeId,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 /// Database view the factory needs at construction time.
 pub trait FoundryDatabase: DynDatabase {
@@ -33,6 +39,10 @@ pub trait FoundryDatabase: DynDatabase {
 
     /// Drops a remotely cached storage slot, so the next read refetches it.
     fn evict_storage(&self, _address: &Address, _slot: &U256) {}
+
+    /// Sets whether the execution reading this database applies EIP-161, under which empty
+    /// accounts do not exist.
+    fn set_eip161(&self, _eip161: bool) {}
 }
 
 impl<D: FoundryDatabase + ?Sized> FoundryDatabase for &mut D {
@@ -50,6 +60,10 @@ impl<D: FoundryDatabase + ?Sized> FoundryDatabase for &mut D {
 
     fn evict_storage(&self, address: &Address, slot: &U256) {
         (**self).evict_storage(address, slot);
+    }
+
+    fn set_eip161(&self, eip161: bool) {
+        (**self).set_eip161(eip161);
     }
 }
 
@@ -86,6 +100,10 @@ impl FoundryDatabase for Box<dyn BackingDb> {
     fn evict_storage(&self, address: &Address, slot: &U256) {
         (**self).evict_storage(address, slot);
     }
+
+    fn set_eip161(&self, eip161: bool) {
+        (**self).set_eip161(eip161);
+    }
 }
 
 /// A remote fork's backing database: Foundry's RPC-backed fork cache, read by evm2.
@@ -97,12 +115,14 @@ impl FoundryDatabase for Box<dyn BackingDb> {
 pub struct ForkDb<D> {
     db: D,
     source_chain_id: u64,
+    /// Whether empty accounts do not exist (EIP-161), shared by every handle to the fork.
+    eip161: Arc<AtomicBool>,
 }
 
 impl<D> ForkDb<D> {
     /// Wraps a fork cache whose remote state belongs to `source_chain_id`.
-    pub const fn new(db: D, source_chain_id: u64) -> Self {
-        Self { db, source_chain_id }
+    pub fn new(db: D, source_chain_id: u64) -> Self {
+        Self { db, source_chain_id, eip161: Arc::new(AtomicBool::new(true)) }
     }
 
     /// Returns the wrapped fork cache.
@@ -119,8 +139,11 @@ where
         let info = self.db.basic_ref(*address).map_err(fatal)?;
         // The fork cache reports accounts the remote does not hold as existing empty accounts.
         // From Spurious Dragon on an empty account does not exist (EIP-161), so load it as absent;
-        // otherwise fresh EIP-7702 authorities would be refunded as existing ones.
-        Ok(info.filter(|info| !info.is_empty()).map(|info| {
+        // otherwise fresh EIP-7702 authorities would be refunded as existing ones. Before, the
+        // remote cannot tell an existing empty account apart from an absent one; load it as
+        // existing, as the account a historical call reaches usually is.
+        let eip161 = self.eip161.load(Ordering::Relaxed);
+        Ok(info.filter(|info| !eip161 || !info.is_empty()).map(|info| {
             let code = info.code.map(|code| Bytecode::new_raw(code.original_bytes()));
             AccountInfo::new(info.balance, info.nonce, info.code_hash, code)
         }))
@@ -157,6 +180,10 @@ impl<N: Network, B: ForkBlockEnv> FoundryDatabase for ForkDb<SharedBackend<N, B>
         if let Some(storage) = self.db.data().storage.write().get_mut(address) {
             storage.remove(slot);
         }
+    }
+
+    fn set_eip161(&self, eip161: bool) {
+        self.eip161.store(eip161, Ordering::Relaxed);
     }
 }
 
@@ -255,5 +282,9 @@ impl FoundryDatabase for AcceptedView {
 
     fn evict_storage(&self, address: &Address, slot: &U256) {
         self.backing.evict_storage(address, slot);
+    }
+
+    fn set_eip161(&self, eip161: bool) {
+        self.backing.set_eip161(eip161);
     }
 }
