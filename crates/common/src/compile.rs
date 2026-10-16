@@ -18,15 +18,15 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Severity, Source, output_selection::OutputSelection,
-        remappings::Remapping,
+        BytecodeObject, Contract, Error as SolcError, Severity, Source,
+        output_selection::OutputSelection, remappings::Remapping,
     },
     compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
-    multi::{MultiCompiler, MultiCompilerSettings},
+    multi::{MultiCompiler, MultiCompilerError, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
@@ -40,6 +40,7 @@ use solar::{
     parse::Parser,
 };
 use std::{
+    any::Any,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
@@ -295,21 +296,37 @@ impl ProjectCompiler {
                 project.paths.read_input_files()?
             };
 
-            let compile = |sources| {
-                let mut compiler =
-                    foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
-                if preprocess {
-                    compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+            let compile = |preprocess| -> Result<ProjectCompileOutput<C>> {
+                let compile_sources = |sources| {
+                    let mut compiler = foundry_compilers::project::ProjectCompiler::with_sources(
+                        project, sources,
+                    )?;
+                    if preprocess {
+                        compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+                    }
+                    if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
+                };
+                let mut output = compile_sources(sources.clone())?;
+                // Solc error 2449 can be introduced by filtering compilation roots in an import
+                // cycle. Retry before reporting diagnostics or bailing on the filtered output.
+                if !fallback_files.is_empty()
+                    && output.output().errors.iter().any(|error| error.error_code() == Some(2449))
+                {
+                    output = compile_sources(Source::read_all(&fallback_files)?)?;
                 }
-                if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
+                Ok(output)
             };
-            let mut output = compile(sources)?;
-            // Solc error 2449 can be introduced by filtering compilation roots in an import
-            // cycle. Retry before reporting diagnostics or bailing on the filtered output.
-            if !fallback_files.is_empty()
-                && output.output().errors.iter().any(|error| error.error_code() == Some(2449))
+            let mut output = compile(preprocess)?;
+            if preprocess
+                && let Some(reason) = dynamic_test_linking_failure(&output.output().errors)
             {
-                output = compile(Source::read_all(fallback_files)?)?;
+                sh_warn!(
+                    "dynamic test linking failed ({reason}); retrying with native test linking. \
+                     Use --no-dynamic-test-linking to skip the failed attempt."
+                )?;
+                // The preprocessor is part of the cache identity: native compilation cannot
+                // reuse DTL artifacts. Return only this attempt, including any compiler errors.
+                output = compile(false)?;
             }
             if !output.has_compiler_errors()
                 && let Some(external) = external
@@ -1041,6 +1058,37 @@ impl std::fmt::Debug for PathOrContractInfo {
             }
         }
     }
+}
+
+/// Recognizes only solc code-generation failures that DTL's source rewrites can introduce.
+/// Unrelated errors (including other languages) must not trigger a retry.
+fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'static str> {
+    let mut reason = None;
+    for error in errors.iter().filter(|error| error.is_error()) {
+        // CompilationError has no structured message/type accessors. Inspect the concrete solc
+        // diagnostic rather than its Display output, which can include source snippets.
+        let error = error as &dyn Any;
+        let error = if let Some(error) = error.downcast_ref::<SolcError>() {
+            error
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_ref::<MultiCompilerError>()
+        {
+            error
+        } else {
+            return None;
+        };
+        reason = Some(match error.r#type.as_str() {
+            "YulException" if error.message.contains("too deep in the stack") => "stack too deep",
+            "CompilerError" if error.message.contains("Stack too deep") => "stack too deep",
+            "InternalCompilerError"
+                if error.message.contains("Tag too large for reserved space") =>
+            {
+                "Tag too large for reserved space"
+            }
+            _ => return None,
+        });
+    }
+    reason
 }
 
 #[cfg(test)]
