@@ -1,26 +1,97 @@
+//! State forked off a remote client.
+
 use crate::eth::backend::db::{
-    Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-    SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
-    cache_block_hash,
+    AccountInfo, AccountState, BlockEnv, BlockchainDb, Bytecode, CacheDB, DatabaseError,
+    DatabaseRef, DatabaseResult, Db, DbAccount, MaybeForkedDatabase, MaybeFullDatabase,
+    RevertStateSnapshotAction, SerializableAccountRecord, SerializableBlock,
+    SerializableHistoricalStates, SerializableState, SerializableTransaction, SharedBackend,
+    StateDb, StateSnapshot, StateSnapshots, cache_block_hash,
 };
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
-use foundry_evm::{
-    backend::{
-        BlockchainDb, DatabaseResult, RevertStateSnapshotAction, SharedBackend, StateSnapshot,
-    },
-    fork::database::ForkDbStateSnapshot,
-};
-use revm::{
-    context::BlockEnv,
-    database::{Database, DbAccount},
-    state::AccountInfo,
-};
+use evm2::evm::{BlockStateAccumulator, DynDatabase};
+use foundry_evm_core::evm::ForkDb;
+use foundry_fork_db::cache::MemDb as RemoteState;
+use parking_lot::Mutex;
+use std::sync::Arc;
 
-pub use foundry_evm::fork::database::ForkedDatabase;
+/// Converts an account of the fork cache into an Anvil account.
+///
+/// The fork cache stores REVM-typed accounts; this reads them field by field at the boundary.
+macro_rules! remote_account {
+    ($info:expr) => {{
+        let info = $info;
+        AccountInfo::new(
+            info.balance,
+            info.nonce,
+            info.code_hash,
+            info.code.as_ref().map(|code| Bytecode::new_raw(code.original_bytes())),
+        )
+    }};
+}
 
-impl<N: Network> MaybeFullDatabase for SharedBackend<N> {
+/// Reads remote state through the RPC-backed fork cache.
+#[derive(Clone, Debug)]
+pub struct RemoteDb<N: Network> {
+    backend: SharedBackend<N>,
+}
+
+impl<N: Network> RemoteDb<N> {
+    /// Reads through `backend`.
+    pub const fn new(backend: SharedBackend<N>) -> Self {
+        Self { backend }
+    }
+
+    fn fork_db(&self) -> ForkDb<SharedBackend<N>> {
+        ForkDb::new(self.backend.clone(), 0)
+    }
+}
+
+/// Recovers the fork cache error carried by an evm2 database error.
+fn remote_err(err: evm2::DatabaseError) -> DatabaseError {
+    let Some(err) = err.downcast_ref::<DatabaseError>() else {
+        return DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{err}")));
+    };
+    match err {
+        DatabaseError::MissingCode(hash) => DatabaseError::MissingCode(*hash),
+        DatabaseError::Recv(err) => DatabaseError::Recv(*err),
+        DatabaseError::Send(err) => DatabaseError::Send(err.clone()),
+        DatabaseError::GetAccount(address, err) => DatabaseError::GetAccount(*address, err.clone()),
+        DatabaseError::GetStorage(address, index, err) => {
+            DatabaseError::GetStorage(*address, *index, err.clone())
+        }
+        DatabaseError::GetBlockHash(number, err) => {
+            DatabaseError::GetBlockHash(*number, err.clone())
+        }
+        DatabaseError::GetFullBlock(block, err) => DatabaseError::GetFullBlock(*block, err.clone()),
+        DatabaseError::BlockNotFound(block) => DatabaseError::BlockNotFound(*block),
+        DatabaseError::GetTransaction(hash, err) => {
+            DatabaseError::GetTransaction(*hash, err.clone())
+        }
+        DatabaseError::AnyRequest(err) => DatabaseError::AnyRequest(err.clone()),
+    }
+}
+
+impl<N: Network> DatabaseRef for RemoteDb<N> {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        self.fork_db().get_account(&address).map_err(remote_err)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        self.fork_db().get_code_by_hash(&code_hash).map_err(remote_err)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        self.fork_db().get_storage(&address, &index).map_err(remote_err)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        self.fork_db().get_block_hash(&U256::from(number)).map_err(remote_err)
+    }
+}
+
+impl<N: Network> MaybeFullDatabase for RemoteDb<N> {
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         StateSnapshot::default()
     }
@@ -34,23 +105,187 @@ impl<N: Network> MaybeFullDatabase for SharedBackend<N> {
     fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
 }
 
+/// Reads the accounts, storage and block hashes held by the fork cache.
+fn remote_state_snapshot(remote: &RemoteState) -> StateSnapshot {
+    StateSnapshot {
+        accounts: remote
+            .accounts
+            .read()
+            .iter()
+            .map(|(address, info)| (*address, remote_account!(info)))
+            .collect(),
+        storage: remote
+            .storage
+            .read()
+            .iter()
+            .map(|(address, storage)| {
+                (*address, storage.iter().map(|(slot, value)| (*slot, *value)).collect())
+            })
+            .collect(),
+        block_hashes: remote.block_hashes.read().clone(),
+    }
+}
+
+/// Copies the fork cache's state.
+fn clone_remote_state(remote: &RemoteState) -> RemoteState {
+    RemoteState {
+        accounts: parking_lot::RwLock::new(remote.accounts.read().clone()),
+        storage: parking_lot::RwLock::new(remote.storage.read().clone()),
+        block_hashes: parking_lot::RwLock::new(remote.block_hashes.read().clone()),
+    }
+}
+
+/// A local snapshot of a [`ForkedDatabase`]: its local changes and the fork cache's contents.
+#[derive(Debug)]
+struct ForkDbLocalSnapshot<N: Network> {
+    local: CacheDB<RemoteDb<N>>,
+    remote: RemoteState,
+}
+
+impl<N: Network> Clone for ForkDbLocalSnapshot<N> {
+    fn clone(&self) -> Self {
+        Self { local: self.local.clone(), remote: clone_remote_state(&self.remote) }
+    }
+}
+
+/// State forked off another client.
+///
+/// Missing state is fetched from the remote endpoint through the fork cache (`db`); changes are
+/// kept in a local [`CacheDB`] so the fork cache only ever holds unchanged remote state.
+#[derive(Clone, Debug)]
+pub struct ForkedDatabase<N: Network> {
+    /// Responsible for fetching missing data.
+    backend: SharedBackend<N>,
+    /// Local changes over the remote state.
+    cache_db: CacheDB<RemoteDb<N>>,
+    /// Contains all the data already fetched; exclusively the unchanged remote state.
+    db: BlockchainDb,
+    /// Holds the state snapshots of a blockchain.
+    state_snapshots: Arc<Mutex<StateSnapshots<ForkDbLocalSnapshot<N>>>>,
+}
+
+impl<N: Network> ForkedDatabase<N> {
+    /// Creates a new instance of this DB
+    pub fn new(backend: SharedBackend<N>, db: BlockchainDb) -> Self {
+        Self {
+            cache_db: CacheDB::new(RemoteDb::new(backend.clone())),
+            backend,
+            db,
+            state_snapshots: Arc::new(Mutex::new(Default::default())),
+        }
+    }
+
+    pub const fn database(&self) -> &CacheDB<RemoteDb<N>> {
+        &self.cache_db
+    }
+
+    pub const fn database_mut(&mut self) -> &mut CacheDB<RemoteDb<N>> {
+        &mut self.cache_db
+    }
+
+    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    pub fn reset(
+        &mut self,
+        _urls: Vec<String>,
+        block_number: impl Into<BlockId>,
+    ) -> Result<(), String> {
+        self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
+        // wipe the storage retrieved from remote
+        self.inner().db().clear();
+        // create a fresh `CacheDB`, effectively wiping modified state
+        self.cache_db = CacheDB::new(RemoteDb::new(self.backend.clone()));
+        trace!(target: "backend::forkdb", "Cleared database");
+        Ok(())
+    }
+
+    /// Flushes the cache to disk if configured
+    pub fn flush_cache(&self) {
+        self.db.cache().flush()
+    }
+
+    /// Returns the database that holds the remote state
+    pub const fn inner(&self) -> &BlockchainDb {
+        &self.db
+    }
+
+    /// Returns a read-only view of the current state.
+    pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot<N> {
+        ForkDbStateSnapshot {
+            local: self.cache_db.clone(),
+            state_snapshot: remote_state_snapshot(self.db.db()),
+        }
+    }
+
+    /// Creates a new snapshot and returns its ID.
+    pub fn insert_state_snapshot(&self) -> U256 {
+        let state_snapshot = ForkDbLocalSnapshot {
+            local: self.cache_db.clone(),
+            remote: clone_remote_state(self.db.db()),
+        };
+        let id = self.state_snapshots.lock().insert(state_snapshot);
+        trace!(target: "backend::forkdb", "Created new snapshot {}", id);
+        id
+    }
+
+    /// Removes the snapshot from the tracked snapshot and sets it as the current state
+    pub fn revert_state_snapshot(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
+        let state_snapshot = self.state_snapshots.lock().remove(id);
+        let Some(state_snapshot) = state_snapshot else {
+            warn!(target: "backend::forkdb", "No snapshot to revert for {}", id);
+            return false;
+        };
+        if action.is_keep() {
+            self.state_snapshots.lock().insert_at(state_snapshot.clone(), id);
+        }
+        let ForkDbLocalSnapshot { local, remote } = state_snapshot;
+        let db = self.inner().db();
+        *db.accounts.write() = remote.accounts.into_inner();
+        *db.storage.write() = remote.storage.into_inner();
+        *db.block_hashes.write() = remote.block_hashes.into_inner();
+        self.cache_db = local;
+        trace!(target: "backend::forkdb", "Reverted snapshot {}", id);
+        true
+    }
+}
+
+impl<N: Network> DatabaseRef for ForkedDatabase<N> {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        self.cache_db.basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        self.cache_db.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        self.cache_db.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        self.cache_db.block_hash_ref(number)
+    }
+}
+
 impl<N: Network> Db for ForkedDatabase<N> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.database_mut().insert_account(address, account)
+        self.cache_db.insert_account_info(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address)?;
-        self.database_mut().set_storage_at(address, slot, val)
+        self.cache_db.insert_account_storage(address, slot.into(), val.into())
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        cache_block_hash(&mut self.database_mut().cache.block_hashes, number, hash);
+        cache_block_hash(&mut self.cache_db.cache.block_hashes, number, hash);
     }
 
     fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
-        self.database_mut().cache.block_hashes = block_hashes.into_iter().collect();
+        self.cache_db.cache.block_hashes = block_hashes.into_iter().collect();
+    }
+
+    fn commit(&mut self, changes: &BlockStateAccumulator) {
+        self.cache_db.commit(changes)
     }
 
     fn dump_state(
@@ -61,26 +296,28 @@ impl<N: Network> Db for ForkedDatabase<N> {
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
-        let mut db = self.database().clone();
         let accounts = self
-            .database()
+            .cache_db
             .cache
             .accounts
-            .clone()
-            .into_iter()
-            .map(|(k, v)| -> DatabaseResult<_> {
-                let code = if let Some(code) = v.info.code {
-                    code
-                } else {
-                    db.code_by_hash(v.info.code_hash())?
+            .iter()
+            .filter(|(_, account)| account.account_state != AccountState::NotExisting)
+            .map(|(address, account)| -> DatabaseResult<_> {
+                let code = match &account.info.code {
+                    Some(code) => code.clone(),
+                    None => self.cache_db.code_by_hash_ref(account.info.code_hash)?,
                 };
                 Ok((
-                    k,
+                    *address,
                     SerializableAccountRecord {
-                        nonce: v.info.nonce,
-                        balance: v.info.balance,
+                        nonce: account.info.nonce,
+                        balance: account.info.balance,
                         code: code.original_bytes(),
-                        storage: v.storage.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
+                        storage: account
+                            .storage
+                            .iter()
+                            .map(|(k, v)| ((*k).into(), (*v).into()))
+                            .collect(),
                     },
                 ))
             })
@@ -108,7 +345,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
-        self.state_snapshots().lock().remove_at(id).is_some()
+        self.state_snapshots.lock().remove_at(id).is_some()
     }
 
     fn current_state(&self) -> StateDb {
@@ -118,11 +355,11 @@ impl<N: Network> Db for ForkedDatabase<N> {
 
 impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
-        Some(&self.database().cache.accounts)
+        Some(&self.cache_db.cache.accounts)
     }
 
     fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
-        Some(&mut self.database_mut().cache.accounts)
+        Some(&mut self.cache_db.cache.accounts)
     }
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
@@ -131,18 +368,13 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
-        let accounts = std::mem::take(&mut *db.accounts.write());
-        let storage = std::mem::take(&mut *db.storage.write());
-        let block_hashes = std::mem::take(&mut *db.block_hashes.write());
-        StateSnapshot { accounts, storage, block_hashes }
+        let state_snapshot = remote_state_snapshot(db);
+        db.clear();
+        state_snapshot
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        let db = self.inner().db();
-        let accounts = db.accounts.read().clone();
-        let storage = db.storage.read().clone();
-        let block_hashes = db.block_hashes.read().clone();
-        StateSnapshot { accounts, storage, block_hashes }
+        remote_state_snapshot(self.inner().db())
     }
 
     fn clear(&mut self) {
@@ -151,11 +383,82 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
-        let db = self.inner().db();
-        let StateSnapshot { accounts, storage, block_hashes } = state_snapshot;
-        *db.accounts.write() = accounts;
-        *db.storage.write() = storage;
-        *db.block_hashes.write() = block_hashes;
+        // The fork cache only holds unchanged remote state, so restored state becomes local.
+        self.inner().db().clear();
+        self.cache_db.init_from_state_snapshot(state_snapshot);
+    }
+}
+
+impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
+    fn maybe_reset(&mut self, urls: Vec<String>, block_number: BlockId) -> Result<(), String> {
+        self.reset(urls, block_number)
+    }
+
+    fn maybe_flush_cache(&self) -> Result<(), String> {
+        self.flush_cache();
+        Ok(())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
+        Ok(self.inner())
+    }
+}
+
+/// A read-only view of a [`ForkedDatabase`] at a point in time.
+///
+/// Local changes take precedence over the remote state captured with the snapshot, which takes
+/// precedence over the live fork cache.
+#[derive(Clone, Debug)]
+pub struct ForkDbStateSnapshot<N: Network> {
+    pub local: CacheDB<RemoteDb<N>>,
+    pub state_snapshot: StateSnapshot,
+}
+
+impl<N: Network> ForkDbStateSnapshot<N> {
+    /// Lookup storage in `state_snapshot`, then fall back to the backend (remote RPC).
+    fn storage_from_snapshot_or_backend(
+        &self,
+        address: Address,
+        index: U256,
+    ) -> DatabaseResult<U256> {
+        if let Some(val) = self.state_snapshot.storage.get(&address).and_then(|s| s.get(&index)) {
+            return Ok(*val);
+        }
+        self.local.storage_ref(address, index)
+    }
+}
+
+impl<N: Network> DatabaseRef for ForkDbStateSnapshot<N> {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        match self.local.cache.accounts.get(&address) {
+            Some(account) => Ok(account.info()),
+            None => match self.state_snapshot.accounts.get(&address).cloned() {
+                Some(info) => Ok(Some(info)),
+                None => self.local.basic_ref(address),
+            },
+        }
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        self.local.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        match self.local.cache.accounts.get(&address) {
+            Some(account) => match account.storage.get(&index) {
+                Some(entry) => Ok(*entry),
+                None if account.account_state.is_storage_cleared() => Ok(U256::ZERO),
+                None => self.storage_from_snapshot_or_backend(address, index),
+            },
+            None => self.storage_from_snapshot_or_backend(address, index),
+        }
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        match self.state_snapshot.block_hashes.get(&U256::from(number)).copied() {
+            None => self.local.block_hash_ref(number),
+            Some(block_hash) => Ok(block_hash),
+        }
     }
 }
 
@@ -193,20 +496,5 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         self.state_snapshot = state_snapshot;
-    }
-}
-
-impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
-    fn maybe_reset(&mut self, urls: Vec<String>, block_number: BlockId) -> Result<(), String> {
-        self.reset(urls, block_number)
-    }
-
-    fn maybe_flush_cache(&self) -> Result<(), String> {
-        self.flush_cache();
-        Ok(())
-    }
-
-    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
-        Ok(self.inner())
     }
 }

@@ -21,7 +21,7 @@ use alloy_rpc_types::{Authorization, BlockId, TransactionRequest, trace::parity:
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_test_utils::rpc;
 use serde_json::{Value, json};
 use std::time::Duration;

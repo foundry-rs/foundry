@@ -1,5 +1,9 @@
 use crate::eth::{
-    backend::{info::StorageInfo, notifications::ChainNotifications},
+    backend::{
+        env::{BlobExcessGasAndPrice, SpecId},
+        info::StorageInfo,
+        notifications::ChainNotifications,
+    },
     error::BlockchainError,
 };
 use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
@@ -8,7 +12,6 @@ use alloy_network::Network;
 use alloy_primitives::{B256, Bytes};
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
-use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -19,7 +22,7 @@ use std::{
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 #[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 
 #[cfg(feature = "optimism")]
 mod optimism;
@@ -842,7 +845,10 @@ mod tests {
             INITIAL_BASE_FEE,
             true,
             INITIAL_GAS_PRICE,
-            BlobExcessGasAndPrice::new_with_spec(0, SpecId::CANCUN),
+            BlobExcessGasAndPrice::new(
+                0,
+                alloy_eips::eip4844::BLOB_GASPRICE_UPDATE_FRACTION as u64,
+            ),
             BlobParams::cancun(),
             BaseFeeParams::ethereum(),
             None,

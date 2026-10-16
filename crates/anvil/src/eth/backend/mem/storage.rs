@@ -5,7 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::cache::DiskStateCache,
+        mem::{cache::DiskStateCache, in_memory_db::MemDb},
     },
     pool::transactions::PoolTransaction,
 };
@@ -27,11 +27,9 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use foundry_evm::{
-    backend::MemDb,
-    traces::{
-        CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
-    },
+use evm2_inspectors::tracing::{
+    ParityTraceBuilder, TracingInspectorConfig,
+    types::{CallKind, CallTraceNode, TraceMemberOrder},
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -319,7 +317,8 @@ pub struct BlockchainStorage<N: Network> {
     pub total_difficulty: U256,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
-    pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
+    pub monad_block_participants:
+        B256HashMap<crate::eth::backend::mem::monad::MonadBlockParticipants>,
     /// Execution profile used when each locally stored Monad block was created.
     #[cfg(feature = "monad")]
     pub monad_block_replay_profiles: B256HashMap<crate::eth::backend::db::MonadBlockReplayProfile>,
@@ -729,12 +728,15 @@ pub struct MinedTransactionReceipt<N: Network> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::backend::{db::Db, mem::in_memory_db::StateRootDb};
+    use crate::eth::backend::{
+        db::{AccountInfo, DatabaseRef, Db},
+        mem::in_memory_db::StateRootDb,
+    };
     use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
+    use evm2::interpreter::InstrStop;
     use foundry_primitives::FoundryNetwork;
-    use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;
 
     #[test]
@@ -804,7 +806,7 @@ mod tests {
 
         let mut state = MemDb::default();
         let addr = Address::random();
-        let info = AccountInfo::from_balance(U256::from(1337));
+        let info = AccountInfo::default().with_balance(U256::from(1337));
         state.insert_account(addr, info);
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
@@ -829,7 +831,7 @@ mod tests {
         let address = Address::random();
         let mut db = StateRootDb::default();
 
-        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
+        db.insert_account(address, AccountInfo::default().with_balance(U256::ONE));
         storage.insert(one, db.current_state());
         db.set_balance(address, U256::from(2)).unwrap();
         storage.insert(two, db.current_state());
@@ -855,7 +857,7 @@ mod tests {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
             let balance = (idx * 2) as u64;
-            let info = AccountInfo::from_balance(U256::from(balance));
+            let info = AccountInfo::default().with_balance(U256::from(balance));
             state.insert_account(addr, info);
             storage.insert(hash, StateDb::new(state));
         }
@@ -894,7 +896,8 @@ mod tests {
                 let hash = B256::from(U256::from(i));
                 let mut state = MemDb::default();
                 let addr = Address::from_word(hash);
-                state.insert_account(addr, AccountInfo::from_balance(U256::from(i * 100)));
+                state
+                    .insert_account(addr, AccountInfo::default().with_balance(U256::from(i * 100)));
                 storage.insert(hash, StateDb::new(state));
                 hash
             })
@@ -1006,7 +1009,7 @@ mod tests {
                 to: None,
                 contract_address: None,
                 traces: Vec::new(),
-                exit: InstructionResult::Stop,
+                exit: InstrStop::Stop,
                 out: None,
                 nonce: 0,
                 gas_used: 0,
