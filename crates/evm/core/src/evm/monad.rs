@@ -8,12 +8,12 @@ use alloy_consensus::transaction::Recovered;
 use alloy_network::{AnyRpcTransaction, Ethereum};
 use alloy_primitives::{Address, map::HashSet};
 use evm2::{
-    TxResult, Version, ethereum::TxEnvelope, evm::precompile::PrecompileProvider,
+    ExecutionConfig, TxResult, Version, ethereum::TxEnvelope, evm::precompile::PrecompileProvider,
     registry::TxRegistry,
 };
 use monad_evm2::{
     MonadBlockExt, MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
-    MonadPrecompiles, MonadTxResultExt, monad_tx_registry, monad_version,
+    MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
 };
 
 /// Monad EVM network.
@@ -92,6 +92,16 @@ impl FoundryEvmFactory for MonadEvmFactory {
 
     fn version(&self, spec: MonadHardfork, chain_id: u64) -> Version {
         monad_version(spec, chain_id)
+    }
+
+    fn execution_config(
+        &self,
+        spec: MonadHardfork,
+        mut version: Version,
+    ) -> ExecutionConfig<MonadEvmTypes> {
+        // MIP-3 caps the pooled memory limit from MonadNine on, including a larger configured one.
+        version.memory_limit = monad_memory_limit(spec, version.memory_limit);
+        ExecutionConfig::for_spec_and_version(spec, version)
     }
 
     fn tx_registry(

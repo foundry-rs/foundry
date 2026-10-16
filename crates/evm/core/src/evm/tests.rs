@@ -412,6 +412,18 @@ fn monad_charges_the_full_gas_limit() {
     assert_eq!(balance(&mut evm, caller), U256::from(ETHER - 7 - 50_000 * 7 * GWEI));
 }
 
+#[cfg(feature = "monad")]
+#[test]
+fn monad_caps_configured_memory_limit() {
+    let factory = monad_evm2::MonadEvmFactory;
+    let spec = monad_evm2::MonadHardfork::MonadNine;
+    let mut env = EvmEnv::new(spec, factory.version(spec, 1), Default::default());
+    env.version.memory_limit = 128 * 1024 * 1024;
+    let evm = FoundryEvmFactory::create_evm(&factory, db_with(&[], 0), env);
+
+    assert_eq!(evm.version().memory_limit, monad_evm2::MONAD_MEMORY_LIMIT);
+}
+
 #[cfg(feature = "base")]
 #[test]
 fn base_factory_plants_precompile_sentinels() {
