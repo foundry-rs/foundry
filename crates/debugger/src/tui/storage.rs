@@ -5,8 +5,8 @@ use alloy_primitives::{
     B256, U256,
     map::{B256Map, IndexMap},
 };
+use evm2::interpreter::{InstrStop, op as opcode};
 use foundry_evm_traces::{CallTraceStep, StorageChangeReason};
-use revm::{bytecode::opcode, interpreter::InstructionResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageAccessKind {
@@ -176,7 +176,7 @@ pub(super) fn storage_access_at(
 ) -> Option<StorageAccess> {
     let step = steps.get(step_index)?;
     if matches!(step.op.get(), opcode::SSTORE | opcode::TSTORE)
-        && !step.status.is_none_or(InstructionResult::is_ok)
+        && !step.status.is_none_or(InstrStop::is_success)
     {
         return None;
     }

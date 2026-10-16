@@ -177,8 +177,8 @@ mod tests {
     use super::*;
     use crate::invariant::{TargetedContract, TargetedContracts};
     use alloy_json_abi::JsonAbi;
+    use evm2::evm::InMemoryDB;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::database::InMemoryDB;
 
     #[test]
     fn zero_delay_is_disabled() {

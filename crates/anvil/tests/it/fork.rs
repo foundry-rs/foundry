@@ -33,7 +33,11 @@ use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{
     EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
-    eth::{EthApi, fees::INITIAL_BASE_FEE},
+    eth::{
+        EthApi,
+        backend::env::{BlobExcessGasAndPrice, BlockEnv, SpecId},
+        fees::INITIAL_BASE_FEE,
+    },
     spawn, try_spawn,
 };
 use axum::{Json, Router, routing::post};
@@ -51,10 +55,6 @@ use futures::{
     StreamExt,
     future::{join_all, pending},
 };
-use revm::{
-    context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
-    precompile::PrecompileStatus, primitives::hardfork::SpecId,
-};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -66,7 +66,7 @@ use std::{
 };
 
 #[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
@@ -858,7 +858,7 @@ async fn test_optimism_fork_transaction_hash_replay_uses_base_source_schedule() 
 
     let (origin_api, origin) = spawn(
         NodeConfig::test_base()
-            .with_hardfork(Some(foundry_evm::hardforks::BaseUpgrade::Azul.into()))
+            .with_hardfork(Some(foundry_evm_hardforks::BaseUpgrade::Azul.into()))
             .with_genesis_timestamp(Some(AZUL_ERA_TIMESTAMP - 100)),
     )
     .await;
@@ -4600,20 +4600,15 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
     struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
-        fn precompiles(&self) -> Vec<(Address, alloy_evm::precompiles::DynPrecompile)> {
+        fn precompiles(
+            &self,
+        ) -> Vec<(Address, anvil::evm::PrecompileId, anvil::evm::DynPrecompile)> {
             vec![(
                 Address::with_last_byte(0x71),
-                alloy_evm::precompiles::DynPrecompile::from(
-                    |input: alloy_evm::precompiles::PrecompileInput<'_>| {
-                        Ok(revm::precompile::PrecompileOutput {
-                            bytes: Bytes::copy_from_slice(input.data),
-                            gas_used: 0,
-                            gas_refunded: 0,
-                            status: PrecompileStatus::Success,
-                            state_gas_used: 0,
-                            state_gas_spilled: 0,
-                            reservoir: input.reservoir,
-                        })
+                anvil::evm::PrecompileId::custom("echo"),
+                Arc::new(
+                    |input: anvil::evm::PrecompileInput<'_>, _gas: &mut anvil::evm::GasTracker| {
+                        Ok(anvil::evm::PrecompileOutput::new(Bytes::copy_from_slice(input.data)))
                     },
                 ),
             )]

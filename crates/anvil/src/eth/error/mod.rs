@@ -1,7 +1,6 @@
 //! Aggregated error type for this module
 
 use alloy_consensus::crypto::RecoveryError;
-use alloy_evm::overrides::StateOverrideError;
 use alloy_primitives::{B256, Bytes, SignatureError, TxHash, U256};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
@@ -11,19 +10,11 @@ use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
-use revm::{
-    context_interface::result::{EVMError, InvalidHeader, InvalidTransaction},
-    interpreter::InstructionResult,
-};
+use evm2::{interpreter::InstrStop, registry::HandlerError};
+use foundry_evm_core::decode::RevertDecoder;
+use foundry_fork_db::DatabaseError;
 use serde::Serialize;
-use tempo_revm::TempoInvalidTransaction;
 use tokio::time::Duration;
-
-#[cfg(feature = "base")]
-mod base;
-#[cfg(feature = "optimism")]
-mod optimism;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
@@ -70,7 +61,7 @@ pub enum BlockchainError {
     #[error(transparent)]
     AlloyForkProvider(#[from] TransportError),
     #[error("EVM error {0:?}")]
-    EvmError(InstructionResult),
+    EvmError(InstrStop),
     #[error("Evm override error: {0}")]
     EvmOverrideError(String),
     #[error("Invalid url {0:?}")]
@@ -181,43 +172,67 @@ impl From<RpcError> for BlockchainError {
     }
 }
 
-impl<T> From<EVMError<T>> for BlockchainError
-where
-    T: Into<Self>,
-{
-    fn from(err: EVMError<T>) -> Self {
-        match err {
-            EVMError::Transaction(err) => InvalidTransactionError::from(err).into(),
-            EVMError::Header(err) => match err {
-                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
-                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
-            },
-            EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => Self::Message(err),
-            EVMError::CustomAny(err) => Self::Message(err.to_string()),
+impl From<evm2::DatabaseError> for BlockchainError {
+    fn from(err: evm2::DatabaseError) -> Self {
+        // Remote fork failures keep their typed error so RPC callers see the fork error.
+        match err.downcast_ref::<DatabaseError>().and_then(clone_database_error) {
+            Some(err) => Self::DatabaseError(err),
+            None => Self::Message(err.to_string()),
         }
     }
 }
 
-impl<T> From<EVMError<T, TempoInvalidTransaction>> for BlockchainError
-where
-    T: Into<Self>,
-{
-    fn from(err: EVMError<T, TempoInvalidTransaction>) -> Self {
+/// Clones a fork database error, which does not implement `Clone`.
+pub(crate) fn clone_database_error(err: &DatabaseError) -> Option<DatabaseError> {
+    Some(match err {
+        DatabaseError::MissingCode(hash) => DatabaseError::MissingCode(*hash),
+        DatabaseError::GetAccount(address, err) => DatabaseError::GetAccount(*address, err.clone()),
+        DatabaseError::GetStorage(address, slot, err) => {
+            DatabaseError::GetStorage(*address, *slot, err.clone())
+        }
+        DatabaseError::GetBlockHash(number, err) => {
+            DatabaseError::GetBlockHash(*number, err.clone())
+        }
+        DatabaseError::GetFullBlock(block, err) => DatabaseError::GetFullBlock(*block, err.clone()),
+        DatabaseError::BlockNotFound(block) => DatabaseError::BlockNotFound(*block),
+        DatabaseError::GetTransaction(hash, err) => {
+            DatabaseError::GetTransaction(*hash, err.clone())
+        }
+        DatabaseError::AnyRequest(err) => DatabaseError::AnyRequest(err.clone()),
+        DatabaseError::Recv(err) => DatabaseError::Recv(*err),
+        DatabaseError::Send(err) => DatabaseError::Send(err.clone()),
+    })
+}
+
+impl From<HandlerError> for BlockchainError {
+    fn from(err: HandlerError) -> Self {
         match err {
-            EVMError::Transaction(err) => match err {
-                TempoInvalidTransaction::EthInvalidTransaction(err) => {
-                    InvalidTransactionError::from(err).into()
+            HandlerError::Database(err) => err.into(),
+            HandlerError::Fatal(err) => Self::Message(err.to_string()),
+            HandlerError::External(err) => {
+                #[cfg(feature = "optimism")]
+                if let Some(err) = err.downcast_ref::<op_evm2::OpTxError>() {
+                    return match err {
+                        op_evm2::OpTxError::MissingEnvelopedTx => {
+                            Self::InvalidTransaction(InvalidTransactionError::MissingEnvelopedTx)
+                        }
+                        op_evm2::OpTxError::DepositSystemTxPostRegolith => {
+                            Self::DepositTransactionUnsupported
+                        }
+                    };
                 }
-                err => Self::Message(format!("tempo transaction error: {err}")),
-            },
-            EVMError::Header(err) => match err {
-                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
-                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
-            },
-            EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => Self::Message(err),
-            EVMError::CustomAny(err) => Self::Message(err.to_string()),
+                Self::InvalidTransaction(InvalidTransactionError::Rejected(err.to_string()))
+            }
+            HandlerError::UnsupportedTransactionType(ty) => {
+                #[cfg(feature = "base")]
+                if ty == base_common_consensus::EIP8130_TX_TYPE_ID {
+                    return Self::BaseTransactionUnsupported;
+                }
+                Self::InvalidTransaction(InvalidTransactionError::Rejected(format!(
+                    "unsupported transaction type 0x{ty:02x}"
+                )))
+            }
+            err => Self::InvalidTransaction(err.into()),
         }
     }
 }
@@ -225,21 +240,6 @@ where
 impl From<WalletError> for BlockchainError {
     fn from(value: WalletError) -> Self {
         Self::Message(value.to_string())
-    }
-}
-
-impl<E> From<StateOverrideError<E>> for BlockchainError
-where
-    E: Into<Self>,
-{
-    fn from(value: StateOverrideError<E>) -> Self {
-        match value {
-            StateOverrideError::InvalidBytecode(err) => Self::StateOverrideError(err.to_string()),
-            StateOverrideError::BothStateAndStateDiff(addr) => Self::StateOverrideError(format!(
-                "state and state_diff can't be used together for account {addr}",
-            )),
-            StateOverrideError::Database(err) => err.into(),
-        }
     }
 }
 
@@ -365,9 +365,9 @@ pub enum InvalidTransactionError {
     AuthorizationListNotSupported,
     #[error("Transaction gas limit is greater than the block gas limit, gas_limit: {0}, cap: {1}")]
     TxGasLimitGreaterThanCap(u64, u64),
-    /// Forwards error from the revm
-    #[error(transparent)]
-    Revm(revm::context_interface::result::InvalidTransaction),
+    /// Any other transaction validation failure reported by evm2.
+    #[error("{0}")]
+    Rejected(String),
     /// Deposit transaction error post regolith
     #[error("op-deposit failure post regolith")]
     DepositTxErrorPostRegolith,
@@ -402,58 +402,37 @@ pub enum InvalidTransactionError {
     TempoInsufficientFeeTokenBalance { balance: U256, required: U256 },
 }
 
-impl From<InvalidTransaction> for InvalidTransactionError {
-    fn from(err: InvalidTransaction) -> Self {
+impl From<HandlerError> for InvalidTransactionError {
+    fn from(err: HandlerError) -> Self {
         match err {
-            InvalidTransaction::InvalidChainId => Self::InvalidChainId,
-            InvalidTransaction::PriorityFeeGreaterThanMaxFee => Self::TipAboveFeeCap,
-            InvalidTransaction::GasPriceLessThanBasefee => Self::FeeCapTooLow,
-            InvalidTransaction::CallerGasLimitMoreThanBlock => {
+            HandlerError::InvalidChainId { .. } => Self::InvalidChainId,
+            HandlerError::PriorityFeeGreaterThanMaxFee => Self::TipAboveFeeCap,
+            HandlerError::FeeCapLessThanBaseFee { .. } => Self::FeeCapTooLow,
+            HandlerError::GasLimitMoreThanBlock { .. } => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallerGasLimitMoreThanBlock") })
             }
-            InvalidTransaction::CallGasCostMoreThanGasLimit { .. } => {
+            HandlerError::IntrinsicGasTooLow { .. } => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
-            InvalidTransaction::GasFloorMoreThanGasLimit { .. } => {
-                Self::GasTooHigh(ErrDetail { detail: String::from("GasFloorMoreThanGasLimit") })
+            HandlerError::RejectCallerWithCode => Self::SenderNoEOA,
+            HandlerError::InsufficientFunds => Self::InsufficientFunds,
+            HandlerError::NonceOverflow => Self::NonceMaxValue,
+            HandlerError::CreateInitCodeSizeLimit { .. } => Self::MaxInitCodeSizeExceeded,
+            HandlerError::InvalidNonce { expected, got } if got > expected => Self::NonceTooHigh,
+            HandlerError::InvalidNonce { .. } => Self::NonceTooLow,
+            HandlerError::BlobFeeCapLessThanBlobBaseFee { max_fee_per_blob_gas, blob_base_fee } => {
+                Self::BlobFeeCapTooLow(
+                    blob_base_fee.saturating_to(),
+                    max_fee_per_blob_gas.saturating_to(),
+                )
             }
-            InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
-            InvalidTransaction::LackOfFundForMaxFee { .. } => Self::InsufficientFunds,
-            InvalidTransaction::OverflowPaymentInTransaction => Self::GasUintOverflow,
-            InvalidTransaction::NonceOverflowInTransaction => Self::NonceMaxValue,
-            InvalidTransaction::CreateInitCodeSizeLimit => Self::MaxInitCodeSizeExceeded,
-            InvalidTransaction::NonceTooHigh { .. } => Self::NonceTooHigh,
-            InvalidTransaction::NonceTooLow { .. } => Self::NonceTooLow,
-            InvalidTransaction::AccessListNotSupported => Self::AccessListNotSupported,
-            InvalidTransaction::BlobGasPriceGreaterThanMax {
-                block_blob_gas_price,
-                tx_max_fee_per_blob_gas,
-            } => Self::BlobFeeCapTooLow(block_blob_gas_price, tx_max_fee_per_blob_gas),
-            InvalidTransaction::BlobVersionedHashesNotSupported => {
-                Self::BlobVersionedHashesNotSupported
-            }
-            InvalidTransaction::MaxFeePerBlobGasNotSupported => Self::MaxFeePerBlobGasNotSupported,
-            InvalidTransaction::BlobCreateTransaction => Self::BlobCreateTransaction,
-            InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
-            InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
-            InvalidTransaction::TooManyBlobs { have, max } => Self::TooManyBlobs(have, max),
-            InvalidTransaction::AuthorizationListNotSupported => {
-                Self::AuthorizationListNotSupported
-            }
-            InvalidTransaction::TxGasLimitGreaterThanCap { gas_limit, cap } => {
+            HandlerError::BlobVersionNotSupported => Self::BlobVersionNotSupported,
+            HandlerError::EmptyBlobs => Self::EmptyBlobs,
+            HandlerError::TooManyBlobs { have, max } => Self::TooManyBlobs(have, max),
+            HandlerError::TxGasLimitGreaterThanCap { gas_limit, cap } => {
                 Self::TxGasLimitGreaterThanCap(gas_limit, cap)
             }
-
-            InvalidTransaction::AuthorizationListInvalidFields
-            | InvalidTransaction::Eip1559NotSupported
-            | InvalidTransaction::Eip2930NotSupported
-            | InvalidTransaction::Eip4844NotSupported
-            | InvalidTransaction::Eip7702NotSupported
-            | InvalidTransaction::EmptyAuthorizationList
-            | InvalidTransaction::Eip7873NotSupported
-            | InvalidTransaction::Eip7873MissingTarget
-            | InvalidTransaction::MissingChainId
-            | InvalidTransaction::Str(_) => Self::Revm(err),
+            err => Self::Rejected(err.to_string()),
         }
     }
 }

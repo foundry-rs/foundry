@@ -3,10 +3,10 @@ use super::{
 };
 use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
 use alloy_primitives::map::rustc_hash::FxHashSet;
+use evm2::interpreter::op as opcode;
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::{bytecode::InstIter, ic::IcPcMap};
-use revm::bytecode::opcode;
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(

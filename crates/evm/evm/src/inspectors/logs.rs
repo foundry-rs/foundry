@@ -1,13 +1,13 @@
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
+use evm2::{
+    EvmTypesHost, Inspector,
+    interpreter::{InstrStop, Interpreter, Message, MessageResult},
+};
+use foundry_cheatcodes::message_result;
 use foundry_common::{ErrorExt, fmt::ConsoleFmt, sh_println};
 use foundry_evm_core::{
-    InspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_log,
-};
-use revm::{
-    Inspector,
-    context::ContextTr,
-    interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
+    abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_log,
 };
 
 /// An inspector that collects logs during execution.
@@ -29,22 +29,18 @@ impl LogCollector {
         }
     }
 
+    /// Records a `console.log` message, such as one emitted by a cheatcode.
+    pub fn console_log(&mut self, msg: &str) {
+        self.push_msg(msg);
+    }
+
     #[cold]
-    fn do_hardhat_log<CTX: ContextTr>(
+    fn do_hardhat_log<T: EvmTypesHost>(
         &mut self,
-        context: &mut CTX,
-        inputs: &CallInputs,
-    ) -> Option<CallOutcome> {
-        if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
-            let result = InstructionResult::Revert;
-            let output = err.abi_encode_revert();
-            return Some(CallOutcome {
-                result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
-                memory_offset: inputs.return_memory_offset.clone(),
-                was_precompile_called: true,
-                precompile_call_logs: vec![],
-                charged_new_account_state_gas: inputs.charged_new_account_state_gas,
-            });
+        message: &Message<T>,
+    ) -> Option<MessageResult<T>> {
+        if let Err(err) = self.hardhat_log(&message.input) {
+            return Some(message_result(message, InstrStop::Revert, err.abi_encode_revert()));
         }
         None
     }
@@ -81,22 +77,20 @@ impl LogCollector {
     }
 }
 
-impl<CTX: ContextTr> Inspector<CTX> for LogCollector {
-    fn log(&mut self, _context: &mut CTX, log: Log) {
-        self.push_raw_log(log);
+impl<T: EvmTypesHost> Inspector<T> for LogCollector {
+    fn log(&mut self, log: &Log, _host: &mut T::Host<'_>) {
+        self.push_raw_log(log.clone());
     }
 
-    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        if inputs.transfer_to() == HARDHAT_CONSOLE_ADDRESS {
-            return self.do_hardhat_log(context, inputs);
+    fn call(
+        &mut self,
+        _interp: &mut Interpreter<'_, '_, T>,
+        message: &mut Message<T>,
+    ) -> Option<MessageResult<T>> {
+        if message.destination == HARDHAT_CONSOLE_ADDRESS {
+            return self.do_hardhat_log::<T>(message);
         }
         None
-    }
-}
-
-impl InspectorExt for LogCollector {
-    fn console_log(&mut self, msg: &str) {
-        self.push_msg(msg);
     }
 }
 

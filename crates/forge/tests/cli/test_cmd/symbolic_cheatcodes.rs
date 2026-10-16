@@ -1687,6 +1687,9 @@ contract SymbolicPreparedEnvironment is Test {
         vm.prevrandao(bytes32(uint256(99)));
         vm.coinbase(address(0xBEEF));
         vm.txGasPrice(66);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = bytes32(uint256(0x1111));
+        vm.blobhashes(hashes);
     }
 
     function checkPreparedEnvironment(uint256 x) public {
@@ -1699,6 +1702,7 @@ contract SymbolicPreparedEnvironment is Test {
         assertEq(block.prevrandao, 99);
         assertEq(block.coinbase, address(0xBEEF));
         assertEq(tx.gasprice, 66);
+        assertEq(blobhash(0), bytes32(uint256(0x1111)));
     }
 }
 "#,
@@ -4895,8 +4899,8 @@ contract StorageHooksTest is Test {
         StorageHookDepthTarget hooked = new StorageHookDepthTarget();
         hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
 
-        // Without isolation the test contract's frame takes one more call-depth slot.
-        uint256 depth = vm.isIsolateMode() ? 1024 : 1023;
+        // The test contract's frame takes one call-depth slot, also for an isolated call.
+        uint256 depth = 1023;
         assertTrue(baseline.recurse(depth));
         assertFalse(hooked.recurse(depth));
     }

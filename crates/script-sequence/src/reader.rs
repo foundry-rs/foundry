@@ -1,8 +1,8 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
 use alloy_network::{Network, ReceiptResponse};
+use evm2_inspectors::tracing::types::CallKind;
 use eyre::{Result, bail};
 use foundry_common::{errors::FsPathError, fs};
-use revm_inspectors::tracing::types::CallKind;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};

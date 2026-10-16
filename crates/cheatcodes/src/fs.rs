@@ -8,15 +8,15 @@ use crate::{
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_network::{AnyNetwork, Network, ReceiptResponse};
-use alloy_primitives::{Bytes, FixedBytes, U256, hex, map::Entry};
+use alloy_primitives::{B256, Bytes, FixedBytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
+use evm2::{bytecode::Bytecode, interpreter::MessageKind};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
+use foundry_evm_core::evm::{FoundryEvmNetwork, MessageFor};
 use foundry_evm_traces::CallKind;
-use revm::{context::CreateScheme, interpreter::CreateInputs};
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
@@ -531,8 +531,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         bytecode.extend_from_slice(args);
     }
 
-    let scheme =
-        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
+    let kind = if salt.is_some() { MessageKind::Create2 } else { MessageKind::Create };
 
     // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
     // original depth just as the native create inspector would.
@@ -544,7 +543,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
             caller = new_caller;
         }
         if let Some(new_origin) = changes.origin {
-            ccx.ecx.tx_mut().set_caller(new_origin);
+            ccx.state.set_origin(ccx.tx_env.origin, new_origin);
         }
         if let Some(used) = changes.used {
             ccx.state.pranks.insert(depth, used);
@@ -552,18 +551,19 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     }
 
     ccx.state.deploy_code_depth = Some(depth);
-    let outcome = exec_create(
-        executor,
-        CreateInputs::new(
-            caller,
-            scheme,
-            value.unwrap_or(U256::ZERO),
-            bytecode.into(),
-            ccx.gas_limit,
-            0,
-        ),
-        ccx,
-    );
+    let input = Bytes::from(bytecode);
+    let message = MessageFor::<FEN> {
+        kind,
+        depth: u16::try_from(depth + 1).unwrap_or(u16::MAX),
+        gas_limit: ccx.gas_limit,
+        caller,
+        code: Bytecode::new_raw(input.clone()),
+        input,
+        value: value.unwrap_or(U256::ZERO),
+        salt: salt.map(B256::from).unwrap_or_default(),
+        ..Default::default()
+    };
+    let outcome = exec_create(executor, message, ccx);
     ccx.state.deploy_code_depth = None;
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
@@ -571,8 +571,9 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     if let Some(broadcast) = &mut ccx.state.broadcast {
         broadcast.deploy_from_code = false;
         if broadcast.single_call && depth == broadcast.depth {
-            ccx.ecx.tx_mut().set_caller(broadcast.original_origin);
+            let original_origin = broadcast.original_origin;
             ccx.state.broadcast = None;
+            ccx.state.set_origin(ccx.tx_env.origin, original_origin);
         }
     }
 
@@ -580,7 +581,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     if let Some(prank) = ccx.state.get_prank(depth).copied()
         && depth == prank.depth
     {
-        ccx.ecx.tx_mut().set_caller(prank.prank_origin);
+        ccx.state.set_origin(ccx.tx_env.origin, prank.prank_origin);
         if prank.single_call {
             ccx.state.pranks.remove(&depth);
         }
@@ -588,11 +589,11 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     let outcome = outcome?;
 
-    if !outcome.result.result.is_ok() {
-        return Err(crate::Error::from(outcome.result.output));
+    if !outcome.is_success() {
+        return Err(crate::Error::from(outcome.output));
     }
 
-    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
+    let address = outcome.created_address.ok_or_else(|| fmt_err!("contract creation failed"))?;
 
     Ok(address.abi_encode())
 }

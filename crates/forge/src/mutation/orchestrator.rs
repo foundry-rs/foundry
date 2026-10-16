@@ -141,7 +141,7 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
 ) -> Result<MutationRunResult> {
     let create2_deployer_available =
         backend.can_use_create2_deployer(evm_opts.create2_deployer).await?;
-    let fork = backend.fork()?;
+    let fork = backend.fork();
     let mutation_evm = MutationEvmConfig {
         opts: evm_opts.clone(),
         backend,

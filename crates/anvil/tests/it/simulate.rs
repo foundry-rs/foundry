@@ -14,12 +14,6 @@ use alloy_eips::{
         compute_block_access_list_hash,
     },
 };
-use alloy_evm::{
-    block::system_calls::{
-        BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS,
-    },
-    precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
-};
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, TxKind, U256, address};
 use alloy_provider::Provider;
@@ -31,10 +25,16 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolEvent, sol};
-use anvil::{EthereumHardfork, NodeConfig, PrecompileFactory, spawn};
+use anvil::{
+    EthereumHardfork, NodeConfig, PrecompileFactory,
+    evm::{
+        DynPrecompile, GasTracker, PrecompileError, PrecompileId, PrecompileInput,
+        PrecompileOutput, PrecompileResult,
+    },
+    spawn,
+};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
-use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
 use serde_json::{Value, json};
 use std::{
     sync::{
@@ -455,52 +455,18 @@ async fn test_simulate_v1_validates_precompile_moves_rpc() {
     assert_eq!(response["error"]["code"], -32000, "{response}");
 }
 
-#[derive(Clone, Copy, Debug)]
-struct LookupOnlyPrecompileFactory(Address);
+/// The address of the EIP-8282 builder deposit requests predeploy.
+const BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS: Address =
+    address!("0x0000BFF46984E3725691FA540A8C7589300D8282");
 
-impl PrecompileFactory for LookupOnlyPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
-        Vec::new()
-    }
+/// The address of the EIP-8282 builder exit requests predeploy.
+const BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS: Address =
+    address!("0x000064D678505AD48F8CCB093BC65613800E8282");
 
-    fn install(&self, precompiles: &mut PrecompilesMap) {
-        let lookup_address = self.0;
-        precompiles.set_precompile_lookup(move |address: &Address| {
-            (*address == lookup_address).then(|| {
-                DynPrecompile::from(|input: PrecompileInput<'_>| {
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::copy_from_slice(input.data),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        state_gas_spilled: 0,
-                        reservoir: input.reservoir,
-                    })
-                })
-            })
-        });
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_v1_rejects_lookup_only_precompile_move_rpc() {
-    let source = address!("0xdead000000000000000000000000000000000071");
-    let (_, handle) =
-        spawn(NodeConfig::test().with_precompile_factory(LookupOnlyPrecompileFactory(source)))
-            .await;
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{"blockStateCalls": [{"stateOverrides": {
-            (source.to_string()): {
-                "movePrecompileToAddress": "0x0000000000000000000000000000000000123456"
-            }
-        }}]}, "latest"]),
-    )
-    .await;
-
-    assert_eq!(response["error"]["code"], -32000, "{response}");
+fn dyn_precompile(
+    f: impl Fn(PrecompileInput<'_>, &mut GasTracker) -> PrecompileResult + Send + Sync + 'static,
+) -> DynPrecompile {
+    Arc::new(f)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1232,34 +1198,20 @@ async fn test_simulate_preserves_beacon_root_override_rpc() {
 struct RequestOutputPrecompileFactory;
 
 impl PrecompileFactory for RequestOutputPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         vec![
             (
                 WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-                DynPrecompile::from(|input: PrecompileInput<'_>| {
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::from_static(&[0xaa]),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        state_gas_spilled: 0,
-                        reservoir: input.reservoir,
-                    })
+                PrecompileId::custom("request"),
+                dyn_precompile(|_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                    Ok(PrecompileOutput::new(Bytes::from_static(&[0xaa])))
                 }),
             ),
             (
                 CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-                DynPrecompile::from(|input: PrecompileInput<'_>| {
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::from_static(&[0xbb]),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        state_gas_spilled: 0,
-                        reservoir: input.reservoir,
-                    })
+                PrecompileId::custom("request"),
+                dyn_precompile(|_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                    Ok(PrecompileOutput::new(Bytes::from_static(&[0xbb])))
                 }),
             ),
         ]
@@ -1270,21 +1222,14 @@ impl PrecompileFactory for RequestOutputPrecompileFactory {
 struct PerBlockRequestPrecompileFactory(Arc<AtomicUsize>);
 
 impl PrecompileFactory for PerBlockRequestPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         let calls = Arc::clone(&self.0);
         vec![(
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            DynPrecompile::from(move |input: PrecompileInput<'_>| {
+            PrecompileId::custom("request"),
+            dyn_precompile(move |_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
                 let value = calls.fetch_add(1, Ordering::SeqCst) as u8 + 1;
-                Ok(PrecompileOutput {
-                    status: PrecompileStatus::Success,
-                    bytes: Bytes::from(vec![value]),
-                    gas_used: 0,
-                    gas_refunded: 0,
-                    state_gas_used: 0,
-                    state_gas_spilled: 0,
-                    reservoir: input.reservoir,
-                })
+                Ok(PrecompileOutput::new(Bytes::from(vec![value])))
             }),
         )]
     }
@@ -1463,11 +1408,12 @@ const SIMULATION_POST_BLOCK_ERROR: &str = "simulation post-block sentinel";
 struct FailingWithdrawalPrecompileFactory;
 
 impl PrecompileFactory for FailingWithdrawalPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         vec![(
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            DynPrecompile::from(|_: PrecompileInput<'_>| {
-                Err(PrecompileError::Fatal(SIMULATION_POST_BLOCK_ERROR.to_string()))
+            PrecompileId::custom("request"),
+            dyn_precompile(|_: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                Err(PrecompileError::fatal(std::io::Error::other(SIMULATION_POST_BLOCK_ERROR)))
             }),
         )]
     }

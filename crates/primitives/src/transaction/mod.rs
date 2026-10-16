@@ -15,4 +15,4 @@ pub use receipt::FoundryReceiptEnvelope;
 pub use request::{Cip64TransactionRequest, FoundryTransactionRequest, TempoTransactionRequest};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
-pub use deposit::get_deposit_tx_parts;
+pub use deposit::{DepositTransactionParts, get_deposit_tx_parts};

@@ -13,7 +13,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::redact_url;
-use foundry_evm::hardfork::OpHardfork;
+use foundry_evm_hardforks::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
@@ -21,7 +21,7 @@ use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
 
 #[cfg(feature = "base")]
-use foundry_evm::hardforks::BaseUpgrade;
+use foundry_evm_hardforks::BaseUpgrade;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inferred_optimism_forks_require_op_stack_source_resets() {

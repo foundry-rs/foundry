@@ -1474,7 +1474,7 @@ Error: expiring nonce transactions must use nonce 0 before the Tempo T12 hardfor
         .assert_failure()
         .stdout_eq("")
         .stderr_eq(str![[r#"
-Error: server returned an error response: error code -32603: tempo transaction error: expiring nonce transaction must have nonce == 0 before T12
+Error: server returned an error response: error code -32003: expiring nonce transaction must have nonce == 0 before T12
 
 "#]]);
 }
