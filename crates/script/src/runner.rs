@@ -670,8 +670,10 @@ mod tests {
         // The constructor stores seven; the runtime increments that slot when called.
         let initcode = bytes!("60075f556008600e5f3960085ff35f546001015f5500");
         for batch in [false, true] {
-            let mut env = EvmOpts::default().local_evm_env::<TempoEvmNetwork>();
+            let opts = EvmOpts { memory_limit: 1 << 25, ..Default::default() };
+            let mut env = opts.local_evm_env::<TempoEvmNetwork>();
             env.set_chain_id(31337);
+            env.block.gas_limit = U256::from(30_000_000);
             let executor = ExecutorBuilder::<TempoEvmNetwork>::new().gas_limit(30_000_000).build(
                 env,
                 Default::default(),

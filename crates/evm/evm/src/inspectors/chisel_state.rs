@@ -22,8 +22,8 @@ impl<T: EvmTypesHost> Inspector<T> for ChiselState {
     #[cold]
     fn step_end(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         // If we are at the final pc of the REPL contract execution, set the state.
-        // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.
-        if self.final_pc == interp.pc() - 1 {
+        // evm2 leaves `pc` on an instruction that halts, which can be the first one.
+        if interp.pc().checked_sub(1) == Some(self.final_pc) {
             self.state =
                 Some((interp.stack().as_slice().to_vec(), interp.memory().as_slice().to_vec()))
         }

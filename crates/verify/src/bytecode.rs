@@ -1075,7 +1075,8 @@ mod tests {
         let caller = Address::with_last_byte(0x42);
         let recipient = Address::with_last_byte(0x43);
         let target = B256::with_last_byte(2);
-        let env = EvmOpts::default().local_evm_env::<EthEvmNetwork>();
+        let mut env = EvmOpts::default().local_evm_env::<EthEvmNetwork>();
+        env.block.gas_limit = U256::from(30_000_000);
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::new().build(
             env,
             Default::default(),
@@ -1105,7 +1106,8 @@ mod tests {
     #[test]
     fn replay_missing_target_does_not_execute_prefix() {
         let caller = Address::with_last_byte(0x42);
-        let env = EvmOpts::default().local_evm_env::<EthEvmNetwork>();
+        let mut env = EvmOpts::default().local_evm_env::<EthEvmNetwork>();
+        env.block.gas_limit = U256::from(30_000_000);
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::new().build(
             env,
             Default::default(),

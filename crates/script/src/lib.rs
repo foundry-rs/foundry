@@ -1518,8 +1518,12 @@ mod tests {
         config.select_rpc(url_a.clone()).await.unwrap();
         let reused_a = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(reused_a.executor.get_balance(state_address).unwrap(), balance_a);
-        // The same fork ID shares the fork manager's RPC cache.
-        assert_eq!(cache_a, reused_a.executor.backend().active_fork_info().unwrap().id);
+        // A reused fork shares the creating fork's RPC cache under a suffixed ID.
+        let reused_id = &reused_a.executor.backend().active_fork_info().unwrap().id;
+        assert!(
+            reused_id.0 == cache_a.0 || reused_id.0.starts_with(&format!("{}-", cache_a.0)),
+            "{reused_id:?} does not reuse {cache_a:?}"
+        );
         config.select_rpc(url_b.clone()).await.unwrap();
 
         let provider_a = handle_a.http_provider();

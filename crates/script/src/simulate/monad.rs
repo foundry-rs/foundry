@@ -255,7 +255,9 @@ mod tests {
 
     fn simulation() -> MonadSimulation {
         // Match the simulation environment produced by EvmOpts.
-        let env = EvmOpts::default().local_evm_env::<MonadEvmNetwork>();
+        let opts = EvmOpts { memory_limit: 1 << 25, ..Default::default() };
+        let mut env = opts.local_evm_env::<MonadEvmNetwork>();
+        env.block.gas_limit = U256::from(30_000_000);
         let executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20).build(
             env,
             Default::default(),
