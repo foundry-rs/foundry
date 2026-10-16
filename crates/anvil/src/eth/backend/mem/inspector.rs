@@ -350,7 +350,8 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
         if let Some(collector) = &mut self.simulation_logs {
             collector.sync_journal_logs(interp.host().logs());
             collector.frame_start();
-            if matches!(message.kind, MessageKind::Call | MessageKind::CallCode) {
+            // CALLCODE keeps the value in the calling account, so it is not a transfer.
+            if message.kind == MessageKind::Call {
                 collector.push_transfer(message.caller, message.destination, message.value);
             }
         }
