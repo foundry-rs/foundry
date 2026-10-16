@@ -6,13 +6,14 @@ use super::{
 use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
-    Address, B256, Bytes, Log, TxKind, U256, keccak256,
+    Address, B256, Bytes, KECCAK256_EMPTY, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressSet},
 };
 use evm2::{
     EvmFeatures, ExecutionError, Inspector,
+    bytecode::Bytecode,
     ethereum::{floor_gas, intrinsic_gas},
-    evm::JournalEntry,
+    evm::{DbResult, JournalEntry, PendingState, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
 };
 use foundry_cheatcodes::{
@@ -438,6 +439,8 @@ pub struct InspectorStackInner {
     pending_inner_root: Option<InnerRoot>,
     /// Synthetic CREATE depth corresponding to an outer top-level deployment.
     synthetic_create_depth: Option<u16>,
+    /// Accounts the running top-level transaction created, directly or through isolated calls.
+    tx_created: AddressSet,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack of the depths of CREATE frames that were redirected to the CREATE2 factory.
@@ -996,6 +999,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         result: &mut MessageResultFor<FEN>,
     ) {
         let stop = result.stop;
+        if !self.inner.in_inner_context
+            && stop.is_success()
+            && let Some(address) = result.created_address
+        {
+            self.inner.tx_created.insert(address);
+        }
         let backend = self.backend.as_deref_mut();
         let cheats = self.cheatcodes.as_deref_mut().filter(|_| backend.is_some());
         macro_rules! changed {
@@ -1133,6 +1142,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The nested transaction continues the running one's network extension state, such as
         // Monad's reserve balance context.
         *child.ext_mut() = evm.ext().clone();
+        // Accounts the running transaction created stay created in the nested one, so that
+        // EIP-6780 SELFDESTRUCT still deletes them.
+        let features = child.version().features;
+        for address in &self.inner.tx_created {
+            if mark_created(child.state_mut(), address, features).is_err() {
+                return not_executed(Bytes::new());
+            }
+        }
 
         // Cheatcodes route environment changes through their opcode overrides while isolated,
         // and the root frame reads the running transaction's origin.
@@ -1168,6 +1185,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return not_executed(Bytes::new());
         };
         let result = executed.result;
+        self.inner.tx_created.extend(
+            executed
+                .pending_state
+                .account_changes()
+                .filter(|change| change.created && change.current.is_some())
+                .map(|change| change.address),
+        );
 
         let replaced = epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
             || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
@@ -1176,7 +1200,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Backend::<FEN>::end_frame_evm(evm, child);
             true
         } else {
-            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok();
+            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
+                && (!result.status
+                    || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok());
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             *evm.ext_mut() = child.ext().clone();
@@ -1220,6 +1246,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Invoked at the beginning of a new top-level (0 depth) frame.
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
+        self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
         }
@@ -1947,6 +1974,44 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
             message.code = code;
         }
     }
+}
+
+/// Marks the existing `address` as created in the running transaction of `state`, keeping its
+/// account fields.
+///
+/// evm2 only marks accounts created by `CREATE` and `CREATE2`, so this recreates the account
+/// over an empty one and restores its nonce and code.
+fn mark_created(state: &mut State<'_>, address: &Address, features: EvmFeatures) -> DbResult<()> {
+    let (nonce, code_hash, code) = {
+        let mut account = state.account(address)?;
+        if account.is_created() || !account.exists() {
+            return Ok(());
+        }
+        let (nonce, code_hash, code) = (account.nonce(), account.code_hash(), account.load_code()?);
+        account.set_nonce(0);
+        account.set_code(KECCAK256_EMPTY, Bytecode::default());
+        (nonce, code_hash, code)
+    };
+    // The account is empty and the endowment is zero, so the creation cannot fail.
+    let _ = state.create_account(address, address, &U256::ZERO, features)?;
+    let mut account = state.account(address)?;
+    account.set_nonce(nonce);
+    account.set_code(code_hash, code);
+    Ok(())
+}
+
+/// Warms in `state` the accounts a successful nested transaction loaded and the storage slots it
+/// accessed, as accesses across an isolated call boundary stay warm for the calling frame.
+fn warm_accessed(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
+    for change in pending.account_changes() {
+        state.account(&change.address)?.warm();
+        for (key, slot) in &change.storage.slots {
+            if slot.is_warm {
+                state.storage_slot(&change.address, *key)?.warm();
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Warms Arbitrum's ArbSys like a precompile, as Nitro does, on Arbitrum chains.
