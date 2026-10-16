@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
-use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
+use tempo_hardfork_evm2::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 #[cfg(feature = "optimism")]
 use foundry_evm_hardforks::OpHardfork;

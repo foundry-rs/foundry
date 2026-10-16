@@ -25,7 +25,9 @@ use crate::constants::SYSTEM_PRECOMPILE_STUB;
 pub use foundry_common::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
 };
-pub use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
+pub use foundry_evm_networks::{
+    TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
+};
 pub use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, IAccountKeychain, IAddressRegistry,
     IFeeManager, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, ITIP20ChannelReserve,
@@ -44,26 +46,6 @@ pub use tempo_precompiles_evm2::{
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
-
-/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
-pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
-    foundry_evm_networks::is_tempo_precompile_active_at(address, revm_tempo_hardfork(hardfork))
-}
-
-/// Returns the well-known Tempo precompile addresses active at `hardfork`.
-pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
-    TEMPO_PRECOMPILE_ADDRESSES
-        .iter()
-        .copied()
-        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
-}
-
-/// Maps an evm2 Tempo hardfork onto the hardfork type `foundry-evm-networks` schedules with.
-///
-/// Both types share hardfork names.
-fn revm_tempo_hardfork(hardfork: TempoHardfork) -> tempo_hardfork::TempoHardfork {
-    hardfork.to_string().parse().unwrap_or_default()
-}
 
 /// Initialize Tempo precompiles and contracts for a specific active hardfork.
 pub fn initialize_tempo_genesis_at_hardfork(

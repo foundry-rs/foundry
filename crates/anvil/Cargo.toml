@@ -32,7 +32,6 @@ foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 foundry-fork-db.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
-tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 
 # evm2

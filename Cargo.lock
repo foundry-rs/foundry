@@ -1353,7 +1353,6 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-evm",
- "tempo-hardfork 1.11.0",
  "tempo-hardfork 1.16.0",
  "tempo-precompiles 1.16.0",
  "tempo-primitives 1.11.0",
@@ -3209,7 +3208,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-contracts 1.11.0",
- "tempo-hardfork 1.11.0",
+ "tempo-hardfork 1.16.0",
  "tempo-primitives 1.11.0",
  "tokio",
  "tower",
@@ -6018,7 +6017,6 @@ dependencies = [
  "tempo-alloy",
  "tempo-contracts 1.11.0",
  "tempo-evm",
- "tempo-hardfork 1.11.0",
  "tempo-hardfork 1.16.0",
  "tempo-precompiles 1.16.0",
  "tempo-primitives 1.16.0",
@@ -6080,18 +6078,13 @@ dependencies = [
  "alloy-hardforks",
  "alloy-op-hardforks",
  "alloy-rpc-types",
- "base-common-evm",
  "base-common-genesis",
  "base-evm2",
  "evm2",
  "foundry-compilers",
  "monad-evm2",
- "monad-revm",
  "op-evm2",
- "op-revm",
- "revm",
  "serde",
- "tempo-hardfork 1.11.0",
  "tempo-hardfork 1.16.0",
 ]
 
@@ -6101,14 +6094,13 @@ version = "1.8.6"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
- "alloy-evm",
  "alloy-op-hardforks",
  "alloy-primitives",
- "base-common-precompiles",
+ "base-common-eip8130",
+ "base-evm2",
  "clap",
  "foundry-evm-hardforks",
- "monad-revm",
- "revm",
+ "monad-evm2",
  "serde",
  "serde_json",
  "tempo-contracts 1.11.0",
@@ -8453,16 +8445,6 @@ dependencies = [
  "alloy-primitives",
  "evm2",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "op-revm"
-version = "20.0.0"
-source = "git+https://github.com/foundry-rs/optimism?rev=206d26cedb9d861b983d89fc71e1122187dfa877#206d26cedb9d861b983d89fc71e1122187dfa877"
-dependencies = [
- "auto_impl",
- "op-alloy-consensus",
- "revm",
 ]
 
 [[package]]

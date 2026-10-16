@@ -59,6 +59,7 @@ pub struct MonadBlockReplayProfile {
     /// Chain ID active when the block was executed.
     pub execution_chain_id: u64,
     /// Monad hardfork active when the block was executed.
+    #[serde(with = "alloy_serde::displayfromstr")]
     pub hardfork: foundry_evm_hardforks::MonadHardfork,
 }
 

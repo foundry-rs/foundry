@@ -60,7 +60,6 @@ op-alloy-consensus = { workspace = true, features = ["alloy-compat", "k256"], op
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 tempo-alloy.workspace = true
-tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
 
 # evm2

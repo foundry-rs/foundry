@@ -111,7 +111,7 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
-use tempo_hardfork::TempoHardfork;
+use tempo_hardfork_evm2::TempoHardfork;
 use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, transaction::FEE_PAYER_SIGNATURE_MARKER};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
