@@ -2637,8 +2637,14 @@ impl<N: Network> Backend<N> {
                 .with_max_blob_gas_per_block(max_blob_gas_per_block)
                 .with_cheats(self.cheats.clone());
         #[cfg(any(feature = "base", feature = "optimism"))]
-        if self.is_optimism() || matches!(opts.hardfork, FoundryHardfork::Base(_)) {
-            executor = executor.with_deposit_hardfork(opts.hardfork);
+        {
+            #[cfg(feature = "base")]
+            let is_base = matches!(opts.hardfork, FoundryHardfork::Base(_));
+            #[cfg(not(feature = "base"))]
+            let is_base = false;
+            if self.is_optimism() || is_base {
+                executor = executor.with_deposit_hardfork(opts.hardfork);
+            }
         }
         if matches!(
             opts.hardfork,

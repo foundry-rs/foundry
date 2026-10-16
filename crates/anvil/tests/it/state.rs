@@ -1207,7 +1207,7 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
     );
     assert_eq!(
         block_env.blob_excess_gas_and_price,
-        Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
+        Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE as u64))
     );
 
     assert_eq!(state.best_block_number, Some(1));
