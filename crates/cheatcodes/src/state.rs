@@ -3,6 +3,7 @@
 use crate::{
     CheatcodeAnalysis, CheatsConfig, ExpectedCallTracker, Wallets,
     evm::mock::{MockCallDataContext, MockCallReturnData},
+    inspector::ArbitraryStorage,
 };
 use alloy_primitives::{
     Address, Bytes, U256,
@@ -62,6 +63,8 @@ pub struct CheatcodesCore {
     pub access_list: Option<AccessList>,
     /// Whether the next contract creation should be intercepted to return its initcode.
     pub intercept_next_create_call: bool,
+    /// Addresses with arbitrary storage.
+    pub arbitrary_storage: Option<ArbitraryStorage>,
 }
 
 impl Default for CheatcodesCore {
@@ -90,6 +93,7 @@ impl CheatcodesCore {
             recorded_logs: Default::default(),
             access_list: Default::default(),
             intercept_next_create_call: Default::default(),
+            arbitrary_storage: Default::default(),
         }
     }
 
@@ -132,6 +136,12 @@ impl CheatcodesCore {
     /// Returns struct definitions from the analysis, if available.
     pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
         self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
+    }
+
+    /// Returns existing or set a default `ArbitraryStorage` option.
+    /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
+    pub fn arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
+        self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
     }
 }
 

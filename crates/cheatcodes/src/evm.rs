@@ -313,7 +313,7 @@ impl Cheatcode for loadCall {
                     .state
                     .cached_arbitrary_storage_value(target, slot.into())
                     .unwrap_or_else(|| ccx.state.core.rng().random());
-                ccx.state.arbitrary_storage.as_mut().unwrap().save(
+                ccx.state.core.arbitrary_storage.as_mut().unwrap().save(
                     ccx.ecx,
                     target,
                     slot.into(),
@@ -325,7 +325,7 @@ impl Cheatcode for loadCall {
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
                 let rand_value = ccx.state.core.rng().random();
-                val.data = ccx.state.arbitrary_storage.as_mut().unwrap().copy(
+                val.data = ccx.state.core.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.ecx,
                     target,
                     slot.into(),
