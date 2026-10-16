@@ -5733,6 +5733,7 @@ version = "1.8.6"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-eips",
  "alloy-network",
  "alloy-primitives",
  "alloy-rpc-types",
@@ -5746,7 +5747,6 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "proptest",
- "revm",
  "serde",
  "serde_json",
  "similar-asserts",
