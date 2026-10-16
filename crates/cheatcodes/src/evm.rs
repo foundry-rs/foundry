@@ -1311,7 +1311,15 @@ impl Cheatcode for broadcastRawTransactionCall {
         };
 
         let evm_tx = FEN::evm_tx(tx.clone(), sender, TxPayload::Signed)?;
-        let _ = executor.transact_from_tx(ccx.backend, ccx.evm, &evm_tx)?;
+        // The transaction validates with a chain ID `vm.chainId` set in the running one.
+        let env = ccx.state.env_overrides.get(ccx.active_fork_id()).and_then(|o| o.chain_id).map(
+            |chain_id| {
+                let mut env = evm_env(ccx.evm);
+                env.set_chain_id(chain_id);
+                env
+            },
+        );
+        let _ = executor.transact_from_tx(ccx.backend, ccx.evm, &evm_tx, env)?;
         ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {

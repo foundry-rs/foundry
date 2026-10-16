@@ -561,10 +561,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         tx: &Recovered<TxFor<FEN>>,
+        env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut inspector =
             InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
-        backend.backend_mut().transact_from_tx(tx, evm, Some(&mut inspector))
+        backend.backend_mut().transact_from_tx(tx, evm, env, Some(&mut inspector))
     }
 
     fn console_log(&mut self, msg: &str) {

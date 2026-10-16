@@ -148,7 +148,7 @@ where
     assert_eq!((balance(&mut evm, alloc), nonce(&mut evm, caller)), (U256::from(9), 0));
 
     // A nested transaction merges its writes into the running one.
-    let result = backend.transact_from_tx(&store(0, 101), &mut evm, None).unwrap();
+    let result = backend.transact_from_tx(&store(0, 101), &mut evm, None, None).unwrap();
     assert!(result.status);
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(101), 1));
     evm.state_mut().commit_transaction();
