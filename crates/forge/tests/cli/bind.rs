@@ -1,6 +1,12 @@
-use foundry_compilers::utils::read_json_file;
+use foundry_compilers::{
+    artifacts::{BytecodeHash, ConfigurableContractArtifact},
+    cache::CompilerCache,
+    multi::MultiCompilerSettings,
+    utils::read_json_file,
+};
 use foundry_config::SolcReq;
-use foundry_test_utils::{TestProject, cargo_profile_dir};
+use foundry_test_utils::{TestProject, cargo_profile_dir, snapbox::IntoData};
+use serde_json::json;
 use std::{fs, path::Path, process::Command};
 
 // Keep each generated crate isolated while reusing its dependencies across binding tests.
@@ -129,6 +135,18 @@ fn event_has_all_derives() {
     .unwrap();
 }
 
+fn assert_binding_bytecode(binding: &str, artifact: &Path) -> alloy_primitives::Bytes {
+    let artifact = read_json_file::<ConfigurableContractArtifact>(artifact).unwrap();
+    let bytecode = artifact.bytecode.unwrap().into_bytes().unwrap();
+    assert!(!bytecode.is_empty());
+    let embedded_bytecode = binding
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("///0x"))
+        .expect("binding should include creation bytecode");
+    assert_eq!(embedded_bytecode, alloy_primitives::hex::encode(&bytecode));
+    bytecode
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9482>
 #[forgetest]
 fn bind_unlinked_bytecode(prj: _, cmd: _) {
@@ -201,9 +219,7 @@ contract BindTarget {
 // <https://github.com/foundry-rs/foundry/issues/10441>
 #[forgetest]
 fn bind_generates_enum_variants(prj: _, cmd: _) {
-    prj.add_source(
-        "EnumUser.sol",
-        r#"
+    let source = r#"
 contract EnumUser {
     enum Status { Pending, Active }
 
@@ -211,8 +227,9 @@ contract EnumUser {
         return status;
     }
 }
-"#,
-    );
+"#;
+    prj.add_source("EnumUser.sol", source);
+    prj.add_source("Unselected.sol", "contract Unselected {}");
 
     cmd.args(["bind", "--select", "^EnumUser$"]).assert_success();
 
@@ -232,19 +249,11 @@ fn enum_variants_are_typed() {
     assert_bindings_compile(&bindings_path);
 
     cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--no-cache", "--select", "^EnumUser$"])
+        .assert_success();
 
-    prj.add_source(
-        "EnumUser.sol",
-        r#"
-contract EnumUser {
-    enum Status { Active, Pending }
-
-    function echo(Status status) external pure returns (Status) {
-        return status;
-    }
-}
-"#,
-    );
+    prj.add_source("EnumUser.sol", &source.replace("Pending, Active", "Active, Pending"));
     cmd.forge_fuse()
         .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
         .assert_success();
@@ -252,6 +261,27 @@ contract EnumUser {
     let binding = fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap();
     assert!(binding.contains("pub struct Status"), "{binding}");
     assert!(!binding.contains("pub enum Status"), "{binding}");
+
+    // Enum metadata requires the full source graph and all cached artifacts to remain valid.
+    prj.add_source("EnumUser.sol", source);
+    prj.add_source("Unselected.sol", "contract Unselected { uint256 value; }");
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+    assert_data_eq!(
+        fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap(),
+        binding.as_str().raw()
+    );
+
+    prj.add_source("Unselected.sol", "contract Unselected {}");
+    fs::remove_file(prj.paths().artifacts.join("Unselected.sol/Unselected.json")).unwrap();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+    assert_data_eq!(
+        fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap(),
+        binding.as_str().raw()
+    );
 }
 
 #[forgetest]
@@ -299,10 +329,17 @@ contract EnumUser {
 
     let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
     assert!(binding.contains("pub enum Status"), "{binding}");
+
+    let external_binding = prj.root().join("out/bindings/src/external.rs");
+    let expected = fs::read_to_string(&external_binding).unwrap();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^External$", "--overwrite"])
+        .assert_success();
+    assert_data_eq!(fs::read_to_string(external_binding).unwrap(), expected.as_str().raw());
 }
 
 #[forgetest]
-fn bind_stale_untracked_enum_artifacts_fall_back_to_udvt(prj: _, cmd: _) {
+fn bind_ignores_stale_untracked_enum_artifacts(prj: _, cmd: _) {
     prj.add_source(
         "A.sol",
         r#"
@@ -329,9 +366,103 @@ contract EnumUser {
         .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
         .assert_success();
 
-    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
-    assert!(binding.contains("pub struct Status"), "{binding}");
-    assert!(!binding.contains("pub enum Status"), "{binding}");
+    let binding_path = prj.root().join("out/bindings/src/enum_user.rs");
+    let binding = fs::read_to_string(&binding_path).unwrap();
+    // After FOUN1-39 fix, bind only sees the current artifact from the cache,
+    // not the orphaned A.sol/EnumUser.json, so it generates a proper enum.
+    assert!(binding.contains("pub enum Status"), "{binding}");
+    assert!(!binding.contains("pub struct Status"), "{binding}");
+
+    // Filesystem selection must not enrich orphaned artifacts with current enum definitions.
+    assert!(prj.paths().artifacts.join("A.sol/EnumUser.json").is_file());
+    let cache = fs::read(prj.cache()).unwrap();
+    fs::remove_file(prj.cache()).unwrap();
+    let args = ["bind", "--skip-build", "--no-cache", "--overwrite", "--select", "^EnumUser$"];
+    cmd.forge_fuse().args(args).assert_success();
+    let expected = fs::read_to_string(&binding_path).unwrap();
+
+    fs::write(prj.cache(), cache).unwrap();
+    cmd.forge_fuse().args(args).assert_success();
+    assert_data_eq!(fs::read_to_string(binding_path).unwrap(), expected.as_str().raw());
+}
+
+#[forgetest]
+fn bind_no_cache_includes_new_contracts(prj: _, cmd: _) {
+    prj.add_source(
+        "Existing.sol",
+        r#"
+contract Existing {
+    function foo() external pure returns (uint256) { return 42; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    prj.add_source(
+        "Added.sol",
+        r#"
+contract Added {
+    function bar() external pure returns (uint256) { return 100; }
+}
+"#,
+    );
+
+    // Compile with --no-cache. Both contracts compile, but cache is not updated.
+    // bind should still see both contracts via filesystem scan, not stale cache.
+    cmd.forge_fuse().args(["bind", "--no-cache", "--overwrite"]).assert_success();
+
+    let existing_binding =
+        fs::read_to_string(prj.root().join("out/bindings/src/existing.rs")).unwrap();
+    assert!(existing_binding.contains("pub fn foo"), "{existing_binding}");
+
+    let added_binding = fs::read_to_string(prj.root().join("out/bindings/src/added.rs")).unwrap();
+    assert!(added_binding.contains("pub fn bar"), "{added_binding}");
+}
+
+#[forgetest]
+fn bind_select_deleted_contract_returns_empty(prj: _, cmd: _) {
+    prj.add_source(
+        "Gone.sol",
+        r#"
+contract Gone {
+    function old() external pure returns (uint256) { return 1; }
+}
+"#,
+    );
+    prj.add_source(
+        "Live.sol",
+        r#"
+contract Live {
+    function current() external pure returns (uint256) { return 2; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    // Delete Gone.sol and rebuild. Cache correctly excludes Gone.
+    fs::remove_file(prj.paths().sources.join("Gone.sol")).unwrap();
+    cmd.forge_fuse().arg("build").assert_success();
+
+    // Selecting the deleted contract should fail with "No contract artifacts found",
+    // not fall back to filesystem scan and generate orphaned bindings.
+    cmd.forge_fuse().args(["bind", "--select", "^Gone$"]).assert_failure().stderr_eq(str![[r#"
+Error: No contract artifacts found
+
+"#]]);
+
+    let gone_binding = prj.root().join("out/bindings/src/gone.rs");
+    assert!(!gone_binding.exists(), "orphaned binding should not be generated");
+
+    // Same behavior with --skip-build.
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^Gone$"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No contract artifacts found
+
+"#]]);
+
+    assert!(!gone_binding.exists(), "orphaned binding should not be generated");
 }
 
 #[forgetest]
@@ -662,4 +793,599 @@ Checking bindings for 2 contracts
 Error: [..]/module-bindings/mod.rs is not a file
 
 "#]]);
+}
+
+#[forgetest]
+fn bind_deny_includes_new_contracts(prj: _, cmd: _) {
+    prj.add_source(
+        "Existing.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+contract Existing {}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    prj.add_source(
+        "Added.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+contract Added {}
+"#,
+    );
+
+    // Denying diagnostics disables compilation caching, leaving the old manifest on disk.
+    for level in ["warnings", "notes"] {
+        cmd.forge_fuse().args(["bind", "--deny", level, "--overwrite"]).assert_success().stderr_eq(
+            str![[r#"
+Generating bindings for 2 contracts
+Bindings have been generated to [..]/out/bindings
+
+"#]],
+        );
+
+        let bindings = prj.root().join("out/bindings/src");
+        assert!(bindings.join("existing.rs").is_file());
+        assert!(bindings.join("added.rs").is_file());
+
+        cmd.forge_fuse().args(["bind", "--deny", level]).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+OK.
+
+"#]]);
+    }
+}
+
+#[forgetest]
+fn bind_preserves_duplicate_artifact_order(prj: _, cmd: _) {
+    prj.add_source(
+        "Ownable.sol",
+        "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_lib(
+        "dep/src/Ownable.sol",
+        "contract Ownable { function theirs() external pure returns (uint256) { return 2; } }",
+    );
+    prj.add_source(
+        "User.sol",
+        r#"
+import {Ownable as DepOwnable} from "../lib/dep/src/Ownable.sol";
+contract User is DepOwnable {}
+"#,
+    );
+
+    // Preserve the bindings selected by the original sorted filesystem discovery.
+    cmd.forge_fuse().args(["bind", "--no-cache", "--select", "^Ownable$"]).assert_success();
+    let binding = prj.root().join("out/bindings/src/ownable.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+
+    // Cache entries visit the dependency first, but artifact paths visit the project first.
+    for skip_build in [false, true] {
+        let mut args = vec!["bind", "--select", "^Ownable$"];
+        if skip_build {
+            args.push("--skip-build");
+        }
+        cmd.forge_fuse().args(&args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+
+        args.push("--overwrite");
+        cmd.forge_fuse().args(&args).assert_success();
+        assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
+    }
+}
+
+#[forgetest]
+fn bind_preserves_external_artifact_order(prj: _, cmd: _) {
+    prj.add_source(
+        "Ownable.sol",
+        "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
+    );
+    cmd.arg("build").assert_success();
+
+    let external = prj.paths().artifacts.join(".external/fixture/app/Ownable.json");
+    fs::create_dir_all(external.parent().unwrap()).unwrap();
+    fs::write(
+        external,
+        r#"{"abi":[{"type":"function","name":"theirs","inputs":[],"outputs":[],"stateMutability":"nonpayable"}]}"#,
+    )
+    .unwrap();
+
+    // External artifacts precede Solidity artifacts in the sorted filesystem discovery.
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--no-cache", "--select", "^Ownable$"])
+        .assert_success();
+    let binding = prj.root().join("out/bindings/src/ownable.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+
+    // Keep the synthetic external artifact without invoking an external compiler adapter.
+    let args = ["bind", "--skip-build", "--select", "^Ownable$"];
+    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+
+    cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
+    assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
+}
+
+#[forgetest]
+fn bind_selects_cached_compiler_version(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo.sol",
+        r#"
+pragma solidity ^0.8.0;
+contract Foo { function value() external pure returns (uint256) { return 42; } }
+"#,
+    );
+    prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
+    let binding = prj.root().join("out/bindings/src/foo.rs");
+
+    let expected = ["0.8.21", "0.8.20"].map(|version| {
+        prj.clear();
+        cmd.forge_fuse().args(["build", "--use", version]).assert_success();
+
+        // With one compiler artifact, capture the complete binding including deployment bytecode.
+        cmd.forge_fuse()
+            .args(["bind", "--skip-build", "--use", version, "--select", "^Foo$"])
+            .assert_success();
+        let expected = fs::read_to_string(&binding).unwrap();
+        let bytecode =
+            assert_binding_bytecode(&expected, &prj.artifacts().join("Foo.sol/Foo.json"));
+        (version, expected, bytecode)
+    });
+    assert_ne!(expected[0].2, expected[1].2);
+
+    for versions in [["0.8.21", "0.8.20"], ["0.8.20", "0.8.21"]] {
+        prj.clear();
+        for version in versions {
+            cmd.forge_fuse().args(["build", "--use", version]).assert_success();
+        }
+
+        // The requested compiler must win before same-name artifacts are deduplicated,
+        // regardless of which version originally received the shorter artifact path.
+        for (version, expected, _) in &expected {
+            let args = ["bind", "--skip-build", "--use", version, "--select", "^Foo$"];
+            cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
+            // Compare bytecode-bearing Rust source without normalizing backslash escapes.
+            assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+
+            cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+        }
+    }
+}
+
+#[forgetest]
+fn bind_selects_cached_compiler_profile(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo.sol",
+        r#"
+pragma solidity ^0.8.0;
+contract Foo { function value() external pure returns (uint256) { return 42; } }
+"#,
+    );
+    prj.update_config(|config| {
+        config.solc = Some(SolcReq::Version("0.8.21".parse().unwrap()));
+        config.evm_version = "paris".parse().unwrap();
+        config.additional_compiler_profiles = serde_json::from_value(
+            json!([{ "name": "no-metadata", "bytecode_hash": BytecodeHash::None }]),
+        )
+        .unwrap();
+    });
+    let select_profile = |restricted| {
+        prj.update_config(|config| {
+            config.compilation_restrictions = if restricted {
+                serde_json::from_value(
+                    json!([{ "paths": "src/Foo.sol", "bytecode_hash": BytecodeHash::None }]),
+                )
+                .unwrap()
+            } else {
+                Vec::new()
+            };
+        });
+    };
+    let binding = prj.root().join("out/bindings/src/foo.rs");
+    let expected = [false, true].map(|restricted| {
+        prj.clear();
+        select_profile(restricted);
+        cmd.forge_fuse().arg("build").assert_success();
+        cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^Foo$"]).assert_success();
+        let cached = fs::read_to_string(&binding).unwrap();
+
+        // Ordinary binding compilation requests ABI-only artifacts.
+        prj.clear();
+        cmd.forge_fuse().args(["bind", "--select", "^Foo$"]).assert_success();
+        let compiled = fs::read_to_string(&binding).unwrap();
+        (restricted, cached, compiled)
+    });
+    assert_ne!(expected[0].1, expected[1].1);
+
+    for profiles in [[false, true], [true, false]] {
+        prj.clear();
+        for restricted in profiles {
+            select_profile(restricted);
+            cmd.forge_fuse().arg("build").assert_success();
+        }
+        // Keep both profile definitions so rebuilding does not evict the historical artifact.
+        let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
+        assert_eq!(cache.artifacts_len(), 2);
+
+        for (restricted, expected, _) in &expected {
+            select_profile(*restricted);
+            let args = ["bind", "--skip-build", "--select", "^Foo$"];
+            cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
+            assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+            cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+        }
+    }
+
+    for (restricted, _, expected) in &expected {
+        prj.clear();
+        let args = ["bind", "--select", "^Foo$"];
+        for profile in [!*restricted, *restricted] {
+            select_profile(profile);
+            cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
+        }
+        let cache = fs::read(prj.cache()).unwrap();
+        assert_eq!(
+            CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap().artifacts_len(),
+            2
+        );
+
+        // Restore bytecode to the earlier profile's shorter artifact path without changing the
+        // ABI-only cache. A normal bind must not select this historical profile from its output.
+        select_profile(!*restricted);
+        cmd.forge_fuse().args(["build", "--no-cache"]).assert_success();
+        assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+        let artifact = read_json_file::<ConfigurableContractArtifact>(
+            &prj.artifacts().join("Foo.sol/Foo.json"),
+        )
+        .unwrap();
+        assert!(!artifact.bytecode.unwrap().into_bytes().unwrap().is_empty());
+
+        select_profile(*restricted);
+        cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
+        assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+        cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+    }
+}
+
+#[forgetest]
+fn bind_skip_build_requires_requested_compiler_artifact(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo.sol",
+        "pragma solidity ^0.8.0; contract Foo { function value() external pure returns (uint256) { return 42; } }",
+    );
+    prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
+    cmd.args(["build", "--use", "0.8.21"]).assert_success();
+
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--use", "0.8.20", "--select", "^Foo$"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No cached artifact for [..]src/Foo.sol:Foo with compiler 0.8.20 and profile `default`; run `forge build` first
+
+"#]]);
+    assert!(!prj.root().join("out/bindings").exists());
+
+    // Artifacts excluded by the name filter must not produce a missing-context error.
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--use", "0.8.20", "--select", "^Missing$"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No contract artifacts found
+
+"#]]);
+}
+
+#[forgetest]
+fn bind_skip_build_rejects_ambiguous_missing_compiler(prj: _, cmd: _) {
+    prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
+    for version in ["0.8.20", "0.8.21"] {
+        cmd.forge_fuse().args(["build", "--use", version]).assert_success();
+    }
+
+    let missing_solc = prj.root().join("missing-solc");
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(missing_solc)));
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^Foo$"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Cannot determine compiler version for [..]src/Foo.sol:Foo: configured solc is unavailable and multiple versions are cached; specify `--use <version>`
+
+"#]]);
+    assert!(!prj.root().join("out/bindings").exists());
+}
+
+#[forgetest]
+fn bind_skip_build_force_preserves_artifacts(prj: _, cmd: _) {
+    prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
+    cmd.args(["build", "--use", "0.8.21"]).assert_success();
+    let artifact_path = prj.artifacts().join("Foo.sol/Foo.json");
+    let artifact = fs::read(&artifact_path).unwrap();
+    let cache = fs::read(prj.cache()).unwrap();
+    let args = ["bind", "--skip-build", "--use", "0.8.21", "--select", "^Foo$"];
+    cmd.forge_fuse().args(args).assert_success();
+    let binding = prj.root().join("out/bindings/src/foo.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+
+    let missing_solc = prj.root().join("missing-solc");
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(missing_solc)));
+    cmd.forge_fuse()
+        .args(args)
+        .args(["--force", "--offline", "--overwrite"])
+        .assert_success()
+        .stdout_eq("");
+
+    assert_eq!(fs::read(&artifact_path).unwrap(), artifact);
+    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+    assert_data_eq!(fs::read_to_string(binding).unwrap(), expected.as_str().raw());
+}
+
+#[forgetest]
+fn bind_skip_build_resolves_multiple_compiler_versions(prj: _, cmd: _) {
+    prj.add_lib(
+        "dep/Common.sol",
+        "pragma solidity ^0.8.0; contract Common { function value() external pure returns (uint256) { return 42; } }",
+    );
+    for (contract, version) in [("A", "0.8.20"), ("B", "0.8.21")] {
+        prj.add_source(
+            &format!("{contract}.sol"),
+            &format!(
+                "pragma solidity ={version}; import {{Common}} from '../lib/dep/Common.sol'; contract {contract} is Common {{}}"
+            ),
+        );
+    }
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+    });
+    cmd.arg("build").assert_success();
+
+    let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
+    assert_eq!(cache.files[Path::new("lib/dep/Common.sol")].artifacts["Common"].len(), 2);
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^(A|B)$"])
+        .assert_success()
+        .stdout_eq("");
+    for contract in ["A", "B"] {
+        let binding = fs::read_to_string(
+            prj.root().join(format!("out/bindings/src/{}.rs", contract.to_lowercase())),
+        )
+        .unwrap();
+        assert_binding_bytecode(
+            &binding,
+            &prj.artifacts().join(format!("{contract}.sol/{contract}.json")),
+        );
+    }
+}
+
+#[forgetest]
+fn bind_skip_build_rejects_changed_compiler_settings(prj: _, cmd: _) {
+    prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    prj.update_config(|config| {
+        config.evm_version = "paris".parse().unwrap();
+        config.optimizer = Some(false);
+    });
+    cmd.args(["build", "--use", "0.8.21"]).assert_success();
+
+    prj.update_config(|config| config.optimizer = Some(true));
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--use", "0.8.21", "--select", "^Foo$"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Cached compiler settings for [..]src/Foo.sol:Foo and profile `default` do not match; run `forge build` first
+
+"#]]);
+    assert!(!prj.root().join("out/bindings").exists());
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn bind_skip_build_ignores_installed_compiler_versions(prj: _, cmd: _) {
+    let compiler_home = tempfile::tempdir().unwrap();
+    let svm = compiler_home.path().join(".svm");
+    fs::create_dir_all(&svm).unwrap();
+    let mut forge = |args: &[&str]| {
+        cmd.forge_fuse();
+        cmd.env("HOME", compiler_home.path());
+        cmd.env("XDG_DATA_HOME", compiler_home.path().join("data"));
+        cmd.args(args).assert_success()
+    };
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+    });
+
+    // Install the newer compiler without retaining its artifacts or exposing it during the build.
+    prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    forge(&["build", "--use", "0.8.21"]);
+    let newer = compiler_home.path().join("newer-solc");
+    let cached = compiler_home.path().join("cached-solc");
+    fs::rename(svm.join("0.8.21"), &newer).unwrap();
+
+    for requirement in ["^0.8.0", "=0.8.20"] {
+        prj.clear();
+        prj.add_source(
+            "Foo.sol",
+            &format!(
+                "pragma solidity {requirement}; contract Foo {{ function value() external pure returns (uint256) {{ return 42; }} }}"
+            ),
+        );
+        forge(&["build", "--use", "0.8.20"]);
+        forge(&["bind", "--skip-build", "--select", "^Foo$"]);
+        let binding = prj.root().join("out/bindings/src/foo.rs");
+        let expected = fs::read_to_string(&binding).unwrap();
+        assert_binding_bytecode(&expected, &prj.artifacts().join("Foo.sol/Foo.json"));
+        let cache = fs::read(prj.cache()).unwrap();
+
+        // Adding a compatible compiler after the build must not change cached bindings.
+        // Also cover absent compilers and an installed compiler incompatible with the pragma.
+        for cached_installed in [true, false] {
+            if !cached_installed {
+                fs::rename(svm.join("0.8.20"), &cached).unwrap();
+            }
+            for newer_installed in [false, true] {
+                if newer_installed {
+                    fs::rename(&newer, svm.join("0.8.21")).unwrap();
+                }
+                for offline in [false, true] {
+                    let mut args = vec!["bind", "--skip-build", "--overwrite", "--select", "^Foo$"];
+                    if offline {
+                        args.push("--offline");
+                    }
+                    forge(&args).stdout_eq("");
+                    assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+                    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+                }
+                if newer_installed {
+                    fs::rename(svm.join("0.8.21"), &newer).unwrap();
+                }
+            }
+        }
+        fs::rename(&cached, svm.join("0.8.20")).unwrap();
+    }
+}
+
+#[forgetest]
+fn bind_skip_build_select_ignores_unrelated_compiler_requirements(prj: _, cmd: _) {
+    prj.add_source("A.sol", "pragma solidity =0.8.20; enum Status { A } contract A {}");
+    prj.add_source(
+        "Selected.sol",
+        "pragma solidity =0.8.21; enum Status { B } contract B { function value() external pure returns (uint256) { return 42; } function status(Status value) external pure returns (Status) { return value; } }",
+    );
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+    });
+    cmd.arg("build").assert_success();
+
+    cmd.forge_fuse().args(["bind", "--select", "^B$"]).assert_success();
+    let binding = prj.root().join("out/bindings/src/b.rs");
+    let expected = fs::read_to_string(&binding).unwrap();
+
+    // Scoped compiler resolution must retain enum ambiguity from the full source graph.
+    for skip in [false, true] {
+        let mut args =
+            vec!["bind", "--skip-build", "--use", "0.8.21", "--select", "^B$", "--overwrite"];
+        if skip {
+            args.extend(["--skip", "A.sol"]);
+        }
+        cmd.forge_fuse().args(args).assert_success().stdout_eq("");
+        assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
+    }
+    assert!(!prj.root().join("out/bindings/src/a.rs").exists());
+}
+
+#[forgetest]
+fn bind_skip_build_selected_dependency_preserves_importer_context(prj: _, cmd: _) {
+    prj.add_lib(
+        "dep/Common.sol",
+        "pragma solidity ^0.8.0; contract Common { function value() external pure returns (uint256) { return 42; } }",
+    );
+    prj.add_source(
+        "A.sol",
+        "pragma solidity =0.8.20; import {Common} from '../lib/dep/Common.sol'; contract A is Common {}",
+    );
+    prj.add_source("B.sol", "pragma solidity =0.8.21; contract B {}");
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+        config.additional_compiler_profiles =
+            serde_json::from_value(json!([{ "name": "via-ir", "via_ir": true }])).unwrap();
+        config.compilation_restrictions =
+            serde_json::from_value(json!([{ "paths": "src/A.sol", "via_ir": true }])).unwrap();
+    });
+    cmd.arg("build").assert_success();
+
+    let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
+    let artifact = cache.files[Path::new("lib/dep/Common.sol")]
+        .find_artifact("Common", &"0.8.20".parse().unwrap(), "via-ir")
+        .expect("dependency should inherit its importer's compiler and profile");
+
+    // Selecting a library must preserve its importer's context without including unrelated roots.
+    for version in [None, Some("0.8.20")] {
+        let mut args = vec!["bind", "--skip-build", "--select", "^Common$", "--overwrite"];
+        if let Some(version) = version {
+            args.extend(["--use", version]);
+        }
+        cmd.forge_fuse().args(args).assert_success().stdout_eq("");
+        let binding = fs::read_to_string(prj.root().join("out/bindings/src/common.rs")).unwrap();
+        assert_binding_bytecode(&binding, &prj.artifacts().join(&artifact.path));
+    }
+}
+
+#[forgetest]
+fn bind_skip_build_select_keeps_required_dependencies(prj: _, cmd: _) {
+    prj.add_lib("dep/Common.sol", "pragma solidity ^0.8.0; contract Common {}");
+    prj.add_source(
+        "B.sol",
+        "pragma solidity =0.8.21; import {Common} from '../lib/dep/Common.sol'; contract B is Common {}",
+    );
+    prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
+    cmd.args(["build", "--use", "0.8.21"]).assert_success();
+
+    prj.add_lib("dep/Common.sol", "pragma solidity =0.8.20; contract Common {}");
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--use", "0.8.21", "--select", "^B$"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: Encountered invalid compiler version in lib/dep/Common.sol: No compiler version exists that matches the version requirement: =0.8.20
+
+"#]]);
+}
+
+#[forgetest]
+fn bind_skip_build_select_preserves_shared_compiler_version(prj: _, cmd: _) {
+    prj.add_source(
+        "B.sol",
+        "pragma solidity ^0.8.0; contract B { function value() external pure returns (uint256) { return 42; } }",
+    );
+    prj.update_config(|config| {
+        config.solc = None;
+        config.evm_version = "paris".parse().unwrap();
+    });
+    // Make a newer compiler available before the project chooses one shared version.
+    cmd.args(["build", "--use", "0.8.21"]).assert_success();
+    prj.clear();
+    prj.add_source("A.sol", "pragma solidity =0.8.20; contract A {}");
+    cmd.forge_fuse().arg("build").assert_success();
+
+    let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
+    let artifact = cache.files[Path::new("src/B.sol")]
+        .find_artifact("B", &"0.8.20".parse().unwrap(), "default")
+        .expect("compatible sources should share the same compiler version");
+
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^B$"])
+        .assert_success()
+        .stdout_eq("");
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/b.rs")).unwrap();
+    assert_binding_bytecode(&binding, &prj.artifacts().join(&artifact.path));
 }
