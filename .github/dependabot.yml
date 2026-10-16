@@ -22,6 +22,8 @@ updates:
     multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
+  # This also refreshes SHA-only rust-toolchain pins. Keep them without a v1
+  # comment because upstream moves that tag instead of publishing fixed releases.
   - package-ecosystem: github-actions
     directory: /
     schedule:
