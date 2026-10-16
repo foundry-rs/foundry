@@ -143,7 +143,32 @@ impl DependencyInstallOpts {
                     // checkout submodules at the revs recorded in `foundry.lock`
                     if let Some(out_of_sync) = &out_of_sync_deps {
                         for (rel_path, dep_id) in out_of_sync {
-                            git.checkout_at(dep_id.checkout_id(), &git.root.join(rel_path))?;
+                            let path = git.root.join(rel_path);
+                            git.checkout_at(dep_id.checkout_id(), &path).wrap_err_with(|| {
+                                let dep = rel_path.display();
+                                // `sync` also creates entries that are not recorded on disk.
+                                let mut on_disk = Lockfile::new(&config.root);
+                                let hint =
+                                    if on_disk.read().is_ok() && on_disk.get(rel_path).is_some() {
+                                        format!(
+                                            "\n`{dep}` is locked to {dep_id} in {FOUNDRY_LOCK}. If \
+                                             that ref is no longer available from the dependency's \
+                                             remote, update the `{dep}` entry in {FOUNDRY_LOCK}."
+                                        )
+                                    } else if let DepIdentifier::Branch { name, .. } = dep_id {
+                                        format!(
+                                            "\nBranch `{name}` comes from the `branch` setting for \
+                                             `{dep}` in .gitmodules. Make sure it exists on the \
+                                             dependency's remote, or update .gitmodules."
+                                        )
+                                    } else {
+                                        String::new()
+                                    };
+                                format!(
+                                    "Failed to check out `{}` for dependency `{dep}`{hint}",
+                                    dep_id.checkout_id()
+                                )
+                            })?;
                         }
                     }
 
