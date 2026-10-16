@@ -71,10 +71,10 @@ use foundry_config::{
 use foundry_debugger::{Debugger, DebuggerLayout};
 use foundry_evm::{
     backend::Backend,
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    core::evm::{EthEvmNetwork, EvmFactoryFor, FoundryEvmNetwork, TempoEvmNetwork},
     executors::{ExecutorBuilder, ShowmapDomain},
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
         trace_arena_at_depth,
@@ -3183,7 +3183,20 @@ async fn spawn_backend<FEN: FoundryEvmNetwork>(
     config: &Config,
     evm_opts: &EvmOpts,
 ) -> Result<Backend<FEN>> {
-    let (env, _, _) = evm_opts.env_with_fork_context::<FEN>().await?;
+    let (mut env, _, fork_context) = evm_opts.env_with_fork_context::<FEN>().await?;
+    // Network state seeded at spawn, such as Base's precompile sentinels, follows the configured
+    // hardfork the tests run on.
+    resolve_execution_spec(
+        &EvmFactoryFor::<FEN>::default(),
+        config.evm_version,
+        config.hardfork,
+        &mut env,
+        ExecutionSpecContext::local_or_fork(
+            fork_context.as_ref().map(|context| context.source_chain_id),
+            fork_context.as_ref().and_then(|context| context.hardfork),
+        ),
+        None,
+    );
     Backend::spawn(evm_opts.get_fork(config, evm_opts.env.chain_id.unwrap_or_default(), None), env)
 }
 
