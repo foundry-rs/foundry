@@ -1234,6 +1234,150 @@ contract InterruptedResume is Script {
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
 }
 
+#[forgetest_init]
+async fn broadcast_reports_submission_without_receipt(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "InvisibleSubmission.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InvisibleSubmissionTarget {}
+
+contract InvisibleSubmission is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InvisibleSubmissionTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    // A load-balanced endpoint can briefly forget a transaction that later mines.
+    let hidden = Arc::new(AtomicBool::new(true));
+    let rpc = spawn_rpc_proxy_mapping_method(rpc, "eth_getTransactionByHash", {
+        let hidden = hidden.clone();
+        move |_, result| if hidden.load(Ordering::SeqCst) { Value::Null } else { result }
+    })
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let path = prj.root().join("broadcast/InvisibleSubmission.s.sol/31337/run-latest.json");
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    // The submitted transaction has no receipt, so the broadcast is incomplete rather than
+    // successful.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InvisibleSubmission",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    cmd.assert_success()
+        .stdout_eq(str![[r#"
+...
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+Warning: ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:
+chain 31337: 0x[..]
+Add `--resume` to your command to check them again and replay dropped signed transactions.
+
+"#]]);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let hash = sequence["transactions"][0]["hash"].clone();
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+
+    // Once it mines and the endpoint returns it again, resume records its receipt without
+    // submitting anything.
+    hidden.store(false, Ordering::SeqCst);
+    api.mine_one().await.unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InvisibleSubmission",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"][0]["transactionHash"], hash);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+}
+
+#[forgetest_init]
+async fn broadcast_reports_submission_without_receipt_before_later_failure(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "InvisibleSubmission.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InvisibleSubmissionTarget {}
+
+contract InvisibleSubmission is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InvisibleSubmissionTarget();
+        new InvisibleSubmissionTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = spawn_rpc_proxy_mapping_method(
+        handle.http_endpoint(),
+        "eth_getTransactionByHash",
+        |_, _| Value::Null,
+    )
+    .await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    // The second batch fails after the first hash lost visibility, so the guidance must already
+    // be on stderr.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InvisibleSubmission",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--slow",
+        "--json",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+Error: After 5 attempts, provider nonce (0) is still behind expected nonce (1).
+
+"#]]);
+}
+
 #[forgetest]
 async fn can_deploy_script_remember_key(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
