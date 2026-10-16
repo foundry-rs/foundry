@@ -1116,7 +1116,8 @@ Error: submission outcome for delegated operation 0 is unknown; refusing to risk
     assert_eq!(submissions.load(Ordering::Relaxed), 1);
 }
 
-// Polling must not wait forever on a transaction queued behind one the endpoint stopped returning.
+// Polling must not wait forever on transactions queued behind one the endpoint stopped returning,
+// even when that one was answered last, and resume must replay it before waiting on them.
 #[forgetest_init]
 async fn broadcast_stops_polling_after_invisible_transaction(prj: _, cmd: _) {
     let script = prj.add_script(
@@ -1129,8 +1130,9 @@ contract InvisibleSubmissionTarget {}
 contract InvisibleSubmission is Script {
     function run() external {
         vm.startBroadcast();
-        new InvisibleSubmissionTarget();
-        new InvisibleSubmissionTarget();
+        for (uint256 i; i < 12; i++) {
+            new InvisibleSubmissionTarget();
+        }
         vm.stopBroadcast();
     }
 }
@@ -1140,30 +1142,33 @@ contract InvisibleSubmission is Script {
     let path = prj.root().join("broadcast/InvisibleSubmission.s.sol/31337/run-latest.json");
     prj.update_config(|config| config.transaction_timeout = 1);
 
-    // A load-balanced endpoint either forgets only the first transaction while returning its
-    // successor, or forgets both after the node really dropped the first.
+    // A load-balanced endpoint forgets the first transaction while returning its successors, either
+    // only temporarily or after the node really dropped it.
     for dropped in [false, true] {
         let (api, handle) = spawn(NodeConfig::test()).await;
         api.anvil_set_auto_mine(false).await.unwrap();
-        let (rpc, submissions) =
-            spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction")
-                .await;
-        let hidden_nonces = Arc::new(std::sync::Mutex::new(if dropped {
-            vec![Value::from("0x0"), Value::from("0x1")]
-        } else {
-            vec![Value::from("0x0")]
-        }));
-        let rpc = spawn_rpc_proxy_mapping_method(rpc, "eth_getTransactionByHash", {
-            let hidden_nonces = hidden_nonces.clone();
-            move |_, result| {
-                if hidden_nonces.lock().unwrap().contains(&result["nonce"]) {
-                    Value::Null
-                } else {
-                    result
+        // The first transaction is returned once, confirming its failed submission, and then
+        // forgotten.
+        let forgotten = Arc::new(AtomicBool::new(true));
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let rpc =
+            spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+                let forgotten = forgotten.clone();
+                move |_, result| {
+                    if result["nonce"] == "0x0"
+                        && lookups.fetch_add(1, Ordering::SeqCst) > 0
+                        && forgotten.load(Ordering::SeqCst)
+                    {
+                        Value::Null
+                    } else {
+                        result
+                    }
                 }
-            }
-        })
-        .await;
+            })
+            .await;
+        // The first submission is answered last, so its hash is pending after ten successors.
+        let (rpc, submissions, reached, release) =
+            spawn_rpc_proxy_blocking_first_submission(rpc, "eth_sendRawTransaction", true).await;
 
         cmd.forge_fuse().arg("script").arg(&script).args([
             "--tc",
@@ -1174,29 +1179,68 @@ contract InvisibleSubmission is Script {
             private_key,
             "--broadcast",
         ]);
-        cmd.assert_success().stderr_eq(str![[r#"
+        let mut child = KillOnDrop::spawn(cmd.cmd());
+        tokio::time::timeout(Duration::from_secs(30), async {
+            reached.notified().await;
+            while foundry_common::fs::read_json_file::<Value>(&path)
+                .ok()
+                .and_then(|sequence| sequence["pending"].as_array().map(Vec::len))
+                != Some(11)
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("successors of the first transaction were not checkpointed");
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while child.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("forge did not finish");
+        let output = child.kill_and_wait();
+        assert!(output.status.success());
+        assert_data_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            str![[r#"
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
-"#]]);
+"#]]
+        );
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
-        let hashes = [&sequence["transactions"][0]["hash"], &sequence["transactions"][1]["hash"]];
-        // An invisible transaction is removed so that resume can replay it, while the visible
-        // successor stays pending.
-        let expected_pending = if dropped { vec![] } else { vec![hashes[1].clone()] };
-        assert_eq!(sequence["pending"], Value::from(expected_pending));
+        let hashes = sequence["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tx| tx["hash"].clone())
+            .collect::<Vec<_>>();
+        // The invisible transaction is removed so that resume can replay it, while its visible
+        // successors stay pending.
+        let mut pending = sequence["pending"].as_array().unwrap().clone();
+        pending.sort_by_key(|hash| hashes.iter().position(|h| h == hash));
+        assert_eq!(pending, hashes[1..]);
         assert!(sequence["receipts"].as_array().unwrap().is_empty());
         let original = submissions.lock().unwrap().clone();
-        assert_eq!(original.len(), 2);
 
-        // Resume records both receipts. Transactions that only looked dropped are not submitted
-        // again, and a dropped one is replayed with the identical signed bytes.
+        // Resume records every receipt. Transactions that only looked dropped are not submitted
+        // again, and a dropped one is replayed with the identical signed bytes before its
+        // successors are waited on.
         if dropped {
             let first_hash = hashes[0].as_str().unwrap().parse().unwrap();
             api.anvil_drop_transaction(first_hash).await.unwrap();
+            // The node drops the successors too, so they are added back to stay visible but
+            // unmineable.
+            for payload in original.iter().filter(|payload| **payload != original[0]) {
+                let payload = hex::decode(payload[0].as_str().unwrap()).unwrap();
+                api.send_raw_transaction(payload.into()).await.unwrap();
+            }
             api.anvil_set_auto_mine(true).await.unwrap();
+        } else {
+            api.mine_one().await.unwrap();
         }
-        hidden_nonces.lock().unwrap().clear();
-        api.mine_one().await.unwrap();
+        forgotten.store(false, Ordering::SeqCst);
         cmd.forge_fuse().arg("script").arg(&script).args([
             "--tc",
             "InvisibleSubmission",
@@ -1208,14 +1252,14 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
         ]);
         cmd.assert_success().stderr_eq(str![""]);
         let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
-        assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+        assert_eq!(sequence["receipts"].as_array().unwrap().len(), 12);
         assert!(sequence["pending"].as_array().unwrap().is_empty());
         let submissions = submissions.lock().unwrap();
         if dropped {
-            assert!(submissions.len() > 2);
-            assert!(submissions[2..].iter().all(|payload| original.contains(payload)));
+            assert!(submissions.len() > original.len());
+            assert!(submissions[original.len()..].iter().all(|payload| original.contains(payload)));
         } else {
-            assert_eq!(submissions.len(), 2);
+            assert_eq!(submissions.len(), original.len());
         }
     }
 }
@@ -1289,13 +1333,17 @@ contract UnpolledReceipts is Script {
             "--broadcast",
         ]);
         let mut child = KillOnDrop::spawn(cmd.cmd());
-        let pending = tokio::time::timeout(Duration::from_secs(30), async {
+        let hashes = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
-                    && let Some(pending) = sequence["pending"].as_array()
-                    && pending.len() == 12
+                    && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 12)
                 {
-                    break pending.clone();
+                    break sequence["transactions"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|tx| tx["hash"].clone())
+                        .collect::<Vec<_>>();
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -1305,7 +1353,7 @@ contract UnpolledReceipts is Script {
 
         // The first ten fill every polling slot and look dropped, so the rest are only checked
         // once after polling stops.
-        *hidden.lock().unwrap() = pending[..10].to_vec();
+        *hidden.lock().unwrap() = hashes[..10].to_vec();
         if revert {
             api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
         }
@@ -1333,8 +1381,8 @@ contract UnpolledReceipts is Script {
                 stderr,
                 format!(
                     "Error: Transaction Failure: {}\nTransaction Failure: {}\n\nAdd `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC.\n",
-                    pending[10].as_str().unwrap(),
-                    pending[11].as_str().unwrap()
+                    hashes[10].as_str().unwrap(),
+                    hashes[11].as_str().unwrap()
                 )
             );
             assert!(receipts.is_empty());
@@ -1347,8 +1395,8 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
 ...
 "#]]
             );
-            receipts.sort_by_key(|hash| pending.iter().position(|h| h == hash));
-            assert_eq!(receipts, pending[10..]);
+            receipts.sort_by_key(|hash| hashes.iter().position(|h| h == hash));
+            assert_eq!(receipts, hashes[10..]);
         }
         // The invisible transactions are removed so that resume can replay them.
         assert!(sequence["pending"].as_array().unwrap().is_empty());

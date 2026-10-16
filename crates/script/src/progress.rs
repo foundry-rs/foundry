@@ -196,7 +196,10 @@ impl ScriptProgress {
     /// node's mempool, we wait for its receipt to be available. If the transaction
     /// has not confirmed, and cannot be found in the mempool, we remove it from
     /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
-    /// later steps, stop polling, and check every remaining hash once.
+    /// later steps, stop polling, and check every remaining hash once. `blocked_hashes`
+    /// cannot be mined until an earlier transaction is replayed, so they are only checked
+    /// once.
+    #[allow(clippy::too_many_arguments)]
     pub async fn wait_for_pending<N: Network>(
         &self,
         sequence_idx: usize,
@@ -205,6 +208,7 @@ impl ScriptProgress {
         timeout: u64,
         confirmations: u64,
         submission_hashes: (&[B256], &[B256]),
+        blocked_hashes: &[B256],
     ) -> Result<()> {
         let (durable_hashes, replayable_hashes) = submission_hashes;
         if deployment_sequence.pending.is_empty() {
@@ -218,24 +222,40 @@ impl ScriptProgress {
 
         trace!("Checking status of {count} pending transactions");
 
-        let futs = deployment_sequence
-            .pending
-            .clone()
-            .into_iter()
-            .map(|tx| check_tx_status(provider, tx, timeout, confirmations));
+        // Poll in operation order, so that no transaction waits on an earlier one left unpolled.
+        let mut pending = deployment_sequence.pending.clone();
+        pending.sort_by_cached_key(|hash| {
+            deployment_sequence.transactions.iter().position(|tx| tx.hash == Some(*hash))
+        });
+
+        let futs = pending
+            .iter()
+            .filter(|hash| !blocked_hashes.contains(hash))
+            .map(|&tx| check_tx_status(provider, tx, timeout, confirmations));
         let mut tasks = Some(futures::stream::iter(futs).buffer_unordered(10));
         let mut polled = Vec::with_capacity(count);
-        let mut unpolled = Vec::new();
+        let mut unpolled = None;
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
 
         loop {
-            let (tx_hash, result) = if let Some(tasks) = &mut tasks {
-                let Some((tx_hash, result)) = tasks.next().await else { break };
+            let (tx_hash, result) = if let Some(tasks) = &mut tasks
+                && let Some((tx_hash, result)) = tasks.next().await
+            {
                 polled.push(tx_hash);
                 (tx_hash, result)
             } else {
+                // Polling stopped, so check every hash left unpolled once.
+                tasks = None;
+                let unpolled = unpolled.get_or_insert_with(|| {
+                    pending
+                        .iter()
+                        .rev()
+                        .filter(|hash| !polled.contains(hash))
+                        .copied()
+                        .collect::<Vec<_>>()
+                });
                 let Some(tx_hash) = unpolled.pop() else { break };
                 let Some(status) = check_tx_status_once(provider, tx_hash, confirmations).await
                 else {
@@ -289,15 +309,7 @@ impl ScriptProgress {
 
                     // A later nonce can stay visible indefinitely behind this transaction, so
                     // stop polling and check every remaining hash once instead.
-                    if tasks.take().is_some() {
-                        unpolled = deployment_sequence
-                            .pending
-                            .iter()
-                            .rev()
-                            .filter(|hash| !polled.contains(hash))
-                            .copied()
-                            .collect();
-                    }
+                    tasks = None;
                 }
                 Ok(TxStatus::Success(receipt)) => {
                     trace!(tx_hash=?tx_hash, "received tx receipt");
