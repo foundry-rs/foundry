@@ -12,9 +12,8 @@ use std::path::{Component, Path, PathBuf};
 /// It consists methods that filter and search for transactions in the broadcast files that match a
 /// `transactionType` if provided.
 ///
-/// Note:
-///
-/// It only returns transactions for which there exists a corresponding receipt in the broadcast.
+/// [`Self::into_tx_receipts`] only returns transactions for which there is a corresponding receipt
+/// in the broadcast.
 #[derive(Debug, Clone)]
 pub struct BroadcastReader {
     contract_name: String,
@@ -99,9 +98,9 @@ impl BroadcastReader {
         Ok(broadcasts)
     }
 
-    /// Attempts read the latest broadcast file in the broadcast directory.
+    /// Reads the matching broadcast with the latest timestamp from the broadcast files.
     ///
-    /// This may be the `run-latest.json` file or the broadcast file with the latest timestamp.
+    /// The `*-latest.json` shortcut files are ignored by [`Self::read`].
     pub fn read_latest<N: Network>(&self) -> eyre::Result<ScriptSequence<N>>
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
