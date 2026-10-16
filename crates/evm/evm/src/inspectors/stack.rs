@@ -1351,6 +1351,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 call_inspectors!(
                     [
                         // These are sorted in definition order.
+                        &mut inner.chisel_state,
                         &mut inner.printer,
                         &mut inner.revert_diag,
                         &mut inner.script_execution_inspector,
@@ -1892,7 +1893,8 @@ impl InspectorStackInner {
 
     #[inline]
     const fn refresh_static_step_dispatch(&mut self) {
-        self.static_step_dispatch = if self.edge_coverage.is_none()
+        self.static_step_dispatch = if self.chisel_state.is_none()
+            && self.edge_coverage.is_none()
             && self.line_coverage.is_none()
             && self.printer.is_none()
             && self.revert_diag.is_none()
