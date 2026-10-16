@@ -817,13 +817,15 @@ async fn test_ethereum_fork_transaction_hash_replay_preserves_base_id_op_source_
     )
     .await;
     origin_api.anvil_set_auto_mine(false).await.unwrap();
-    origin_api.evm_set_next_block_timestamp(AZUL_ERA_TIMESTAMP).unwrap();
     let provider = origin.http_provider();
     let sender = origin.dev_wallets().next().unwrap().address();
     let target = Address::random();
     // CLZ is active in Base Azul/Osaka, but not OP Jovian/Prague. If replay leaks Base's schedule,
     // this transaction succeeds and stores 255 instead of preserving the source failure.
     origin_api.anvil_set_code(target, bytes!("60011e60005500")).await.unwrap();
+    // Mine the code, so the replayed transaction's parent block has it.
+    origin_api.mine_one().await.unwrap();
+    origin_api.evm_set_next_block_timestamp(AZUL_ERA_TIMESTAMP).unwrap();
     let transaction = provider
         .send_transaction(WithOtherFields::new(
             TransactionRequest::default().from(sender).to(target).gas_limit(100_000),
@@ -863,13 +865,15 @@ async fn test_optimism_fork_transaction_hash_replay_uses_base_source_schedule() 
     )
     .await;
     origin_api.anvil_set_auto_mine(false).await.unwrap();
-    origin_api.evm_set_next_block_timestamp(AZUL_ERA_TIMESTAMP).unwrap();
     let provider = origin.http_provider();
     let sender = origin.dev_wallets().next().unwrap().address();
     let target = Address::random();
     // Base Azul enables CLZ, while the selected OP schedule remains Jovian/Prague. Replaying with
     // the source's Base schedule would incorrectly preserve this successful state transition.
     origin_api.anvil_set_code(target, bytes!("60011e60005500")).await.unwrap();
+    // Mine the code, so the replayed transaction's parent block has it.
+    origin_api.mine_one().await.unwrap();
+    origin_api.evm_set_next_block_timestamp(AZUL_ERA_TIMESTAMP).unwrap();
     let transaction = provider
         .send_transaction(WithOtherFields::new(
             TransactionRequest::default().from(sender).to(target).gas_limit(100_000),

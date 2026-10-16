@@ -756,6 +756,9 @@ async fn fork_transaction_replay_uses_jovian_da_footprint() {
             .anvil_set_storage_at(l1_block, U256::from(8), B256::from(scalar_slot))
             .await
             .unwrap();
+        // Mine the override, so the replayed transaction's parent block has it.
+        origin_api.evm_set_next_block_timestamp(timestamp).unwrap();
+        origin_api.mine_one().await.unwrap();
 
         let wallet = origin.dev_wallets().next().unwrap();
         let provider = http_provider_with_signer(&origin.http_endpoint(), wallet.into());

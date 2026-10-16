@@ -1211,6 +1211,51 @@ async fn test_send_transaction_uses_valid_fallback_gas_on_osaka() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn execution_witness_covers_code_installed_on_the_parent_head() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let target = Address::repeat_byte(0x42);
+
+    // PUSH1 1, PUSH1 0, SSTORE, STOP
+    let code = bytes!("600160005500");
+    api.mine_one().await.unwrap();
+    api.anvil_set_code(target, code.clone()).await.unwrap();
+    let parent = provider.get_block_number().await.unwrap();
+
+    let tx = TransactionRequest::default().with_from(from).with_to(target);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let number = receipt.block_number.unwrap();
+    assert_eq!(number, parent + 1);
+    assert_eq!(
+        provider
+            .get_storage_at(target, U256::ZERO)
+            .block_id(BlockId::number(number))
+            .await
+            .unwrap(),
+        U256::ONE
+    );
+
+    // The child executed against the overridden head state, so its witness must carry the code.
+    let witness: ExecutionWitness = provider
+        .client()
+        .request("debug_executionWitness", (BlockNumberOrTag::Number(number),))
+        .await
+        .unwrap();
+    assert!(
+        witness.codes.iter().any(|c| c == &code),
+        "witness is missing the code the block executed: {:?}",
+        witness.codes
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_execution_witness() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 

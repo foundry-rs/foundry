@@ -1583,6 +1583,29 @@ async fn test_reorg_zero_depth_with_transactions_is_rejected() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_assigns_nonce_after_head_override() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let sender = api.accounts().unwrap()[0];
+
+    api.mine_one().await.unwrap();
+    api.anvil_set_nonce(sender, U256::from(5)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    // The rollback restores the overridden nonce, so the replacement transaction must use it.
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(1));
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
+    })
+    .await
+    .unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 1);
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(6));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reorg_blockhash_opcode_consistency() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
