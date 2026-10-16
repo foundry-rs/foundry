@@ -5349,7 +5349,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips",
- "alloy-evm",
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",
@@ -5360,6 +5359,7 @@ dependencies = [
  "anvil",
  "clap",
  "dialoguer",
+ "evm2",
  "eyre",
  "forge-script-sequence",
  "forge-verify",
@@ -5376,7 +5376,6 @@ dependencies = [
  "futures",
  "indicatif",
  "itertools 0.15.0",
- "monad-revm",
  "parking_lot",
  "reqwest 0.13.5",
  "semver 1.0.28",
@@ -5437,6 +5436,7 @@ dependencies = [
  "alloy-rpc-types",
  "async-trait",
  "clap",
+ "evm2",
  "eyre",
  "foundry-block-explorers",
  "foundry-cli",
@@ -5448,10 +5448,8 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.15.0",
- "monad-revm",
  "regex",
  "reqwest 0.13.5",
- "revm",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -7921,19 +7919,6 @@ dependencies = [
  "alloy-sol-types",
  "evm2",
  "evm2-macros",
-]
-
-[[package]]
-name = "monad-revm"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27654f9cc215f197ccf39165b6565d9099e65cd1b28314e07b241c6bc6731616"
-dependencies = [
- "alloy-sol-types",
- "auto_impl",
- "revm",
- "revm-interpreter",
- "serde",
 ]
 
 [[package]]

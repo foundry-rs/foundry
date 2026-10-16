@@ -23,6 +23,7 @@ use alloy_signer::Signer;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
+use evm2::{EvmFeatures, interpreter::InstrStop};
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
@@ -31,7 +32,7 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{
-    ContractsByArtifact, SELECTOR_LEN,
+    ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
     shell,
@@ -48,8 +49,11 @@ use foundry_debugger::DebuggerLayout;
 use foundry_evm::{
     backend::Backend,
     core::{
-        Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        Breakpoints,
+        evm::{
+            EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
+            TransactionRequestFor,
+        },
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -57,7 +61,6 @@ use foundry_evm::{
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
-    revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -916,7 +919,7 @@ pub struct ScriptResult<N: Network> {
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
     #[serde(skip)]
-    pub exit_reason: Option<InstructionResult>,
+    pub exit_reason: Option<InstrStop>,
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
@@ -1026,11 +1029,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     ) -> Result<Self> {
         // Linking and execution share the backend created here, before any preflight reads.
         prepare_script_source(&mut config, &mut evm_opts, None).await?;
-        let backend = Backend::spawn(evm_opts.get_fork(
-            &config,
-            evm_opts.env.chain_id.unwrap_or_default(),
-            None,
-        ))?;
+        let (env, _, _) = evm_opts.env_with_fork_context::<FEN>().await?;
+        let backend = Backend::spawn(
+            evm_opts.get_fork(&config, evm_opts.env.chain_id.unwrap_or_default(), None),
+            env,
+        )?;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if evm_opts.fork_url.is_some() {
@@ -1074,24 +1077,28 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
     async fn select_backend(&mut self) -> Result<()> {
         if self.evm_opts.fork_url.is_none() {
-            if self.backend.fork()?.is_some() {
-                self.backend.replace_fork(None)?;
+            if self.backend.fork().is_some() {
+                self.backend.replace_fork(None, self.evm_opts.local_evm_env::<FEN>())?;
             }
             return Ok(());
         }
         if !self.prepare_requested_source().await? {
             return Ok(());
         }
-        self.backend.replace_fork(self.evm_opts.get_fork(
-            &self.config,
-            self.evm_opts.env.chain_id.unwrap_or_default(),
-            None,
-        ))
+        let (env, _, _) = self.evm_opts.env_with_fork_context::<FEN>().await?;
+        self.backend.replace_fork(
+            self.evm_opts.get_fork(
+                &self.config,
+                self.evm_opts.env.chain_id.unwrap_or_default(),
+                None,
+            ),
+            env,
+        )
     }
 
     /// Prepares the requested RPC source. Returns `false` if the backend already serves it.
     async fn prepare_requested_source(&mut self) -> Result<bool> {
-        if let Some(fork) = self.backend.fork()? {
+        if let Some(fork) = self.backend.fork() {
             if fork.matches_request(&self.evm_opts) {
                 return Ok(false);
             }
@@ -1111,8 +1118,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.resolve_execution_env().await?;
             return Ok(());
         }
-        let (mut evm_env, _, fork_context) =
-            self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
+        let (mut evm_env, _, fork_context) = self.evm_opts.env_with_fork_context::<FEN>().await?;
         self.apply_execution_spec(&mut evm_env, fork_context);
         Ok(())
     }
@@ -1145,7 +1151,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // Script execution is synthetic. Keep the Tempo transaction context, but do not charge
         // protocol fees for deploying or calling the local script contract.
         if self.evm_opts.networks.is_tempo() {
-            runner.executor.evm_env_mut().cfg_env.disable_fee_charge = true;
+            runner.executor.evm_env_mut().set_feature(EvmFeatures::FEE_CHARGE, false);
         }
 
         Ok(runner)
@@ -1158,7 +1164,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (evm_env, mut tx_env) = self.resolve_execution_env().await?;
+        let (evm_env, mut tx) = self.resolve_execution_env().await?;
         let db = self.backend.clone();
 
         // We need to enable tracing to decode contract names: local or external.
@@ -1196,10 +1202,12 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         // Propagate fee token to the transaction environment so that internal EVM calls
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
-        tx_env.set_fee_token(self.tempo.fee_token);
+        if let Some(fee_token) = self.tempo.fee_token {
+            tx.set_fee_token(fee_token);
+        }
 
         let mut runner = ScriptRunner::new(
-            builder.build(evm_env, tx_env, db, self.evm_opts.networks),
+            builder.build(evm_env, tx, db, self.evm_opts.networks),
             self.evm_opts.clone(),
         )
         .with_debug_bytecodes(debug);
@@ -1212,11 +1220,13 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     /// Builds the execution environment and spec from the selected backend.
-    async fn resolve_execution_env(&mut self) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
-        let (mut evm_env, tx_env) = self.backend.env(&self.evm_opts).await?;
-        let fork_context = self.backend.fork()?.as_ref().map(|fork| fork.context());
+    async fn resolve_execution_env(
+        &mut self,
+    ) -> Result<(EvmEnvFor<FEN>, TransactionRequestFor<FEN>)> {
+        let (mut evm_env, tx) = self.backend.env(&self.evm_opts).await?;
+        let fork_context = self.backend.fork().map(|fork| fork.context());
         self.apply_execution_spec(&mut evm_env, fork_context);
-        Ok((evm_env, tx_env))
+        Ok((evm_env, tx))
     }
 
     /// Records the source chain and resolves the execution spec for `fork_context`.
@@ -1229,6 +1239,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
         self.hardfork = resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             self.config.evm_version,
             self.config.hardfork,
             evm_env,
@@ -1293,18 +1304,11 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
-    use foundry_evm::{
-        revm::context::Block as _,
-        traces::{
-            CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
-        },
+    use foundry_evm::traces::{
+        CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
     };
     use semver::Version;
-    use std::{
-        fs,
-        num::NonZeroU64,
-        sync::{Arc, LazyLock},
-    };
+    use std::{fs, num::NonZeroU64, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
 
@@ -1349,7 +1353,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let first = config.backend.fork().unwrap().unwrap();
+        let first = config.backend.fork().unwrap();
         assert_eq!(first.number(), 1);
         assert_eq!(config.evm_opts.fork_block_number, None);
         assert!(first.matches_request(&config.evm_opts));
@@ -1357,7 +1361,7 @@ mod tests {
         config._get_runner(None, false, false).await.unwrap();
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
-        let second = config.backend.fork().unwrap().unwrap();
+        let second = config.backend.fork().unwrap();
 
         assert_eq!(second.number(), 3);
         assert_eq!(config.evm_opts.fork_block_number, None);
@@ -1392,7 +1396,7 @@ mod tests {
         assert_eq!(config.evm_opts.networks, NetworkConfigs::with_ethereum());
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
-        let second = config.backend.fork().unwrap().unwrap();
+        let second = config.backend.fork().unwrap();
 
         assert_eq!(second.number(), 3);
         assert_eq!(second.context().network_profile, NetworkConfigs::with_monad());
@@ -1425,7 +1429,7 @@ mod tests {
         config._get_runner(None, false, false).await.unwrap();
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
-        let context = config.backend.fork().unwrap().unwrap();
+        let context = config.backend.fork().unwrap();
 
         assert_eq!(context.number(), 1);
         assert_eq!(config.evm_opts.fork_block_number, Some(1));
@@ -1454,14 +1458,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let latest = config.backend.fork().unwrap().unwrap();
+        let latest = config.backend.fork().unwrap();
         assert_eq!(config.evm_opts.fork_block_number, None);
         config._get_runner(None, false, false).await.unwrap();
 
         config.select_rpc(handle_b.http_endpoint()).await.unwrap();
         config.evm_opts.fork_block_number = Some(1);
         config.select_backend().await.unwrap();
-        let explicit = config.backend.fork().unwrap().unwrap();
+        let explicit = config.backend.fork().unwrap();
 
         assert_eq!(explicit.number(), 1);
         assert_eq!(config.evm_opts.fork_block_number, Some(1));
@@ -1501,23 +1505,21 @@ mod tests {
         .unwrap();
         let mut runner_a = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(runner_a.executor.get_balance(state_address).unwrap(), balance_a);
-        let first_a = config.backend.fork().unwrap().unwrap();
-        let cache_a = runner_a.executor.backend().active_fork().unwrap().backend().data();
+        let first_a = config.backend.fork().unwrap();
+        let cache_a = runner_a.executor.backend().active_fork_info().unwrap().id.clone();
         runner_a.executor.set_balance(state_address, U256::from(3)).unwrap();
 
         config.select_rpc(url_b.clone()).await.unwrap();
         let runner_b = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(runner_b.executor.get_balance(state_address).unwrap(), balance_b);
-        let context_b = config.backend.fork().unwrap().unwrap().clone();
+        let context_b = config.backend.fork().unwrap().clone();
         assert_eq!(context_b.number(), 1);
 
         config.select_rpc(url_a.clone()).await.unwrap();
         let reused_a = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(reused_a.executor.get_balance(state_address).unwrap(), balance_a);
-        assert!(Arc::ptr_eq(
-            &cache_a,
-            &reused_a.executor.backend().active_fork().unwrap().backend().data()
-        ));
+        // The same fork ID shares the fork manager's RPC cache.
+        assert_eq!(cache_a, reused_a.executor.backend().active_fork_info().unwrap().id);
         config.select_rpc(url_b.clone()).await.unwrap();
 
         let provider_a = handle_a.http_provider();
@@ -1531,14 +1533,17 @@ mod tests {
         assert_ne!(replacement.header.mix_hash, Some(original_prevrandao));
 
         config.select_rpc(url_a.clone()).await.unwrap();
-        let second_a = config.backend.fork().unwrap().unwrap();
+        let second_a = config.backend.fork().unwrap();
         assert_eq!(second_a.number(), first_a.number());
         assert_eq!(second_a.hash(), replacement.header.hash);
         assert_ne!(second_a.hash(), first_a.hash());
 
         let runner = config._get_runner(None, false, false).await.unwrap();
         assert_eq!(runner.executor.get_balance(state_address).unwrap(), balance_a);
-        assert_eq!(runner.executor.evm_env().block_env.prevrandao(), replacement.header.mix_hash);
+        assert_eq!(
+            runner.executor.evm_env().block.prevrandao,
+            U256::from_be_bytes(replacement.header.mix_hash.unwrap().0)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1561,15 +1566,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let resolved = config.backend.fork().unwrap().unwrap();
+        let resolved = config.backend.fork().unwrap();
         config._get_runner(None, false, false).await.unwrap();
 
         api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         config.select_rpc(url.clone()).await.unwrap();
         let runner = config._get_runner(None, false, false).await.unwrap();
 
-        assert_eq!(config.backend.fork().unwrap().as_ref(), Some(&resolved));
-        assert_eq!(runner.executor.evm_env().block_env.number(), U256::ONE);
+        assert_eq!(config.backend.fork().as_ref(), Some(&resolved));
+        assert_eq!(runner.executor.evm_env().block.number, U256::ONE);
         assert_eq!(config.evm_opts.fork_block_number, None);
     }
 
@@ -1594,11 +1599,11 @@ mod tests {
         .await
         .unwrap();
         config._get_runner(None, false, false).await.unwrap();
-        let without_headers = config.backend.fork().unwrap().unwrap().clone();
+        let without_headers = config.backend.fork().unwrap().clone();
 
         config.evm_opts.fork_headers = Some(vec!["x-foundry-test: resolved-fork".to_string()]);
         config.select_backend().await.unwrap();
-        let with_headers = config.backend.fork().unwrap().unwrap();
+        let with_headers = config.backend.fork().unwrap();
         config._get_runner(None, false, false).await.unwrap();
 
         assert_ne!(without_headers, with_headers);
@@ -1630,7 +1635,7 @@ mod tests {
         .await
         .unwrap();
         config._get_runner(None, false, false).await.unwrap();
-        let first = config.backend.fork().unwrap().unwrap().clone();
+        let first = config.backend.fork().unwrap().clone();
         let first_instance = first.context().instance_id.unwrap();
 
         api.anvil_reset(None).await.unwrap();
@@ -1638,7 +1643,7 @@ mod tests {
         configure_changed(&mut config.evm_opts);
 
         config.select_backend().await.unwrap();
-        let second = config.backend.fork().unwrap().unwrap();
+        let second = config.backend.fork().unwrap();
         assert_ne!(second.context().instance_id, Some(first_instance));
         assert_ne!(second, first);
         assert_eq!(config.evm_opts.fork_block_number, Some(0));
@@ -1701,7 +1706,7 @@ mod tests {
         config._get_runner(None, false, false).await.unwrap();
 
         let provider = handle.http_provider();
-        let pinned = config.backend.fork().unwrap().unwrap();
+        let pinned = config.backend.fork().unwrap();
         provider
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
             .await
@@ -1714,11 +1719,14 @@ mod tests {
         config.select_rpc(handle.http_endpoint()).await.unwrap();
         match config._get_runner(None, false, false).await {
             Ok(runner) => {
-                assert_eq!(runner.executor.evm_env().block_env.prevrandao(), Some(prevrandao));
+                assert_eq!(
+                    runner.executor.evm_env().block.prevrandao,
+                    U256::from_be_bytes(prevrandao.0)
+                );
             }
             Err(error) => assert_missing_orphaned_block(&error),
         }
-        assert_eq!(config.backend.fork().unwrap().as_ref(), Some(&pinned));
+        assert_eq!(config.backend.fork().as_ref(), Some(&pinned));
     }
 
     #[test]
@@ -2002,7 +2010,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let resolved = config.backend.fork().unwrap().unwrap();
+        let resolved = config.backend.fork().unwrap();
         assert_eq!(config.evm_opts.fork_block_number, None);
         assert_eq!(config.sender_nonce, 0);
 
@@ -2016,7 +2024,7 @@ mod tests {
             Ok(()) => assert_eq!(config.sender_nonce, 1),
             Err(error) => assert_missing_orphaned_block(&error),
         }
-        assert_eq!(config.backend.fork().unwrap().as_ref(), Some(&resolved));
+        assert_eq!(config.backend.fork().as_ref(), Some(&resolved));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2105,7 +2113,7 @@ mod tests {
         .unwrap();
 
         let rpc_runner = script._get_runner(None, false, false).await.unwrap();
-        assert!(!rpc_runner.executor.evm_env().cfg_env.disable_fee_charge);
+        assert!(rpc_runner.executor.evm_env().version.feature(EvmFeatures::FEE_CHARGE));
 
         let target = ArtifactId {
             path: PathBuf::from("Script.json"),
@@ -2125,7 +2133,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(synthetic_runner.executor.evm_env().cfg_env.disable_fee_charge);
+        assert!(!synthetic_runner.executor.evm_env().version.feature(EvmFeatures::FEE_CHARGE));
     }
 
     #[test]
