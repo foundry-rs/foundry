@@ -23,7 +23,7 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryInspectorExt,
-    backend::Backend,
+    backend::{Backend, transaction_error},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
@@ -533,7 +533,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
                 }
                 Ok(result)
             }
-            Err(err) => Err(eyre::eyre!("{err:?}")),
+            Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
         self.exit_inner_context(previous);

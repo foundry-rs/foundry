@@ -53,10 +53,16 @@ impl From<Infallible> for BackendError {
     }
 }
 
+/// Returns a report for a transaction evm2 rejected or failed to execute, wrapped in an
+/// "EVM error" context.
+pub fn handler_error(err: HandlerError) -> eyre::Report {
+    transaction_error(err).wrap_err("EVM error")
+}
+
 /// Returns a report for a transaction evm2 rejected or failed to execute.
 ///
 /// Transaction validation errors keep the wording users saw before the evm2 migration.
-pub fn handler_error(err: HandlerError) -> eyre::Report {
+pub fn transaction_error(err: HandlerError) -> eyre::Report {
     let reason = match &err {
         HandlerError::InvalidNonce { expected, got } if got > expected => {
             format!("nonce {got} too high, expected {expected}")
@@ -97,7 +103,7 @@ pub fn handler_error(err: HandlerError) -> eyre::Report {
         | HandlerError::NonceOverflow
         | HandlerError::EmptyBlobs
         | HandlerError::BlobVersionNotSupported => err.to_string(),
-        _ => return eyre::Report::new(err).wrap_err("EVM error"),
+        _ => return eyre::Report::new(err),
     };
-    eyre::eyre!("transaction validation error: {reason}").wrap_err("EVM error")
+    eyre::eyre!("transaction validation error: {reason}")
 }

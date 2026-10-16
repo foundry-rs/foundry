@@ -69,7 +69,9 @@ pub use diagnostic::RevertDiagnostic;
 mod bal;
 
 mod error;
-pub use error::{BackendError, BackendResult, DatabaseError, DatabaseResult, handler_error};
+pub use error::{
+    BackendError, BackendResult, DatabaseError, DatabaseResult, handler_error, transaction_error,
+};
 
 mod cow;
 pub use cow::CowBackend;
