@@ -389,12 +389,7 @@ impl Cheatcode for dumpStateCall {
 
         let fork_id = ccx.active_fork_id();
         let state = ccx.evm.state_mut();
-        let mut created_accounts = Vec::new();
-        for address in ccx.state.created_accounts(fork_id) {
-            if state.account(&address)?.is_created() {
-                created_accounts.push(address);
-            }
-        }
+        let created_accounts = ccx.state.created_accounts(fork_id);
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address| {
@@ -406,8 +401,12 @@ impl Cheatcode for dumpStateCall {
                 || key == &ccx.state.core.config.evm_opts.sender
         };
 
+        // A fork switch accepts the running transaction's state, so keep the accounts it created
+        // before the switch as well.
+        let mut accounts = transaction_accounts(state);
+        accounts.extend(created_accounts.iter().copied());
         let mut alloc = BTreeMap::new();
-        for address in known_accounts(state) {
+        for address in accounts {
             if skip(&address)
                 || state.account_info_untracked(&address)?.is_none_or(|info| info.is_empty())
             {
@@ -2034,17 +2033,19 @@ pub(crate) fn append_storage_access(
     }
 }
 
-/// Returns the addresses the running state knows: those in its accepted overlay and those the
-/// running transaction changed or warmed.
-fn known_accounts(state: &State<'_>) -> AddressSet {
-    let mut accounts = state.overlay_db().cache.accounts.keys().copied().collect::<AddressSet>();
-    accounts.extend(state.journal().iter().filter_map(|entry| match entry {
-        JournalEntry::AccountChange { address, .. }
-        | JournalEntry::StorageChange { address, .. }
-        | JournalEntry::StorageWarmed { address, .. } => Some(*address),
-        _ => None,
-    }));
-    accounts
+/// Returns the addresses the running transaction changed or warmed, like the accounts REVM's
+/// journal had loaded.
+fn transaction_accounts(state: &State<'_>) -> AddressSet {
+    state
+        .journal()
+        .iter()
+        .filter_map(|entry| match entry {
+            JournalEntry::AccountChange { address, .. }
+            | JournalEntry::StorageChange { address, .. }
+            | JournalEntry::StorageWarmed { address, .. } => Some(*address),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Returns the storage slots of `address` the running state knows: those in its accepted overlay
