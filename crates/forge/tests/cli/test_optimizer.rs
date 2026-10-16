@@ -8,7 +8,10 @@ use foundry_compilers::artifacts::{
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 #[cfg(unix)]
-use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
+use foundry_compilers::{
+    artifacts::{SolcInput, output_selection::OutputSelection},
+    solc::Solc,
+};
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
@@ -5261,6 +5264,219 @@ Compiler run successful!
 "#]])
         .stderr_eq(str![[r#"
 Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+
+"#]]);
+}
+
+// Inject solc's codegen diagnostics only for rewritten inputs, then compile the native retry
+// with real solc. This keeps coverage independent of optimizer/version-specific codegen limits.
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_codegen_fallback(prj: _, cmd: _) {
+    let real_solc =
+        Solc::find_or_install(&foundry_test_utils::util::SOLC_VERSION.parse().unwrap()).unwrap();
+    let solc = prj.root().join("solc-wrapper");
+    fs::write(
+        &solc,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    exec '{real_solc}' "$@"
+fi
+cat > "$0.input"
+if grep -q 'deployCode' "$0.input"; then
+    cat "$0.error"
+else
+    exec '{real_solc}' "$@" < "$0.input"
+fi
+"#,
+            real_solc = real_solc.solc.display(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&solc, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+        config.dynamic_test_linking = true;
+        config.via_ir = true;
+        config.optimizer = Some(true);
+        config.lint.lint_on_build = false;
+    });
+    let implementation =
+        "contract Impl { function value() external pure returns (uint256) { return 111; } }";
+    prj.add_source("Impl.sol", implementation);
+    prj.add_test(
+        "Fallback.t.sol",
+        r#"
+import "../src/Impl.sol";
+contract FallbackTest {
+    function test_fallback() public {
+        require(new Impl().value() == 111, "stale fallback bytecode");
+    }
+}
+"#,
+    );
+
+    for (kind, message, reason) in [
+        (
+            "YulException",
+            "Yul exception:Variable _8 is 1 too deep in the stack [ RET _8 ] memoryguard was present.",
+            "stack too deep",
+        ),
+        (
+            "CompilerError",
+            "Compiler error:Stack too deep. Try compiling with --via-ir.",
+            "stack too deep",
+        ),
+        (
+            "InternalCompilerError",
+            "Internal compiler error:Assembly exception for bytecode: Tag too large for reserved space.",
+            "Tag too large for reserved space",
+        ),
+    ] {
+        fs::write(
+            solc.with_extension("error"),
+            serde_json::to_vec(&serde_json::json!({"errors": [{
+                "type": kind, "component": "general", "severity": "error", "message": message
+            }]}))
+            .unwrap(),
+        )
+        .unwrap();
+        cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]).stderr_eq(format!(
+            "Warning: dynamic test linking failed ({reason}); retrying with native test linking. Use --no-dynamic-test-linking to skip the failed attempt.\n"
+        ));
+        // The retry publishes usable native artifacts, reusable when explicitly opting out.
+        cmd.forge_fuse()
+            .args(["test", "--no-dynamic-test-linking"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Fallback.t.sol:FallbackTest
+[PASS] test_fallback() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+            .stderr_eq(str![""]);
+    }
+
+    // Native tests must recompile when an embedded dependency changes after the fallback.
+    prj.add_source("Impl.sol", &implementation.replace("return 111", "return 222"));
+    cmd.forge_fuse()
+        .args(["test", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+[FAIL: stale fallback bytecode] test_fallback() ([..])
+...
+"#]])
+        .stderr_eq(str![""]);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_codegen_fallback_is_targeted(prj: _, cmd: _) {
+    let solc = prj.root().join("solc-wrapper");
+    fs::write(
+        &solc,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.35+commit.69074fbd"
+    exit 0
+fi
+cat > /dev/null
+cat "$0.error"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&solc, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+        config.dynamic_test_linking = true;
+        config.lint.lint_on_build = false;
+    });
+    prj.add_test("Empty.t.sol", "contract EmptyTest { function test_empty() public {} }");
+    let error = |kind, message| {
+        serde_json::json!({
+            "type": kind, "component": "general", "severity": "error", "message": message
+        })
+    };
+    let stack = error("YulException", "Yul exception:Variable _8 is 1 too deep in the stack.");
+
+    // Neither unrelated errors nor matching text in a source snippet may cause a retry.
+    for errors in [
+        vec![error("InternalCompilerError", "Unrelated internal compiler error.")],
+        vec![error("YulException", "Unrelated Yul exception.")],
+        vec![error("TypeError", "Stack too deep")],
+        vec![stack.clone(), error("TypeError", "Unrelated type error.")],
+        vec![serde_json::json!({
+            "type": "TypeError", "component": "general", "severity": "error",
+            "message": "Unrelated type error.",
+            "formattedMessage": "TypeError: Unrelated type error.\n --> test/Empty.t.sol:1:1:\n1 | // Tag too large for reserved space\n"
+        })],
+    ] {
+        fs::write(
+            solc.with_extension("error"),
+            serde_json::to_vec(&serde_json::json!({"errors": errors})).unwrap(),
+        )
+        .unwrap();
+        cmd.forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]])
+            .stderr_eq(str![[r#"
+Error: Compiler run failed:
+...
+"#]]);
+    }
+
+    fs::write(
+        solc.with_extension("error"),
+        serde_json::to_vec(&serde_json::json!({"errors": [stack]})).unwrap(),
+    )
+    .unwrap();
+    // A native failure is returned after exactly one retry, not swallowed or retried again.
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]]).stderr_eq(str![[r#"
+Warning: dynamic test linking failed (stack too deep); retrying with native test linking. Use --no-dynamic-test-linking to skip the failed attempt.
+Error: Compiler run failed:
+Error: Yul exception:Variable _8 is 1 too deep in the stack.
+
+"#]]);
+    // Explicit opt-out never retries, even for a recognized diagnostic.
+    cmd.forge_fuse()
+        .args(["build", "--force", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error: Yul exception:Variable _8 is 1 too deep in the stack.
 
 "#]]);
 }
