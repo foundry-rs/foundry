@@ -2,7 +2,8 @@
 
 use super::{
     EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, TransactionRequestFor, TxEnvelopeFor, TxPayload, placeholder_signature,
+    FoundryTxResultExt, SendableExt, TransactionRequestFor, TxEnvelopeFor, TxPayload,
+    placeholder_signature,
 };
 use crate::{
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
@@ -16,13 +17,17 @@ use alloy_network::{
 use alloy_primitives::{Address, Bytes};
 use evm2::{Evm, TxResult, Version, evm::precompile::PrecompileProvider, registry::TxRegistry};
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
+use std::sync::Arc;
 use tempo_alloy::{TempoNetwork, primitives::TEMPO_TX_TYPE_ID};
 use tempo_evm2::{
     TempoBlockExt, TempoEvmExt, TempoEvmFactory, TempoEvmTypes, TempoTxEnv, TempoTxResultExt,
     tempo_execution_config, tempo_tx_registry,
 };
 use tempo_hardfork_evm2::TempoHardfork;
-use tempo_precompiles_evm2::{TempoPrecompiles, storage::StorageCtx};
+use tempo_precompiles_evm2::{
+    TempoPrecompiles,
+    storage::{StorageActions, StorageCtx},
+};
 use tempo_primitives_evm2::TempoTxEnvelope;
 
 /// Tempo EVM network.
@@ -43,6 +48,26 @@ impl FoundryBlockExt for TempoBlockExt {
 type TempoNetworkTxEnvelope = TxEnvelopeFor<TempoEvmNetwork>;
 
 impl FoundryEvmExt<TempoTxEnv> for TempoEvmExt {}
+
+// SAFETY: `detached` allocates fresh transaction-local state instead of cloning or reading the
+// `Rc` handles; every other field is `Send + Sync`.
+unsafe impl SendableExt for TempoEvmExt {
+    fn detached(&self) -> Self {
+        Self {
+            fee_manager: Arc::clone(&self.fee_manager),
+            actions: if self.actions.is_enabled() {
+                StorageActions::enabled()
+            } else {
+                StorageActions::disabled()
+            },
+            skip_valid_after_check: self.skip_valid_after_check,
+            skip_liquidity_check: self.skip_liquidity_check,
+            resolved_fee_token: self.resolved_fee_token,
+            key_expiry: self.key_expiry,
+            ..Self::default()
+        }
+    }
+}
 
 impl FoundryTxResultExt for TempoTxResultExt {}
 

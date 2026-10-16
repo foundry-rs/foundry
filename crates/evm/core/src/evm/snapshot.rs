@@ -1,6 +1,6 @@
 //! User-visible state snapshots.
 
-use super::{EvmEnv, ForkRegistry};
+use super::{EvmEnv, ForkRegistry, SendableExt, StoredExt};
 use evm2::{EvmTypesHost, evm::StateSnapshot};
 use std::fmt;
 
@@ -17,12 +17,12 @@ pub struct LifecycleSnapshot<T: EvmTypesHost, C> {
     /// Environment of the running context.
     pub(super) env: EvmEnv<T>,
     /// Network extension state of the running context.
-    pub(super) ext: T::EvmExt,
+    pub(super) ext: StoredExt<T::EvmExt>,
     /// Caller-owned state, such as cheatcode state.
     pub(super) extra: C,
 }
 
-impl<T: EvmTypesHost<EvmExt: Clone>, C: Clone> Clone for LifecycleSnapshot<T, C> {
+impl<T: EvmTypesHost<EvmExt: SendableExt>, C: Clone> Clone for LifecycleSnapshot<T, C> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),

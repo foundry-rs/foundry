@@ -14,7 +14,6 @@ use std::fmt::Debug;
 /// `disable_eip3607` is `EIP3607`, `disable_fee_charge` is `FEE_CHARGE`,
 /// `disable_priority_fee_check` is `PRIORITY_FEE_CHECK` and `tx_chain_id_check` is
 /// `TX_CHAIN_ID_CHECK`. Size and memory limits are plain [`Version`] fields.
-#[derive(Debug)]
 pub struct EvmEnv<T: EvmTypesHost> {
     /// Active network spec.
     pub spec: T::SpecId,
@@ -22,6 +21,16 @@ pub struct EvmEnv<T: EvmTypesHost> {
     pub version: Version,
     /// Block environment.
     pub block: BlockEnv<T>,
+}
+
+impl<T: EvmTypesHost<SpecId: Debug>> Debug for EvmEnv<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EvmEnv")
+            .field("spec", &self.spec)
+            .field("version", &self.version)
+            .field("block", &self.block)
+            .finish()
+    }
 }
 
 impl<T: EvmTypesHost> Clone for EvmEnv<T> {
@@ -119,7 +128,7 @@ pub trait FoundryBlockExt: Copy + Debug + Default + Send + Sync + 'static {
 impl FoundryBlockExt for () {}
 
 /// Per-EVM network state, such as OP L1 block info or Monad's reserve-balance context.
-pub trait FoundryEvmExt<Tx>: Clone + Debug + Default + 'static {
+pub trait FoundryEvmExt<Tx>: SendableExt + Debug + Default + 'static {
     /// Prepares the state for a standalone synthetic transaction.
     fn for_transaction(&mut self, _tx: &Recovered<Tx>) {}
 
@@ -139,6 +148,68 @@ pub trait FoundryEvmExt<Tx>: Clone + Debug + Default + 'static {
 }
 
 impl<Tx> FoundryEvmExt<Tx> for () {}
+
+/// Network extension state that can be copied without sharing thread-unsafe state.
+///
+/// Some extensions, such as Tempo's, share transaction-local state with their precompiles
+/// through `Rc`. [`StoredExt`] keeps such state outside a running EVM and across threads.
+///
+/// # Safety
+///
+/// [`Self::detached`] must return a value that shares no thread-unsafe state with `self` or any
+/// other value, and must not access thread-unsafe state of `self`.
+pub unsafe trait SendableExt: Clone {
+    /// Returns a copy that shares no thread-unsafe state with `self`.
+    fn detached(&self) -> Self {
+        self.clone()
+    }
+}
+
+// SAFETY: `()` holds no state.
+unsafe impl SendableExt for () {}
+
+/// Network extension state stored outside a running EVM, such as by a parked context or a
+/// snapshot.
+///
+/// The value enters and leaves only through [`SendableExt::detached`], so it never shares
+/// thread-unsafe state with another value and can move between threads.
+pub struct StoredExt<E>(E);
+
+impl<E: SendableExt> StoredExt<E> {
+    /// Stores a detached copy of `ext`.
+    pub fn new(ext: &E) -> Self {
+        Self(ext.detached())
+    }
+
+    /// Returns a detached copy of the stored state.
+    pub fn get(&self) -> E {
+        self.0.detached()
+    }
+
+    /// Returns the stored state.
+    pub fn into_inner(self) -> E {
+        self.0
+    }
+}
+
+impl<E: SendableExt> Clone for StoredExt<E> {
+    fn clone(&self) -> Self {
+        Self(self.0.detached())
+    }
+}
+
+impl<E> Debug for StoredExt<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredExt").finish_non_exhaustive()
+    }
+}
+
+// SAFETY: the stored value is created by `SendableExt::detached`, so no other value shares its
+// thread-unsafe state, and shared access only calls `detached`, which reads none of it.
+unsafe impl<E: SendableExt> Send for StoredExt<E> {}
+
+// SAFETY: see the `Send` implementation.
+unsafe impl<E: SendableExt> Sync for StoredExt<E> {}
 
 /// Network-only transaction outcome flags.
 ///

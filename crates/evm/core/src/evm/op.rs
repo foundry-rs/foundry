@@ -2,7 +2,7 @@
 
 use super::{
     EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, TxPayload,
+    FoundryTxResultExt, SendableExt, TxPayload,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Encodable2718;
@@ -21,6 +21,14 @@ use op_evm2::{
 pub struct OpEvmNetwork;
 
 impl FoundryBlockExt for OpBlockEnvExt {}
+
+// SAFETY: `OpEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe state.
+unsafe impl SendableExt for OpEvmExt {}
+
+const _: fn() = || {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<OpEvmExt>();
+};
 
 impl FoundryEvmExt<OpTxEnvelope> for OpEvmExt {
     fn clear_transaction_fee_cache(&mut self) {

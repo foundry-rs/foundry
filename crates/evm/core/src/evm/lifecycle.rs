@@ -28,7 +28,7 @@
 
 use super::{
     AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt, FoundryEvmFactory,
-    LifecycleSnapshot, Parked, evm_env,
+    LifecycleSnapshot, Parked, StoredExt, evm_env,
 };
 use crate::{backend::RevertStateSnapshotAction, state_snapshot::StateSnapshots};
 use alloy_consensus::transaction::Recovered;
@@ -36,7 +36,7 @@ use alloy_primitives::{Address, KECCAK256_EMPTY, Log, U256};
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
-    evm::{Cache, DbResult, EmptyDB, PrewarmSet, State},
+    evm::{AccountChanges, Cache, DbResult, EmptyDB, PendingState, PrewarmSet, State},
 };
 use std::{mem, sync::Arc};
 
@@ -183,7 +183,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             Some(cache) => {
                 let view = AcceptedView { cache: Arc::clone(cache), backing: db };
                 let mut evm = factory.new_evm(view, env);
-                *evm.ext_mut() = context.ext.clone();
+                *evm.ext_mut() = context.ext.get();
                 evm
             }
         }
@@ -209,7 +209,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             _ => context.cache = Some(Arc::new(local)),
         }
         context.env = env;
-        context.ext = ext;
+        context.ext = StoredExt::new(&ext);
     }
 
     /// Materializes the accepted state `evm` reads through a shared view into its own overlay.
@@ -329,6 +329,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         Ok(())
     }
 
+    /// Returns the environment change deferred by an in-flight operation, applied at the next
+    /// transaction.
+    pub const fn pending_env(&self) -> Option<&EvmEnv<F::Types>> {
+        self.pending_env.as_ref()
+    }
+
     /// Applies an environment change deferred by an in-flight operation. Call before every
     /// transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {
@@ -359,7 +365,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             state: evm.state().snapshot(),
             forks: self.forks.clone(),
             env: evm_env(evm),
-            ext: evm.ext().clone(),
+            ext: StoredExt::new(evm.ext()),
             extra,
         })
     }
@@ -392,7 +398,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let mut state = state.into_state(db.clone_backing());
         *state.logs_mut() = logs;
         *evm.state_mut() = state;
-        *evm.ext_mut() = ext;
+        *evm.ext_mut() = ext.into_inner();
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
         Some((extra, transition))
@@ -524,7 +530,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let db = context.db.clone_backing();
         let env = nested.env.unwrap_or(context.env);
         let ext = nested.ext.unwrap_or_else(|| {
-            let mut ext = context.ext.clone();
+            let mut ext = context.ext.get();
             ext.for_transaction(tx);
             ext
         });
@@ -554,7 +560,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         let executed = executor.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
         let persistent = &self.forks.persistent;
-        merge_changes(evm.state_mut(), &executed, |address| persistent.contains(address))?;
+        merge_changes(evm.state_mut(), executed.account_changes(), |address| {
+            persistent.contains(address)
+        })?;
         let result = executed.commit();
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
@@ -576,7 +584,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let context = self.active_mut();
         context.cache = Some(Arc::new(cache.clone()));
         context.env = env;
-        context.ext = ext;
+        context.ext = StoredExt::new(&ext);
         Suspended { cache, logs, prewarm }
     }
 
@@ -595,7 +603,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let mut cache = context.cache.take().map(Arc::unwrap_or_clone).unwrap_or_default();
         let db = context.db.clone_backing();
         let env = context.env;
-        let ext = context.ext.clone();
+        let ext = context.ext.get();
         self.forks.merge_persistent(&source, &mut cache);
 
         let mut state = State::new(db.clone_backing());
@@ -657,6 +665,17 @@ struct Suspended {
     prewarm: PrewarmSet,
 }
 
+/// Clears `evm`'s inspector and returns the EVM without the borrows the inspector held, such as
+/// to park an EVM whose inspector borrowed the lifecycle's owner.
+pub fn release_inspector<'b, T: EvmTypes>(mut evm: Evm<'_, T>) -> Evm<'b, T> {
+    evm.clear_inspector();
+    let evm = mem::ManuallyDrop::new(evm);
+    // SAFETY: An EVM's lifetime only bounds its inspector, which is cleared, and its backing
+    // database and precompiles, which Foundry always installs owned (`'static`). The value is
+    // moved out exactly once and the original is never dropped.
+    unsafe { std::ptr::read((&raw const *evm).cast::<Evm<'b, T>>()) }
+}
+
 /// Runs `f` as a nested frame of the running transaction: its writes are rolled back if it fails.
 pub fn nested_frame<T: EvmTypes, R, E>(
     evm: &mut Evm<'_, T>,
@@ -677,17 +696,23 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed, |_| true)
+    merge_changes(state, executed.account_changes(), |_| true)
 }
 
-/// Applies a nested transaction's changes to the accounts selected by `filter` to `state` as
+/// Applies the changes of a nested transaction detached into `pending` to the running
+/// transaction's `state` as journaled writes, like [`merge_nested_changes`].
+pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
+    merge_changes(state, pending.account_changes(), |_| true)
+}
+
+/// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
 /// journaled writes.
-fn merge_changes<T: EvmTypesHost>(
+fn merge_changes<'c>(
     state: &mut State<'_>,
-    executed: &ExecutedTx<'_, '_, T>,
+    changes: impl Iterator<Item = AccountChanges<'c>>,
     filter: impl Fn(&Address) -> bool,
 ) -> DbResult<()> {
-    for change in executed.account_changes().filter(|change| change.is_changed()) {
+    for change in changes.filter(|change| change.is_changed()) {
         let address = change.address;
         if !filter(&address) {
             continue;

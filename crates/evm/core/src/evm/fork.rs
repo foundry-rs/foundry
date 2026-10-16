@@ -1,7 +1,7 @@
 //! Fork registry: which backing databases exist, which one is active, and the accepted state each
 //! inactive one resumes with.
 
-use super::{BackingDb, EvmEnv};
+use super::{BackingDb, EvmEnv, SendableExt, StoredExt};
 use crate::fork::{Fork, ForkId};
 use alloy_primitives::{Address, U256, map::AddressSet};
 use evm2::{EvmTypesHost, evm::Cache};
@@ -41,7 +41,7 @@ pub struct Parked<T: EvmTypesHost> {
     /// Environment to resume with.
     pub env: EvmEnv<T>,
     /// Network extension state to resume with.
-    pub ext: T::EvmExt,
+    pub ext: StoredExt<T::EvmExt>,
     /// Accepted state to resume with; `None` until the context is first initialized.
     ///
     /// The cache is shared with snapshots and with EVMs created over the context, so taking a
@@ -49,14 +49,14 @@ pub struct Parked<T: EvmTypesHost> {
     pub cache: Option<Arc<Cache>>,
 }
 
-impl<T: EvmTypesHost> Parked<T> {
+impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
     /// Creates a context that has never run.
     pub fn new(db: Box<dyn BackingDb>, env: EvmEnv<T>, ext: T::EvmExt) -> Self {
-        Self { db, env, ext, cache: None }
+        Self { db, env, ext: StoredExt::new(&ext), cache: None }
     }
 }
 
-impl<T: EvmTypesHost<EvmExt: Clone>> Clone for Parked<T> {
+impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
     fn clone(&self) -> Self {
         Self {
             db: self.db.clone_backing(),
@@ -87,7 +87,7 @@ impl<T: EvmTypesHost> fmt::Debug for ForkEntry<T> {
     }
 }
 
-impl<T: EvmTypesHost<EvmExt: Clone>> Clone for ForkEntry<T> {
+impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for ForkEntry<T> {
     fn clone(&self) -> Self {
         Self { info: self.info.clone(), context: self.context.clone() }
     }
@@ -120,7 +120,7 @@ impl<T: EvmTypesHost> fmt::Debug for ForkRegistry<T> {
     }
 }
 
-impl<T: EvmTypesHost<EvmExt: Clone>> Clone for ForkRegistry<T> {
+impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for ForkRegistry<T> {
     fn clone(&self) -> Self {
         Self {
             local: self.local.clone(),

@@ -523,7 +523,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Returns whether `address` is a precompile of the active context.
     pub fn is_existing_precompile(&self, address: &Address) -> bool {
         let context = self.lifecycle.active();
-        self.lifecycle.factory().precompiles(&context.env, &context.ext).contains(address)
+        self.lifecycle.factory().precompiles(&context.env, &context.ext.get()).contains(address)
     }
 
     // ---- Persistent accounts and cheatcode access ----

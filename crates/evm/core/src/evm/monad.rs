@@ -2,7 +2,7 @@
 
 use super::{
     EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, TxPayload, eth_envelope_from_any_rpc, eth_tx,
+    FoundryTxResultExt, SendableExt, TxPayload, eth_envelope_from_any_rpc, eth_tx,
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_network::{AnyRpcTransaction, Ethereum};
@@ -21,6 +21,15 @@ use monad_evm2::{
 pub struct MonadEvmNetwork;
 
 impl FoundryBlockExt for MonadBlockExt {}
+
+// SAFETY: `MonadEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe
+// state.
+unsafe impl SendableExt for MonadEvmExt {}
+
+const _: fn() = || {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<MonadEvmExt>();
+};
 
 impl FoundryEvmExt<TxEnvelope> for MonadEvmExt {
     fn for_transaction(&mut self, tx: &Recovered<TxEnvelope>) {

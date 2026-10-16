@@ -2,7 +2,7 @@
 
 use super::{
     EvmEnv, FoundryBlockExt, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
-    FoundryTxResultExt, TxPayload,
+    FoundryTxResultExt, SendableExt, TxPayload,
 };
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
 use alloy_consensus::transaction::Recovered;
@@ -25,6 +25,14 @@ use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_acti
 pub struct BaseEvmNetwork;
 
 impl FoundryBlockExt for BaseBlockEnvExt {}
+
+// SAFETY: `BaseEvmExt` is `Send + Sync`, as asserted below, so clones share only thread-safe state.
+unsafe impl SendableExt for BaseEvmExt {}
+
+const _: fn() = || {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<BaseEvmExt>();
+};
 
 impl FoundryEvmExt<BaseTxEnvelope> for BaseEvmExt {
     fn clear_transaction_fee_cache(&mut self) {
