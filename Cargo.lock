@@ -6102,11 +6102,13 @@ version = "1.8.6"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
+ "alloy-network",
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
  "base64 0.23.1",
+ "evm2",
  "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-config",
