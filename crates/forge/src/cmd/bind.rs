@@ -317,7 +317,8 @@ impl BindArgs {
             json_files(&config.out).collect()
         };
         let files = self.filter_artifact_paths(files)?;
-        if let Some(cache) = cache
+        // Cache-based selection already guarantees membership for built-in artifacts.
+        if let Some(cache) = cache.filter(|_| !config.cache)
             && !definitions.is_empty()
         {
             let cached_artifacts = cache

@@ -366,11 +366,24 @@ contract EnumUser {
         .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
         .assert_success();
 
-    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    let binding_path = prj.root().join("out/bindings/src/enum_user.rs");
+    let binding = fs::read_to_string(&binding_path).unwrap();
     // After FOUN1-39 fix, bind only sees the current artifact from the cache,
     // not the orphaned A.sol/EnumUser.json, so it generates a proper enum.
     assert!(binding.contains("pub enum Status"), "{binding}");
     assert!(!binding.contains("pub struct Status"), "{binding}");
+
+    // Filesystem selection must not enrich orphaned artifacts with current enum definitions.
+    assert!(prj.paths().artifacts.join("A.sol/EnumUser.json").is_file());
+    let cache = fs::read(prj.cache()).unwrap();
+    fs::remove_file(prj.cache()).unwrap();
+    let args = ["bind", "--skip-build", "--no-cache", "--overwrite", "--select", "^EnumUser$"];
+    cmd.forge_fuse().args(args).assert_success();
+    let expected = fs::read_to_string(&binding_path).unwrap();
+
+    fs::write(prj.cache(), cache).unwrap();
+    cmd.forge_fuse().args(args).assert_success();
+    assert_data_eq!(fs::read_to_string(binding_path).unwrap(), expected.as_str().raw());
 }
 
 #[forgetest]
