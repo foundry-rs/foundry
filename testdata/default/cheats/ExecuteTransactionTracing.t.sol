@@ -16,6 +16,12 @@ contract ExecuteTransactionTracingTest is Test {
         assertEq(calls, 3);
     }
 
+    function test_broadcast_raw_subcall() public {
+        this.broadcast(signedTransaction(abi.encodeCall(this.subcall, ()), false, false));
+        this.leaf();
+        assertEq(calls, 3);
+    }
+
     function test_nested_create() public {
         this.execute(signedTransaction(type(TraceChild).creationCode, true, false));
     }
@@ -57,6 +63,11 @@ contract ExecuteTransactionTracingTest is Test {
         address origin = tx.origin;
         vm.executeTransaction(rawTx);
         assertEq(tx.origin, origin);
+        this.leaf();
+    }
+
+    function broadcast(bytes memory rawTx) external {
+        vm.broadcastRawTransaction(rawTx);
         this.leaf();
     }
 

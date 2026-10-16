@@ -509,7 +509,7 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let _ = executor.transact(ccx.backend, ccx.evm, fork_id, transaction)?;
+    let _ = executor.transact(ccx.backend, ccx.evm, ccx.depth as u16, fork_id, transaction)?;
     ccx.state.state_epoch += 1;
     Ok(Default::default())
 }

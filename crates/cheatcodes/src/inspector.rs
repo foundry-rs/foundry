@@ -105,11 +105,13 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
 
     /// Replays a mined transaction of fork `fork_id`, or of the active fork, for `vm.transact`.
     ///
-    /// Cheatcodes are not active in the replayed transaction.
+    /// Cheatcodes are not active in the replayed transaction. Its root frame duplicates the
+    /// cheatcode call at `depth`, like [`Self::nested_transaction`].
     fn transact(
         &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>>;
@@ -118,11 +120,12 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     /// `broadcastRawTransaction`.
     ///
     /// Cheatcodes are not active in the executed transaction. It runs in `env`, or the running
-    /// environment for `None`.
+    /// environment for `None`, and its root frame duplicates the cheatcode call at `depth`.
     fn transact_from_tx(
         &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>>;
@@ -197,6 +200,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        _depth: u16,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
@@ -207,6 +211,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        _depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {

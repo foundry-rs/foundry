@@ -354,8 +354,8 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
 struct InnerRoot {
     /// Depth of the duplicated frame.
     depth: u16,
-    /// Sender of the nested transaction.
-    caller: Address,
+    /// Sender of the nested transaction, or `None` if not known in advance.
+    caller: Option<Address>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -519,7 +519,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut child = backend.backend().nested_evm(evm, tx, env);
-        let previous = self.enter_inner_context(InnerRoot { depth, caller: tx.signer() });
+        let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
@@ -548,24 +548,33 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
+        let previous = self.enter_inner_context(InnerRoot { depth, caller: None });
         let mut inspector =
             InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
-        backend.backend_mut().transact(fork_id, transaction, evm, Some(&mut inspector))
+        let result =
+            backend.backend_mut().transact(fork_id, transaction, evm, Some(&mut inspector));
+        self.exit_inner_context(previous);
+        result
     }
 
     fn transact_from_tx(
         &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
+        let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
         let mut inspector =
             InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
-        backend.backend_mut().transact_from_tx(tx, evm, env, Some(&mut inspector))
+        let result = backend.backend_mut().transact_from_tx(tx, evm, env, Some(&mut inspector));
+        self.exit_inner_context(previous);
+        result
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -1168,7 +1177,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         });
         let previous_inner = self
             .inner
-            .enter_inner_context(InnerRoot { depth: message.depth, caller: message.caller });
+            .enter_inner_context(InnerRoot { depth: message.depth, caller: Some(message.caller) });
         let create2_redirects = self.inner.pending_create2_redirects.len();
 
         child.set_inspector(InspectorStackRefMut {
@@ -1264,11 +1273,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> bool {
-        let Some(root) = self
-            .inner
-            .pending_inner_root
-            .take_if(|root| message.depth == 0 && message.caller == root.caller)
-        else {
+        let Some(root) = self.inner.pending_inner_root.take_if(|root| {
+            message.depth == 0 && root.caller.is_none_or(|caller| caller == message.caller)
+        }) else {
             return false;
         };
         message.depth = root.depth;

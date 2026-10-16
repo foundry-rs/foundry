@@ -1319,7 +1319,7 @@ impl Cheatcode for broadcastRawTransactionCall {
                 env
             },
         );
-        let _ = executor.transact_from_tx(ccx.backend, ccx.evm, &evm_tx, env)?;
+        let _ = executor.transact_from_tx(ccx.backend, ccx.evm, ccx.depth as u16, &evm_tx, env)?;
         ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {
