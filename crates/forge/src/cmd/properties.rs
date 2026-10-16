@@ -1,7 +1,7 @@
 //! The `forge properties` command: an external generator audits the targets and writes their
 //! documented properties as tests. Forge reports the tests that fail on every seed as possible bugs
 //! and keeps the tests that pass. With `--mutation`, a second phase sends the mutants that survive
-//! the kept tests to the generator and keeps only new tests that kill one.
+//! the kept tests to the generator and keeps a passing batch only if it kills one on every seed.
 
 use crate::{
     cmd::test::RerunFailure,
@@ -126,7 +126,7 @@ pub struct PropertiesArgs {
     rounds: usize,
 
     /// After the audit, mutate the targets and ask the generator for tests that kill the mutants
-    /// that survive. Forge keeps a new test file only if it kills a survivor on every seed.
+    /// that survive. Forge keeps a passing batch only if it kills a survivor on every seed.
     #[arg(long)]
     mutation: bool,
 
@@ -1064,6 +1064,8 @@ impl Campaign<'_> {
             .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"))
             // A workspace has its own resolved `foundry.toml`.
             .env_remove("FOUNDRY_CONFIG")
+            .env_remove("FOUNDRY_REMAPPINGS")
+            .env_remove("DAPP_REMAPPINGS")
             .env_remove("FOUNDRY_TEST");
         command
     }
@@ -1087,6 +1089,11 @@ fn candidate_workspace(
         toml.push_str(&format!("\n[profile.{profile}]\n"));
     }
     fs::write(workspace.path().join(Config::FILE_NAME), toml)?;
+    // Remappings are already resolved and rebased in the workspace config.
+    let remappings = workspace.path().join("remappings.txt");
+    if remappings.exists() {
+        fs::remove_file(remappings)?;
+    }
     // Mutation testing copies this workspace again. Its library links must point into this
     // workspace, or the nested copy reaches the project through two paths. `copy_project` also
     // links `node_modules` and `dependencies` when they are not in `libs`.
@@ -1603,6 +1610,7 @@ fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<(
 /// Checks both dotted and inline-table forms of a NatSpec fuzz seed override.
 fn has_inline_fuzz_seed(source: &str) -> bool {
     source.lines().filter_map(|line| line.split_once("forge-config:")).any(|(_, setting)| {
+        let setting = setting.split_once("*/").map_or(setting, |(setting, _)| setting);
         setting.trim().parse::<toml_edit::DocumentMut>().is_ok_and(|config| {
             config
                 .iter()

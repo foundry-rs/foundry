@@ -587,4 +587,35 @@ Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
 
 "#]]);
     assert!(!prj.root().join("test/generated/FeeCheck.t.sol").exists());
+    write_candidate(
+        "seeded-block.json",
+        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    /** forge-config: default.fuzz.seed = \"0x3\" */\n    function testFuzzFee(uint256 amount) public pure {}\n}\n",
+    );
+    cmd.forge_fuse().args(check("seeded-block.json")).assert_failure().stderr_eq(str![[r#"
+Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
+
+"#]]);
+}
+
+#[forgetest_init]
+fn properties_check_rebases_remapping_providers(prj: _, cmd: _) {
+    let candidate = serde_json::json!({
+        "schema": "foundry/properties-candidate-v1",
+        "rationale": "check generated imports",
+        "files": [
+            {"path": "test/generated/Helper.sol", "content": "pragma solidity ^0.8.20; library Helper { function value() internal pure returns (uint) { return 1; } }"},
+            {"path": "test/generated/Property.t.sol", "content": "pragma solidity ^0.8.20; import {Helper} from 'generated/Helper.sol'; contract Property { function testValue() public pure { require(Helper.value() == 1); } }"}
+        ]
+    });
+    fs::write(prj.root().join("candidate.json"), candidate.to_string()).unwrap();
+    let mapping = format!("generated/={}/test/generated/", prj.root().display());
+    let check = ["properties", "--check", "candidate.json", "--seed", "1", "--seed", "2"];
+    fs::write(prj.root().join("remappings.txt"), &mapping).unwrap();
+    cmd.args(check).assert_success();
+    fs::remove_file(prj.root().join("remappings.txt")).unwrap();
+    for variable in ["FOUNDRY_REMAPPINGS", "DAPP_REMAPPINGS"] {
+        cmd.forge_fuse().env(variable, &mapping);
+        cmd.args(check).assert_success();
+        cmd.unset_env(variable);
+    }
 }
