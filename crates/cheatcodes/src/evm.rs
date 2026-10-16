@@ -1384,11 +1384,13 @@ impl Cheatcode for executeTransactionCall {
         let created_address = tx.kind().is_create().then(|| sender.create(tx.nonce()));
         let tx = FEN::evm_tx(tx, sender, TxPayload::Signed)?;
 
-        // Execute in the running environment with realistic validation: no base fee, nonce
-        // checks, the spec's transaction gas limit cap, and an initcode limit derived from the
-        // configured code size limit rather than the unlimited one used for test contracts.
+        // Execute in the running environment with realistic validation: no base fee or fee
+        // payment, nonce checks, the spec's transaction gas limit cap, and an initcode limit
+        // derived from the configured code size limit rather than the unlimited one used for
+        // test contracts.
         let mut env = evm_env(ccx.evm);
         env.block.basefee = U256::ZERO;
+        env.set_feature(EvmFeatures::FEE_CHARGE, false);
         env.set_feature(EvmFeatures::NONCE_CHECK, true);
         // The nested transaction validates with a chain ID `vm.chainId` set in the running one.
         if let Some(chain_id) =
