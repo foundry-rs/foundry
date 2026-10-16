@@ -2339,3 +2339,49 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#
     ]]);
 }
+
+// Isolated calls run as nested transactions, which must be valid on hardforks before London.
+#[forgetest]
+fn test_isolated_calls_before_london(prj: _, cmd: _) {
+    prj.add_test(
+        "IsolatedPreLondon.t.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 initial) {
+        number = initial;
+    }
+
+    function increment() external returns (uint256) {
+        return ++number;
+    }
+}
+
+contract IsolatedPreLondonTest {
+    function test_create_and_call() public {
+        Counter counter = new Counter(5);
+        require(counter.increment() == 6, "call");
+        require(counter.number() == 6, "state");
+    }
+}
+"#,
+    );
+
+    for evm_version in [EvmVersion::Byzantium, EvmVersion::Istanbul, EvmVersion::Berlin] {
+        prj.update_config(|config| {
+            config.evm_version = evm_version;
+            config.isolate = true;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--mc", "IsolatedPreLondonTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/IsolatedPreLondon.t.sol:IsolatedPreLondonTest
+[PASS] test_create_and_call() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}

@@ -3,7 +3,7 @@ use super::{
     EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic,
     ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::{TxType, transaction::Recovered};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, KECCAK256_EMPTY, Log, TxKind, U256, keccak256,
@@ -1135,9 +1135,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .with_value(message.value)
             .with_nonce(nonce)
             .with_chain_id(env.chain_id())
-            .with_gas_limit(gas_limit)
-            .with_max_fee_per_gas(0)
-            .with_max_priority_fee_per_gas(0);
+            .with_gas_limit(gas_limit);
+        // Hardforks before London have no EIP-1559 transactions, so use a legacy one there.
+        if evm.registry().contains(TxType::Eip1559 as u8) {
+            request.set_max_fee_per_gas(0);
+            request.set_max_priority_fee_per_gas(0);
+        } else {
+            request.set_gas_price(0);
+        }
         if let Some(access_list) = access_list {
             request.set_access_list(access_list);
         }
