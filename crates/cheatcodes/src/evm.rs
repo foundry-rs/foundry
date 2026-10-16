@@ -2085,7 +2085,7 @@ fn genesis_account(state: &mut State<'_>, address: &Address) -> Result<GenesisAc
     Ok(GenesisAccount {
         nonce: Some(nonce),
         balance,
-        code: (!code.is_empty()).then(|| code.original_bytes()),
+        code: Some(code.original_bytes()),
         storage: Some(storage),
         private_key: None,
     })
