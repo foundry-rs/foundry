@@ -19,13 +19,13 @@ use foundry_common::{
     tempo::{is_tempo_hardfork_active, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
-use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::NetworkVariant;
 use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
 use serde_json::Value;
 use std::str::FromStr;
 use tempo_alloy::{
     TempoNetwork,
+    chainspec::hardfork::TempoHardfork,
     rpc::TempoTransactionRequest,
     transport::{RelayConnector, SponsorshipMode},
 };

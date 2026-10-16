@@ -117,7 +117,10 @@ where
 {
     fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
         let info = self.db.basic_ref(*address).map_err(fatal)?;
-        Ok(info.map(|info| {
+        // The fork cache reports accounts the remote does not hold as existing empty accounts.
+        // From Spurious Dragon on an empty account does not exist (EIP-161), so load it as absent;
+        // otherwise fresh EIP-7702 authorities would be refunded as existing ones.
+        Ok(info.filter(|info| !info.is_empty()).map(|info| {
             let code = info.code.map(|code| Bytecode::new_raw(code.original_bytes()));
             AccountInfo::new(info.balance, info.nonce, info.code_hash, code)
         }))

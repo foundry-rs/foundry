@@ -370,7 +370,7 @@ async fn monad_run_preserves_endpoint_hardfork(cmd: _) {
 
 #[cfg(feature = "monad")]
 #[casttest]
-async fn monad_run_traces_protocol_system_call(cmd: _) {
+async fn monad_run_rejects_protocol_system_call(cmd: _) {
     let config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
@@ -395,35 +395,22 @@ async fn monad_run_traces_protocol_system_call(cmd: _) {
         .unwrap();
     assert!(receipt.status());
 
+    // Protocol system calls have no evm2 replay path, so replaying one fails explicitly, even
+    // when the node serves it as a canonical system transaction.
     let endpoint = handle.http_endpoint();
     let tx_hash = receipt.transaction_hash;
     let tx_hash_string = tx_hash.to_string();
-    let original =
-        cmd.args(["run", &tx_hash_string, "--rpc-url", &endpoint, "--quick"]).assert_failure();
-    let original = original.get_output();
-    assert!(
-        original.stderr_lossy().contains("invalid Monad protocol system transaction"),
-        "{}",
-        original.stderr_lossy()
-    );
-    assert!(
-        !original.stdout_lossy().contains("Staking::syscallSnapshot()"),
-        "{}",
-        original.stdout_lossy()
-    );
-
     let canonical_endpoint =
         foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
-    let output = cmd
-        .cast_fuse()
-        .args(["run", &tx_hash_string, "--rpc-url", &canonical_endpoint, "--quick"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    for endpoint in [&endpoint, &canonical_endpoint] {
+        cmd.cast_fuse()
+            .args(["run", &tx_hash_string, "--rpc-url", endpoint, "--quick"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: 0x[..] is a Monad protocol system transaction, which cannot be replayed locally; `--debug-trace-transaction` renders the node's own trace instead
 
-    assert!(output.contains("Staking::syscallSnapshot()"), "{output}");
-    assert!(output.contains("Transaction successfully executed."), "{output}");
-    assert!(!output.contains("0x0000000000000000000000000000000000000000::fallback()"), "{output}");
+"#]]);
+    }
 
     let unrelated_system = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
     api.anvil_impersonate_account(unrelated_system).await.unwrap();
