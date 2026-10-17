@@ -2396,3 +2396,69 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 }
+
+// EIP-7702 delegations do not exist before Prague, so attaching one fails with a clear error
+// instead of executing the delegation designator as code; signing still works.
+#[forgetest]
+fn test_delegation_before_prague(prj: _, cmd: _) {
+    prj.add_test(
+        "DelegationBeforePrague.t.sol",
+        r#"
+interface Vm {
+    struct SignedDelegation {
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+        uint64 nonce;
+        address implementation;
+    }
+
+    function signDelegation(address implementation, uint256 privateKey)
+        external
+        returns (SignedDelegation memory signedDelegation);
+    function attachDelegation(SignedDelegation calldata signedDelegation) external;
+    function signAndAttachDelegation(address implementation, uint256 privateKey)
+        external
+        returns (SignedDelegation memory signedDelegation);
+}
+
+contract Implementation {
+    function ping() external pure returns (uint256) {
+        return 42;
+    }
+}
+
+contract DelegationBeforePragueTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 constant PRIVATE_KEY = 0xA11CE;
+
+    function test_sign() public {
+        Implementation implementation = new Implementation();
+        Vm.SignedDelegation memory delegation = vm.signDelegation(address(implementation), PRIVATE_KEY);
+        require(delegation.implementation == address(implementation), "implementation");
+    }
+
+    function test_attach() public {
+        Implementation implementation = new Implementation();
+        vm.attachDelegation(vm.signDelegation(address(implementation), PRIVATE_KEY));
+    }
+
+    function test_sign_and_attach() public {
+        Implementation implementation = new Implementation();
+        vm.signAndAttachDelegation(address(implementation), PRIVATE_KEY);
+    }
+}
+"#,
+    );
+
+    prj.update_config(|config| config.evm_version = EvmVersion::Cancun);
+    cmd.args(["test", "--mc", "DelegationBeforePragueTest"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/DelegationBeforePrague.t.sol:DelegationBeforePragueTest
+[FAIL: vm.attachDelegation: delegations are not supported before the Prague hard fork; see EIP-7702: https://eips.ethereum.org/EIPS/eip-7702] test_attach() ([GAS])
+[PASS] test_sign() ([GAS])
+[FAIL: vm.signAndAttachDelegation: delegations are not supported before the Prague hard fork; see EIP-7702: https://eips.ethereum.org/EIPS/eip-7702] test_sign_and_attach() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
