@@ -1,12 +1,12 @@
 use eyre::{Context, Result};
 use foundry_common::{
-    compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
-    strip_bytecode_placeholders,
+    compact_to_contract, external_compiler::is_external_artifact, fs::read_json_file,
+    is_deploy_helper_path, strip_bytecode_placeholders,
 };
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{
-        Bytecode, ContractBytecodeSome, Libraries, Source,
+        Bytecode, ContractBytecodeSome, Libraries, Source, Sources,
         sourcemap::{SourceElement, SourceMap},
     },
     multi::MultiCompilerLanguage,
@@ -14,6 +14,7 @@ use foundry_compilers::{
 use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
+use serde::Deserialize;
 use solar::{ast, interface::SpannedOption};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -329,10 +330,17 @@ pub struct ArtifactData {
     pub pc_ic_map_runtime: Option<PcIcMap>,
     pub build_id: String,
     pub file_id: u32,
+    /// Whether the contract was compiled through the via-IR pipeline, if the metadata says.
+    pub via_ir: Option<bool>,
 }
 
 impl ArtifactData {
-    fn new(bytecode: ContractBytecodeSome, build_id: String, file_id: u32) -> Result<Self> {
+    fn new(
+        bytecode: ContractBytecodeSome,
+        build_id: String,
+        file_id: u32,
+        via_ir: Option<bool>,
+    ) -> Result<Self> {
         let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
             let source_map = if b.source_map.as_ref().is_none_or(|s| s.is_empty()) {
@@ -359,7 +367,15 @@ impl ArtifactData {
             .map(|b| parse(&b, "runtime"))
             .unwrap_or_else(|| Ok((None, None)))?;
 
-        Ok(Self { source_map, source_map_runtime, pc_ic_map, pc_ic_map_runtime, build_id, file_id })
+        Ok(Self {
+            source_map,
+            source_map_runtime,
+            pc_ic_map,
+            pc_ic_map_runtime,
+            build_id,
+            file_id,
+            via_ir,
+        })
     }
 }
 
@@ -403,6 +419,11 @@ impl ContractSources {
             .map(|(id, artifact)| {
                 let mut new_artifact = None;
                 if let Some(file_id) = artifact.id {
+                    // Solc records `viaIR` in the metadata settings only when it is enabled.
+                    let via_ir = artifact
+                        .metadata
+                        .as_ref()
+                        .map(|metadata| metadata.settings.via_ir.unwrap_or_default());
                     let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
                         linker.link(id, libraries)?
                     } else {
@@ -412,7 +433,7 @@ impl ContractSources {
 
                     new_artifact = Some((
                         id.name.clone(),
-                        ArtifactData::new(bytecode, id.build_id.clone(), file_id)?,
+                        ArtifactData::new(bytecode, id.build_id.clone(), file_id, via_ir)?,
                     ));
                 } else {
                     warn!(id = id.identifier(), "source not found");
@@ -475,6 +496,32 @@ impl ContractSources {
             let _ = sh_warn!("{}", warning);
         }
 
+        Ok(())
+    }
+
+    /// Replaces each source that the compiler saw with different text than the file on disk, such
+    /// as a test rewritten by dynamic test linking, with that text. Source maps point into it.
+    ///
+    /// The text comes from the full build infos (`build_info = true`) in `build_info_dir`. A build
+    /// without one keeps the files on disk.
+    pub fn insert_compiled_sources(&mut self, build_info_dir: &Path) -> Result<()> {
+        for (build_id, sources) in &mut self.sources_by_id {
+            let path = build_info_dir.join(build_id).with_extension("json");
+            if !path.exists() {
+                continue;
+            }
+            let Some(mut input) = read_json_file::<BuildInfoSources>(&path)?.input else {
+                continue;
+            };
+            for source in sources.values_mut() {
+                if let Some(compiled) = input.sources.remove(&source.path)
+                    && compiled.content != source.source
+                {
+                    *source =
+                        Arc::new(SourceData { source: compiled.content, ..(**source).clone() });
+                }
+            }
+        }
         Ok(())
     }
 
@@ -556,6 +603,17 @@ impl ContractSources {
     }
 }
 
+/// The compiler input sources of a build info. Only full build infos have them.
+#[derive(Deserialize)]
+struct BuildInfoSources {
+    input: Option<BuildInfoInput>,
+}
+
+#[derive(Deserialize)]
+struct BuildInfoInput {
+    sources: Sources,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,5 +655,49 @@ mod tests {
         assert_eq!(names(30), ["before", "nested"]);
         assert_eq!(names(50), ["before"]);
         assert_eq!(names(80), ["before", "after"]);
+    }
+
+    #[test]
+    fn compiled_sources_replace_rewritten_files() {
+        let source = |path: &str, text: &str| {
+            Arc::new(SourceData {
+                source: Arc::new(text.to_string()),
+                language: Default::default(),
+                path: PathBuf::from(path),
+                contract_definitions: Vec::new(),
+                debug_scopes: Vec::new(),
+            })
+        };
+        let mut sources = ContractSources::default();
+        sources.sources_by_id.insert(
+            "build".to_string(),
+            HashMap::from([
+                (0, source("src/A.sol", "contract A {}")),
+                (1, source("test/A.t.sol", "contract T { A a = new A(); }")),
+            ]),
+        );
+        // Only `build` has a full build info, and it records a rewritten test file.
+        sources.sources_by_id.insert(
+            "other".to_string(),
+            HashMap::from([(0, source("src/A.sol", "contract A {}"))]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let build_info = serde_json::json!({
+            "id": "build",
+            "input": { "sources": {
+                "src/A.sol": { "content": "contract A {}" },
+                "test/A.t.sol": { "content": "contract T { A a = A(deploy()); }" },
+            }},
+        });
+        std::fs::write(dir.path().join("build.json"), build_info.to_string()).unwrap();
+
+        sources.insert_compiled_sources(dir.path()).unwrap();
+
+        let text =
+            |build: &str, id: u32| sources.sources_by_id[build][&id].source.as_str().to_owned();
+        assert_eq!(text("build", 0), "contract A {}");
+        assert_eq!(text("build", 1), "contract T { A a = A(deploy()); }");
+        assert_eq!(sources.sources_by_id["build"][&1].path, PathBuf::from("test/A.t.sol"));
+        assert_eq!(text("other", 0), "contract A {}");
     }
 }
