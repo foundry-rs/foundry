@@ -40,7 +40,7 @@ pub enum Status<'a> {
     /// The cheatcode is unstable, meaning it may contain bugs and may break its API on any
     /// release.
     ///
-    /// Use of experimental cheatcodes will result in a warning.
+    /// This status currently has no runtime effect.
     Experimental,
     /// The cheatcode has been deprecated, meaning it will be removed in a future release.
     ///
