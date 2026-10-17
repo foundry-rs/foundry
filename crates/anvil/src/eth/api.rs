@@ -340,6 +340,32 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Pauses or resumes automatic block production.
+    ///
+    /// While paused, the block time interval keeps ticking but blocks that come due are skipped,
+    /// so the next block is mined on the first tick after mining resumes. Once this returns with
+    /// `paused` set, no automatic block is mined until mining resumes.
+    ///
+    /// Handler for RPC call: `anvil_setMiningPaused`
+    pub async fn anvil_set_mining_paused(&self, paused: bool) -> Result<()> {
+        node_info!("anvil_setMiningPaused");
+        self.miner.set_paused(paused);
+        if paused {
+            // Wait for a block that is already being mined. Candidates that take the lock after
+            // this are skipped by the mining task.
+            drop(self.backend.lock_mining().await);
+        }
+        Ok(())
+    }
+
+    /// Returns `true` if automatic block production is paused.
+    ///
+    /// Handler for RPC call: `anvil_getMiningPaused`
+    pub fn anvil_get_mining_paused(&self) -> Result<bool> {
+        node_info!("anvil_getMiningPaused");
+        Ok(self.miner.is_paused())
+    }
+
     /// Removes transactions from the pool
     ///
     /// Handler for RPC call: `anvil_dropTransaction`
@@ -2431,6 +2457,10 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_interval_mining(interval).to_rpc_result()
             }
             EthRequest::GetIntervalMining(()) => self.anvil_get_interval_mining().to_rpc_result(),
+            EthRequest::SetMiningPaused(paused) => {
+                self.anvil_set_mining_paused(paused).await.to_rpc_result()
+            }
+            EthRequest::GetMiningPaused(()) => self.anvil_get_mining_paused().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
