@@ -1,5 +1,7 @@
 use super::*;
+use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::{RpcEndpointUrl, RpcEndpoints};
 
 #[forgetest]
 fn invariant_after_invariant(prj: _, cmd: _) {
@@ -1230,9 +1232,19 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 }
 
 #[forgetest_init]
-fn invariant_roll_inactive_fork_preserves_active_block(prj: _, cmd: _) {
-    prj.add_rpc_endpoints();
+async fn invariant_roll_inactive_fork_preserves_active_block(prj: _, cmd: _) {
+    let (api, anvil) =
+        spawn(NodeConfig::test().with_no_mining(true).with_genesis_block_number(Some(19812632u64)))
+            .await;
+    let account = alloy_primitives::Address::with_last_byte(0x42);
+    api.anvil_set_balance(account, U256::ONE).await.unwrap();
+    for value in [7, 11, 13] {
+        api.anvil_set_storage_at(account, U256::ZERO, U256::from(value).into()).await.unwrap();
+        api.mine_one().await.unwrap();
+    }
     prj.update_config(|config| {
+        config.rpc_endpoints =
+            RpcEndpoints::new([("mainnet", RpcEndpointUrl::Url(anvil.http_endpoint()))]);
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.shrink_run_limit = 0;
     });
@@ -1255,13 +1267,16 @@ contract InactiveRollForkHandler is Test {
         if (calls == 1) {
             vm.rollFork(block.number + 1);
         } else {
+            require(block.number == 19812633, "lost active roll");
             vm.rollFork(inactiveFork, block.number + 1);
         }
+        require(block.number == 19812633, "active block changed");
     }
 }
 
 contract InvariantInactiveRollForkTest is Test {
     InactiveRollForkHandler forkHandler;
+    uint256 probe;
 
     function setUp() public {
         vm.createSelectFork("mainnet", 19812632);
@@ -1275,11 +1290,54 @@ contract InvariantInactiveRollForkTest is Test {
     function invariant_inactive_roll_preserves_active_block() public view {
         require(forkHandler.calls() < 2, "inactive fork rolled");
     }
+
+    function test_inactive_roll_then_select() public {
+        uint256 active = vm.activeFork();
+        uint256 inactive = vm.createFork("mainnet", 19812632);
+        vm.rollFork(19812633);
+        assertEq(block.number, 19812633);
+        assertEq(uint256(vm.load(address(0x42), bytes32(0))), 11);
+
+        vm.rollFork(inactive, 19812634);
+        assertEq(vm.activeFork(), active);
+        assertEq(block.number, 19812633);
+        assertEq(uint256(vm.load(address(0x42), bytes32(0))), 11);
+
+        probe = 1;
+        for (uint256 i; i < 2; i++) {
+            (bool ok, bytes memory data) = address(this).call{gas: 500_000}(
+                abi.encodeCall(this.rollInactiveAndFail, (inactive, i == 1))
+            );
+            assertFalse(ok);
+            assertEq(data, i == 1 ? bytes("") : abi.encodeWithSignature("Error(string)", "rolled"));
+            assertEq(probe, 1);
+            assertEq(vm.activeFork(), active);
+            assertEq(block.number, 19812633);
+        }
+
+        vm.selectFork(inactive);
+        assertEq(block.number, 19812634);
+        assertEq(uint256(vm.load(address(0x42), bytes32(0))), 13);
+        vm.selectFork(active);
+        assertEq(block.number, 19812633);
+        assertEq(uint256(vm.load(address(0x42), bytes32(0))), 11);
+    }
+
+    function rollInactiveAndFail(uint256 inactive, bool halt) external {
+        probe = 2;
+        vm.rollFork(inactive, 19812634);
+        probe = 3;
+        if (halt) {
+            assembly { invalid() }
+        }
+        revert("rolled");
+    }
 }
 "#,
     );
 
-    assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test", "-j1", "--match-test", "^invariant_"])).failure().stdout_eq(
+        str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -1307,7 +1365,23 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
+"#]],
+    );
+    for isolate in [false, true] {
+        let cmd = cmd.forge_fuse();
+        cmd.args(["test", "--match-test", r"^test_inactive_roll_then_select\(\)$"]);
+        cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
+        cmd.assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantInactiveRollFork.t.sol:InvariantInactiveRollForkTest
+[PASS] test_inactive_roll_then_select() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
+    }
 }
 
 #[forgetest_init]
