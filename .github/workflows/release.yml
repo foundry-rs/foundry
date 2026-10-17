@@ -351,7 +351,8 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: alpine
             arch: arm64
-          - runner: macos-15-large
+          # Cross-compiled on Apple Silicon, which builds faster than the Intel runner.
+          - runner: macos-15-xlarge
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
@@ -406,12 +407,10 @@ jobs:
               # Apple Silicon and the Touch ID shim require macOS 11 or newer.
               printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n'
             fi
-            if [[ '${{ matrix.target }}' == 'aarch64-apple-darwin' ]]; then
-              # Keep the release independent of Homebrew's libusb installation.
-              printf 'LIBUSB_STATIC=1\n'
-              # The ARM64 runner has less memory than the Intel large runner.
-              printf 'CARGO_BUILD_JOBS=2\n'
-            fi
+            # Keep the release independent of Homebrew's libusb installation.
+            printf 'LIBUSB_STATIC=1\n'
+            # Limit parallel fat-LTO jobs to fit in the ARM64 runner's 14 GB of memory.
+            printf 'CARGO_BUILD_JOBS=2\n'
           } >> "$GITHUB_ENV"
           xcrun --find clang
           xcrun --find ld
@@ -481,6 +480,9 @@ jobs:
             ldd "$bin" || true
             if [[ "$TARGET" == "$host_target" ]]; then
               "$bin" --version
+            elif [[ "$TARGET" == "x86_64-apple-darwin" ]]; then
+              # Run the Intel binary through Rosetta 2 on the Apple Silicon runner.
+              arch -x86_64 "$bin" --version
             else
               echo "Skipping execution of $name: target $TARGET differs from host $host_target"
             fi
