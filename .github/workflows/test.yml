@@ -176,16 +176,11 @@ jobs:
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
-          EXTERNAL_TESTS: ${{ contains(matrix.name, 'external') }}
         shell: bash
         run: |
           # A compilation failure must not publish a report restored from an earlier run's cache.
           rm -f target/nextest/ci/junit.xml
           args=(-E "$NEXTEST_FILTER")
-          # Filter expressions select tests after compilation. Limit Cargo's build scope too.
-          if [[ "$EXTERNAL_TESTS" == "true" ]]; then
-            args+=(-p forge --test cli)
-          fi
           if [[ -n "$NEXTEST_PARTITION" ]]; then
             args+=(--partition "$NEXTEST_PARTITION")
           fi
