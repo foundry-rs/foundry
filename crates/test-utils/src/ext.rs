@@ -1,4 +1,4 @@
-use crate::prj::{TestCommand, TestProject, clone_remote, setup_forge};
+use crate::prj::{TestCommand, TestProject, setup_forge};
 use foundry_compilers::PathStyle;
 use std::{
     path::{Path, PathBuf},
@@ -121,7 +121,7 @@ impl ExtTester {
         // Clone the external repository.
         let repo_url = format!("https://github.com/{}/{}.git", self.org, self.name);
         let root = prj.root().to_str().unwrap();
-        clone_remote(&repo_url, root, recursive);
+        clone_fixture(&repo_url, root);
 
         // Checkout the revision.
         if self.rev.is_empty() {
@@ -230,6 +230,16 @@ impl ExtTester {
     }
 }
 
+/// Clones fixture history without downloading unused file contents or default-branch submodules.
+fn clone_fixture(repo_url: &str, root: &str) {
+    let mut git = Command::new("git");
+    git.args(["clone", "--filter=blob:none", "--no-checkout", "--no-recurse-submodules"])
+        .args([repo_url, root]);
+    test_debug!("$ {git:?}");
+    let status = git.status().unwrap();
+    assert!(status.success(), "git clone failed: {status}");
+}
+
 /// Checks out a fixture revision and restores its pinned submodule revisions.
 fn checkout_revision(root: &str, rev: &str, recursive: bool) {
     checkout_revision_inner(root, rev, recursive, None);
@@ -246,16 +256,25 @@ fn checkout_revision_inner(root: &str, rev: &str, recursive: bool, allowed_proto
     assert!(status.success(), "git checkout failed: {status}");
 
     if recursive {
-        // The clone initialized submodules from the default branch, not the pinned revision.
+        // Initialize submodules only after selecting the fixture revision. Sync each parent's
+        // URLs before updating its children, including when revisiting an existing checkout.
         for args in [
             &["-c", "submodule.recurse=false", "submodule", "sync"][..],
-            &["-c", "submodule.recurse=false", "submodule", "update", "--init", "--checkout"][..],
+            &[
+                "-c",
+                "submodule.recurse=false",
+                "submodule",
+                "update",
+                "--init",
+                "--checkout",
+                "--depth=1",
+            ][..],
             &[
                 "submodule",
                 "foreach",
                 "--recursive",
                 "git -c submodule.recurse=false submodule sync && git -c submodule.recurse=false \
-                 submodule update --init --checkout",
+                 submodule update --init --checkout --depth=1",
             ][..],
         ] {
             let mut git = Command::new("git");
@@ -349,7 +368,6 @@ mod tests {
         let new_nested = temp.path().join("new-nested");
         let dependency = temp.path().join("dependency");
         let fixture = temp.path().join("fixture");
-        let checkout = temp.path().join("checkout");
 
         for (repository, file) in [(&old_nested, "old.sol"), (&new_nested, "new.sol")] {
             fs::create_dir(repository).unwrap();
@@ -416,31 +434,95 @@ mod tests {
         git(&fixture, &["add", "lib/dependency"]);
         git(&fixture, &["commit", "-m", "update dependency"]);
 
+        for recursive in [false, true] {
+            let checkout = temp.path().join(format!("checkout-{recursive}"));
+            if recursive {
+                git(
+                    temp.path(),
+                    &[
+                        "-c",
+                        "protocol.file.allow=always",
+                        "clone",
+                        "--recursive",
+                        fixture.to_str().unwrap(),
+                        checkout.to_str().unwrap(),
+                    ],
+                );
+            } else {
+                clone_fixture(fixture.to_str().unwrap(), checkout.to_str().unwrap());
+            }
+            git(&checkout, &["config", "submodule.recurse", "false"]);
+
+            checkout_revision_inner(
+                checkout.to_str().unwrap(),
+                &pinned_fixture,
+                true,
+                Some("file"),
+            );
+
+            let checked_out_dependency = checkout.join("lib/dependency");
+            let checked_out_nested = checked_out_dependency.join("lib/nested");
+            assert_eq!(git(&checked_out_dependency, &["rev-parse", "HEAD"]), pinned_dependency);
+            assert_eq!(git(&checked_out_nested, &["rev-parse", "HEAD"]), pinned_nested);
+            assert_eq!(
+                git(&checked_out_nested, &["remote", "get-url", "origin"]),
+                old_nested.to_str().unwrap()
+            );
+            assert!(checked_out_nested.join("old.sol").exists());
+            assert!(!checked_out_nested.join("new.sol").exists());
+            assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+        }
+    }
+
+    #[test]
+    fn clone_fixture_skips_default_branch_submodules() {
+        let temp = tempfile::tempdir().unwrap();
+        let dependency = temp.path().join("dependency");
+        let fixture = temp.path().join("fixture");
+        let checkout = temp.path().join("checkout");
+        fs::create_dir(&dependency).unwrap();
+        fs::create_dir(&fixture).unwrap();
+        git(&dependency, &["init"]);
+        fs::write(dependency.join("pinned.sol"), "pinned dependency").unwrap();
+        git(&dependency, &["add", "."]);
+        git(&dependency, &["commit", "-m", "pinned dependency"]);
+        let pinned_dependency = git(&dependency, &["rev-parse", "HEAD"]);
+
+        git(&fixture, &["init"]);
         git(
-            temp.path(),
+            &fixture,
             &[
                 "-c",
                 "protocol.file.allow=always",
-                "clone",
-                "--recursive",
-                fixture.to_str().unwrap(),
-                checkout.to_str().unwrap(),
+                "submodule",
+                "add",
+                dependency.to_str().unwrap(),
+                "lib/dependency",
             ],
         );
-        git(&checkout, &["config", "submodule.recurse", "false"]);
+        git(&fixture, &["commit", "-am", "pin dependency"]);
+        let pinned_fixture = git(&fixture, &["rev-parse", "HEAD"]);
 
+        // The default branch points at an unavailable dependency, which must never be cloned.
+        git(
+            &fixture,
+            &[
+                "config",
+                "--file",
+                ".gitmodules",
+                "submodule.lib/dependency.url",
+                temp.path().join("missing").to_str().unwrap(),
+            ],
+        );
+        git(&fixture, &["commit", "-am", "change default branch dependency"]);
+
+        clone_fixture(fixture.to_str().unwrap(), checkout.to_str().unwrap());
+        assert!(!checkout.join("lib").exists());
         checkout_revision_inner(checkout.to_str().unwrap(), &pinned_fixture, true, Some("file"));
 
-        let checked_out_dependency = checkout.join("lib/dependency");
-        let checked_out_nested = checked_out_dependency.join("lib/nested");
-        assert_eq!(git(&checked_out_dependency, &["rev-parse", "HEAD"]), pinned_dependency);
-        assert_eq!(git(&checked_out_nested, &["rev-parse", "HEAD"]), pinned_nested);
-        assert_eq!(
-            git(&checked_out_nested, &["remote", "get-url", "origin"]),
-            old_nested.to_str().unwrap()
-        );
-        assert!(checked_out_nested.join("old.sol").exists());
-        assert!(!checked_out_nested.join("new.sol").exists());
+        let submodule = checkout.join("lib/dependency");
+        assert_eq!(git(&submodule, &["rev-parse", "HEAD"]), pinned_dependency);
+        assert_eq!(fs::read_to_string(submodule.join("pinned.sol")).unwrap(), "pinned dependency");
         assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
     }
 }

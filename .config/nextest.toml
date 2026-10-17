@@ -4,6 +4,8 @@
 deploy-verify = { max-threads = 1 }
 # The Tempo canaries fork public endpoints that rate limit concurrent replays.
 tempo-canary = { max-threads = 1 }
+# Generated binding crates share one Cargo target directory and serialize on its build lock.
+bindings = { max-threads = 1 }
 
 [profile.default]
 retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
@@ -38,6 +40,21 @@ test-group = "tempo-canary"
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0
+
+# Inherit the default filters, retries, timeouts, and groups, and retain CI timings.
+[profile.ci.junit]
+path = "junit.xml"
+
+# Start the long tail before the short tests so it does not keep the runner idle at the end.
+[[profile.ci.overrides]]
+filter = "package(=forge) & binary(=cli) & (test(=test_cmd::testdata) | test(=test_cmd::symbolic_parity::halmos::minivat_linear_smoke_parity) | test(=test_cmd::symbolic_parity::openzeppelin::erc721_unique_ownership_passes) | test(=test_cmd::symbolic_invariant::symbolic_transient_storage_clears_between_sequence_steps))"
+priority = 100
+
+# Let nextest queue these instead of occupying several test slots waiting for the same Cargo lock.
+[[profile.ci.overrides]]
+filter = "package(=forge) & binary(=cli) & (test(=cmd::can_bind_e2e) | test(/^bind::bind_(generates_enum_variants|event_module_name_shadowing|event_module_prefix_does_not_shadow_aliases|regression_fixtures_compile|single_file_crate_and_module_match|dollar_sign_in_contract_name)$/))"
+test-group = "bindings"
+priority = 50
 
 # Profile for running flaky tests (used by nightly CI and for local debugging)
 # Run with: cargo nextest run --profile flaky
