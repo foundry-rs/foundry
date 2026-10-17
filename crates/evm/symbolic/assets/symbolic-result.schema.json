@@ -61,6 +61,10 @@
     },
     "minimization": {
       "$ref": "#/$defs/minimization"
+    },
+    "gas": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/gas_snapshot" }
     }
   },
   "allOf": [
@@ -562,6 +566,19 @@
           "type": "integer",
           "minimum": 0
         }
+      }
+    },
+    "gas_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "name", "max", "calldata", "replayed"],
+      "properties": {
+        "group": { "type": ["string", "null"] },
+        "name": { "type": "string" },
+        "max": { "type": "integer", "minimum": 0 },
+        "calldata": { "type": "string", "pattern": "^0x([0-9a-fA-F]{2})*$" },
+        "sender": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+        "replayed": { "type": ["integer", "null"], "minimum": 0 }
       }
     }
   }

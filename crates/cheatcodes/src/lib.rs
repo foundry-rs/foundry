@@ -49,6 +49,7 @@ mod env;
 pub use env::{current_execution_context, set_execution_context};
 
 mod evm;
+pub use evm::GAS_SNAPSHOT_OVERHEAD;
 
 mod expected_emit;
 

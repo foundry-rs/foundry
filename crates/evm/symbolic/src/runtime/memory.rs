@@ -28,6 +28,16 @@ impl SymStack {
             .ok_or(SymbolicError::StackUnderflow)
     }
 
+    /// Stack items, bottom first.
+    pub(crate) fn items(&self) -> &[SymExpr] {
+        &self.0
+    }
+
+    /// Mutable stack items, bottom first.
+    pub(crate) fn items_mut(&mut self) -> &mut [SymExpr] {
+        &mut self.0
+    }
+
     pub(crate) fn swap(&mut self, index_from_top: usize) -> Result<(), SymbolicError> {
         let len = self.0.len();
         let other = len.checked_sub(index_from_top + 1).ok_or(SymbolicError::StackUnderflow)?;
@@ -569,6 +579,14 @@ impl SymMemory {
         result
     }
 
+    /// Memory size in bytes, if it is concrete.
+    pub(crate) fn concrete_size(&self) -> Option<usize> {
+        match &self.logical_size {
+            Some(size) => size.as_const().and_then(|size| usize::try_from(size).ok()),
+            None => Some(0),
+        }
+    }
+
     pub(crate) fn size_word(&self, cx: &mut SymCx) -> SymExpr {
         self.logical_size.clone().unwrap_or_else(|| SymExpr::zero(cx))
     }
@@ -926,6 +944,20 @@ impl SymCode {
         let analyzed = Bytecode::new_legacy(Bytes::from(analysis));
         let jump_table = analyzed.legacy_jump_table().cloned().unwrap_or_default();
         Self { bytes, jump_table }
+    }
+
+    /// Returns this code with the 32-byte word at each of `offsets` replaced by a fresh symbolic
+    /// word, for immutable values that are unknown.
+    pub(crate) fn with_symbolic_words(&self, cx: &mut SymCx, offsets: &[usize]) -> Self {
+        let mut bytes = (0..self.len()).map(|idx| self.bytes.byte(cx, idx)).collect::<Vec<_>>();
+        for &offset in offsets {
+            let word = SymExpr::var(cx, &format!("immutable_{offset}"));
+            let word = SymBytes::word(cx, word);
+            for (idx, byte) in bytes.iter_mut().skip(offset).take(32).enumerate() {
+                *byte = word.byte(cx, idx);
+            }
+        }
+        Self::from_byte_exprs(cx, bytes)
     }
 
     pub(crate) fn concrete(cx: &mut SymCx, bytes: Vec<u8>) -> Self {

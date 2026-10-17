@@ -26,29 +26,55 @@ pub(crate) fn execute_precompile(
     input: &[u8],
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    let output = match precompile_number_for_spec(address, spec_id) {
-        Some(1) => secp256k1::ec_recover_run(input, u64::MAX),
-        Some(2) => hash::sha256_run(input, u64::MAX),
-        Some(3) => hash::ripemd160_run(input, u64::MAX),
-        Some(4) => identity::identity_run(input, u64::MAX),
-        Some(5) => modexp::berlin_run(input, u64::MAX),
-        Some(6) => bn254::run_add(input, bn254::add::ISTANBUL_ADD_GAS_COST, u64::MAX),
-        Some(7) => bn254::run_mul(input, bn254::mul::ISTANBUL_MUL_GAS_COST, u64::MAX),
-        Some(8) => bn254::run_pair(
+    let output = run_precompile(address, input, spec_id)
+        .ok_or(SymbolicError::Unsupported("unsupported precompile"))?;
+    match output {
+        Ok(output) => Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes.to_vec()))),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Returns the gas of calling the precompile at `address` with `input`, if it is known.
+///
+/// Symbolic input bytes are `None`. A precompile whose cost depends only on the input length
+/// and that never fails is priced for any input. The others are priced only for a concrete input
+/// they accept, since a failure consumes all forwarded gas. `MODEXP` is not priced: its cost
+/// changes by fork beyond the Berlin rules the executor runs.
+pub(crate) fn precompile_gas(
+    address: Address,
+    input: &[Option<u8>],
+    spec_id: SpecId,
+) -> Option<u64> {
+    let number = precompile_number_for_spec(address, spec_id)?;
+    let input = match input.iter().copied().collect::<Option<Vec<_>>>() {
+        _ if number == 5 => return None,
+        Some(input) => input,
+        None if number <= 4 => vec![0; input.len()],
+        None => return None,
+    };
+    run_precompile(address, &input, spec_id)?.ok().map(|output| output.gas_used)
+}
+
+/// Runs the precompile at `address` with revm, if the executor models it.
+fn run_precompile(address: Address, input: &[u8], spec_id: SpecId) -> Option<EthPrecompileResult> {
+    Some(match precompile_number_for_spec(address, spec_id)? {
+        1 => secp256k1::ec_recover_run(input, u64::MAX),
+        2 => hash::sha256_run(input, u64::MAX),
+        3 => hash::ripemd160_run(input, u64::MAX),
+        4 => identity::identity_run(input, u64::MAX),
+        5 => modexp::berlin_run(input, u64::MAX),
+        6 => bn254::run_add(input, bn254::add::ISTANBUL_ADD_GAS_COST, u64::MAX),
+        7 => bn254::run_mul(input, bn254::mul::ISTANBUL_MUL_GAS_COST, u64::MAX),
+        8 => bn254::run_pair(
             input,
             bn254::pair::ISTANBUL_PAIR_PER_POINT,
             bn254::pair::ISTANBUL_PAIR_BASE,
             u64::MAX,
         ),
-        Some(9) => blake2::run(input, u64::MAX),
-        Some(10) => kzg_point_evaluation::run(input, u64::MAX),
-        _ => return Err(SymbolicError::Unsupported("unsupported precompile")),
-    };
-
-    match output {
-        Ok(output) => Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes.to_vec()))),
-        Err(_) => Ok(None),
-    }
+        9 => blake2::run(input, u64::MAX),
+        10 => kzg_point_evaluation::run(input, u64::MAX),
+        _ => return None,
+    })
 }
 
 pub(crate) fn execute_symbolic_precompile(

@@ -41,6 +41,7 @@ mod symbolic_conformance;
 mod symbolic_creates;
 mod symbolic_engine_capabilities;
 mod symbolic_false_pass_prevention;
+mod symbolic_gas;
 mod symbolic_helpers;
 mod symbolic_invariant;
 mod symbolic_limits;

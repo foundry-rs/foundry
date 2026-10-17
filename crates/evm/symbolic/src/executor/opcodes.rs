@@ -462,6 +462,11 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::ExceptionalHalt);
         }
 
+        self.settle_isolated_call(executor, state, state.call_depth, state.pc - 1);
+        if state.gas.begin_op(state.call_depth, state.pc - 1) {
+            self.charge_gas(executor, state, op);
+        }
+
         match op {
             opcode::PUSH0 => {
                 state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -635,7 +640,11 @@ impl SymbolicExecutor {
             }
             opcode::BALANCE => {
                 let target = state.stack.pop()?;
-                let balance = state.balance_word(&mut self.cx, executor, target)?;
+                let balance = if self.is_unknown_account(executor, state, &target) {
+                    self.unknown_account_word("unknown_balance", &target)
+                } else {
+                    state.balance_word(&mut self.cx, executor, target)?
+                };
                 state.stack.push(balance)?;
             }
             opcode::SELFBALANCE => {
@@ -644,15 +653,26 @@ impl SymbolicExecutor {
             }
             opcode::EXTCODESIZE => {
                 let target = state.stack.pop()?;
-                let size = state.extcode_size_word(&mut self.cx, executor, target)?;
+                let size = if self.is_unknown_account(executor, state, &target) {
+                    self.unknown_account_word("unknown_code_size", &target)
+                } else {
+                    state.extcode_size_word(&mut self.cx, executor, target)?
+                };
                 state.stack.push(size)?;
             }
             opcode::EXTCODEHASH => {
                 let target = state.stack.pop()?;
-                let hash = state.extcode_hash_word(&mut self.cx, executor, target)?;
+                let hash = if self.is_unknown_account(executor, state, &target) {
+                    self.unknown_account_word("unknown_code_hash", &target)
+                } else {
+                    state.extcode_hash_word(&mut self.cx, executor, target)?
+                };
                 state.stack.push(hash)?;
             }
             opcode::EXTCODECOPY => {
+                if self.is_unknown_account(executor, state, state.stack.peek(0)?) {
+                    return Err(SymbolicError::Unsupported("EXTCODECOPY of an unknown account"));
+                }
                 let dest = state.stack.peek(1)?.clone();
                 let size = state.stack.peek(3)?.clone();
                 if let Some(outcome) =
@@ -1157,7 +1177,14 @@ impl SymbolicExecutor {
                 let gas = state.fresh_gasleft(&mut self.cx);
                 state.stack.push(gas)?;
             }
-            opcode::JUMPDEST => {}
+            opcode::JUMPDEST => {
+                if self.loop_summaries && state.call_depth == 0 {
+                    let pc = state.pc - 1;
+                    if let Some(activation) = state.activations.last_mut() {
+                        activation.visit(pc);
+                    }
+                }
+            }
             opcode::MCOPY => {
                 let dest = state.stack.peek(0)?.clone();
                 let src = state.stack.peek(1)?.clone();

@@ -548,6 +548,9 @@ pub struct SymbolicResult {
     /// Deterministic concrete minimization details, when a replayed counterexample was minimized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimization: Option<SymbolicCounterexampleMinimization>,
+    /// Largest value of each gas snapshot the test measured.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gas: Vec<SymbolicGasSnapshot>,
 }
 
 impl SymbolicResult {
@@ -623,12 +626,19 @@ impl SymbolicResult {
             corpus_seeds: None,
             artifact: None,
             minimization: None,
+            gas: Vec::new(),
         }
     }
 
     /// Attaches fuzz corpus import metadata to this symbolic result.
     pub fn with_corpus_seeds(mut self, corpus_seeds: SymbolicCorpusSeedMetadata) -> Self {
         self.corpus_seeds = Some(corpus_seeds);
+        self
+    }
+
+    /// Attaches the largest value of each gas snapshot to this symbolic result.
+    pub fn with_gas(mut self, gas: Vec<SymbolicGasSnapshot>) -> Self {
+        self.gas = gas;
         self
     }
 
@@ -643,6 +653,24 @@ impl SymbolicResult {
         self.minimization = Some(minimization);
         self
     }
+}
+
+/// Largest value of one gas snapshot over every successful symbolic path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicGasSnapshot {
+    /// Snapshot group passed to `vm.startSnapshotGas`, if any.
+    pub group: Option<String>,
+    /// Snapshot name passed to `vm.startSnapshotGas`.
+    pub name: String,
+    /// Upper bound on the snapshot for every input.
+    pub max: u64,
+    /// ABI-encoded calldata of an input whose path reaches `max`.
+    pub calldata: Bytes,
+    /// Sender of that input, when the snapshot is a whole transaction with a symbolic sender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<Address>,
+    /// Snapshot value when the input is replayed concretely, if the replay recorded one.
+    pub replayed: Option<u64>,
 }
 
 /// Fuzz corpus import metadata for a symbolic run.

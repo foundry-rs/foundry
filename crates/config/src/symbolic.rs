@@ -63,7 +63,8 @@ pub struct SymbolicConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub solver_portfolio: Vec<String>,
     /// Optional SMT solver timeout in seconds. Also bounds the stateless deferred hard-arithmetic
-    /// solver phase and wall-clock symbolic invariant exploration before falling back to fuzzing.
+    /// solver phase, wall-clock symbolic invariant exploration before falling back to fuzzing,
+    /// and the wall-clock time of each `@custom:max-gas` check.
     pub timeout: Option<u32>,
     /// Halmos-compatible loop bound accepted by config and annotations.
     #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]

@@ -1790,6 +1790,9 @@ fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
     Ok(value.abi_encode())
 }
 
+/// Gas the snapshot cheatcode calls spend themselves, subtracted from every gas snapshot.
+pub const GAS_SNAPSHOT_OVERHEAD: u64 = 171;
+
 fn inner_start_gas_snapshot<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
@@ -1834,9 +1837,9 @@ fn inner_stop_gas_snapshot<FEN: FoundryEvmNetwork>(
         .iter_mut()
         .find(|record| record.group == group && record.name == name)
     {
-        // Calculate the gas used since the snapshot was started.
-        // We subtract 171 from the gas used to account for gas used by the snapshot itself.
-        let value = record.gas_used.saturating_sub(171);
+        // Calculate the gas used since the snapshot was started, without the gas used by the
+        // snapshot itself.
+        let value = record.gas_used.saturating_sub(GAS_SNAPSHOT_OVERHEAD);
 
         ccx.state
             .gas_snapshots
