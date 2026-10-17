@@ -16,7 +16,62 @@ pub fn find_anchors(
     analysis: &SourceAnalysis,
 ) -> ItemAnchors {
     let mut anchors = ItemAnchors::default();
-    let index = SourceMapIndex::new(bytecode, source_map);
+    let mut entries = source_map
+        .iter()
+        .enumerate()
+        .map(|(instruction, element)| (element.index_i32(), element.offset(), instruction))
+        .collect::<Vec<_>>();
+    entries.sort_unstable();
+    let mut branches = Vec::new();
+    for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+        if (opcode::PUSH1..=opcode::PUSH32).contains(&inst.opcode.get()) {
+            // Match the linear lookup's stopping point for short source maps.
+            if source_map.get(ic).is_none() {
+                break;
+            }
+            let next_pc = pc + inst.immediate.len() + 1;
+            if bytecode.get(next_pc).copied() == Some(opcode::JUMPI) {
+                branches.push((ic, next_pc, inst.immediate));
+            }
+        }
+    }
+    let find_simple = |item_id, loc: &SourceLocation| {
+        let source = loc.source_id as i32;
+        let start =
+            entries.partition_point(|&(id, offset, _)| (id, offset) < (source, loc.bytes.start));
+        let end = entries.partition_point(|&(id, offset, _)| {
+            (id, offset) <= (source, loc.bytes.start + loc.len())
+        });
+        // Keep the original range predicate and instruction order, including endpoint matches.
+        let instruction = entries[start..end]
+            .iter()
+            .map(|&(_, _, instruction)| instruction)
+            .filter(|&instruction| is_in_source_range(&source_map[instruction], loc))
+            .min();
+        anchor_at(instruction, ic_pc_map, item_id, loc)
+    };
+    let find_branch = |item_id, loc: &SourceLocation, exact| {
+        let mut anchors = None;
+        for &(ic, next_pc, immediate) in &branches {
+            if if exact {
+                source_map.get(ic + 1).is_some_and(|jump| {
+                    jump.index() == Some(loc.source_id as u32)
+                        && jump.offset() == loc.bytes.start
+                        && jump.length() == loc.len()
+                })
+            } else {
+                is_in_source_range(&source_map[ic], loc)
+            } {
+                let found = branch_anchors(item_id, next_pc, immediate)?;
+                if exact {
+                    return Ok(found);
+                }
+                anchors = Some(found);
+            }
+        }
+        anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
+    };
+
     let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
         0 => (fallthrough, None),
         1 => (taken, Some(fallthrough.instruction - 1)),
@@ -37,22 +92,17 @@ pub fn find_anchors(
                 CoverageItemKind::Branch { path_id: 1, is_first_opcode: true, .. }
                     if item.anchor_loc.is_some() =>
                 {
-                    index
-                        .find_anchor(ic_pc_map, item_id, anchor_loc)
-                        .map(|anchor| (anchor, None))
-                        .or_else(|_| {
-                            index
-                                .find_branch(item_id, &item.loc, false)
-                                .map(|anchors| select_branch(anchors, 1))
-                        })
+                    find_simple(item_id, anchor_loc).map(|anchor| (anchor, None)).or_else(|_| {
+                        find_branch(item_id, &item.loc, false)
+                            .map(|anchors| select_branch(anchors, 1))
+                    })
                 }
                 CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
                     let exact = analysis.is_ternary_branch(item.loc.source_id as u32, branch_id);
-                    index
-                        .find_branch(item_id, anchor_loc, exact)
+                    find_branch(item_id, anchor_loc, exact)
                         .map(|anchors| select_branch(anchors, path_id))
                 }
-                _ => index.find_anchor(ic_pc_map, item_id, anchor_loc).map(|anchor| (anchor, None)),
+                _ => find_simple(item_id, anchor_loc).map(|anchor| (anchor, None)),
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
@@ -202,88 +252,6 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     let end_of_ranges =
         (location.bytes.start + location.len()).min(element.offset() + element.length());
     start_of_ranges <= end_of_ranges
-}
-
-/// Source positions sorted for range lookups and branch candidates in bytecode order.
-struct SourceMapIndex<'a> {
-    source_map: &'a SourceMap,
-    entries: Vec<(i32, u32, usize)>,
-    // PUSH instruction index, JUMPI program counter, and PUSH immediate bytes.
-    branches: Vec<(usize, usize, &'a [u8])>,
-}
-
-impl<'a> SourceMapIndex<'a> {
-    fn new(bytecode: &'a [u8], source_map: &'a SourceMap) -> Self {
-        let mut entries = source_map
-            .iter()
-            .enumerate()
-            .map(|(instruction, element)| (element.index_i32(), element.offset(), instruction))
-            .collect::<Vec<_>>();
-        entries.sort_unstable();
-        let mut branches = Vec::new();
-        for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
-            if (opcode::PUSH1..=opcode::PUSH32).contains(&inst.opcode.get()) {
-                // Match the linear lookup's stopping point for short source maps.
-                if source_map.get(ic).is_none() {
-                    break;
-                }
-                let next_pc = pc + inst.immediate.len() + 1;
-                if bytecode.get(next_pc).copied() == Some(opcode::JUMPI) {
-                    branches.push((ic, next_pc, inst.immediate));
-                }
-            }
-        }
-        Self { source_map, entries, branches }
-    }
-
-    fn find_anchor(
-        &self,
-        ic_pc_map: &IcPcMap,
-        item_id: u32,
-        loc: &SourceLocation,
-    ) -> eyre::Result<ItemAnchor> {
-        let source = loc.source_id as i32;
-        let start = self
-            .entries
-            .partition_point(|&(id, offset, _)| (id, offset) < (source, loc.bytes.start));
-        let end = self.entries.partition_point(|&(id, offset, _)| {
-            (id, offset) <= (source, loc.bytes.start + loc.len())
-        });
-        // Keep the original range predicate and instruction order, including endpoint matches.
-        let instruction = self.entries[start..end]
-            .iter()
-            .map(|&(_, _, instruction)| instruction)
-            .filter(|&instruction| is_in_source_range(&self.source_map[instruction], loc))
-            .min();
-        anchor_at(instruction, ic_pc_map, item_id, loc)
-    }
-
-    fn find_branch(
-        &self,
-        item_id: u32,
-        loc: &SourceLocation,
-        exact: bool,
-    ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
-        let mut anchors = None;
-        for &(ic, next_pc, immediate) in &self.branches {
-            if if exact {
-                self.source_map.get(ic + 1).is_some_and(|jump| {
-                    jump.index() == Some(loc.source_id as u32)
-                        && jump.offset() == loc.bytes.start
-                        && jump.length() == loc.len()
-                })
-            } else {
-                is_in_source_range(&self.source_map[ic], loc)
-            } {
-                let found = branch_anchors(item_id, next_pc, immediate)?;
-                if exact {
-                    return Ok(found);
-                }
-                anchors = Some(found);
-            }
-        }
-        anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
-    }
 }
 
 fn anchor_at(
