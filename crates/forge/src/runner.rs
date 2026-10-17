@@ -832,6 +832,22 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(mut self, filter: &dyn TestFilter) -> SuiteResult {
+        let usage = self.executor.inspector_mut().cheatcodes.as_mut().map(|cheats| {
+            cheats.internal_cheatcodes = Default::default();
+            cheats.internal_cheatcodes.clone()
+        });
+        let mut result = self.run_tests_inner(filter);
+        if let Some(usage) = usage {
+            let mut signatures = usage.lock().iter().copied().collect::<Vec<_>>();
+            signatures.sort_unstable();
+            result.warnings.extend(signatures.into_iter().map(|signature| {
+                format!("cheatcode {signature} is internal and may change or be removed")
+            }));
+        }
+        result
+    }
+
+    fn run_tests_inner(mut self, filter: &dyn TestFilter) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
         let generated_symbolic_regression =

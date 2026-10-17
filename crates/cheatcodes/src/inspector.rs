@@ -51,6 +51,7 @@ use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
 use itertools::Itertools;
+use parking_lot::Mutex;
 use rand::Rng;
 use revm::{
     Inspector, JournalEntry,
@@ -736,6 +737,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
+    /// Internal calls observed across clones of a suite's inspector.
+    pub internal_cheatcodes: Arc<Mutex<HashSet<&'static str>>>,
     /// Main script contract, when script execution protection is enabled.
     pub script_address: Option<Address>,
     /// Signatures identifier for decoding events and functions
@@ -844,6 +847,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_storage_hook: Default::default(),
             active_storage_hook: Default::default(),
             deprecated: Default::default(),
+            internal_cheatcodes: Default::default(),
             script_address: Default::default(),
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
@@ -3710,6 +3714,9 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     if let spec::Status::Deprecated(replacement) = cheat.status {
         ccx.state.deprecated.insert(cheatcode_signature(cheat), replacement);
     }
+    if matches!(cheat.status, spec::Status::Internal) {
+        ccx.state.internal_cheatcodes.lock().insert(cheatcode_signature(cheat));
+    }
 
     // Monomorphized dispatch: calls apply_full directly, no trait objects.
     macro_rules! dispatch {
@@ -3719,7 +3726,9 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
             }
         };
     }
-    let result = if ccx.state.core.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
+    let result = if matches!(cheat.status, spec::Status::Removed) {
+        Err(fmt_err!("cheatcode has been removed"))
+    } else if ccx.state.core.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
         Err(fmt_err!("disabled during restricted execution"))
     } else {
         vm_calls!(dispatch)
