@@ -10,26 +10,10 @@ use crate::eth::backend::db::{
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
-use evm2::evm::{BlockStateAccumulator, DynDatabase};
-use foundry_evm_core::evm::ForkDb;
+use evm2::evm::BlockStateAccumulator;
 use foundry_fork_db::cache::MemDb as RemoteState;
 use parking_lot::Mutex;
 use std::sync::Arc;
-
-/// Converts an account of the fork cache into an Anvil account.
-///
-/// The fork cache stores REVM-typed accounts; this reads them field by field at the boundary.
-macro_rules! remote_account {
-    ($info:expr) => {{
-        let info = $info;
-        AccountInfo::new(
-            info.balance,
-            info.nonce,
-            info.code_hash,
-            info.code.as_ref().map(|code| Bytecode::new_raw(code.original_bytes())),
-        )
-    }};
-}
 
 /// Reads remote state through the RPC-backed fork cache.
 #[derive(Clone, Debug)]
@@ -42,52 +26,23 @@ impl<N: Network> RemoteDb<N> {
     pub const fn new(backend: SharedBackend<N>) -> Self {
         Self { backend }
     }
-
-    fn fork_db(&self) -> ForkDb<SharedBackend<N>> {
-        ForkDb::new(self.backend.clone(), 0)
-    }
-}
-
-/// Recovers the fork cache error carried by an evm2 database error.
-fn remote_err(err: evm2::DatabaseError) -> DatabaseError {
-    let Some(err) = err.downcast_ref::<DatabaseError>() else {
-        return DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{err}")));
-    };
-    match err {
-        DatabaseError::MissingCode(hash) => DatabaseError::MissingCode(*hash),
-        DatabaseError::Recv(err) => DatabaseError::Recv(*err),
-        DatabaseError::Send(err) => DatabaseError::Send(err.clone()),
-        DatabaseError::GetAccount(address, err) => DatabaseError::GetAccount(*address, err.clone()),
-        DatabaseError::GetStorage(address, index, err) => {
-            DatabaseError::GetStorage(*address, *index, err.clone())
-        }
-        DatabaseError::GetBlockHash(number, err) => {
-            DatabaseError::GetBlockHash(*number, err.clone())
-        }
-        DatabaseError::GetFullBlock(block, err) => DatabaseError::GetFullBlock(*block, err.clone()),
-        DatabaseError::BlockNotFound(block) => DatabaseError::BlockNotFound(*block),
-        DatabaseError::GetTransaction(hash, err) => {
-            DatabaseError::GetTransaction(*hash, err.clone())
-        }
-        DatabaseError::AnyRequest(err) => DatabaseError::AnyRequest(err.clone()),
-    }
 }
 
 impl<N: Network> DatabaseRef for RemoteDb<N> {
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        self.fork_db().get_account(&address).map_err(remote_err)
+        self.backend.account(address).map(|info| info.filter(|info| !info.is_empty()))
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        self.fork_db().get_code_by_hash(&code_hash).map_err(remote_err)
+        Err(DatabaseError::MissingCode(code_hash))
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        self.fork_db().get_storage(&address, &index).map_err(remote_err)
+        self.backend.storage_at(address, index)
     }
 
     fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
-        self.fork_db().get_block_hash(&U256::from(number)).map_err(remote_err)
+        self.backend.block_hash(number)
     }
 }
 
@@ -108,12 +63,7 @@ impl<N: Network> MaybeFullDatabase for RemoteDb<N> {
 /// Reads the accounts, storage and block hashes held by the fork cache.
 fn remote_state_snapshot(remote: &RemoteState) -> StateSnapshot {
     StateSnapshot {
-        accounts: remote
-            .accounts
-            .read()
-            .iter()
-            .map(|(address, info)| (*address, remote_account!(info)))
-            .collect(),
+        accounts: remote.accounts.read().clone(),
         storage: remote
             .storage
             .read()

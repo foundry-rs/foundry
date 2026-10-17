@@ -76,11 +76,8 @@ pub use error::{
 mod cow;
 pub use cow::CowBackend;
 
-mod in_memory_db;
-pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
-
 mod snapshot;
-pub use snapshot::{RevertStateSnapshotAction, StateSnapshot};
+pub use snapshot::RevertStateSnapshotAction;
 
 #[cfg(test)]
 mod tests;
@@ -1233,8 +1230,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let info = self.fork_info(id)?.clone();
         let options = self.fork_options(&info.id)?;
         let target = self.transaction_target(id, transaction)?;
-        let ForkResult { id: fork_id, backend, fork: remote } =
-            self.forks.roll_fork_exact(info.id.clone(), target.fork_block)?;
+        let ForkResult { id: fork_id, backend, fork: remote } = self
+            .forks
+            .roll_fork_exact_with_bal(info.id.clone(), target.fork_block, target.mined)?;
         let source_chain_id = remote.context().source_chain_id;
         let env = self.fork_env(&options.evm_opts, &remote, &target.block, spec);
         let db = ForkDb::new(backend, source_chain_id);

@@ -54,7 +54,7 @@ base-common-consensus = { workspace = true, optional = true, features = [
 base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
-# Fork cache storage types (`foundry-fork-db`) and Anvil state dumps only; execution runs on evm2.
+# Persisted fork block metadata only; execution and account storage use evm2.
 revm = { workspace = true, features = ["std", "serde"] }
 op-alloy-consensus = { workspace = true, features = ["alloy-compat", "k256"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
@@ -75,7 +75,6 @@ monad-evm2 = { workspace = true, optional = true }
 eyre.workspace = true
 futures.workspace = true
 itertools.workspace = true
-parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

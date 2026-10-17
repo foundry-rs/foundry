@@ -15,11 +15,11 @@ use alloy_primitives::{
     map::{AddressHashMap, U256Map},
 };
 use alloy_provider::Provider;
+use evm2::{bytecode::Bytecode, evm::AccountInfo};
 use eyre::{Result, WrapErr};
 use foundry_common::provider::is_rpc_method_not_found;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_fork_db::cache::MemDb;
-use revm::state::{AccountInfo, Bytecode};
 use std::time::Duration;
 
 /// Fetches and validates a parent BAL without mutating a database or propagating BAL failures.
@@ -131,13 +131,7 @@ fn cache_bal_accounts(accounts: &mut AddressHashMap<AccountInfo>, bal: &BlockAcc
         {
             accounts.entry(account.address()).or_insert_with(|| {
                 let code = Bytecode::new_raw(code.new_code.clone());
-                AccountInfo {
-                    balance,
-                    nonce,
-                    code_hash: code.hash_slow(),
-                    code: Some(code),
-                    account_id: None,
-                }
+                AccountInfo::new(balance, nonce, code.hash_slow(), Some(code))
             });
         }
     }

@@ -3,7 +3,7 @@
 //! Anvil keeps one network-agnostic environment for the next block and for RPC executions: the
 //! block fields, the chain ID, the Ethereum-equivalent spec used to gate RPC behavior, and the
 //! execution toggles configured by the user. It is converted into the selected network's evm2
-//! environment right before execution, see [`super::evm`].
+//! environment right before execution, see [`crate::eth::backend::evm`].
 
 use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
@@ -143,6 +143,8 @@ pub struct CfgEnv {
     pub disable_eip3607: bool,
     /// Skips the base fee check.
     pub disable_base_fee: bool,
+    /// Skips the blob base fee check for zero-cap simulations.
+    pub disable_blob_base_fee: bool,
     /// Skips the priority fee check.
     pub disable_priority_fee_check: bool,
     /// Skips charging the transaction fee.
@@ -164,6 +166,7 @@ impl Default for CfgEnv {
             disable_block_gas_limit: false,
             disable_eip3607: false,
             disable_base_fee: false,
+            disable_blob_base_fee: false,
             disable_priority_fee_check: false,
             disable_fee_charge: false,
         }

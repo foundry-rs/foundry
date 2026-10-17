@@ -43,7 +43,6 @@ monad-evm2 = { workspace = true, optional = true }
 tempo-evm.workspace = true
 tempo-hardfork.workspace = true
 tempo-precompiles-evm2.workspace = true
-tempo-primitives-evm2.workspace = true
 
 # Base
 base-common-chains = { workspace = true, optional = true, features = ["std"] }
@@ -191,6 +190,4 @@ cmd = [
     "anvil-server/clap",
     "tokio/signal",
 ]
-# evm2-inspectors' JS tracer needs `boa_engine` 0.22, which conflicts with the workspace's pinned
-# `time`; JS tracers fail explicitly until the pins align.
-js-tracer = []
+js-tracer = ["evm2-inspectors/js-tracer"]

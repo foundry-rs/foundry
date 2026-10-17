@@ -186,6 +186,7 @@ impl From<evm2::DatabaseError> for BlockchainError {
 pub(crate) fn clone_database_error(err: &DatabaseError) -> Option<DatabaseError> {
     Some(match err {
         DatabaseError::MissingCode(hash) => DatabaseError::MissingCode(*hash),
+        DatabaseError::BlockNumberOverflow(number) => DatabaseError::BlockNumberOverflow(*number),
         DatabaseError::GetAccount(address, err) => DatabaseError::GetAccount(*address, err.clone()),
         DatabaseError::GetStorage(address, slot, err) => {
             DatabaseError::GetStorage(*address, *slot, err.clone())

@@ -1,9 +1,11 @@
 //! evm2 execution for every network family Anvil runs.
 //!
-//! Anvil keeps one network-agnostic environment ([`EvmEnv`]) and one transaction type
-//! ([`FoundryTxEnvelope`]). Right before execution they are converted into the selected family's
-//! evm2 environment and transaction through [`AnvilEvmNetwork`], so execution, mining and tracing
-//! code is written once, generically, and dispatched once per call with [`with_evm_network!`].
+//! Anvil keeps one network-agnostic environment ([`EvmEnv`](crate::eth::backend::env::EvmEnv)) and
+//! one transaction type ([`FoundryTxEnvelope`](foundry_primitives::FoundryTxEnvelope)). Right
+//! before execution they are converted into the selected family's evm2 environment and transaction
+//! through [`AnvilEvmNetwork`](crate::eth::backend::evm::AnvilEvmNetwork), so execution, mining and
+//! tracing code is written once, generically, and dispatched once per call with
+//! `with_evm_network!`.
 
 use crate::{
     PrecompileFactory,
@@ -465,6 +467,7 @@ pub fn version<N: AnvilEvmNetwork>(
         (cfg.disable_block_gas_limit, EvmFeatures::BLOCK_GAS_LIMIT_CHECK),
         (cfg.disable_eip3607, EvmFeatures::EIP3607),
         (cfg.disable_base_fee, EvmFeatures::BASE_FEE_CHECK),
+        (cfg.disable_blob_base_fee, EvmFeatures::BLOB_BASE_FEE_CHECK),
         (cfg.disable_priority_fee_check, EvmFeatures::PRIORITY_FEE_CHECK),
         (cfg.disable_fee_charge, EvmFeatures::FEE_CHARGE),
     ] {

@@ -3,6 +3,7 @@
 use super::{Backend, ClientFork, MonadExecutionContext, storage::BlockchainStorage};
 use crate::eth::{
     backend::{
+        cheats::CheatsManager,
         db::MonadBlockReplayProfile,
         env::{BlobExcessGasAndPrice, EvmEnv, SpecId},
         evm::PreparedTx,
@@ -39,18 +40,26 @@ struct Participant {
 }
 
 impl Participant {
-    fn new(sender: Address, tx: &impl Transaction) -> Self {
+    fn new(sender: Address, tx: &impl Transaction, cheats: &CheatsManager) -> Self {
         let authorities = tx
             .authorization_list()
             .unwrap_or_default()
             .iter()
-            .filter_map(|authorization| authorization.recover_authority().ok())
+            .filter_map(|authorization| {
+                authorization.recover_authority().ok().or_else(|| {
+                    let signature = authorization.signature().ok()?;
+                    cheats.get_recover_override(&signature.as_bytes().into())
+                })
+            })
             .collect();
         Self { sender, authorities }
     }
 
-    fn from_pending(pending: &PendingTransaction<FoundryTxEnvelope>) -> Self {
-        Self::new(*pending.sender(), pending.transaction.as_ref())
+    fn from_pending(
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+        cheats: &CheatsManager,
+    ) -> Self {
+        Self::new(*pending.sender(), pending.transaction.as_ref(), cheats)
     }
 }
 
@@ -65,8 +74,14 @@ fn participants_of(transactions: &[Participant]) -> MonadBlockParticipants {
 /// Collects all senders and EIP-7702 authorities of the given pending transactions.
 pub(super) fn block_participants<'a>(
     transactions: impl IntoIterator<Item = &'a PendingTransaction<FoundryTxEnvelope>>,
+    cheats: &CheatsManager,
 ) -> MonadBlockParticipants {
-    participants_of(&transactions.into_iter().map(Participant::from_pending).collect::<Vec<_>>())
+    participants_of(
+        &transactions
+            .into_iter()
+            .map(|tx| Participant::from_pending(tx, cheats))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Builds Monad context from cached ancestor participants and the current block transactions.
@@ -172,8 +187,8 @@ pub(super) async fn cache_fork_context(fork: &ClientFork) -> Result<(), Blockcha
 }
 
 /// Adds a candidate transaction to the current Monad block context.
-fn append_transaction(chain: &mut MonadChainContext, tx: &PreparedTx) {
-    let participant = Participant::new(tx.sender, &tx.tx);
+fn append_transaction(chain: &mut MonadChainContext, tx: &PreparedTx, cheats: &CheatsManager) {
+    let participant = Participant::new(tx.sender, &tx.tx, cheats);
     chain.current_tx_index = chain.current_block_senders.len();
     chain.current_block_senders.push(participant.sender);
     chain.current_block_authorities.push(participant.authorities);
@@ -182,11 +197,12 @@ fn append_transaction(chain: &mut MonadChainContext, tx: &PreparedTx) {
 pub(super) fn resolve_execution_context(
     context: Option<MonadExecutionContext<'_>>,
     tx: &PreparedTx,
+    cheats: &CheatsManager,
 ) -> Option<MonadChainContext> {
     match context {
         Some(MonadExecutionContext::Exact(context)) => Some(*context),
         Some(MonadExecutionContext::Next(context)) => {
-            append_transaction(context, tx);
+            append_transaction(context, tx, cheats);
             Some(context.clone())
         }
         // The EVM derives the standalone context from the transaction itself.
@@ -259,7 +275,7 @@ impl<N: Network> Backend<N> {
             .unwrap_or_else(|| self.hardfork());
         let context = self.monad_context_for_child_of_block_hash(parent_hash).await?;
         let participants =
-            participants_of(&Self::monad_historical_replay_participants(transactions));
+            participants_of(&self.monad_historical_replay_participants(transactions));
 
         Ok(Some(ForkReplay {
             hardfork,
@@ -485,6 +501,7 @@ impl<N: Network> Backend<N> {
     /// Collects retained local transactions' participants using their authoritative mined
     /// senders.
     fn monad_participants_from_storage(
+        &self,
         storage: &BlockchainStorage<N>,
         transactions: &[MaybeImpersonatedTransaction<FoundryTxEnvelope>],
     ) -> Result<Vec<Participant>, BlockchainError> {
@@ -495,7 +512,7 @@ impl<N: Network> Backend<N> {
                     storage,
                     transaction.clone(),
                 )?;
-                Ok(Participant::from_pending(&pending))
+                Ok(Participant::from_pending(&pending, self.cheats()))
             })
             .collect()
     }
@@ -503,11 +520,18 @@ impl<N: Network> Backend<N> {
     /// Collects a historical replay prefix's participants using its prepared authoritative
     /// senders.
     fn monad_historical_replay_participants(
+        &self,
         transactions: &[HistoricalReplayTransaction],
     ) -> Vec<Participant> {
         transactions
             .iter()
-            .map(|replay| Participant::new(replay.transaction.signer(), replay.transaction.inner()))
+            .map(|replay| {
+                Participant::new(
+                    replay.transaction.signer(),
+                    replay.transaction.inner(),
+                    self.cheats(),
+                )
+            })
             .collect()
     }
 
@@ -525,10 +549,9 @@ impl<N: Network> Backend<N> {
                 {
                     return Err(BlockchainError::DataUnavailable);
                 }
-                None => participants_of(&Self::monad_participants_from_storage(
-                    storage,
-                    &block.body.transactions,
-                )?),
+                None => participants_of(
+                    &self.monad_participants_from_storage(storage, &block.body.transactions)?,
+                ),
             };
             return Ok((block.header.number(), block.header.parent_hash, participants));
         }
@@ -544,8 +567,10 @@ impl<N: Network> Backend<N> {
         let BlockTransactions::Full(transactions) = block.transactions() else {
             return Err(BlockchainError::DataUnavailable);
         };
-        let participants =
-            transactions.iter().map(|tx| Participant::new(tx.from(), tx)).collect::<Vec<_>>();
+        let participants = transactions
+            .iter()
+            .map(|tx| Participant::new(tx.from(), tx, self.cheats()))
+            .collect::<Vec<_>>();
         Ok((block.header().number(), block.header().parent_hash(), participants_of(&participants)))
     }
 
@@ -571,7 +596,7 @@ impl<N: Network> Backend<N> {
             })
             .map(|(hash, block)| (*hash, block.body.transactions.clone()))
             .map(|(hash, transactions)| {
-                let participants = Self::monad_participants_from_storage(storage, &transactions)?;
+                let participants = self.monad_participants_from_storage(storage, &transactions)?;
                 Ok((hash, participants_of(&participants)))
             })
             .collect::<Result<Vec<_>, BlockchainError>>()?;
@@ -663,7 +688,7 @@ impl<N: Network> Backend<N> {
         &self,
         block: &Block,
     ) -> Result<MonadChainContext, BlockchainError> {
-        let current = Self::monad_participants_from_storage(
+        let current = self.monad_participants_from_storage(
             &self.blockchain.storage.read(),
             &block.body.transactions,
         )?;
@@ -682,7 +707,7 @@ impl<N: Network> Backend<N> {
         block: &Block,
         current_tx_index: usize,
     ) -> Result<MonadChainContext, BlockchainError> {
-        let current = Self::monad_participants_from_storage(
+        let current = self.monad_participants_from_storage(
             &self.blockchain.storage.read(),
             &block.body.transactions,
         )?;

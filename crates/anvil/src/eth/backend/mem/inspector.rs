@@ -5,13 +5,13 @@ use alloy_primitives::{Address, B256, Log, LogData, U256};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use evm2::{
     EvmTypes, Inspector,
-    interpreter::{Interpreter, Message, MessageKind, MessageResult},
+    interpreter::{GasTracker, InstrStop, Interpreter, Message, MessageKind, MessageResult},
 };
 use evm2_inspectors::{
     tracing::{TracingInspector, TracingInspectorConfig, types::CallTraceNode},
     transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector},
 };
-use foundry_common::fmt::ConsoleFmt;
+use foundry_common::{ErrorExt, fmt::ConsoleFmt};
 use foundry_evm_core::{
     abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_logs,
 };
@@ -48,8 +48,8 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, data: &[u8]) {
-        let Ok(decoded) = console::hh::ConsoleCalls::abi_decode(data) else { return };
+    fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
+        let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
         for line in decoded.fmt(Default::default()).lines() {
             self.logs.push(Log::new_unchecked(
                 HARDHAT_CONSOLE_ADDRESS,
@@ -57,6 +57,7 @@ impl LogCollector {
                 line.abi_encode().into(),
             ));
         }
+        Ok(())
     }
 }
 
@@ -355,11 +356,6 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
                 collector.push_transfer(message.caller, message.destination, message.value);
             }
         }
-        if let Some(collector) = &mut self.log_collector
-            && message.destination == HARDHAT_CONSOLE_ADDRESS
-        {
-            collector.hardhat_log(&message.input);
-        }
         if let Some(transfer) = &mut self.transfer
             && let Some(result) = Inspector::<T>::call(transfer, interp, message)
         {
@@ -367,7 +363,23 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
         }
         if let Some(tracer) = &mut self.tracer {
             self.tracer_depth += 1;
-            return Inspector::<T>::call(tracer, interp, message);
+            if let Some(result) = Inspector::<T>::call(tracer, interp, message) {
+                return Some(result);
+            }
+        }
+        if let Some(collector) = &mut self.log_collector
+            && message.destination == HARDHAT_CONSOLE_ADDRESS
+            && let Err(err) = collector.hardhat_log(&message.input)
+        {
+            return Some(MessageResult::<T> {
+                stop: InstrStop::Revert,
+                gas: GasTracker::new_with_execution_gas_and_reservoir(
+                    message.gas_limit,
+                    message.reservoir,
+                ),
+                output: err.abi_encode_revert(),
+                ..Default::default()
+            });
         }
         None
     }

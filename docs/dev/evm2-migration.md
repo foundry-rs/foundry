@@ -56,7 +56,7 @@ explicitly or is documented as different; none falls back to REVM.
 
 | Area | Gap | Behavior | Extension point |
 | --- | --- | --- | --- |
-| Lifecycle | evm2 replaces its spec and `Version` (which carries the chain ID) only between transactions. | A fork switch or snapshot revert inside a transaction applies state and block at once and the spec or chain ID at the next transaction (`EnvTransition::Deferred`), while `CHAINID` reads a switched fork's chain ID at once; `vm.setEvmVersion` also applies from the next transaction, such as from `setUp` to the test. | `Evm::set_execution_config` during execution. |
+| Lifecycle | evm2 replaces its spec and `Version` (which carries the chain ID) only between transactions. | A fork switch or snapshot revert inside a transaction applies state and block at once and the spec or chain ID at the next transaction (`EnvTransition::Deferred`), while `CHAINID` reads a switched fork's chain ID at once; `vm.setEvmVersion` also applies from the next transaction, such as from `setUp` to the test. | A journal-aware environment transition; bypassing evm2's execution guard is not sufficient. |
 | Lifecycle | A fork switch accepts the running transaction's writes. | Like the REVM backend, an enclosing revert does not undo writes made before a fork switch. | None needed. |
 | Lifecycle | A fork switch replaces the running state with the target fork's. | Accounts the running transaction created or loaded on the source fork are not visible on the target fork unless persistent (`Issue6032.t.sol`, `Fork2.t.sol`'s `testForkDumpState*`); REVM's journal kept them until the transaction ended. | None needed. |
 | Transactions | evm2 frames borrow the transaction environment (origin, gas price, chain ID, blob hashes) for the whole transaction. | `vm.prank` with origin, `vm.txGasPrice`, `vm.blobhashes` and `vm.chainId` inside a transaction override the `ORIGIN`, `GASPRICE`, `BLOBHASH` and `CHAINID` opcodes at once; fee accounting keeps the transaction's values, and the chain ID applies to validation from the next transaction (`EnvTransition::Deferred`). | Mutable `TxEnv` for nested frames. |
@@ -74,11 +74,10 @@ explicitly or is documented as different; none falls back to REVM.
 | Traces | evm2 fires `step_end` for call and create opcodes after the child frame returns, and steps code-less accounts through a single `STOP`. | Step traces (`forge test --json` at high verbosity, the debugger) report the gas a `CALL*`/`CREATE*` step consumed, child included, instead of the gas remaining after forwarding (REVM, geth struct logs), and show one `STOP` step in calls to accounts without code. | None needed. |
 | Executor | `call_tx`, `transact_tx` and block replay take converted network transactions, whose request fields are gone. | Their results report a zero `stipend`; `calculate_stipend` on a request omits EIP-7702 authorization costs. | None needed. |
 | Tempo | Tempo's EVM extension shares transaction-local state (storage action buffers, non-creditable slots) with its precompiles through `Rc`, which cannot cross threads. | Parked contexts and snapshots store a detached copy (`StoredExt`) that keeps fee settings and resets that transaction-local state. | Thread-safe Tempo extension state. |
-| OP | op-evm2 has no post-execution (`0x7D`) transactions. | Converting one fails with an explicit error. | op-evm2 PostExec handler. |
-| Base | base-evm2 registers no EIP-8130 handler; stateful Beryl/Cobalt precompiles are missing. | Executing an EIP-8130 transaction fails as an unsupported transaction type. Beryl tests that call the B20 factory revert (`test_cmd::base::base_beryl_precompiles_and_nested_evm`, `base_local_allows_stateful_precompile_writes`). | base-evm2 handlers. |
+| OP | op-evm2 has no post-execution (`0x7D`) transactions. | Converting one fails with an explicit error. | Block-level order/index validation and refund settlement over preceding receipts, not a no-op transaction handler. |
+| Base | base-evm2 registers no EIP-8130 handler; B20, policy and TxContext precompiles are missing. | Executing an EIP-8130 transaction fails as an unsupported transaction type. Beryl tests that call the B20 factory revert (`test_cmd::base::base_beryl_precompiles_and_nested_evm`, `base_local_allows_stateful_precompile_writes`). The Cobalt nonce-manager read ABI is native. | Phased authorization, payer/nonce validation and settlement in base-evm2; read-only active `TxEnv` access for TxContext. |
 | Tempo | Foundry's RPC types and Tempo's evm2 integration pin different Tempo revisions. | Envelopes cross over as their exact EIP-2718 encoding. | Single Tempo pin. |
 | Fork cache | RPC endpoints report absent accounts as empty, so `ForkDb` cannot tell an existing empty account from an absent one. | `ForkDb` follows the EIP-161 rule of the latest EVM built or environment installed over the fork: with EIP-161 empty remote accounts load as absent, before it as existing (as REVM loaded them), so pre-Spurious Dragon execution sees absent empty accounts as existing. | None needed. |
-| Fork cache | `foundry-fork-db` stores REVM-typed accounts. | `ForkDb` converts at the read boundary. | evm2-typed fork cache in `foundry-core`. |
 | Fuzz | The evm2 accepted overlay holds only committed changes, while REVM's fork `CacheDB` also cached every account `setUp` read. | `EvmFuzzState::new` seeds the dictionary from accounts, code and storage `setUp` accepted; accounts it only read from a fork are not seeded. | Seed from the fork cache as well. |
 | Fuzz | evm2 reports account changes, not REVM's touched flag. | Contracts are discovered from accounts a call changed; an account it only called without changing is not rediscovered. | None needed. |
 | Symbolic | The evm2 accepted overlay holds only committed changes, while REVM's fork `CacheDB` also cached every account `setUp` read. | Symbolic calls to a symbolic address consider accounts that `setUp` accepted and accounts the symbolic run itself loaded; contracts `setUp` only read from a fork are not candidate targets. | Enumerate the fork cache as well. |
@@ -93,7 +92,6 @@ explicitly or is documented as different; none falls back to REVM.
 | Backend | `refresh_fork_storage` cannot override a slot the running transaction already loaded. | The refreshed value is set as a journaled write, so its original value (for `SSTORE` gas and refunds) stays the pre-refresh value. | evm2 slot override, like `AccountHandle::override_balance`. |
 | Backend | The local database is evm2's `EmptyDB`, which reports unknown accounts as absent. | REVM's `EmptyDBWrapper` reported them as empty existing accounts; only pre-Spurious Dragon execution can observe the difference. | None needed. |
 | Anvil storage | Resolved: Anvil owns evm2-typed `MemDb`, `CacheDB`, `StateSnapshot` and dump/load types; serialized dumps keep the pre-migration layout. | `foundry-fork-db` is still read through Anvil's REVM-free boundary types. | None needed. |
-| Anvil tracing | evm2-inspectors' JS tracer needs `boa_engine` 0.22, which conflicts with the workspace pin. | `debug_trace*` with a JavaScript tracer fails with an explicit `invalid params` error, even with the `js-tracer` feature. | Align the `boa_engine` pin. |
 | Anvil Celo | Anvil executes Celo CIP-64 transactions through their inner EIP-1559 body. | The fee currency is ignored, so gas is charged in CELO instead of the fee currency. | evm2 Celo transaction type. |
 | Anvil Base | base-evm2 has no EIP-8130 handler. | EIP-8130 pool admission, calls, gas estimation and simulation fail with `Eip8130TransactionRejected`; the pool payer reservation charges `gas_limit * max_fee_per_gas` without the payer-authorization cost. Nonce reads (`base_getNonce`) still work. | base-evm2 EIP-8130 handler. |
 | Anvil Base | `base-common-evm` (REVM) owned the Canyon create2 deployer, the Denim `BaseTime` predeploy and the Zenith system-account stub. | Anvil writes them directly into its database at genesis, reset and load with bundled bytecode artifacts (`crates/anvil/src/eth/backend/mem/bytecode/`); behavior matches, but the artifacts must be bumped by hand with the Base pin. | Engine-neutral Base genesis helpers. |
@@ -104,17 +102,64 @@ explicitly or is documented as different; none falls back to REVM.
 | Anvil precompiles | `PrecompileFactory` returns a fixed `(Address, PrecompileId, DynPrecompile)` list; REVM's dynamic precompile lookup (`install`) has no equivalent. | Library users must list precompile addresses up front. | evm2 lookup-based precompile provider. |
 | Anvil precompiles | BSC's P256 precompile is added from Haber on, but an Osaka-or-later Ethereum spec on a pre-Haber BSC fork still exposes Ethereum's P256 precompile. | Pre-Haber BSC forks at Osaka see a precompile the chain did not have. | Per-chain precompile removal. |
 | Anvil Tempo | Tempo's evm2 integration has no standalone pool-validation entry point. | Pool admission runs the transaction against the latest state with `skip_valid_after_check` and `skip_liquidity_check`, then discards it; fee-token shortfalls surface as the generic insufficient-funds error instead of `insufficient fee token balance`. | Tempo evm2 pool validator. |
-| Anvil blobs | evm2 checks `max_fee_per_blob_gas` against the block blob base fee even when the base fee check is disabled; REVM skipped it. | `eth_simulateV1` calls without a blob fee cap fail with `blob_gas_price is greater than max_fee_per_blob_gas` (6 `eip4844::simulate_v1_*` tests and `simulate::test_simulate_v1_preserves_precompile_warming_rpc`); `can_send_eip4844_transaction_eth_send_transaction` also fails with `OpcodeNotFound`, not yet diagnosed. | Feature-gate the blob fee check in evm2. |
-| Anvil tests | Remaining non-fork integration failures that need follow-up. | `anvil_api::reverting_prague_transition_rolls_back_mining` and `manual_mining_rpcs_preserve_controls_on_failure` (a reverting system call errors with `system call to ... failed: Revert`, not `execution reverted`), `gas::test_estimation_with_print_traces`, `monad::monad_mining_tracks_eip7702_authorities`, `optimism::test_tempo_fields_do_not_override_op_deposit_classification` (OutOfGas), `tempo::test_tempo_eip7702_replay_signature_override` (recover override not applied to Tempo 7702 replays) and `tempo::test_gas_estimation_with_value_fails` (error now `-32003 value transfer not allowed`). Fork and RPC tests were not run. | Per-test follow-up. |
-| Anvil build | `foundry-cli` (Anvil's default `cli` feature) depends on `foundry-cheatcodes`, which does not compile on the branch yet. | `cargo check -p anvil --all-features` fails in `foundry-cheatcodes`; Anvil itself checks with `--no-default-features --features optimism,base,monad,js-tracer,asm-keccak`. | Cheatcodes layer. |
-| Dependencies | `foundry-evm-hardforks`, `foundry-evm-networks` and `foundry-common-fmt` depend on no REVM crate, but external crates still compile REVM (`revm`, `alloy-evm`) transitively: `tempo-evm` (evm2 integration) through `reth-evm`, `reth-evm-ethereum` and `reth-consensus`; `base-consensus-upgrades`, `base-protocol`, `base-common-chains`, `base-common-network`, `base-common-rpc-types` and `base-common-precompiles` (`foundry-evm-traces`); `base-common-consensus` with its `evm` feature, which `foundry-evm-core` enables, so `base-evm2` and `base-common-eip8130` pull REVM in unified builds; and `foundry-fork-db`. | REVM is compiled but not executed. | REVM-free releases of these crates, or dropping the `evm` features that enable it. |
+| Anvil tests | Remaining integration failures that need follow-up. | `optimism::test_tempo_fields_do_not_override_op_deposit_classification` (`OutOfGas`), `tempo::test_tempo_eip7702_replay_signature_override` (authority override not applied to Tempo 7702 replays) and `tempo::test_gas_estimation_with_value_fails` (error now `-32003 value transfer not allowed`). | Per-test follow-up, preserving the existing assertions. |
+| Dependencies | `foundry-evm-hardforks`, `foundry-evm-networks`, `foundry-common-fmt` and the native fork cache depend on no REVM crate, but external crates still compile REVM (`revm`, `alloy-evm`) transitively: `tempo-evm` (evm2 integration) through `reth-evm`, `reth-evm-ethereum` and `reth-consensus`; `base-consensus-upgrades`, `base-protocol`, `base-common-chains`, `base-common-network`, `base-common-rpc-types` and `base-common-precompiles` (`foundry-evm-traces`); `base-common-consensus` with its `evm` feature, which `foundry-evm-core` enables, so `base-evm2` and `base-common-eip8130` pull REVM in unified builds. Foundry retains REVM's serialized fork block metadata type. | REVM is compiled but not executed. | REVM-free releases of these crates, or dropping the `evm` features that enable it. |
 
 ## Dependencies
 
-evm2 is patched workspace-wide onto `mablr/evm2@mablr/foundry-lifecycle`, which adds the
-suspended-state lifecycle API (`finalize_transaction`, warmth restoration, `set_prewarm_set`) on
-top of the revision Tempo and `evm2-networks` share. Keep the three in lockstep.
+evm2 is patched workspace-wide onto
+[`mablr/evm2@mablr/foundry-completion`](https://github.com/mablr/evm2/tree/mablr/foundry-completion).
+It adds suspended-state lifecycle APIs (`finalize_transaction`, warmth restoration,
+`cool_loaded_state`, `set_prewarm_set`) and independent `BLOB_BASE_FEE_CHECK` policy on upstream
+`de6c02d`, plus resolution of already-present delegation code before Prague, matching REVM.
+Authorization processing remains Prague-gated. The upstream source patch also covers Tempo's
+older engine requirement; the lockfile must contain one evm2 graph, not separate engines for
+different networks.
+
+[`foundry-core@mablr/fork-db-evm2-completion`](https://github.com/foundry-rs/foundry-core/tree/mablr/fork-db-evm2-completion)
+stores native evm2 accounts and bytecode. Existing JSON/zstd caches remain readable, including
+legacy analyzed bytecode and EIP-7702 delegation. RPC cache reads remain separate from execution
+commits. Its dependency and
+[`evm2-networks`](https://github.com/mablr/evm2-networks/tree/main)'s dependency use upstream evm2;
+neither requires Foundry's lifecycle patch in isolation.
 
 `tempo-evm` and `tempo-hardfork` name Tempo's evm2 revision. `tempo-primitives-evm2` and
 `tempo-precompiles-evm2` alias it while the REVM-era `tempo-primitives` (used by the RPC types)
 and `tempo-precompiles` pins remain in use.
+
+## Completion follow-ups
+
+Dependency readiness is not full Foundry parity. Do not bless failing snapshots or weaken
+validation to hide these differences. The existing tests remain executable reproducers.
+
+- `isolated_snapshot_enclosing_revert`, `StateSnapshots.t.sol` and `SnapshotCapsulePolicy.t.sol`:
+  reverting a snapshot replaces the state/journal, so a later ancestor revert cannot undo just
+  the replacement's effects. A follow-up needs journaled restore semantics, preserving fork
+  selection and source writes across switches while rolling back applicable target writes.
+- `Issue6032.t.sol`, `Fork2.t.sol`, fuzz and symbolic fork targets: distinguish the RPC read cache
+  from accepted writes. The native fork cache already exposes account/storage enumeration;
+  start there for discovery rather than copying all loaded state into the execution overlay.
+- Base `registry::tests::eip8130_is_rejected_as_unsupported` in evm2-networks and Foundry's
+  `base_eip8130_*`: implement the complete phase and fee contract together. The TxContext getter
+  has a smaller prerequisite: `PrecompileProvider::execute` has no active transaction origin.
+  On Cobalt, calling `0x813000000000000000000000000000000000aa02` with `0xbead3f50` returns empty
+  bytes instead of the sender ABI word. Expose read-only transaction context; do not cache origin
+  in a network extension, which would become stale across raw/system message execution.
+- OP `0x7D` needs block-position and earlier-receipt inputs. Monad staking system-call helpers
+  already exist, but protocol transaction replay still needs an authoritative codec and block
+  fixtures. Do not register ordinary or no-op handlers for either protocol transaction kind.
+- Amsterdam isolation still needs state-gas accounting across the nested transaction boundary.
+  Use existing gas regression cases and compare parent precharge, child execution and refunds;
+  do not adjust reported gas or golden values to compensate.
+- `test_tempo_eip7702_replay_signature_override`: Tempo's converted `TempoTxEnv` exposes only
+  immutable access to its `LazyTxEip7702`. A narrow upstream API for recovered-authority overrides
+  would allow the same local impersonation policy as Ethereum, OP and Monad without changing
+  signed transaction bytes or bypassing authorization validation.
+
+Blob simulation disables `BLOB_BASE_FEE_CHECK` only for zero-cap calls without validation;
+explicit caps still validate and pay the simulated blob fee. `BASE_FEE_CHECK` remains independent,
+as in REVM. The updated wallet dependency removes the old `time = 0.3.47` constraint, allowing
+Anvil's `js-tracer` feature to use evm2-inspectors/Boa directly. Isolated pre-London execution uses
+legacy transactions rather than unsupported EIP-1559 transactions. Monad's block participant
+tracking uses the same local authority-recovery overrides as execution, including replay and
+persisted block metadata.

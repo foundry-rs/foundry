@@ -183,6 +183,11 @@ use tempo_primitives::{
 use tokio::sync::Notify;
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
+#[cfg(feature = "js-tracer")]
+use crate::eth::backend::evm::{TxFor, TypesFor, block_env, prepared_evm_tx};
+#[cfg(feature = "js-tracer")]
+use evm2_inspectors::tracing::{TransactionContext, js::JsInspector};
+
 #[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_primitives::get_deposit_tx_parts;
 #[cfg(any(feature = "base", feature = "optimism"))]
@@ -878,12 +883,39 @@ fn geth_prestate_traces(
     )?)
 }
 
-/// Returns the error of a JavaScript tracer request.
-///
-/// evm2-inspectors' JavaScript tracer needs `boa_engine`, which conflicts with the workspace's
-/// pinned `time` crate.
+/// Returns the error of a JavaScript tracer request when the feature is disabled.
+#[cfg(not(feature = "js-tracer"))]
 fn js_tracer_unsupported() -> BlockchainError {
     RpcError::invalid_params("JavaScript tracers are not supported by this build of anvil").into()
+}
+
+/// Collects a JavaScript trace over the same network transaction and backing state that ran.
+#[cfg(feature = "js-tracer")]
+fn js_trace_result<E: AnvilEvmNetwork>(
+    inspector: &mut JsInspector,
+    executed: Executed,
+    tx: &PreparedTx,
+    env: &EvmEnv,
+    db: &dyn DatabaseRef,
+) -> Result<GethTrace, BlockchainError>
+where
+    TxFor<E>: TransactionTrait,
+{
+    let result = evm2::evm::TxResultWithState::<TypesFor<E>> {
+        result: executed.result.map_ext(|_| Default::default()),
+        pending_state: executed.state,
+        ..Default::default()
+    };
+    let tx = prepared_evm_tx::<E>(tx, None)?;
+    inspector
+        .json_result(
+            &result,
+            &tx,
+            &block_env::<TypesFor<E>>(env),
+            &mut EvmDb::new(db, *env.spec_id()),
+        )
+        .map(GethTrace::JS)
+        .map_err(|err| BlockchainError::Message(err.to_string()))
 }
 
 /// Rejects the `pending` tag for block trace methods, which only trace mined blocks.
@@ -942,27 +974,25 @@ struct MiningCommitHook {
     resume: Arc<Notify>,
 }
 
-/// Gives access to the [revm::Database]
+/// Owns the chain state and executes transactions on evm2.
 pub struct Backend<N: Network> {
-    /// Access to [`revm::Database`] abstraction.
+    /// Access to Anvil's [`Db`] abstraction.
     ///
-    /// This will be used in combination with [`alloy_evm::Evm`] and is responsible for feeding
-    /// data to the evm during its execution.
+    /// [`EvmDb`] serves reads to [`evm2::Evm`]; committed changes are applied to this database.
     ///
     /// At time of writing, there are two different types of `Db`:
     ///   - [`MemDb`](crate::mem::in_memory_db::MemDb): everything is stored in memory
     ///   - [`ForkDb`](crate::mem::fork_db::ForkedDatabase): forks off a remote client, missing
     ///     data is retrieved via RPC-calls
     ///
-    /// In order to commit changes to the [`revm::Database`], the [`alloy_evm::Evm`] requires
-    /// mutable access, which requires a write-lock from this `db`. In forking mode, the time
-    /// during which the write-lock is active depends on whether the `ForkDb` can provide all
-    /// requested data from memory or whether it has to retrieve it via RPC calls first. This
-    /// means that it potentially blocks for some time, even taking into account the rate
-    /// limits of RPC endpoints. Therefore the `Db` is guarded by a `tokio::sync::RwLock` here
-    /// so calls that need to read from it, while it's currently written to, don't block. E.g.
-    /// a new block is currently mined and a new [`Self::set_storage_at()`] request is being
-    /// executed.
+    /// Committing changes requires mutable access and a write-lock on this `db`. In forking mode,
+    /// the time during which the write-lock is active depends on whether the `ForkDb` can
+    /// provide all requested data from memory or whether it has to retrieve it via RPC calls
+    /// first. This means that it potentially blocks for some time, even taking into account
+    /// the rate limits of RPC endpoints. Therefore the `Db` is guarded by a
+    /// `tokio::sync::RwLock` here so calls that need to read from it, while it's currently
+    /// written to, don't block. E.g. a new block is currently mined and a new
+    /// [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory.
     blockchain: Blockchain<N>,
@@ -1974,7 +2004,7 @@ impl<N: Network> Backend<N> {
         Ok(())
     }
 
-    /// Builds [`Inspector`] with the configured options.
+    /// Builds [`AnvilInspector`] with the configured options.
     fn build_inspector(&self) -> AnvilInspector {
         let mut inspector = AnvilInspector::default();
 
@@ -2579,7 +2609,9 @@ impl<N: Network> Backend<N> {
     fn tx_context(&self, context: Option<MonadExecutionContext<'_>>, tx: &PreparedTx) -> TxContext {
         #[cfg(feature = "monad")]
         if self.is_monad() {
-            return TxContext { monad: monad::resolve_execution_context(context, tx) };
+            return TxContext {
+                monad: monad::resolve_execution_context(context, tx, self.cheats()),
+            };
         }
         TxContext::default()
     }
@@ -2708,6 +2740,7 @@ impl<N: Network> Backend<N> {
                             monad: monad::resolve_execution_context(
                                 Some(MonadExecutionContext::Next(context)),
                                 &tx,
+                                self.cheats(),
                             ),
                         };
                     }
@@ -5628,6 +5661,7 @@ where
                             monad: monad::resolve_execution_context(
                                 Some(MonadExecutionContext::Next(context)),
                                 &tx,
+                                self.cheats(),
                             ),
                         };
                     }
@@ -5910,6 +5944,7 @@ where
             let monad_participants = self.is_monad().then(|| {
                 monad::block_participants(
                     included.iter().map(|pool_tx| &pool_tx.pending_transaction),
+                    self.cheats(),
                 )
             });
 
@@ -6515,7 +6550,31 @@ where
                         Err(RpcError::invalid_params("unsupported tracer type").into())
                     }
                 },
+                #[cfg(not(feature = "js-tracer"))]
                 GethDebugTracerType::JsTracer(_) => Err(js_tracer_unsupported()),
+                #[cfg(feature = "js-tracer")]
+                GethDebugTracerType::JsTracer(code) => {
+                    let mut inspector = JsInspector::new(code, tracer_config.into_json())
+                        .map_err(|err| RpcError::invalid_params(err.to_string()))?;
+                    let PreparedCall { evm_env, tx, .. } = self.prepare_call_env_from_base(
+                        &cache_db,
+                        request,
+                        fee_details,
+                        block,
+                        base_evm_env,
+                    )?;
+                    let executed = self.transact_call_with_inspector_ref_at_hardfork(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        &tx,
+                        monad_context.as_mut().map(next_monad_context),
+                        hardfork,
+                    )?;
+                    with_evm_network!(self.evm_family(), E => {
+                        js_trace_result::<E>(&mut inspector, executed, &tx, &evm_env, &cache_db)
+                    })
+                }
             };
         }
 
@@ -6828,8 +6887,41 @@ where
         code: String,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let _ = (hash, code, opts);
-        Err(js_tracer_unsupported())
+        // Boa is thread-local: construct, execute and drop the inspector before any await.
+        let trace = {
+            let context = self.blockchain.storage.read().transactions.get(&hash).map(|tx| {
+                TransactionContext {
+                    block_hash: Some(tx.block_hash),
+                    tx_index: Some(tx.info.transaction_index as usize),
+                    tx_hash: Some(hash),
+                }
+            });
+            let inspector = JsInspector::with_transaction_context(
+                code,
+                opts.tracer_config.clone().into_json(),
+                context.unwrap_or_default(),
+            )
+            .map_err(|err| RpcError::invalid_params(err.to_string()))?;
+            self.replay_tx_with_inspector(
+                hash,
+                inspector,
+                |executed, db, mut inspector, tx, env| {
+                    with_evm_network!(self.evm_family(), E => {
+                        js_trace_result::<E>(&mut inspector, executed, &tx, &env, db)
+                    })
+                },
+            )
+        };
+        match trace {
+            Ok(trace) => trace,
+            Err(BlockchainError::TransactionNotFound) => {
+                if let Some(fork) = self.get_fork() {
+                    return Ok(fork.debug_trace_transaction(hash, opts).await?);
+                }
+                Err(BlockchainError::TransactionNotFound)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// Prove an account's existence or nonexistence in the state trie.
@@ -8708,6 +8800,10 @@ impl Backend<FoundryNetwork> {
                     // Without validation, calls run at any price against the simulated block's
                     // fees.
                     evm_env.cfg_env.disable_base_fee = !validation;
+                    // Only zero-cap blob calls bypass blob pricing; an explicit cap still pays
+                    // the simulated block's blob fee and must cover it.
+                    evm_env.cfg_env.disable_blob_base_fee =
+                        !validation && request.max_fee_per_blob_gas.unwrap_or_default() == 0;
                     if validation {
                         evm_env.cfg_env.disable_nonce_check = false;
                         evm_env.cfg_env.disable_block_gas_limit = false;

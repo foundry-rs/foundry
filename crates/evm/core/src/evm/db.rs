@@ -9,11 +9,10 @@ use alloy_primitives::{Address, B256, U256};
 use evm2::{
     DatabaseError,
     bytecode::Bytecode,
-    evm::{AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny},
+    evm::{AccountInfo, Cache, Database, DbResult, DynDatabase, EmptyDB, InMemoryDB, NonStaticAny},
     interpreter::Word,
 };
 use foundry_fork_db::{ForkBlockEnv, SharedBackend};
-use revm::DatabaseRef;
 use std::{
     any::TypeId,
     sync::{
@@ -108,9 +107,8 @@ impl FoundryDatabase for Box<dyn BackingDb> {
 
 /// A remote fork's backing database: Foundry's RPC-backed fork cache, read by evm2.
 ///
-/// The fork cache (`foundry-fork-db`) stores REVM-typed accounts; this adapter converts them at the
-/// read boundary, so no REVM type reaches execution. Replacing the cache's storage types is
-/// tracked separately in `foundry-core`.
+/// The fork cache stores native evm2 accounts. This adapter supplies the source chain identity
+/// and the execution spec's empty-account policy.
 #[derive(Clone, Debug)]
 pub struct ForkDb<D> {
     db: D,
@@ -133,33 +131,29 @@ impl<D> ForkDb<D> {
 
 impl<D> DynDatabase for ForkDb<D>
 where
-    D: DatabaseRef<Error: std::error::Error + Send + Sync + 'static> + 'static,
+    D: Database<Error: std::error::Error + Send + Sync + 'static> + 'static,
 {
     fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
-        let info = self.db.basic_ref(*address).map_err(fatal)?;
+        let info = self.db.get_account(address).map_err(fatal)?;
         // The fork cache reports accounts the remote does not hold as existing empty accounts.
         // From Spurious Dragon on an empty account does not exist (EIP-161), so load it as absent;
         // otherwise fresh EIP-7702 authorities would be refunded as existing ones. Before, the
         // remote cannot tell an existing empty account apart from an absent one; load it as
         // existing, as the account a historical call reaches usually is.
         let eip161 = self.eip161.load(Ordering::Relaxed);
-        Ok(info.filter(|info| !eip161 || !info.is_empty()).map(|info| {
-            let code = info.code.map(|code| Bytecode::new_raw(code.original_bytes()));
-            AccountInfo::new(info.balance, info.nonce, info.code_hash, code)
-        }))
+        Ok(info.filter(|info| !eip161 || !info.is_empty()))
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
-        let code = self.db.code_by_hash_ref(*code_hash).map_err(fatal)?;
-        Ok(Bytecode::new_raw(code.original_bytes()))
+        self.db.get_code_by_hash(code_hash).map_err(fatal)
     }
 
     fn get_storage(&mut self, address: &Address, key: &U256) -> DbResult<U256> {
-        self.db.storage_ref(*address, *key).map_err(fatal)
+        self.db.get_storage(address, key).map_err(fatal)
     }
 
     fn get_block_hash(&mut self, number: &U256) -> DbResult<B256> {
-        self.db.block_hash_ref(number.saturating_to()).map_err(fatal)
+        self.db.get_block_hash(number).map_err(fatal)
     }
 }
 

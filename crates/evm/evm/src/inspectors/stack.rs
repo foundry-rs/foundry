@@ -1135,9 +1135,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .with_value(message.value)
             .with_nonce(nonce)
             .with_chain_id(env.chain_id())
-            .with_gas_limit(gas_limit)
-            .with_max_fee_per_gas(0)
-            .with_max_priority_fee_per_gas(0);
+            .with_gas_limit(gas_limit);
+        if evm.spec_id() < evm2::SpecId::LONDON {
+            request.set_gas_price(0);
+        } else {
+            request.set_max_fee_per_gas(0);
+            request.set_max_priority_fee_per_gas(0);
+        }
         if let Some(access_list) = access_list {
             request.set_access_list(access_list);
         }
