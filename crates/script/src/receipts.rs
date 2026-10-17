@@ -7,7 +7,10 @@ use alloy_provider::{
 use eyre::{Result, eyre};
 use forge_script_sequence::ScriptSequence;
 use foundry_common::{retry, retry::RetryError, shell};
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 /// Marker error type for pending receipts
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +42,7 @@ pub async fn check_tx_status<N: Network>(
     timeout: u64,
     confirmations: u64,
 ) -> (TxHash, Result<TxStatus<N::ReceiptResponse>, eyre::Report>) {
+    let warned = AtomicBool::new(false);
     let result = retry::Retry::new_no_delay(3)
         .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)
@@ -72,6 +76,11 @@ pub async fn check_tx_status<N: Network>(
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
                     Ok(Some(_)) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
+                            if !warned.swap(true, Ordering::Relaxed) {
+                                let _ = sh_warn!(
+                                    "Transaction {hash} is still known to the RPC endpoint; continuing to wait for its receipt and requested confirmations."
+                                );
+                            }
                             Err(RetryError::Continue(eyre!(
                                 "tx is still known to the node, waiting for receipt"
                             )))

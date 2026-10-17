@@ -144,9 +144,10 @@ Before sending new work, `BundledState::wait_for_pending` checks each hash in `p
 from a multichain deployment are checked concurrently. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash and returns an error without appending
 the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction. If that endpoint
-returns no transaction, the durable attempt remains the source of identity: signed bytes may be
-replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
+consuming the retry budget while the selected RPC still returns the transaction. The first such
+timeout prints a warning for that transaction; waiting continues without additional RPC checks. If
+that endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes
+may be replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
 while unknown outcomes remain blocked until explicitly resolved. Removing a hash from `pending`
 this way prints an immediate `--resume` warning, so the guidance survives a later batch failure.
 An ordinary broadcast that otherwise succeeds while a submitted operation still lacks a receipt

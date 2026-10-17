@@ -1116,6 +1116,87 @@ Error: submission outcome for delegated operation 0 is unknown; refusing to risk
     assert_eq!(submissions.load(Ordering::Relaxed), 1);
 }
 
+// A receipt timeout warns once but does not abort, resubmit, or change the eventual result.
+#[forgetest_init]
+async fn broadcast_warns_once_while_waiting_for_receipt(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "WaitingReceipt.s.sol",
+        r#"
+import "forge-std/Script.sol";
+contract WaitingReceipt is Script {
+    function run() external {
+        vm.startBroadcast();
+        payable(address(0xBEEF)).transfer(1);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+        let lookups = lookups.clone();
+        move |_, result| {
+            if !result.is_null() {
+                lookups.fetch_add(1, Ordering::Relaxed);
+            }
+            result
+        }
+    })
+    .await;
+    let (rpc, submissions) = spawn_rpc_proxy_recording_method(rpc, "eth_sendRawTransaction").await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd().env("RUST_LOG", "off"));
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while lookups.load(Ordering::Relaxed) < 3 {
+            assert!(child.is_running(), "receipt timeout stopped the broadcast");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Forge did not continue polling after receipt timeouts");
+    assert!(child.is_running());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    api.mine_one().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Forge did not finish after mining");
+    let output = child.kill_and_wait();
+    assert!(output.status.success());
+    let sequence = foundry_common::fs::read_json_file::<ScriptSequence<Ethereum>>(
+        &prj.root().join("broadcast/WaitingReceipt.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let hash = sequence.transactions[0].hash.unwrap();
+    assert_eq!(sequence.receipts.len(), 1);
+    assert_data_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!(
+            "Warning: Transaction {hash} is still known to the RPC endpoint; continuing to wait for its receipt and requested confirmations.\n"
+        )
+    );
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    assert_eq!(
+        handle
+            .http_provider()
+            .get_balance(address!("000000000000000000000000000000000000beef"))
+            .await
+            .unwrap(),
+        U256::from(1)
+    );
+}
+
 // Polling must not wait forever on transactions queued behind one the endpoint stopped returning,
 // even when that one was answered last, and resume must replay it before waiting on them.
 #[forgetest_init]
@@ -1205,6 +1286,7 @@ contract InvisibleSubmission is Script {
         assert_data_eq!(
             String::from_utf8(output.stderr).unwrap(),
             str![[r#"
+...
 Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
 ...
 "#]]
