@@ -12329,8 +12329,7 @@ dependencies = [
 [[package]]
 name = "soldeer-commands"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1149d04975bf4da754f2cd9e0b3ab51f33899eb5ff80f4889d93222c60faaef"
+source = "git+https://github.com/mario-eth/soldeer?rev=f070a2084cde8e54c952e7f7c5cf4638a808b7b0#f070a2084cde8e54c952e7f7c5cf4638a808b7b0"
 dependencies = [
  "bon",
  "clap",
@@ -12347,8 +12346,7 @@ dependencies = [
 [[package]]
 name = "soldeer-core"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ca40c75555686674209accf592806aaa42a9a518e87fc4cae03fd62e4efdccd"
+source = "git+https://github.com/mario-eth/soldeer?rev=f070a2084cde8e54c952e7f7c5cf4638a808b7b0#f070a2084cde8e54c952e7f7c5cf4638a808b7b0"
 dependencies = [
  "bon",
  "chrono",
@@ -12600,9 +12598,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs"
-version = "0.5.29"
+version = "0.5.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fff93ed02d40750ad3994db17a8b684af101001128f3bb934041d1f048276b36"
+checksum = "22cf5aafb7b52198c28ad62af3f666d7f206a7c768011c9130eec6e0aa996893"
 dependencies = [
  "const-hex",
  "digest-io",
@@ -12620,9 +12618,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.5.29"
+version = "0.5.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75b1f441cb747ae19339af229724af9e431db6bb0612846450764f2e4e902613"
+checksum = "a7b38cc89288ba45da6847d5963e49cff0331805fa6cbe276609e5e606a72710"
 dependencies = [
  "const-hex",
  "semver 1.0.28",
@@ -14850,14 +14848,15 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "8.6.0"
+version = "9.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+checksum = "a954114b47a54df49f83d2722814e86b23d4bb1b54a1b90fb7d92b41619ddc22"
 dependencies = [
  "crc32fast",
  "flate2",
  "indexmap 2.14.2",
  "memchr",
+ "nix 0.31.3",
  "typed-path",
  "zopfli",
 ]

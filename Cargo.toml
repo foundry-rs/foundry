@@ -215,11 +215,22 @@ revm-precompile.opt-level = 3
 revm-primitives.opt-level = 3
 revm-state.opt-level = 3
 
+foundry-cheatcodes.opt-level = 3
+foundry-evm.opt-level = 3
+foundry-evm-core.opt-level = 3
+foundry-evm-coverage.opt-level = 3
+foundry-evm-symbolic.opt-level = 3
+foundry-evm-traces.opt-level = 3
+
 ruint.opt-level = 3
 
 sha2.opt-level = 3
 sha3.opt-level = 3
 keccak.opt-level = 3
+
+blst.opt-level = 3
+c-kzg.opt-level = 3
+secp256k1-sys.opt-level = 3
 
 # Fuzzing.
 proptest.opt-level = 3
@@ -347,7 +358,7 @@ solar = { package = "solar-compiler", version = "=0.2.0", default-features = fal
 solar-cli = { version = "=0.2.0", default-features = false }
 solar-lsp = { version = "=0.2.0", default-features = false }
 solar-lint = { version = "=0.2.0", default-features = false }
-svm = { package = "svm-rs", version = "0.5.28", default-features = false, features = [
+svm = { package = "svm-rs", version = "0.5.30", default-features = false, features = [
     "rustls",
 ] }
 
@@ -571,6 +582,11 @@ solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3e
 solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3ef5d82ff0449472ba6b1c98e4a2a30f56" }
 solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3ef5d82ff0449472ba6b1c98e4a2a30f56" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "4d497e3ef5d82ff0449472ba6b1c98e4a2a30f56" }
+
+## soldeer
+# Temporary: https://github.com/mario-eth/soldeer/pull/411
+soldeer-commands = { git = "https://github.com/mario-eth/soldeer", rev = "f070a2084cde8e54c952e7f7c5cf4638a808b7b0" }
+soldeer-core = { git = "https://github.com/mario-eth/soldeer", rev = "f070a2084cde8e54c952e7f7c5cf4638a808b7b0" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "a436b561f814f6244cc5592c71800faaa9009b94" }

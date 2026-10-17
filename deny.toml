@@ -107,26 +107,4 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 unknown-registry = "warn"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
-unknown-git = "deny"
-allow-git = [
-    # Temporary: alloy-chains until HyperliquidTestnet is released.
-    "https://github.com/alloy-rs/chains",
-    "https://github.com/foundry-rs/foundry-core",
-    "https://github.com/paradigmxyz/solar",
-    # Only for tests.
-    "https://github.com/rust-cli/rexpect",
-    # Tempo
-    "https://github.com/tempoxyz/tempo",
-    "https://github.com/tempoxyz/mpp-rs",
-    # Base
-    "https://github.com/foundry-rs/base",
-    # Transitive dependency of Tempo
-    "https://github.com/commonwarexyz/monorepo",
-    "https://github.com/paradigmxyz/reth",
-    # Temporary: OP crates until upstream optimism bumps to revm 40.
-    "https://github.com/foundry-rs/optimism",
-    "https://github.com/foundry-rs/op-revm",
-    # Temporary: evm2 lifecycle APIs and native network adapters.
-    "https://github.com/mablr/evm2",
-    "https://github.com/mablr/evm2-networks",
-]
+unknown-git = "allow"

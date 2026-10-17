@@ -1079,8 +1079,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let evm = interp.host();
         let version = *evm.version();
 
-        let access_list =
-            self.cheatcodes.as_deref().and_then(|cheats| cheats.core.access_list.clone());
+        // Access lists do not exist before Berlin, including in isolated transactions.
+        let access_list = self
+            .cheatcodes
+            .as_deref()
+            .filter(|_| evm.spec_id() >= evm2::SpecId::BERLIN)
+            .and_then(|cheats| cheats.core.access_list.clone());
         let (al_accounts, al_keys) = access_list.as_ref().map_or((0, 0), |list| {
             (list.len() as u64, list.iter().map(|item| item.storage_keys.len() as u64).sum())
         });

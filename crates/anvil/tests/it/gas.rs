@@ -7,7 +7,7 @@ use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    AccessList, AccessListItem, BlockId, BlockNumberOrTag, TransactionRequest,
+    AccessList, AccessListItem, BlockId, BlockNumberOrTag, FeeHistory, TransactionRequest,
     trace::parity::TraceType,
 };
 use alloy_serde::WithOtherFields;
@@ -324,6 +324,43 @@ async fn test_zero_block_fee_history_is_empty() {
     assert!(history.reward.is_none());
     assert!(history.base_fee_per_blob_gas.is_empty());
     assert!(history.blob_gas_used_ratio.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_fee_history_oversized_count() {
+    let (origin, origin_handle) = spawn(NodeConfig::test()).await;
+    origin.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    let (fork, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    fork.mine_one().await.unwrap();
+
+    for (handle, highest) in [(&origin_handle, 2), (&fork_handle, 3)] {
+        let provider = handle.http_provider();
+        for newest in 1..=highest {
+            for count in [
+                U256::ZERO,
+                U256::ONE,
+                U256::from(u64::MAX),
+                U256::from(u64::MAX) + U256::ONE,
+                U256::MAX,
+            ] {
+                let history: FeeHistory = provider
+                    .client()
+                    .request(
+                        "eth_feeHistory",
+                        (count, BlockNumberOrTag::Number(newest), Vec::<f64>::new()),
+                    )
+                    .await
+                    .unwrap();
+                let bounded = count.min(U256::from(newest + 1)).to::<u64>();
+                let expected = provider
+                    .get_fee_history(bounded, BlockNumberOrTag::Number(newest), &[])
+                    .await
+                    .unwrap();
+                assert_eq!(history, expected, "count={count}, newest={newest}");
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1319,7 +1319,11 @@ impl<N: Network> EthApi<N> {
             // efficiently, instead we fetch it from the fork
             if number <= fork_block {
                 return fork
-                    .fee_history(block_count.to(), BlockNumber::Number(number), &reward_percentiles)
+                    .fee_history(
+                        block_count.saturating_to(),
+                        BlockNumber::Number(number),
+                        &reward_percentiles,
+                    )
                     .await
                     .map_err(BlockchainError::AlloyForkProvider);
             }
