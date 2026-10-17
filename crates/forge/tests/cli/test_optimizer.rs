@@ -5559,14 +5559,12 @@ Compiler run successful!
         assert_eq!(calls.len(), 1, "Solc {version} must succeed without a native retry");
         let source = &calls[0].sources[Path::new("test/Repro.t.sol")].content;
         assert!(source.contains(".deployCode({"));
+        let workaround = (15..=25).contains(&patch);
         assert_eq!(
-            calls[0]
-                .sources
-                .values()
-                .filter(|source| source.content.contains("function decodeDeploymentAddress"))
-                .count(),
-            usize::from((15..=25).contains(&patch))
+            source.matches("external returns (uint160);").count(),
+            usize::from(workaround) * 8
         );
+        assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
 
         cmd.forge_fuse().arg("build").assert_success().stderr_eq("").stdout_eq(str![[r#"
 No files changed, compilation skipped
@@ -5579,45 +5577,16 @@ No files changed, compilation skipped
 #[cfg(unix)]
 #[forgetest]
 fn preprocess_via_ir_deployment_semantics(prj: _, cmd: _) {
-    let decoder = format!("decodeDeploymentAddress{:x}", keccak256("test/Deployments.t.sol"));
-    prj.add_raw_source(
-        "Names.sol",
-        &format!(
-            "pragma solidity >=0.8.15 <0.9.0; function {decoder}() pure {{}} function {decoder}_() pure {{}}"
-        ),
-    );
+    let deployments =
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Deployments.t.sol");
     prj.add_raw_source(
         "Targets.sol",
         include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Targets.sol"),
     );
-    prj.add_raw_test(
-        "Deployments.t.sol",
-        &format!(
-            "import '../src/Names.sol';\n{}",
-            include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Deployments.t.sol")
-        ),
-    );
+    prj.add_raw_test("Deployments.t.sol", deployments);
     prj.add_raw_test(
         "ShadowedRequire.t.sol",
         include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/ShadowedRequire.t.sol"),
-    );
-    prj.add_raw_test(
-        "ReverseOwner.t.sol",
-        &format!(
-            r#"
-pragma solidity >=0.8.15 <0.9.0;
-import "./Deployments.t.sol";
-import {{Empty}} from "../src/Targets.sol";
-function {decoder}__(uint256) pure returns (address) {{ return address(0); }}
-contract ReverseOwnerTest {{
-    function test_reverse_import() public {{
-        uint256 abi = 7;
-        Empty target = new Empty();
-        require(target.caller() == address(this) && abi == 7, "deployment state");
-    }}
-}}
-"#
-        ),
     );
     for version in ["0.8.15", "0.8.22", "0.8.24", "0.8.25", "0.8.26"] {
         let solc = recording_solc(prj.root(), version);
@@ -5631,6 +5600,7 @@ contract ReverseOwnerTest {{
             config.optimizer_runs = Some(200);
             config.lint.lint_on_build = false;
         });
+        let workaround = version != "0.8.26";
         let mut cold_calls = None;
         for force in [true, false] {
             cmd.forge_fuse().args(["test", "--match-contract", "DeploymentTest"]);
@@ -5679,86 +5649,21 @@ Ran 1 test suite [ELAPSED]: 15 tests passed, 0 failed, 0 skipped (15 total tests
                 .collect::<Vec<_>>();
             assert_eq!(codegen_calls.len(), 1, "Solc {version} retried or did not reuse its cache");
             let source = &codegen_calls[0].sources[Path::new("test/Deployments.t.sol")].content;
-            let decoded = version != "0.8.26";
-            for excluded in ["test/ReverseOwner.t.sol", "test/ShadowedRequire.t.sol"] {
-                assert!(!codegen_calls[0].sources.contains_key(Path::new(excluded)));
-            }
+            let deployment_count = deployments.matches("new ").count();
+            assert_eq!(source.matches(".deployCode({").count(), deployment_count);
             assert_eq!(
-                codegen_calls[0]
-                    .sources
-                    .keys()
-                    .filter(|path| path
-                        .to_string_lossy()
-                        .starts_with("foundry-pp/DeployHelperDecoder"))
-                    .count(),
-                usize::from(decoded)
-            );
-            assert_eq!(source.matches("function decodeDeploymentAddress").count(), 0);
-            let deployment_source = if decoded {
-                let helper = format!(
-                    "foundry-pp/DeployHelperDecoder{:x}.sol",
-                    keccak256("test/Deployments.t.sol")
-                );
-                assert_eq!(source.matches(&helper).count(), 2, "both owners share a decoder");
-                &codegen_calls[0].sources[Path::new(&helper)].content
-            } else {
-                source
-            };
-            let overloads = deployment_source
-                .lines()
-                .filter(|line| line.trim_start().starts_with("function deployCode("))
-                .collect::<Vec<_>>();
-            assert_eq!(overloads.len(), if decoded { 8 } else { 16 });
-            let result_type = if decoded { "uint256" } else { "address" };
-            assert!(
-                overloads.iter().all(|line| line.ends_with(&format!("returns ({result_type});")))
+                source.matches("payable(address(").count(),
+                usize::from(workaround) * deployment_count
             );
             assert_eq!(
-                source.matches(".deployCode({").count(),
-                include_str!(
-                    "../../../../testdata/fixtures/PreprocessViaIr/runtime/Deployments.t.sol"
-                )
-                .matches("new ")
-                .count(),
-                "every deployment must exercise DTL",
+                source.matches("external returns (uint160);").count(),
+                usize::from(workaround) * 16
             );
-            for (name, args, value, salt) in [
-                ("test_create", false, false, false),
-                ("test_create_args", true, false, false),
-                ("test_create_value", false, true, false),
-                ("test_create_args_value", true, true, false),
-                ("test_create2", false, false, true),
-                ("test_create2_args", true, false, true),
-                ("test_create2_value", false, true, true),
-                ("test_create2_args_value", true, true, true),
-            ] {
-                let body = source.split_once(&format!("function {name}()")).unwrap().1;
-                let body = body.split("\n    function ").next().unwrap();
-                assert_eq!(body.matches(".deployCode({").count(), 1, "{name} stayed native");
-                assert_eq!(body.contains("_args:"), args, "{name} constructor arguments");
-                assert_eq!(body.contains("_value:"), value, "{name} deployment value");
-                assert_eq!(body.contains("_salt:"), salt, "{name} deployment salt");
-            }
+            assert_eq!(
+                source.matches("external returns (address);").count(),
+                usize::from(!workaround) * 16
+            );
         }
-        let narrow_sources = recorded_solc_inputs(&solc)
-            .into_iter()
-            .find(|input| {
-                input.sources[Path::new("test/Deployments.t.sol")].content.contains(".deployCode({")
-            })
-            .unwrap()
-            .sources;
-        let owners = ["DeploymentTest", "OtherOwnerTest"];
-        let narrow_bytecode = owners.map(|owner| {
-            let artifact = read_json_file::<ConfigurableContractArtifact>(
-                &prj.artifacts().join(format!("Deployments.t.sol/{owner}.json")),
-            )
-            .unwrap();
-            let creation = artifact.bytecode.unwrap().object;
-            let runtime = artifact.deployed_bytecode.unwrap().bytecode.unwrap().object;
-            assert!(creation.is_non_empty_bytecode() && runtime.is_non_empty_bytecode());
-            (creation, runtime)
-        });
-        // Both owners in this source unit must use their generated helpers successfully.
         let calls = recorded_solc_inputs(&solc).len();
         cmd.forge_fuse()
             .args(["test", "--match-contract", "OtherOwnerTest"])
@@ -5775,7 +5680,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
         assert_eq!(recorded_solc_inputs(&solc).len(), calls, "cached owner invoked Solc");
-        // A different source requires its own first codegen, then reuses that result.
         cmd.forge_fuse()
             .args(["test", "--match-contract", "ShadowedRequireTest"])
             .assert_success()
@@ -5801,6 +5705,15 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
             })
             .unwrap();
         assert_eq!(shadow.content.matches(".deployCode({").count(), 1);
+        assert_eq!(shadow.content.matches("payable(address(").count(), usize::from(workaround));
+        assert_eq!(
+            shadow.content.matches("external returns (uint160);").count(),
+            usize::from(workaround) * 8
+        );
+        assert_eq!(
+            shadow.content.matches("external returns (address);").count(),
+            usize::from(!workaround) * 8
+        );
         cmd.forge_fuse()
             .args(["test", "--match-contract", "ShadowedRequireTest"])
             .assert_success()
@@ -5810,106 +5723,21 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
             shadow_calls.len(),
             "cached shadowed require invoked Solc"
         );
-        cmd.forge_fuse()
-            .args(["test", "--match-contract", "ReverseOwnerTest"])
-            .assert_success()
-            .stderr_eq("")
-            .stdout_eq(str![[r#"
-...
-Ran 1 test for test/ReverseOwner.t.sol:ReverseOwnerTest
-[PASS] test_reverse_import() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
-        let reverse_inputs = recorded_solc_inputs(&solc);
-        let reverse_calls = reverse_inputs.len();
-        assert_eq!(reverse_calls, shadow_calls.len() + 1, "reverse importer retried codegen");
-        let reverse = reverse_inputs
-            .iter()
-            .find_map(|input| {
-                input
-                    .sources
-                    .get(Path::new("test/ReverseOwner.t.sol"))
-                    .filter(|source| source.content.contains(".deployCode({"))
-            })
-            .unwrap();
-        assert_eq!(reverse.content.matches(".deployCode({").count(), 1);
-        assert_eq!(
-            reverse.content.matches(".decodeDeploymentAddress(").count(),
-            usize::from(version != "0.8.26")
-        );
-        cmd.forge_fuse()
-            .args(["test", "--match-contract", "ReverseOwnerTest"])
-            .assert_success()
-            .stderr_eq("");
-        assert_eq!(
-            recorded_solc_inputs(&solc).len(),
-            reverse_calls,
-            "cached importer invoked Solc"
-        );
-        cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq("");
-        let full_calls = recorded_solc_inputs(&solc);
-        assert_eq!(full_calls.len(), reverse_calls + 1, "full build retried codegen");
-        let full = full_calls
-            .iter()
-            .find(|input| {
-                ["test/ReverseOwner.t.sol", "test/ShadowedRequire.t.sol"].iter().all(|path| {
-                    input
-                        .sources
-                        .get(Path::new(path))
-                        .is_some_and(|source| source.content.contains(".deployCode({"))
-                })
-            })
-            .unwrap();
-        assert_eq!(
-            full.sources
-                .keys()
-                .filter(|path| path.to_string_lossy().starts_with("foundry-pp/DeployHelperDecoder"))
-                .count(),
-            if version == "0.8.26" { 0 } else { 3 }
-        );
-        for (path, source) in narrow_sources {
-            assert_eq!(
-                full.sources[&path].content, source.content,
-                "source changed across build scopes: {path:?}"
-            );
-        }
-        for (owner, expected) in owners.into_iter().zip(narrow_bytecode) {
-            let artifact = read_json_file::<ConfigurableContractArtifact>(
-                &prj.artifacts().join(format!("Deployments.t.sol/{owner}.json")),
-            )
-            .unwrap();
-            assert_eq!(
-                (
-                    artifact.bytecode.unwrap().object,
-                    artifact.deployed_bytecode.unwrap().bytecode.unwrap().object
-                ),
-                expected,
-                "owner bytecode changed across build scopes: {owner}"
-            );
-        }
-        cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
-        assert_eq!(
-            recorded_solc_inputs(&solc).len(),
-            full_calls.len(),
-            "cached full build invoked Solc"
-        );
     }
 }
 
-// Execute the actual emitted decoder, including words the genuine deployment cheatcode cannot
-// return.
 #[cfg(unix)]
 #[forgetest]
-fn preprocess_via_ir_address_decoder(prj: _, cmd: _) {
-    prj.add_source("Target.sol", "pragma solidity >=0.8.15 <0.9.0; contract Target {}");
-    for version in ["0.8.15", "0.8.22", "0.8.24", "0.8.25"] {
+fn preprocess_via_ir_uint160_return_matches_address(prj: _, cmd: _) {
+    prj.add_raw_test(
+        "AddressDecoder.t.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/AddressDecoder.t.sol"),
+    );
+    for version in ["0.8.15", "0.8.24", "0.8.25"] {
         let solc = recording_solc(prj.root(), version);
         prj.update_config(|config| {
             config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
-            config.dynamic_test_linking = true;
+            config.dynamic_test_linking = false;
             config.via_ir = true;
             config.evm_version =
                 if version == "0.8.15" { EvmVersion::London } else { EvmVersion::Shanghai };
@@ -5917,127 +5745,21 @@ fn preprocess_via_ir_address_decoder(prj: _, cmd: _) {
             config.optimizer_runs = Some(200);
             config.lint.lint_on_build = false;
         });
-        let deployment = prj.add_test(
-            "Deploy.t.sol",
-            r#"
-pragma solidity >=0.8.15 <0.9.0;
-import {Target} from "../src/Target.sol";
-contract DeployTest { function test_deploy() public { new Target(); } }
-"#,
-        );
-        cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq("");
-        let inputs = recorded_solc_inputs(&solc);
-        assert_eq!(inputs.len(), 1, "decoder capture must succeed without a native retry");
-        let source = &inputs[0]
-            .sources
-            .values()
-            .find(|source| source.content.contains("function decodeDeploymentAddress"))
-            .unwrap()
-            .content;
-        let decoder = format!(
-            "function decodeDeploymentAddress{}\n}}",
-            source
-                .split_once("function decodeDeploymentAddress")
-                .unwrap()
-                .1
-                .split_once("\n}")
-                .unwrap()
-                .0
-        );
-        let name = decoder.strip_prefix("function ").unwrap().split_once('(').unwrap().0;
-        let test = include_str!(
-            "../../../../testdata/fixtures/PreprocessViaIr/runtime/AddressDecoder.t.sol"
-        )
-        .replace("DECODE_DEPLOYMENT_ADDRESS", name);
-        fs::remove_file(deployment).unwrap();
-        let decoder_test =
-            prj.add_raw_test("AddressDecoder.t.sol", &format!("{test}\n{decoder}\n"));
-        prj.update_config(|config| config.dynamic_test_linking = false);
         cmd.forge_fuse()
-            .args(["test", "--match-contract", "AddressDecoderTest"])
+            .args(["test", "--force", "--match-contract", "AddressDecoderTest"])
             .assert_success()
             .stderr_eq("")
             .stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/AddressDecoder.t.sol:AddressDecoderTest
-[PASS] test_noncanonical_deployment_addresses() ([GAS])
+Ran 3 tests for test/AddressDecoder.t.sol:AddressDecoderTest
 [PASS] test_noncanonical_deployment_return_data() ([GAS])
 [PASS] test_short_deployment_return_data() ([GAS])
-[PASS] test_valid_deployment_addresses() ([GAS])
 [PASS] test_valid_deployment_return_data() ([GAS])
-Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 5 tests passed, 0 failed, 0 skipped (5 total tests)
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
-        fs::remove_file(decoder_test).unwrap();
-    }
-}
-
-#[cfg(unix)]
-#[forgetest]
-fn preprocess_via_ir_decoder_remapping(prj: _, cmd: _) {
-    let target = r#"
-pragma solidity >=0.8.24 <0.9.0;
-contract Target { function value() external pure returns (uint256) { return 111; } }
-"#;
-    prj.add_raw_test(
-        "Remapped.t.sol",
-        r#"
-pragma solidity >=0.8.24 <0.9.0;
-import {Target} from "../src/Target.sol";
-contract RemappedTest {
-    function test_deploy() public { require(new Target().value() == 111, "stale deployment"); }
-}
-"#,
-    );
-    for version in ["0.8.24", "0.8.25", "0.8.26"] {
-        for (index, remapping) in [
-            "foundry-pp/=lib/alternate/",
-            "test/:foundry-pp/=lib/alternate/",
-            "src/:foundry-pp/=lib/alternate/",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let compiler_root = prj.root().join(format!("remapping-{index}"));
-            fs::create_dir_all(&compiler_root).unwrap();
-            let solc = recording_solc(&compiler_root, version);
-            prj.update_config(|config| {
-                config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
-                config.dynamic_test_linking = true;
-                config.via_ir = true;
-                config.evm_version = EvmVersion::Shanghai;
-                config.optimizer = Some(true);
-                config.optimizer_runs = Some(200);
-                config.remappings = vec![remapping.parse::<Remapping>().unwrap().into()];
-                config.lint.lint_on_build = false;
-            });
-            prj.add_raw_source("Target.sol", target);
-            cmd.forge_fuse().args(["test", "--force"]).assert_success().stderr_eq("");
-            let calls = recorded_solc_inputs(&solc);
-            let rewritten = calls.iter().any(|input| {
-                input
-                    .sources
-                    .get(Path::new("test/Remapped.t.sol"))
-                    .is_some_and(|source| source.content.contains(".deployCode({"))
-            });
-            assert_eq!(rewritten, version == "0.8.26" || index == 2, "{version}, {remapping}");
-            cmd.forge_fuse().arg("test").assert_success().stderr_eq("");
-            assert_eq!(
-                recorded_solc_inputs(&solc).len(),
-                calls.len(),
-                "cached remapping invoked Solc"
-            );
-            prj.add_raw_source("Target.sol", &target.replace("return 111", "return 222"));
-            cmd.forge_fuse().arg("test").assert_failure().stderr_eq("").stdout_eq(str![[r#"
-...
-Ran 1 test for test/Remapped.t.sol:RemappedTest
-[FAIL: stale deployment] test_deploy() ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-        }
     }
 }
 

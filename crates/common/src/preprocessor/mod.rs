@@ -54,7 +54,7 @@ impl DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        12
+        13
     }
 
     fn preprocess(
@@ -101,9 +101,10 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 .evm_version
                 .is_some_and(|version| version >= EvmVersion::Constantinople),
         };
+        // Avoid the via-IR address-return stack error with uint160, retaining canonical ABI checks.
         // Keep this compatibility workaround scoped to the verified compiler releases.
         // Specific compiler selection normalizes away prerelease metadata in the input version.
-        let decode_deployment_address = input.input.settings.via_ir == Some(true)
+        let use_uint160_return = input.input.settings.via_ir == Some(true)
             && input.version.pre.is_empty()
             && !matches!(solc, SolcCompiler::Specific(solc) if !solc.version.pre.is_empty())
             && matches!(
@@ -160,7 +161,6 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 source_units,
                 mocks,
                 preprocessor_state,
-                decode_deployment_address,
             );
             // Collect data of source contracts referenced in tests and scripts.
             let data = collect_preprocessor_data(
@@ -174,15 +174,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             sources.extend(create_deploy_helpers(gcx, constructor_context, &data));
 
             // Generate and apply preprocessor source updates.
-            let (updates, decoder_sources) = remove_bytecode_dependencies(
-                gcx,
-                &deps,
-                &data,
-                &paths.root,
-                source_units,
-                decode_deployment_address,
-            );
-            sources.extend(decoder_sources);
+            let updates =
+                remove_bytecode_dependencies(gcx, &deps, &data, &paths.root, use_uint160_return);
             apply_updates(sources, updates);
 
             Ok(())
@@ -901,9 +894,9 @@ mod tests {
     }
 
     #[test]
-    fn deployment_address_decoder_uses_compiler_settings() {
+    fn uint160_deployment_returns_follow_compiler_settings() {
         let mut unchanged = None;
-        for (version, via_ir, decode) in [
+        for (version, via_ir, workaround) in [
             ("0.8.11", Some(true), false),
             ("0.8.12", Some(true), false),
             ("0.8.13", Some(true), false),
@@ -953,27 +946,22 @@ mod tests {
                 .map(|source| source.content.as_str())
                 .collect::<String>();
             assert_eq!(
-                generated.matches("external returns (uint256);").count(),
-                if decode { 8 } else { 0 },
+                generated.matches("external returns (uint160);").count(),
+                if workaround { 8 } else { 0 },
                 "{version}, via_ir={via_ir:?}"
             );
             assert_eq!(
                 generated.matches("external returns (address);").count(),
-                if decode { 0 } else { 8 }
+                if workaround { 0 } else { 8 }
             );
-            assert_eq!(
-                generated.matches("if (raw > type(uint160).max)").count(),
-                usize::from(decode)
-            );
-            assert_eq!(source.matches("function decodeDeploymentAddress").count(), 0);
-            assert_eq!(source.matches(".decodeDeploymentAddress(").count(), usize::from(decode));
+            assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
             assert_eq!(
                 generated
                     .matches("function getCode(string memory _artifact) external view returns (bytes memory);")
                     .count(),
                 1
             );
-            if !decode {
+            if !workaround {
                 if let Some(expected) = &unchanged {
                     assert_eq!(&input.input.sources, expected, "{version}, via_ir={via_ir:?}");
                 } else {
@@ -984,129 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn deployment_address_decoder_is_owned_by_source() {
-        let (_root, paths, mut input) = input();
-        input.version = Version::new(0, 8, 24);
-        input.input.settings.via_ir = Some(true);
-        let owner = format!("VmContractHelper{:x}", keccak256("test/Deploy.sol:First"));
-        let old_decoder = format!("decodeDeploymentAddress{:x}", keccak256("test/Deploy.sol"));
-        let helper = format!("foundry-pp/DeployHelperDecoder{:x}", keccak256("test/Deploy.sol"));
-        input.input.sources = [
-            ("src/Dep.sol".to_string(), "contract Dep {}".to_string()),
-            ("src/Names.sol".to_string(), format!("interface {owner} {{}} interface {owner}_ {{}} function decodeDeploymentAddress(uint256) pure {{}}")),
-            ("test/Deploy.sol".to_string(), "import '../src/Dep.sol'; import '../src/Names.sol'; contract First { function deploy() public { new Dep(); } } contract Second { function deploy() public { new Dep(); } }".to_string()),
-            ("test/Other.sol".to_string(), format!("import './Deploy.sol'; import '../src/Dep.sol'; function {old_decoder}(uint256) pure returns (address) {{ return address(0); }} contract Other {{ function deploy() public {{ new Dep(); }} }}")),
-            (format!("{helper}.sol"), "contract ReservedHelper {}".to_string()),
-            (format!("{helper}_.sol"), "contract ReservedHelperSuffix {}".to_string()),
-        ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
-        let mut wider = input.clone();
-        wider.input.sources.insert(
-            PathBuf::from("test/AAA.sol"),
-            Source::new(format!("interface {owner}__ {{}} function decodeDeploymentAddress(uint256) pure {{}} contract Unrelated {{}}")),
-        );
-        for input in [&mut input, &mut wider] {
-            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor::default(),
-                &SolcCompiler::default(),
-                input,
-                &paths,
-                &mut HashSet::new(),
-            )
-            .unwrap();
-        }
-        let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
-        assert_eq!(source.matches("function decodeDeploymentAddress").count(), 0);
-        assert_eq!(source.matches(&format!("import * as {owner}__ from")).count(), 1);
-        assert_eq!(source.matches(&format!("from \"{helper}__.sol\";")).count(), 2);
-        assert_eq!(source.matches(".decodeDeploymentAddress(").count(), 2);
-        let decoder_source =
-            &input.input.sources[&PathBuf::from(format!("{helper}__.sol"))].content;
-        assert_eq!(
-            decoder_source.matches("function decodeDeploymentAddress(uint256 raw)").count(),
-            1
-        );
-        assert_eq!(decoder_source.matches("external returns (uint256);").count(), 8);
-        assert_eq!(
-            input.input.sources[&PathBuf::from(format!("{helper}.sol"))].content.as_str(),
-            "contract ReservedHelper {}"
-        );
-        assert_eq!(
-            input.input.sources[&PathBuf::from(format!("{helper}_.sol"))].content.as_str(),
-            "contract ReservedHelperSuffix {}"
-        );
-        let other = &input.input.sources[&PathBuf::from("test/Other.sol")].content;
-        let other_helper =
-            format!("foundry-pp/DeployHelperDecoder{:x}.sol", keccak256("test/Other.sol"));
-        assert_eq!(other.matches(&format!("from \"{other_helper}\";")).count(), 1);
-        assert_eq!(input.input.sources[&PathBuf::from(other_helper)].content, *decoder_source);
-        for (path, source) in &input.input.sources {
-            assert_eq!(source.content, wider.input.sources[path].content, "{path:?}");
-        }
-    }
-
-    #[test]
-    fn deployment_address_decoder_preserves_remapped_dependencies() {
-        let helper = format!("foundry-pp/DeployHelperDecoder{:x}", keccak256("test/Deploy.sol"));
-        for (remapping, redirected) in [
-            ("foundry-pp/=lib/unused/".to_string(), true),
-            ("test/:foundry-pp/=lib/unused/".to_string(), true),
-            ("src/:foundry-pp/=lib/unused/".to_string(), false),
-            (format!("{helper}.sol=lib/unused.sol"), false),
-            (format!("{helper}_.sol=lib/unused.sol"), true),
-        ] {
-            for (patch, via_ir) in [(24, true), (25, true), (26, true), (24, false)] {
-                for expression in ["new Dep();", "type(Dep).creationCode;"] {
-                    let (_root, mut paths, mut input) = input();
-                    input.version = Version::new(0, 8, patch);
-                    input.input.settings.via_ir = Some(via_ir);
-                    paths.remappings.push(remapping.parse().unwrap());
-                    let source = format!(
-                        "import '../src/Dep.sol'; contract Deploy {{ function deploy() public {{ {expression} }} }}"
-                    );
-                    input.input.sources = [
-                        (PathBuf::from("src/Dep.sol"), Source::new("contract Dep {}")),
-                        (PathBuf::from("test/Deploy.sol"), Source::new(&source)),
-                        (
-                            PathBuf::from(format!("{helper}.sol")),
-                            Source::new("contract ReservedHelper {}"),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect();
-                    <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                        &DynamicTestLinkingPreprocessor::default(),
-                        &SolcCompiler::default(),
-                        &mut input,
-                        &paths,
-                        &mut HashSet::new(),
-                    )
-                    .unwrap();
-                    let actual = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
-                    let decode = patch != 26 && via_ir;
-                    let native = decode && redirected;
-                    assert_eq!(
-                        actual.as_str() == source,
-                        native,
-                        "0.8.{patch}, via_ir={via_ir}, {remapping}, {expression}"
-                    );
-                    assert_eq!(
-                        input
-                            .input
-                            .sources
-                            .values()
-                            .filter(|source| source
-                                .content
-                                .contains("function decodeDeploymentAddress(uint256 raw)"))
-                            .count(),
-                        usize::from(decode && !native),
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn deployment_address_decoder_preserves_specific_compiler_prereleases() {
+    fn uint160_deployment_returns_preserve_specific_compiler_prereleases() {
         for version in [
             "0.8.15-dev",
             "0.8.24-dev",
@@ -1116,7 +982,7 @@ mod tests {
         ] {
             let (_root, paths, input) = input();
             let version = version.parse::<Version>().unwrap();
-            let decode = version.pre.is_empty();
+            let workaround = version.pre.is_empty();
             let compiler = SolcCompiler::Specific(Solc::new_with_version(
                 paths.root.join("absent-solc"),
                 version.clone(),
@@ -1147,13 +1013,13 @@ mod tests {
                 .map(|source| source.content.as_str())
                 .collect::<String>();
             assert_eq!(
-                generated.matches("external returns (uint256);").count(),
-                if decode { 8 } else { 0 },
+                generated.matches("external returns (uint160);").count(),
+                if workaround { 8 } else { 0 },
                 "{version}"
             );
             assert_eq!(
                 generated.matches("external returns (address);").count(),
-                if decode { 0 } else { 8 },
+                if workaround { 0 } else { 8 },
                 "{version}"
             );
         }

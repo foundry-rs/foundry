@@ -1,28 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity >=0.8.15 <0.9.0;
 
-// The CLI test appends the decoder emitted by the preprocessor and replaces its name here.
 contract AddressDecoderTest {
-    function decode(uint256 raw) external pure returns (address) {
-        return DECODE_DEPLOYMENT_ADDRESS(raw);
-    }
-
-    function test_valid_deployment_addresses() public view {
-        require(this.decode(0) == address(0), "zero address");
-        require(this.decode(0x1234) == address(0x1234), "deployment address");
-        require(this.decode(type(uint160).max) == address(type(uint160).max), "maximum address");
-    }
-
-    function test_noncanonical_deployment_addresses() public {
-        (bool success, bytes memory result) =
-            address(this).call(abi.encodeCall(this.decode, (uint256(type(uint160).max) + 1)));
-        require(!success && result.length == 0, "truncated high address bits");
-        (success, result) = address(this).call(abi.encodeCall(this.decode, (type(uint256).max)));
-        require(!success && result.length == 0, "truncated maximum word");
-    }
-
-    function decodeReturnedAddress(address target) external returns (address) {
-        return DECODE_DEPLOYMENT_ADDRESS(DeploymentWordReturn(target).read());
+    function uint160ReturnedAddress(address target) external returns (address) {
+        return address(DeploymentUint160Return(target).read());
     }
 
     function nativeReturnedAddress(address target) external returns (address) {
@@ -46,7 +27,7 @@ contract AddressDecoderTest {
             for (uint256 j; j < lengths.length; ++j) {
                 target.setResponse(words[i], lengths[j]);
                 address expected = address(uint160(words[i]));
-                require(this.decodeReturnedAddress(address(target)) == expected, "decoded return data");
+                require(this.uint160ReturnedAddress(address(target)) == expected, "decoded return data");
                 require(this.nativeReturnedAddress(address(target)) == expected, "native return data");
             }
         }
@@ -65,15 +46,15 @@ contract AddressDecoderTest {
     }
 
     function checkRejectedReturnData(address target) internal {
-        (bool success, bytes memory result) = address(this).call(abi.encodeCall(this.decodeReturnedAddress, (target)));
+        (bool success, bytes memory result) = address(this).call(abi.encodeCall(this.uint160ReturnedAddress, (target)));
         require(!success && result.length == 0, "decoded invalid return data");
         (success, result) = address(this).call(abi.encodeCall(this.nativeReturnedAddress, (target)));
         require(!success && result.length == 0, "native invalid return data");
     }
 }
 
-interface DeploymentWordReturn {
-    function read() external returns (uint256);
+interface DeploymentUint160Return {
+    function read() external returns (uint160);
 }
 
 interface DeploymentAddressReturn {

@@ -6,7 +6,7 @@ use crate::fs::{canonicalize_path, normalize_path};
 use alloy_primitives::keccak256;
 use foundry_compilers::{
     ProjectPathsConfig, Updates,
-    artifacts::{SolcLanguage, Source, Sources, remappings::Remapping},
+    artifacts::{SolcLanguage, remappings::Remapping},
     project::{NativeDependencies, NativeDependencyState, PreprocessorState},
 };
 use itertools::Itertools;
@@ -87,7 +87,6 @@ impl PreprocessorDependencies {
         source_units: &[PathBuf],
         mocks: &mut HashSet<PathBuf>,
         preprocessor_state: &mut PreprocessorState,
-        decode_deployment_address: bool,
     ) -> Self {
         let relative_paths = project_paths.paths_relative();
         let src_dir = &relative_paths.sources;
@@ -221,14 +220,6 @@ impl PreprocessorDependencies {
                     deps_collector.native_dependencies,
                 );
             }
-            // The decoder adds an import even for parameterless targets and creationCode. Keep
-            // these dependencies native when the owning source would remap that helper.
-            let decoder_remapped = decode_deployment_address && {
-                let helper_path = deployment_decoder_path(path, root_dir, source_units);
-                remappings
-                    .iter()
-                    .any(|remapping| remapping_applies(remapping, &helper_path, path, root_dir))
-            };
             deps_collector.dependencies.retain(|dependency| {
                 let dependency_id = dependency.referenced_contract;
                 let dependency = gcx.hir.contract(dependency_id);
@@ -240,17 +231,15 @@ impl PreprocessorDependencies {
                 let has_constructor_args = dependency
                     .ctor
                     .is_some_and(|ctor_id| !gcx.hir.function(ctor_id).parameters.is_empty());
-                if !decoder_remapped
-                    && can_rewrite(
-                        dependency_path,
-                        path,
-                        root_dir,
-                        source_units,
-                        remappings,
-                        has_constructor_args,
-                        dependency.name.as_str(),
-                    )
-                {
+                if can_rewrite(
+                    dependency_path,
+                    path,
+                    root_dir,
+                    source_units,
+                    remappings,
+                    has_constructor_args,
+                    dependency.name.as_str(),
+                ) {
                     true
                 } else {
                     add_native_dependencies(
@@ -877,11 +866,9 @@ pub(crate) fn remove_bytecode_dependencies(
     deps: &PreprocessorDependencies,
     data: &PreprocessorData,
     root_dir: &Path,
-    source_units: &[PathBuf],
-    decode_deployment_address: bool,
-) -> (Updates, Sources) {
+    use_uint160_return: bool,
+) -> Updates {
     let mut updates = Updates::default();
-    let mut decoder_sources = Sources::new();
     for (contract_id, deps) in &deps.preprocessed_contracts {
         let contract = gcx.hir.contract(*contract_id);
         let source = gcx.hir.source(contract.source);
@@ -890,8 +877,6 @@ pub(crate) fn remove_bytecode_dependencies(
         };
 
         let reserved_identifiers = reserved_identifiers(gcx, contract.source);
-        let decoder_path = decode_deployment_address
-            .then(|| deployment_decoder_path(path, root_dir, source_units));
         let identifier = keccak256(format!(
             "{}:{}",
             path.strip_prefix(root_dir).unwrap_or(path).to_slash_lossy(),
@@ -902,13 +887,8 @@ pub(crate) fn remove_bytecode_dependencies(
 
         let vm_interface_name =
             unique_identifier(&reserved_identifiers, format!("VmContractHelper{identifier:x}"));
-        let vm_type = if decode_deployment_address {
-            format!("{vm_interface_name}.Vm")
-        } else {
-            vm_interface_name.clone()
-        };
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
-        let vm = format!("{vm_type}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
+        let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
         for dep in deps {
             let Some(ContractData { artifact, constructor_data, .. }) =
                 data.get(&dep.referenced_contract)
@@ -936,12 +916,10 @@ pub(crate) fn remove_bytecode_dependencies(
                     salt,
                 } => {
                     let mut update = format!("{name}(payable(");
-                    let closing_seq = if decode_deployment_address {
-                        update.push_str(&format!("{vm_interface_name}.decodeDeploymentAddress("));
-                        "}))))"
-                    } else {
-                        "})))"
-                    };
+                    if use_uint160_return {
+                        update.push_str("address(");
+                    }
+                    let closing_seq = if use_uint160_return { "}))))" } else { "})))" };
                     update.push_str(&format!("{vm}.deployCode({{"));
                     update.push_str(&format!("_artifact: \"{artifact}\""));
 
@@ -1004,10 +982,15 @@ pub(crate) fn remove_bytecode_dependencies(
             })
             .sorted()
             .join("\n");
-        let deployment_return_type = if decode_deployment_address { "uint256" } else { "address" };
-        let interface_name = if decode_deployment_address { "Vm" } else { &vm_interface_name };
-        let vm_interface = format!(
-            r#"interface {interface_name} {{
+        let deployment_return_type = if use_uint160_return { "uint160" } else { "address" };
+        updates.insert((
+            source.file.src.len(),
+            source.file.src.len(),
+            format!(
+                r#"
+{helper_imports}
+
+interface {vm_interface_name} {{
     function deployCode(string memory _artifact) external returns ({deployment_return_type});
     function deployCode(string memory _artifact, bytes32 _salt) external returns ({deployment_return_type});
     function deployCode(string memory _artifact, bytes memory _args) external returns ({deployment_return_type});
@@ -1018,46 +1001,10 @@ pub(crate) fn remove_bytecode_dependencies(
     function deployCode(string memory _artifact, bytes memory _args, uint256 _value, bytes32 _salt) external returns ({deployment_return_type});
     function getCode(string memory _artifact) external view returns (bytes memory);
 }}"#
-        );
-        let declaration = if let Some(path) = decoder_path {
-            // Keep the decoder outside the importer's namespace, reusing its existing helper
-            // alias. A new free function could collide with a wildcard importer's declarations.
-            decoder_sources.entry(path.clone()).or_insert_with(|| {
-                // Solc's via-IR address return decoder can exhaust the Yul stack. Decode a word
-                // instead, retaining the ABI's canonical-address check and empty revert data.
-                Source::new(format!(
-                    r#"// SPDX-License-Identifier: MIT
-pragma solidity >=0.8.15 <0.9.0;
-
-{vm_interface}
-
-function decodeDeploymentAddress(uint256 raw) pure returns (address) {{
-    if (raw > type(uint160).max) {{
-        assembly ("memory-safe") {{ revert(0, 0) }}
-    }}
-    return address(uint160(raw));
-}}
-"#
-                ))
-            });
-            let path = path.to_slash_lossy();
-            format!("import * as {vm_interface_name} from \"{path}\";")
-        } else {
-            vm_interface
-        };
-        updates.insert((
-            source.file.src.len(),
-            source.file.src.len(),
-            format!("\n{helper_imports}\n\n{declaration}"),
+            ),
         ));
     }
-    (updates, decoder_sources)
-}
-
-fn deployment_decoder_path(path: &Path, root_dir: &Path, source_units: &[PathBuf]) -> PathBuf {
-    let identifier =
-        keccak256(path.strip_prefix(root_dir).unwrap_or(path).to_slash_lossy().as_bytes());
-    deploy_helper_path(&format!("Decoder{identifier:x}"), source_units)
+    updates
 }
 
 /// Returns an identifier that cannot collide with text in the original source.
