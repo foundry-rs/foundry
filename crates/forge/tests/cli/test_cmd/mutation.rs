@@ -14,6 +14,37 @@ fn mutation_summary(stdout: &str) -> serde_json::Value {
 }
 
 #[forgetest_init]
+fn mutation_testing_body_survivors_do_not_skip_other_mutants(prj: _, cmd: _) {
+    prj.add_source(
+        "Body.sol",
+        r#"pragma solidity ^0.8.13;
+contract Body {
+    uint public number;
+    function check(bool value) public returns (bool) { number = 7; return value; }
+}"#,
+    );
+    prj.add_test(
+        "Body.t.sol",
+        r#"pragma solidity ^0.8.13;
+import "../src/Body.sol";
+contract BodyTest {
+    function testCheck() public { assert(new Body().check(true)); }
+}"#,
+    );
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[mutation]
+exclude_operators = ["assembly", "binary-op", "delete-expression", "elim-delegate", "require", "unary-op"]
+"#,
+    )
+    .unwrap();
+    cmd.args(["test", "--mutate", "src/Body.sol", "--mutation-jobs", "1", "--json"])
+        .assert_json_stdout(str![[r#"
+{"summary":{"total":3,"killed":1,"survived":2,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":33.33333333333333,"duration_secs":"{...}"},"survived_mutants":{"src/Body.sol":[{"line":5,"column":54,"original":"{ number = 7; return value; }","mutant":"{ return true; }"},{"line":5,"column":56,"original":"number = 7","mutant":"0"}]}}
+"#]]);
+}
+
+#[forgetest_init]
 async fn mutation_fork_backend_is_shared_by_baseline_and_workers(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
     api.anvil_set_balance(address!("0000000000000000000000000000000000001234"), U256::from(42))
@@ -63,7 +94,7 @@ contract CounterTest {
 ...
 Running mutation tests with 4 parallel workers...
 ...
-3 mutants killed
+4 mutants killed
 ...
 "#]]);
     assert_eq!(
@@ -136,9 +167,9 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 1         ┆ 20.0%      │
+│ Survived ┆ 1         ┆ 14.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 4         ┆ 80.0%      │
+│ Killed   ┆ 6         ┆ 85.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -152,7 +183,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
+Mutation Score: 85.7% (6/7 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -165,7 +196,7 @@ Survived mutants
        + ++number
 ...
 ────────────────────────────────────────────────────────────
-4 mutants killed
+6 mutants killed
 
 ════════════════════════════════════════════════════════════
 
@@ -173,7 +204,7 @@ Survived mutants
 
     // Run mutation testing with --json - verify the output contains valid mutation JSON
     cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
-{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":7,"killed":6,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":85.71428571428571,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
 }
@@ -223,6 +254,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -286,6 +318,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -374,6 +407,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -443,6 +477,7 @@ exclude_operators = [
     "binary-op",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
 ]
 "#,
@@ -526,6 +561,7 @@ exclude_operators = [
     "assignment",
     "delete-expression",
     "elim-delegate",
+    "function-body",
     "require",
     "unary-op",
 ]
@@ -996,16 +1032,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 20.0%      │
+│ Survived ┆ 2         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 80.0%      │
+│ Killed   ┆ 10        ┆ 83.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 ...
 "#]]);
 }
@@ -1059,9 +1095,9 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 20.0%      │
+│ Survived ┆ 2         ┆ 16.7%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 80.0%      │
+│ Killed   ┆ 10        ┆ 83.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -1075,7 +1111,7 @@ Legend:
   Skipped - redundant mutation on the same expression
   Timed out - compile/test exceeded the configured timeout
 
-Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
+Mutation Score: 83.3% (10/12 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 Survived mutants
@@ -1091,7 +1127,7 @@ Survived mutants
        - a + b
 ...
 ────────────────────────────────────────────────────────────
-8 mutants killed
+10 mutants killed
 
 ════════════════════════════════════════════════════════════
 
@@ -1820,6 +1856,11 @@ contract UsesSharedTest {
 // Test require/assert mutation for security-critical patterns
 #[forgetest_init]
 fn mutation_testing_require_mutator(prj: _, cmd: _) {
+    fs::write(
+        prj.root().join("foundry.toml"),
+        "[mutation]\nexclude_operators = [\"function-body\"]\n",
+    )
+    .unwrap();
     // A contract with security-critical require checks (access control, input validation)
     prj.add_source(
         "Vault.sol",
@@ -2166,7 +2207,7 @@ contract CounterTest {
         .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"])
         .assert_success()
         .stdout_eq(str![[r#"
-{"summary":{"total":4,"killed":3,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":75.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
 }
@@ -2271,8 +2312,8 @@ contract ArithmeticTest {
             .assert_json_stdout(str![[r#"
 {
   "summary": {
-    "total": 5,
-    "killed": 5,
+    "total": 7,
+    "killed": 7,
     "survived": 0,
     "invalid": 0,
     "skipped": 0,
@@ -2338,8 +2379,8 @@ contract ArithmeticTest {
         [r#"
 {
   "summary": {
-    "total": 5,
-    "killed": 5,
+    "total": 7,
+    "killed": 7,
     "survived": 0,
     "invalid": 0,
     "skipped": 0,
@@ -2434,13 +2475,13 @@ contract CounterInvariantTest {
     assert_eq!(
         unbounded,
         serde_json::json!({
-            "total": 10,
-            "killed": 9,
+            "total": 11,
+            "killed": 10,
             "survived": 1,
             "invalid": 0,
             "skipped": 0,
             "timed_out": 0,
-            "mutation_score": 90.0,
+            "mutation_score": 90.9090909090909,
         })
     );
     assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);

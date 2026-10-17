@@ -5,7 +5,7 @@ use crate::mutation::{
 };
 use eyre::Report;
 use foundry_config::MutatorType;
-use solar::ast::{Expr, ItemContract, VariableDefinition, visit::Visit, yul};
+use solar::ast::{Expr, ItemContract, ItemFunction, VariableDefinition, visit::Visit, yul};
 use std::{ops::ControlFlow, path::PathBuf};
 
 #[cfg(test)]
@@ -164,6 +164,23 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
         let res = self.walk_item_contract(contract);
         self.in_allowed_contract = prev;
         res
+    }
+
+    fn visit_item_function(
+        &mut self,
+        function: &'ast ItemFunction<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        if self.in_allowed_contract && function.body.is_some() {
+            let mut builder = MutationContext::builder()
+                .with_path(self.path.clone())
+                .with_span(function.body_span)
+                .with_function(function);
+            if let Some(src) = self.source {
+                builder = builder.with_source(src);
+            }
+            self.collect_mutations(&builder.build().expect("function body context"));
+        }
+        self.walk_item_function(function)
     }
 
     fn visit_variable_definition(
@@ -517,6 +534,100 @@ contract Test {
             assert!(unary_mutations.contains(&solar::ast::UnOpKind::PreDec));
             assert!(unary_mutations.contains(&solar::ast::UnOpKind::BitNot));
             assert!(unary_mutations.contains(&solar::ast::UnOpKind::PostDec));
+        });
+    }
+
+    #[test]
+    fn function_body_replacements_preserve_headers_and_skip_unsupported_functions() {
+        let source = r#"
+abstract contract Target {
+    constructor() { revert(); }
+    modifier guarded() { require(true); _; }
+    function effect() public guarded { revert(); }
+    function boolean() external pure returns (bool) { return 2 > 1; }
+    function unsigned() internal pure returns (uint8 result) { result = 7; }
+    function signed() private pure returns (int256) { return -7; }
+    function account() public view returns (address) { return msg.sender; }
+    function payableAccount() public view returns (address payable) { return payable(msg.sender); }
+    function tuple() public virtual returns (uint, bool);
+    function dynamic() public pure returns (bytes memory) { return hex"1234"; }
+    function multiple() public pure returns (uint, bool) { return (7, true); }
+    function testSomething() public { revert(); }
+    function invariantSomething() public { revert(); }
+    function setUp() public { revert(); }
+    function empty() public {}
+    function emptyFormatted() public {
+    }
+    function emptyCommented() public { /* No work. */ }
+    function constantBoolean() public pure returns (bool) {
+        return true;
+    }
+    function constantSigned() public pure returns (int256) {return -1;}
+    function implicitReturn() public pure returns (uint256 result) {}
+    receive() external payable { revert(); }
+    fallback() external { revert(); }
+}
+contract Other { function ignored() public { revert(); } }
+"#;
+        let sess = Session::builder().with_silent_emitter(None).build();
+        sess.enter(|| {
+            let arena = Arena::new();
+            let mut parser = Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::Real("target.sol".into()),
+                || Ok(source.to_string()),
+            )
+            .unwrap();
+            let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+            drop(parser);
+            let mut visitor =
+                MutantVisitor::with_operators("target.sol".into(), &[MutatorType::FunctionBody])
+                    .with_source(source)
+                    .with_contract_filter(|name| name == "Target");
+            let _ = visitor.visit_source_unit(&ast);
+            assert!(visitor.take_errors().is_empty());
+            let replacements = visitor
+                .mutation_to_conduct
+                .iter()
+                .map(|mutant| {
+                    let lo = mutant.span.lo().0 as usize;
+                    let hi = mutant.span.hi().0 as usize;
+                    assert_eq!(mutant.original, &source[lo..hi]);
+                    let header = source[..lo].lines().last().unwrap().trim();
+                    (header, mutant.mutation.to_string())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                replacements,
+                [
+                    ("function effect() public guarded", "{}"),
+                    ("function boolean() external pure returns (bool)", "{ return true; }"),
+                    ("function boolean() external pure returns (bool)", "{ return false; }"),
+                    ("function unsigned() internal pure returns (uint8 result)", "{ return 0; }"),
+                    ("function unsigned() internal pure returns (uint8 result)", "{ return 1; }"),
+                    ("function signed() private pure returns (int256)", "{ return 0; }"),
+                    ("function signed() private pure returns (int256)", "{ return 1; }"),
+                    ("function signed() private pure returns (int256)", "{ return -1; }"),
+                    ("function account() public view returns (address)", "{ return address(0); }"),
+                    (
+                        "function payableAccount() public view returns (address payable)",
+                        "{ return payable(address(0)); }"
+                    ),
+                    ("function constantBoolean() public pure returns (bool)", "{ return false; }"),
+                    ("function constantSigned() public pure returns (int256)", "{ return 0; }"),
+                    ("function constantSigned() public pure returns (int256)", "{ return 1; }"),
+                    (
+                        "function implicitReturn() public pure returns (uint256 result)",
+                        "{ return 0; }"
+                    ),
+                    (
+                        "function implicitReturn() public pure returns (uint256 result)",
+                        "{ return 1; }"
+                    ),
+                ]
+                .map(|(header, body)| (header, body.to_string()))
+            );
         });
     }
 }
