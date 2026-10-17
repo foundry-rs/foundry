@@ -641,8 +641,10 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
     pub async fn bundle(mut self) -> Result<BundledState<FEN>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
-        if is_multi_deployment && !self.build_data.libraries.is_empty() {
-            eyre::bail!("Multi-chain deployment is not supported with libraries.");
+        if is_multi_deployment && self.build_data.predeploy_libraries.has_nonce_libraries() {
+            eyre::bail!(
+                "Multi-chain deployment is not supported with libraries deployed at nonce addresses."
+            );
         }
 
         let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::default();
@@ -802,9 +804,11 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             .iter()
             .map(|library| library.address.to_checksum(None))
             .collect::<Vec<_>>();
-        let libraries = self
-            .build_data
-            .libraries
+        let profile = self.build_data.chain_profiles.get(&chain).cloned();
+        let profile_build =
+            profile.as_ref().map(|profile| self.build_data.profile_build(profile)).transpose()?;
+        let libraries = profile_build
+            .map_or(&self.build_data.libraries, |build| &build.libraries)
             .libs
             .iter()
             .flat_map(|(file, libs)| {
@@ -825,6 +829,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             chain,
             commit,
             recovery_generation: None,
+            profile,
         };
         Ok(sequence)
     }

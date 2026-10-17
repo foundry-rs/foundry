@@ -77,6 +77,11 @@ At each root `setUp()` or script-function call, the cheatcode inspector decremen
 before execution so broadcasts observe the on-chain nonce. This correction is not triggered by the
 first `vm.broadcast`, `vm.startBroadcast`, or `vm.getNonce` call.
 
+CREATE2 library deployments are made once per fork. The runner covers the `--rpc-url` chain; on any
+other fork, the inspector stack deploys them before the first broadcast to that fork, from the
+broadcaster, through the CREATE2 deployer, skipping libraries that already have code.
+Nonce-addressed library deployments differ per chain and remain unsupported in multichain scripts.
+
 Script execution protection is installed after deploying the script contract. Alongside the
 `ADDRESS` check, the cheatcode inspector rejects `CALLER` in the main script's broadcasting frame
 when its actual caller differs from the broadcast sender. Called contracts and deeper callbacks
@@ -97,7 +102,7 @@ A `ScriptSequence` compatibility artifact stores:
 - an ordered `transactions` queue containing requests or pre-signed envelopes plus display and
   verification metadata;
 - separate `receipts` and `pending` hash lists;
-- chain ID, libraries, script returns, source commit, and timestamp;
+- chain ID, libraries, the endpoint profile, script returns, source commit, and timestamp;
 - each transaction's RPC URL in a separate sensitive-cache file.
 
 Each `TransactionWithMetadata` has an optional transaction hash. The authoritative recovery plan
@@ -231,6 +236,12 @@ Multichain mode stores per-chain sequences in one `MultiChainSequence`. Pending 
 reconciled per chain, while new sequences are broadcast in container order. There is no cross-chain
 atomicity. Recovery must preserve independent per-chain progress and must not infer that one chain's
 completion permits skipping an operation on another.
+
+Endpoints that name a profile get a separate build in `cache/profiles/<settings hash>`, used on
+every fork of the endpoint's chain: broadcast creates and `vm.deployCode`/`vm.getCode` take the
+build's artifact, creation code passed as call data is replaced when its length is unchanged, and
+the profile's execution spec applies while the fork is active. Each per-chain sequence records its
+profile for resume and verification.
 
 ## Known failure windows
 

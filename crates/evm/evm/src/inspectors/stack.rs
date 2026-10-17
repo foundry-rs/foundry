@@ -14,7 +14,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
-    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
@@ -35,8 +35,8 @@ use revm::{
     context_interface::{CreateScheme, journaled_state::JournalCheckpoint},
     handler::FrameResult,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterResult,
+        CallInput, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput,
+        Gas, InstructionResult, Interpreter, InterpreterResult,
         bytecode::opcode as op,
         interpreter_types::{InputsTr, Jumps},
         return_ok,
@@ -492,6 +492,10 @@ pub struct InspectorStackInner {
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
+    /// Pending profile build error of a broadcast call.
+    pub pending_chain_call_error: Option<CallOutcome>,
+    /// Pending profile build error of a broadcast create.
+    pub pending_chain_create_error: Option<CreateOutcome>,
     /// Counter for CREATE2 salt in `--batch` CREATE rewrites.
     pub batch_create_counter: u64,
     /// Whether the one-shot `--batch` rewrite warning has already been emitted.
@@ -1524,6 +1528,52 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheats.pending_isolated_snapshot_journal = Some(ecx.journal_inner().journal.clone());
         }
     }
+
+    /// Deploys the CREATE2 libraries of the active fork before its first broadcast.
+    fn deploy_chain_libraries(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        caller: Address,
+    ) -> Option<String> {
+        let cheats = self.cheatcodes.as_deref_mut()?;
+        let config = &cheats.core.config;
+        if cheats.broadcast.is_none()
+            || (config.chain_builds.is_empty() && config.create2_libraries.is_empty())
+        {
+            return None;
+        }
+        let depth = ecx.journal().depth();
+        let (sender, salt, libraries) =
+            ecx.db().active_fork_url().zip(ecx.db().active_fork_source_chain_id()).and_then(
+                |(rpc, chain_id)| cheats.take_chain_libraries(&rpc, chain_id, depth, caller),
+            )?;
+        let create2_deployer = self.create2_deployer();
+        for (address, code) in libraries {
+            if ecx
+                .journal_mut()
+                .load_account(address)
+                .is_ok_and(|account| account.info.code_hash == KECCAK_EMPTY)
+            {
+                let input = Bytes::from([salt.as_slice(), code.as_ref()].concat());
+                if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                    cheats.record_library_deployment(ecx, sender, create2_deployer, input.clone());
+                }
+                let gas_limit = ecx.block().gas_limit();
+                let (result, _, _) = self.transact_inner(
+                    ecx,
+                    TxKind::Call(create2_deployer),
+                    sender,
+                    input,
+                    IsolatedGas { regular_limit: gas_limit, reservoir: 0, precharged_state: None },
+                    U256::ZERO,
+                );
+                if !result.result.is_ok() {
+                    return Some(format!("CREATE2 deployment of library {address} failed"));
+                }
+            }
+        }
+        None
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
@@ -1652,6 +1702,67 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 is_create: matches!(frame_input, FrameInput::Create(_)),
                 failed: false,
             });
+        }
+
+        if let FrameInput::Call(call) = frame_input
+            && call.target_address != CHEATCODE_ADDRESS
+            && let Some(cheats) = self.cheatcodes.as_deref()
+            && !cheats.core.config.chain_builds.is_empty()
+            && let Some(chain_id) = ecx.db().active_fork_source_chain_id()
+            && cheats.core.config.chain_builds.contains_key(&chain_id)
+        {
+            let input = call.input.bytes(ecx);
+            match cheats.chain_call_input(
+                chain_id,
+                ecx.journal().depth(),
+                call.transfer_from(),
+                call.is_static,
+                &input,
+            ) {
+                Some(Ok(input)) => call.input = CallInput::Bytes(input),
+                Some(Err(err)) => {
+                    self.inner.pending_chain_call_error = Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Bytes::from(err.into_bytes()),
+                            gas: Gas::new(call.gas_limit),
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
+                    });
+                }
+                None => {}
+            }
+        }
+
+        if let FrameInput::Create(inputs) = frame_input
+            && let Some(cheats) = self.cheatcodes.as_deref()
+            && !cheats.core.config.chain_builds.is_empty()
+            && let Some(chain_id) = ecx.db().active_fork_source_chain_id()
+            && let Some(init_code) = cheats.chain_init_code(
+                chain_id,
+                ecx.journal().depth(),
+                inputs.caller(),
+                inputs.init_code(),
+            )
+        {
+            match init_code {
+                Ok(init_code) => inputs.set_init_code(init_code),
+                Err(err) => {
+                    self.inner.pending_chain_create_error = Some(CreateOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Bytes::from(err.into_bytes()),
+                            gas: Gas::new(inputs.gas_limit()),
+                        },
+                        address: None,
+                        charged_create_state_gas: inputs.charged_create_state_gas(),
+                    });
+                    return None;
+                }
+            }
         }
 
         if let FrameInput::Create(inputs) = frame_input
@@ -1848,6 +1959,21 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             && !self.in_inner_context
             && (ecx.journal().depth() == 1
                 || self.inner.synthetic_create_depth == Some(ecx.journal().depth()));
+        if call.target_address != CHEATCODE_ADDRESS
+            && let Some(err) = self.deploy_chain_libraries(ecx, call.transfer_from())
+        {
+            self.inner.pending_chain_call_error = Some(CallOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output: Bytes::from(err.into_bytes()),
+                    gas: Gas::new(call.gas_limit),
+                },
+                memory_offset: call.return_memory_offset.clone(),
+                was_precompile_called: false,
+                precompile_call_logs: vec![],
+                charged_new_account_state_gas: call.charged_new_account_state_gas,
+            });
+        }
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             apply_mocked_function(cheatcodes, ecx, call);
@@ -1875,6 +2001,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
             debug_assert_eq!(node.trace.depth, ecx.journal().depth());
             node.trace.caller = caller;
+        }
+
+        if let Some(error) = self.inner.pending_chain_call_error.take() {
+            return Some(error);
         }
 
         if let Some(output) = cheatcode_outcome {
@@ -2028,6 +2158,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         );
 
         let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
+        if let Some(err) = self.deploy_chain_libraries(ecx, create.caller()) {
+            self.inner.pending_chain_create_error = Some(CreateOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output: Bytes::from(err.into_bytes()),
+                    gas: Gas::new(create.gas_limit()),
+                },
+                address: None,
+                charged_create_state_gas: create.charged_create_state_gas(),
+            });
+        }
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             cheatcode_outcome = cheatcodes.create(ecx, create);
@@ -2039,6 +2180,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
             debug_assert_eq!(node.trace.depth, ecx.journal().depth());
             node.trace.caller = create.caller();
+        }
+
+        if let Some(error) = self.inner.pending_chain_create_error.take() {
+            return Some(error);
         }
 
         if let Some(output) = cheatcode_outcome {

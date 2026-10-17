@@ -54,7 +54,7 @@ use foundry_evm::{
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
-        cheatcodes::{BroadcastableTransactions, Wallets},
+        cheatcodes::{BroadcastableTransactions, ChainBuild, Wallets},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
     revm::interpreter::InstructionResult,
@@ -63,7 +63,7 @@ use foundry_evm::{
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -1013,6 +1013,10 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub batch: bool,
     /// Tempo transaction options applied to broadcast transactions.
     pub tempo: TempoOpts,
+    /// Profile builds by chain id.
+    pub chain_builds: BTreeMap<u64, Arc<ChainBuild>>,
+    /// CREATE2 libraries to deploy on each fork.
+    pub create2_libraries: Vec<(Address, Bytes)>,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
@@ -1051,6 +1055,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             backend,
             batch,
             tempo,
+            chain_builds: BTreeMap::new(),
+            create2_libraries: Vec::new(),
         })
     }
 
@@ -1187,6 +1193,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     cheats_config.blocked_cheatcodes =
                         library_deployments::rerun_unsafe_cheatcode_selectors();
                 }
+                cheats_config.chain_builds.clone_from(&self.chain_builds);
+                cheats_config.create2_libraries.clone_from(&self.create2_libraries);
                 stack
                     .cheatcodes(cheats_config.into())
                     .wallets(script_wallets)
@@ -1300,11 +1308,7 @@ mod tests {
         },
     };
     use semver::Version;
-    use std::{
-        fs,
-        num::NonZeroU64,
-        sync::{Arc, LazyLock},
-    };
+    use std::{fs, num::NonZeroU64, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
 
