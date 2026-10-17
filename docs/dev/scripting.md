@@ -146,14 +146,29 @@ from a multichain deployment are checked concurrently. A confirmed success remov
 the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
 consuming the retry budget while the selected RPC still returns the transaction. The first such
 timeout prints a warning for that transaction; waiting continues without additional RPC checks. If
-that endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes may be
-replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
-while unknown outcomes remain blocked until explicitly resolved.
+that endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes
+may be replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
+while unknown outcomes remain blocked until explicitly resolved. Removing a hash from `pending`
+this way prints an immediate `--resume` warning, so the guidance survives a later batch failure.
+An ordinary broadcast that otherwise succeeds while a submitted operation still lacks a receipt
+exits successfully, since a lagging or load-balanced endpoint can briefly return no transaction,
+but it replaces the success message with a warning on stderr that lists those operations.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and can
 also remove the compatibility hash from `pending`. Neither that incomplete receipt nor one endpoint
 returning no transaction proves that a submission never reached the network, so neither condition
 permits the recovery store to infer a replacement attempt.
+
+Hashes are polled in operation order, because `pending` follows submission-response order and a
+later nonce can remain visible indefinitely behind an earlier transaction that is gone. Polling
+stops at the first transaction the endpoint no longer returns. A hash queued behind an earlier
+operation on the same chain from the same sender, in any earlier sequence, that has neither a
+receipt nor a pending hash, such as one removed by an earlier check, is not polled at all, so resume
+reaches the replay of that operation. Each hash left unpolled is checked once: a receipt with the
+requested confirmations is recorded, and a confirmed revert still fails the broadcast; a
+transaction the endpoint no longer returns is handled like the first one; anything still visible
+stays in `pending` for a later batch or `--resume`. The broadcaster skips an operation whose
+receipt an earlier batch recorded while it was pending.
 
 Receipts are sorted by block number and transaction index before persistence. Their order is not an
 operation identity. Associate a receipt with a transaction by hash, as `BroadcastReader` does,

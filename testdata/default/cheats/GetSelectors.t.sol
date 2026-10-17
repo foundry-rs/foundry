@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity =0.8.18;
+pragma solidity =0.8.35;
 
 import "utils/Test.sol";
 
@@ -33,7 +33,7 @@ contract GetSelectorsTest is Test {
     }
 
     function testGetSelectorsByNameAndVersion() public {
-        bytes4[] memory selectors = vm.getSelectors("TargetContract:0.8.18");
+        bytes4[] memory selectors = vm.getSelectors("TargetContract:0.8.35");
         assertEq(selectors.length, 3, "should return 3 selectors");
     }
 

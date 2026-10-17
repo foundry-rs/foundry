@@ -5084,3 +5084,101 @@ fn test_fork_uncached_reads_do_not_deadlock_saturated_runtime() {
 
     done_rx.recv_timeout(Duration::from_secs(60)).expect("fork node deadlocked");
 }
+
+#[test]
+fn test_fork_historical_reads_with_pending_logs() {
+    let origin_rt = tokio::runtime::Runtime::new().unwrap();
+    let (_origin_api, origin_handle) = origin_rt.block_on(spawn(NodeConfig::test()));
+    let (endpoint, proxy) = origin_rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let client = reqwest::Client::new();
+        let origin_url = origin_handle.http_endpoint();
+        let router = Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let client = client.clone();
+                let origin_url = origin_url.clone();
+                async move {
+                    let delay = if request["method"] == "eth_getLogs" { 200 } else { 10 };
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    Json(
+                        client
+                            .post(origin_url)
+                            .json(&request)
+                            .send()
+                            .await
+                            .unwrap()
+                            .json::<Value>()
+                            .await
+                            .unwrap(),
+                    )
+                }
+            }),
+        );
+        let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (endpoint, proxy)
+    });
+
+    for urls in [vec![endpoint.clone()], vec![endpoint.clone(), endpoint]] {
+        let fork_rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (api, handle) = fork_rt.block_on(async {
+            let (api, handle) = spawn(
+                NodeConfig::test()
+                    .with_fork_urls(urls)
+                    .with_no_fork_node_info(true)
+                    .with_no_storage_caching(true),
+            )
+            .await;
+            // Read twenty uncached slots while a historical state lock is held.
+            api.anvil_set_code(
+                Address::ZERO,
+                bytes!("60003560005b8082015450600101806100141160055700"),
+            )
+            .await
+            .unwrap();
+            api.mine_one().await.unwrap();
+            api.mine_one().await.unwrap();
+            (api, handle)
+        });
+        let result = origin_rt.block_on(async {
+            let provider = handle.http_provider();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                let call = provider.raw_request::<_, Value>(
+                    "eth_call".into(),
+                    json!([{"to": Address::ZERO, "data": B256::ZERO}, "0x1"]),
+                );
+                let logs = || {
+                    provider.raw_request::<_, Value>(
+                        "eth_getLogs".into(),
+                        json!([{"fromBlock": "0x0", "toBlock": "0x0"}]),
+                    )
+                };
+                let storage = async {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    provider
+                        .raw_request::<_, Value>(
+                            "eth_getStorageAt".into(),
+                            json!([Address::ZERO, "0xff", "0x1"]),
+                        )
+                        .await
+                };
+                let (call, first, second, storage) = tokio::join!(call, logs(), logs(), storage);
+                assert_eq!(call.unwrap(), json!("0x"));
+                assert_eq!(first.unwrap(), json!([]));
+                assert_eq!(second.unwrap(), json!([]));
+                assert_eq!(storage.unwrap(), json!(B256::ZERO));
+                assert_eq!(provider.get_block_number().await.unwrap(), 2);
+            })
+            .await
+        });
+        drop((api, handle));
+        fork_rt.shutdown_background();
+        result.expect("historical reads and logs deadlocked the fork node");
+    }
+    proxy.abort();
+}

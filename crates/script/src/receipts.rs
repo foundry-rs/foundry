@@ -52,16 +52,11 @@ pub async fn check_tx_status<N: Network>(
                 .await
             {
                 Ok(receipt) => {
-                    // Check if the receipt is pending (missing block information)
-                    let is_pending = receipt.block_number().is_none()
-                        || receipt.block_hash().is_none()
-                        || receipt.transaction_index().is_none();
-
-                    if !is_pending {
+                    if is_mined_receipt_for(&receipt, hash) {
                         return Ok(receipt.into());
                     }
 
-                    // Receipt is pending, try to sleep and retry a few times
+                    // Receipt is pending or foreign, try to sleep and retry a few times
                     match provider.get_transaction_by_hash(hash).await {
                         Ok(Some(_)) => {
                             // Sleep for a short time to allow the transaction to be mined
@@ -102,6 +97,39 @@ pub async fn check_tx_status<N: Network>(
         .await;
 
     (hash, result)
+}
+
+/// Checks the status of a txhash once without waiting. Returns `None` while the transaction is
+/// still known to the node but has no receipt with the requested confirmations.
+pub async fn check_tx_status_once<N: Network>(
+    provider: &RootProvider<N>,
+    hash: TxHash,
+    confirmations: u64,
+) -> Option<TxStatus<N::ReceiptResponse>> {
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .ok()
+        .flatten()
+        .filter(|receipt| is_mined_receipt_for(receipt, hash));
+    if let Some(receipt) = receipt {
+        let confirmed = confirmations <= 1
+            || provider.get_block_number().await.is_ok_and(|latest| {
+                receipt.block_number().is_some_and(|block| {
+                    block.checked_add(confirmations - 1).is_some_and(|required| latest >= required)
+                })
+            });
+        return confirmed.then(|| receipt.into());
+    }
+    matches!(provider.get_transaction_by_hash(hash).await, Ok(None)).then_some(TxStatus::Dropped)
+}
+
+/// Returns true if `receipt` is a mined receipt for `hash`.
+pub(crate) fn is_mined_receipt_for<R: ReceiptResponse>(receipt: &R, hash: TxHash) -> bool {
+    receipt.transaction_hash() == hash
+        && receipt.block_number().is_some()
+        && receipt.block_hash().is_some()
+        && receipt.transaction_index().is_some()
 }
 
 /// Prints parts of the receipt to stdout
@@ -329,6 +357,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn check_tx_status_once_requires_confirmations() {
+        let hash = B256::repeat_byte(0x42);
+        // The receipt is mined in block 0x3039.
+        for (latest, confirmations, confirmed) in [
+            (0x3039u64, 1, true),
+            (0x303a, 3, false),
+            (0x303b, 3, true),
+            (u64::MAX, u64::MAX, false),
+        ] {
+            let asserter = Asserter::new();
+            let provider: RootProvider<Ethereum> =
+                ProviderBuilder::default().connect_mocked_client(asserter.clone());
+            asserter.push_success(&mock_receipt(hash, true));
+            asserter.push_success(&U256::from(latest));
+
+            let status = check_tx_status_once(&provider, hash, confirmations).await;
+            assert_eq!(status.is_some(), confirmed, "{latest} {confirmations}");
+        }
+    }
+
+    #[tokio::test]
     async fn check_tx_status_does_not_mark_lookup_errors_as_dropped() {
         let hash = B256::repeat_byte(0x42);
         let asserter = Asserter::new();
@@ -350,6 +399,24 @@ mod tests {
 
         assert!(err.contains("failed to check if transaction"));
         assert!(err.contains("lookup unavailable"));
+    }
+
+    #[tokio::test]
+    async fn check_tx_status_rejects_foreign_receipt() {
+        let hash = B256::repeat_byte(0x42);
+        let foreign = mock_receipt(B256::repeat_byte(0x99), true);
+        let asserter = Asserter::new();
+        let provider: RootProvider<Ethereum> =
+            ProviderBuilder::default().connect_mocked_client(asserter.clone());
+
+        // Receipt lookups while registering and polling, then the transaction lookup.
+        asserter.push_success(&foreign);
+        asserter.push_success(&foreign);
+        asserter.push_success(&None::<()>);
+
+        let (_, status) = check_tx_status(&provider, hash, 0, 1).await;
+
+        assert!(matches!(status.unwrap(), TxStatus::Dropped));
     }
 
     /// Upper bound for the anvil-based `check_tx_status` tests, so a hang fails fast

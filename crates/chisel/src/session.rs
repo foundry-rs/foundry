@@ -5,6 +5,7 @@
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
+use foundry_cli::utils::parse_json;
 use foundry_evm::{core::evm::FoundryEvmNetwork, executors::ExecutorBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -44,7 +45,7 @@ pub struct ChiselSession<FEN: FoundryEvmNetwork> {
 // ChiselSession Common Associated Functions
 impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     fn deserialize_cached(contents: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
-        let mut session: Self = serde_json::from_str(contents)?;
+        let mut session: Self = parse_json(contents)?;
         session.source.config.clear_credentials();
         // A session load must not run project cleanup requested by cached configuration.
         session.source.config.foundry_config.force = false;
@@ -126,34 +127,62 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         }
         Self::secure_cache_dir(cache_dir)?;
 
-        let cache_file_name = match self.id.as_ref() {
-            Some(id) => {
-                // ID is already set- use the existing cache file.
-                format!("{cache_dir}chisel-{id}.json")
-            }
-            None => {
-                // Get the next session cache ID / file
-                let (id, file_name) = Self::next_cached_session_in(cache_dir)?;
-                // Set the session's ID
-                self.id = Some(id);
-                // Return the new session's cache file name
-                file_name
+        // ID is already set- replace the existing cache file.
+        if let Some(id) = &self.id {
+            let cache_file_name = format!("{cache_dir}chisel-{id}.json");
+            self.write_temp_file(cache_dir)?.persist(&cache_file_name).map_err(|err| err.error)?;
+            return Ok(cache_file_name);
+        }
+
+        let id = Self::next_cached_session_in(cache_dir)?;
+        self.write_new_from(cache_dir, id)
+    }
+
+    /// Saves the session under the first unused ID from `id` onward, without replacing a session
+    /// that another process saved after the ID was chosen.
+    ///
+    /// On failure the ID is cleared, so a later save cannot replace a file this session never
+    /// claimed.
+    fn write_new_from(&mut self, cache_dir: &str, mut id: usize) -> Result<String> {
+        let result = loop {
+            self.id = Some(id.to_string());
+            let cache_file_name = format!("{cache_dir}chisel-{id}.json");
+            let file = match self.write_temp_file(cache_dir) {
+                Ok(file) => file,
+                Err(err) => break Err(err),
+            };
+            match file.persist_noclobber(&cache_file_name) {
+                Ok(_) => break Ok(cache_file_name),
+                Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let Some(next) = id.checked_add(1) else {
+                        break Err(eyre::eyre!("no unused chisel session id available"));
+                    };
+                    id = next;
+                }
+                Err(err) => {
+                    break Err(eyre::Error::new(err.error)
+                        .wrap_err(format!("failed to create new session file {cache_file_name}")));
+                }
             }
         };
+        if result.is_err() {
+            self.id = None;
+        }
+        result
+    }
 
-        // The temporary file is private from creation, and replacement does not follow a
-        // destination symlink or retain the permissions of an older session.
+    /// Serializes the session into a private temporary file in the cache directory.
+    ///
+    /// The temporary file is private from creation, and persisting it does not follow a
+    /// destination symlink or retain the permissions of an older session.
+    fn write_temp_file(&self, cache_dir: &str) -> Result<tempfile::NamedTempFile> {
         let mut file = tempfile::NamedTempFile::new_in(cache_dir)?;
         #[cfg(unix)]
         file.as_file().set_permissions(fs::Permissions::from_mode(0o600))?;
         serde_json::to_writer_pretty(&mut file, self)?;
         file.flush()?;
         file.as_file().sync_all()?;
-        file.persist(&cache_file_name).map_err(|err| err.error)?;
-
-        // Return the full cache file path
-        // Ex: /home/user/.foundry/cache/chisel/chisel-0.json
-        Ok(cache_file_name)
+        Ok(file)
     }
 
     /// Get the next default session cache file name
@@ -164,11 +193,14 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Uses one past the highest numeric ID to avoid collisions after deletion.
     pub fn next_cached_session() -> Result<(String, String)> {
-        Self::next_cached_session_in(&Self::cache_dir()?)
+        let cache_dir = Self::cache_dir()?;
+        let id = Self::next_cached_session_in(&cache_dir)?;
+        Ok((id.to_string(), format!("{cache_dir}chisel-{id}.json")))
     }
 
-    fn next_cached_session_in(cache_dir: &str) -> Result<(String, String)> {
-        let next_id = std::fs::read_dir(cache_dir)?
+    /// Returns one past the highest numeric session ID in the cache directory.
+    fn next_cached_session_in(cache_dir: &str) -> Result<usize> {
+        std::fs::read_dir(cache_dir)?
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| {
                 entry
@@ -181,9 +213,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
             })
             .max()
             .map_or(Some(0), |max| max.checked_add(1))
-            .ok_or_else(|| eyre::eyre!("no unused chisel session id available"))?;
-
-        Ok((format!("{next_id}"), format!("{cache_dir}chisel-{next_id}.json")))
+            .ok_or_else(|| eyre::eyre!("no unused chisel session id available"))
     }
 
     /// The Chisel Cache Directory
@@ -382,12 +412,10 @@ mod tests {
         std::fs::write(format!("{cache_dir}chisel-0.json"), "{\"id\":\"0\"}").unwrap();
         std::fs::write(format!("{cache_dir}chisel-2.json"), "{\"id\":\"2\"}").unwrap();
 
-        let (next_id, next_file) =
-            ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir).unwrap();
+        let next_id = ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir).unwrap();
 
         // Counting entries would select the occupied ID 2.
-        assert_eq!(next_id, "3", "must skip past the gap instead of reusing the occupied id 2");
-        assert_eq!(next_file, format!("{cache_dir}chisel-3.json"));
+        assert_eq!(next_id, 3, "must skip past the gap instead of reusing the occupied id 2");
 
         assert_eq!(
             std::fs::read_to_string(format!("{cache_dir}chisel-0.json")).unwrap(),
@@ -407,6 +435,32 @@ mod tests {
 
         let result = ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir);
         assert!(result.is_err(), "must error instead of panicking or wrapping to a reused id");
+    }
+
+    /// An automatic save must skip an ID that another process claimed after the scan instead of
+    /// replacing its session, and must not keep an ID it failed to claim.
+    #[test]
+    fn automatic_save_skips_ids_claimed_after_the_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().to_str().unwrap());
+        let mut session = session_for_normalization_tests();
+
+        let other = format!("{cache_dir}chisel-0.json");
+        std::fs::write(&other, "other").unwrap();
+        let file = session.write_new_from(&cache_dir, 0).unwrap();
+        assert_eq!(file, format!("{cache_dir}chisel-1.json"));
+        assert_eq!(session.id.as_deref(), Some("1"));
+        let saved: ChiselSession<EthEvmNetwork> =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(saved.id.as_deref(), Some("1"));
+        assert_eq!(std::fs::read_to_string(&other).unwrap(), "other");
+
+        let last = format!("{cache_dir}chisel-{}.json", usize::MAX);
+        std::fs::write(&last, "other").unwrap();
+        session.id = None;
+        assert!(session.write_new_from(&cache_dir, usize::MAX).is_err());
+        assert_eq!(session.id, None, "a failed save must not keep an unclaimed ID");
+        assert_eq!(std::fs::read_to_string(&last).unwrap(), "other");
     }
 
     #[test]

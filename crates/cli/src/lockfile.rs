@@ -3,6 +3,7 @@
 use crate::utils::{Git, SubmoduleCheckoutStatus};
 use alloy_primitives::map::HashMap;
 use eyre::{Context, OptionExt, Result};
+use foundry_common::fs::canonicalize_path;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, hash_map::Entry},
@@ -192,7 +193,7 @@ impl<'a> Lockfile<'a> {
 
         let git = self.git.ok_or_eyre("Git is required to check foundry.lock")?;
         let project_root =
-            dunce::canonicalize(self.lockfile_path.parent().expect("lockfile path has a parent"))?;
+            canonicalize_path(self.lockfile_path.parent().expect("lockfile path has a parent"))?;
         let git_root = match Git::root_of(git.root) {
             Ok(root) => root,
             Err(_)

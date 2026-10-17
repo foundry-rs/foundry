@@ -86,7 +86,8 @@ fn literals_equal(a: &Lit<'_>, b: &Lit<'_>) -> bool {
     match (&a.kind, &b.kind) {
         (LitKind::Str(ak, av, _), LitKind::Str(bk, bv, _)) => ak == bk && av == bv,
         (LitKind::Number(a), LitKind::Number(b)) => a == b,
-        (LitKind::Rational(a), LitKind::Rational(b)) => a == b,
+        (LitKind::BigNumber(a), LitKind::BigNumber(b)) => a == b,
+        (LitKind::Rational(an, ad), LitKind::Rational(bn, bd)) => an == bn && ad == bd,
         (LitKind::Address(a), LitKind::Address(b)) => a == b,
         (LitKind::Bool(a), LitKind::Bool(b)) => a == b,
         _ => false,

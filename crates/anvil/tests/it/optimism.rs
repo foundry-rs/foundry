@@ -12,6 +12,7 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use axum::{Json, Router, routing::post};
+use foundry_common::provider::redact_url;
 use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
@@ -36,7 +37,7 @@ async fn inferred_optimism_forks_require_op_stack_source_resets() {
         .unwrap();
     let node_info = ethereum_api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("ethereum"));
-    assert_eq!(node_info.fork_config.fork_url, Some(optimism_handle.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&optimism_handle.http_endpoint())));
 
     let (optimism_api, _) = spawn(
         NodeConfig::test()
@@ -60,7 +61,7 @@ async fn inferred_optimism_forks_require_op_stack_source_resets() {
     );
     let node_info = optimism_api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("optimism"));
-    assert_eq!(node_info.fork_config.fork_url, Some(optimism_handle.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&optimism_handle.http_endpoint())));
     assert_eq!(
         node_info.fork_config.fork_block_number,
         original_node_info.fork_config.fork_block_number

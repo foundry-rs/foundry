@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity =0.8.18;
+pragma solidity =0.8.35;
 
 import "utils/Test.sol";
 
@@ -38,7 +38,7 @@ contract GetDeployedCodeTest is Test {
 
     function testWithVersion() public {
         TestContract test = new TestContract();
-        bytes memory code = vm.getDeployedCode("cheats/GetDeployedCode.t.sol:TestContract:0.8.18");
+        bytes memory code = vm.getDeployedCode("cheats/GetDeployedCode.t.sol:TestContract:0.8.35");
 
         assertEq(address(test).code, code);
 

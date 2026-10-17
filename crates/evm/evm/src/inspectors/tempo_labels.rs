@@ -28,10 +28,10 @@ where
     CTX::Journal: JournalExt,
 {
     fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        if inputs.target_address.is_tip20() && !self.labels.contains_key(&inputs.target_address) {
+        if inputs.transfer_to().is_tip20() && !self.labels.contains_key(&inputs.transfer_to()) {
             let name = 'decode: {
                 let db = ctx.db_mut();
-                let address = inputs.target_address;
+                let address = inputs.transfer_to();
                 let slot = tempo_precompiles::tip20::slots::NAME;
                 let Ok(value) = db.storage(address, slot) else { break 'decode None };
                 let bytes = value.to_be_bytes::<32>();
@@ -60,7 +60,7 @@ where
                 Some(String::from_utf8_lossy(&data).into_owned())
             }
             .unwrap_or_else(|| "TIP20".to_string());
-            self.labels.insert(inputs.target_address, name);
+            self.labels.insert(inputs.transfer_to(), name);
         }
 
         None
