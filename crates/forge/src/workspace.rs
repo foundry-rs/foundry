@@ -142,6 +142,14 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 }
 
 fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    // Preserve workspace library links, but resolve aliases copied into independent files.
+    let lexical = normalize_path(&root.join(path));
+    if let Ok(rel) = lexical.strip_prefix(normalize_path(root))
+        && temp_path.join(rel).exists()
+        && !normalize_existing_ancestor(&temp_path.join(rel)).starts_with(temp_path)
+    {
+        return temp_path.join(rel);
+    }
     let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
     if rel.is_absolute() { resolved } else { temp_path.join(rel) }
@@ -215,7 +223,7 @@ fn rebase_remapping(
 /// that escape the project root.
 ///
 /// `label` and `orig` are only used for error messages.
-fn ensure_within_root(
+pub(crate) fn ensure_within_root(
     allowed_root: &Path,
     candidate: &Path,
     label: &str,
@@ -1004,6 +1012,26 @@ mod tests {
         assert_eq!(config.test, canonical_root.join("test"));
         let remapping = Remapping::from(config.remappings[0].clone());
         assert_eq!(Path::new(&remapping.path), canonical_root.join("src"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_rebase_copied_alias_and_linked_library() {
+        let temp = TempDir::new().unwrap();
+        let root = normalize_existing_ancestor(&temp.path().join("project"));
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
+        create_test_dir_structure(&root, &["src/Real.sol", "lib/example/Lib.sol"]);
+        symlink_file("Real.sol", root.join("src/Alias.sol")).unwrap();
+        let config = Config { root: root.clone(), ..Default::default() }.sanitized();
+        copy_project(&config, &workspace).unwrap();
+        assert_eq!(
+            rebase_project_path(&root, &workspace, Path::new("src/Alias.sol")),
+            workspace.join("src/Real.sol")
+        );
+        assert_eq!(
+            rebase_project_path(&root, &workspace, Path::new("lib/example/Lib.sol")),
+            workspace.join("lib/example/Lib.sol")
+        );
     }
 
     #[test]
