@@ -217,11 +217,22 @@ revm-state.opt-level = 3
 
 revm-inspectors.opt-level = 3
 
+foundry-cheatcodes.opt-level = 3
+foundry-evm.opt-level = 3
+foundry-evm-core.opt-level = 3
+foundry-evm-coverage.opt-level = 3
+foundry-evm-symbolic.opt-level = 3
+foundry-evm-traces.opt-level = 3
+
 ruint.opt-level = 3
 
 sha2.opt-level = 3
 sha3.opt-level = 3
 keccak.opt-level = 3
+
+blst.opt-level = 3
+c-kzg.opt-level = 3
+secp256k1-sys.opt-level = 3
 
 # Fuzzing.
 proptest.opt-level = 3
