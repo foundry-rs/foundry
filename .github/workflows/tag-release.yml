@@ -1,0 +1,119 @@
+name: Tag release
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Prepared stable or RC version (X.Y.Z or X.Y.Z-rcN)
+        type: string
+        required: true
+      commit:
+        description: Exact prepared commit (40 lowercase hex characters)
+        type: string
+        required: true
+
+concurrency:
+  group: release-tagging-${{ github.repository }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  validate-ref:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require trusted coordinator
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "$REF" != "refs/heads/master" ]]; then
+            echo "::error::Tag release must run from refs/heads/master."
+            exit 1
+          fi
+
+  preflight:
+    name: Validate prepared commit and full CI
+    needs: validate-ref
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: stable
+      - name: Validate version, locked metadata, and exact-SHA CI
+        env:
+          COMMIT: ${{ inputs.commit }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/tag-release.py validate \
+            --version "$VERSION" --commit "$COMMIT" --directory "$GITHUB_WORKSPACE/release-source"
+          python3 .github/scripts/tag-release.py ci --version "$VERSION" --commit "$COMMIT" --dispatch
+
+  tag-release:
+    name: Tag validated commit and dispatch build
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release-tag
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: stable
+      - name: Revalidate after environment approval
+        env:
+          COMMIT: ${{ inputs.commit }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/tag-release.py validate \
+            --version "$VERSION" --commit "$COMMIT" --directory "$GITHUB_WORKSPACE/release-source"
+          python3 .github/scripts/tag-release.py ci --version "$VERSION" --commit "$COMMIT"
+      - name: Create repository-scoped tagging token
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Create or verify immutable tag
+        env:
+          COMMIT: ${{ inputs.commit }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: python3 .github/scripts/tag-release.py tag --version "$VERSION" --commit "$COMMIT"
+      - name: Dispatch build on the validated tag
+        env:
+          COMMIT: ${{ inputs.commit }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "v$VERSION" \
+            --raw-field "expected_commit=$COMMIT"
