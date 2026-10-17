@@ -866,6 +866,7 @@ pub(crate) fn remove_bytecode_dependencies(
     deps: &PreprocessorDependencies,
     data: &PreprocessorData,
     root_dir: &Path,
+    use_uint160_return: bool,
 ) -> Updates {
     let mut updates = Updates::default();
     for (contract_id, deps) in &deps.preprocessed_contracts {
@@ -915,7 +916,10 @@ pub(crate) fn remove_bytecode_dependencies(
                     salt,
                 } => {
                     let mut update = format!("{name}(payable(");
-                    let closing_seq = "})))";
+                    if use_uint160_return {
+                        update.push_str("address(");
+                    }
+                    let closing_seq = if use_uint160_return { "}))))" } else { "})))" };
                     update.push_str(&format!("{vm}.deployCode({{"));
                     update.push_str(&format!("_artifact: \"{artifact}\""));
 
@@ -978,6 +982,7 @@ pub(crate) fn remove_bytecode_dependencies(
             })
             .sorted()
             .join("\n");
+        let deployment_return_type = if use_uint160_return { "uint160" } else { "address" };
         updates.insert((
             source.file.src.len(),
             source.file.src.len(),
@@ -986,14 +991,14 @@ pub(crate) fn remove_bytecode_dependencies(
 {helper_imports}
 
 interface {vm_interface_name} {{
-    function deployCode(string memory _artifact) external returns (address);
-    function deployCode(string memory _artifact, bytes32 _salt) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args, bytes32 _salt) external returns (address);
-    function deployCode(string memory _artifact, uint256 _value) external returns (address);
-    function deployCode(string memory _artifact, uint256 _value, bytes32 _salt) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args, uint256 _value) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args, uint256 _value, bytes32 _salt) external returns (address);
+    function deployCode(string memory _artifact) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes32 _salt) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args, bytes32 _salt) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, uint256 _value) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, uint256 _value, bytes32 _salt) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args, uint256 _value) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args, uint256 _value, bytes32 _salt) external returns ({deployment_return_type});
     function getCode(string memory _artifact) external view returns (bytes memory);
 }}"#
             ),

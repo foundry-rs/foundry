@@ -13,7 +13,11 @@ use foundry_compilers::{
     solc::Solc,
 };
 #[cfg(unix)]
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 #[forgetest]
 fn preprocess_abi_coder_v2_solc_07(prj: _, cmd: _) {
@@ -5511,4 +5515,287 @@ Error: Compiler run failed:
 Error: Yul exception:Variable _8 is 1 too deep in the stack.
 
 "#]]);
+}
+
+// This two-file reproducer fails with a real Yul stack error on Solc 0.8.15 through 0.8.25.
+// Its fork test is compile-only here; deployment behavior is checked separately below.
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_via_ir_codegen(prj: _, cmd: _) {
+    for patch in 14..=26 {
+        let version = format!("0.8.{patch}");
+        let solc = recording_solc(prj.root(), &version);
+        prj.update_config(|config| {
+            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+            config.dynamic_test_linking = true;
+            config.via_ir = true;
+            config.evm_version = if patch < 20 { EvmVersion::London } else { EvmVersion::Shanghai };
+            config.optimizer = Some(true);
+            config.optimizer_runs = Some(200);
+            config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
+            // Solc introduced optional CBOR metadata in 0.8.18.
+            config.cbor_metadata = patch < 18;
+            config.lint.lint_on_build = false;
+        });
+        prj.add_raw_source(
+            "core/HedgerPool.sol",
+            &include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/HedgerPool.sol")
+                .replace("pragma solidity 0.8.24;", &format!("pragma solidity {version};")),
+        );
+        prj.add_raw_test(
+            "Repro.t.sol",
+            &include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/Repro.t.sol")
+                .replace("pragma solidity 0.8.24;", &format!("pragma solidity {version};")),
+        );
+        cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq("").stdout_eq(str![
+            [r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]
+        ]);
+        let calls = recorded_solc_inputs(&solc);
+        assert_eq!(calls.len(), 1, "Solc {version} must succeed without a native retry");
+        let source = &calls[0].sources[Path::new("test/Repro.t.sol")].content;
+        assert!(source.contains(".deployCode({"));
+        let workaround = (15..=25).contains(&patch);
+        assert_eq!(
+            source.matches("external returns (uint160);").count(),
+            usize::from(workaround) * 8
+        );
+        assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
+
+        cmd.forge_fuse().arg("build").assert_success().stderr_eq("").stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
+        assert_eq!(recorded_solc_inputs(&solc).len(), calls.len(), "cached build invoked Solc");
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_via_ir_deployment_semantics(prj: _, cmd: _) {
+    let deployments =
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Deployments.t.sol");
+    prj.add_raw_source(
+        "Targets.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Targets.sol"),
+    );
+    prj.add_raw_test("Deployments.t.sol", deployments);
+    prj.add_raw_test(
+        "ShadowedRequire.t.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/ShadowedRequire.t.sol"),
+    );
+    for version in ["0.8.15", "0.8.22", "0.8.24", "0.8.25", "0.8.26"] {
+        let solc = recording_solc(prj.root(), version);
+        prj.update_config(|config| {
+            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+            config.dynamic_test_linking = true;
+            config.via_ir = true;
+            config.evm_version =
+                if version == "0.8.15" { EvmVersion::London } else { EvmVersion::Shanghai };
+            config.optimizer = Some(true);
+            config.optimizer_runs = Some(200);
+            config.lint.lint_on_build = false;
+        });
+        let workaround = version != "0.8.26";
+        let mut cold_calls = None;
+        for force in [true, false] {
+            cmd.forge_fuse().args(["test", "--match-contract", "DeploymentTest"]);
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_success().stderr_eq("").stdout_eq(str![[r#"
+...
+Ran 15 tests for test/Deployments.t.sol:DeploymentTest
+[PASS] test_broadcast() ([GAS])
+[PASS] test_create() ([GAS])
+[PASS] test_create2() ([GAS])
+[PASS] test_create2_args() ([GAS])
+[PASS] test_create2_args_value() ([GAS])
+[PASS] test_create2_side_effect_arguments() ([GAS])
+[PASS] test_create2_value() ([GAS])
+[PASS] test_create_args() ([GAS])
+[PASS] test_create_args_value() ([GAS])
+[PASS] test_create_value() ([GAS])
+[PASS] test_named_side_effect_arguments() ([GAS])
+[PASS] test_prank() ([GAS])
+[PASS] test_recurrent_broadcast() ([GAS])
+[PASS] test_recurrent_prank() ([GAS])
+[PASS] test_revert_data() ([GAS])
+Suite result: ok. 15 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 15 tests passed, 0 failed, 0 skipped (15 total tests)
+
+"#]]);
+            let calls = recorded_solc_inputs(&solc);
+            if let Some(cold_calls) = cold_calls {
+                assert_eq!(calls.len(), cold_calls, "cached test invoked Solc");
+            } else {
+                cold_calls = Some(calls.len());
+            }
+            let codegen_calls = calls
+                .iter()
+                .filter(|input| {
+                    input.settings.output_selection.0.values().any(|contracts| {
+                        contracts
+                            .values()
+                            .flatten()
+                            .any(|output| output.starts_with("evm.bytecode"))
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(codegen_calls.len(), 1, "Solc {version} retried or did not reuse its cache");
+            let source = &codegen_calls[0].sources[Path::new("test/Deployments.t.sol")].content;
+            let deployment_count = deployments.matches("new ").count();
+            assert_eq!(source.matches(".deployCode({").count(), deployment_count);
+            assert_eq!(
+                source.matches("payable(address(").count(),
+                usize::from(workaround) * deployment_count
+            );
+            assert_eq!(
+                source.matches("external returns (uint160);").count(),
+                usize::from(workaround) * 16
+            );
+            assert_eq!(
+                source.matches("external returns (address);").count(),
+                usize::from(!workaround) * 16
+            );
+        }
+        let calls = recorded_solc_inputs(&solc).len();
+        cmd.forge_fuse()
+            .args(["test", "--match-contract", "OtherOwnerTest"])
+            .assert_success()
+            .stderr_eq("")
+            .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Deployments.t.sol:OtherOwnerTest
+[PASS] test_other_owner() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+        assert_eq!(recorded_solc_inputs(&solc).len(), calls, "cached owner invoked Solc");
+        cmd.forge_fuse()
+            .args(["test", "--match-contract", "ShadowedRequireTest"])
+            .assert_success()
+            .stderr_eq("")
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ShadowedRequire.t.sol:ShadowedRequireTest
+[PASS] test_shadowed_require() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+        let shadow_calls = recorded_solc_inputs(&solc);
+        assert_eq!(shadow_calls.len(), calls + 1, "shadowed require retried code generation");
+        let shadow = shadow_calls
+            .iter()
+            .find_map(|input| {
+                input
+                    .sources
+                    .get(Path::new("test/ShadowedRequire.t.sol"))
+                    .filter(|source| source.content.contains(".deployCode({"))
+            })
+            .unwrap();
+        assert_eq!(shadow.content.matches(".deployCode({").count(), 1);
+        assert_eq!(shadow.content.matches("payable(address(").count(), usize::from(workaround));
+        assert_eq!(
+            shadow.content.matches("external returns (uint160);").count(),
+            usize::from(workaround) * 8
+        );
+        assert_eq!(
+            shadow.content.matches("external returns (address);").count(),
+            usize::from(!workaround) * 8
+        );
+        cmd.forge_fuse()
+            .args(["test", "--match-contract", "ShadowedRequireTest"])
+            .assert_success()
+            .stderr_eq("");
+        assert_eq!(
+            recorded_solc_inputs(&solc).len(),
+            shadow_calls.len(),
+            "cached shadowed require invoked Solc"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_via_ir_uint160_return_matches_address(prj: _, cmd: _) {
+    prj.add_raw_test(
+        "AddressDecoder.t.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/AddressDecoder.t.sol"),
+    );
+    for version in ["0.8.15", "0.8.24", "0.8.25"] {
+        let solc = recording_solc(prj.root(), version);
+        prj.update_config(|config| {
+            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+            config.dynamic_test_linking = false;
+            config.via_ir = true;
+            config.evm_version =
+                if version == "0.8.15" { EvmVersion::London } else { EvmVersion::Shanghai };
+            config.optimizer = Some(true);
+            config.optimizer_runs = Some(200);
+            config.lint.lint_on_build = false;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--force", "--match-contract", "AddressDecoderTest"])
+            .assert_success()
+            .stderr_eq("")
+            .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/AddressDecoder.t.sol:AddressDecoderTest
+[PASS] test_noncanonical_deployment_return_data() ([GAS])
+[PASS] test_short_deployment_return_data() ([GAS])
+[PASS] test_valid_deployment_return_data() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+    }
+}
+
+// Record genuine standard-JSON calls without changing compiler input, output, or status.
+#[cfg(unix)]
+fn recording_solc(root: &Path, version: &str) -> PathBuf {
+    let real_solc = Solc::find_or_install(&version.parse().unwrap()).unwrap();
+    let solc = root.join(format!("solc-{version}"));
+    fs::write(
+        &solc,
+        format!(
+            r#"#!/bin/sh
+for arg do
+    if [ "$arg" = "--standard-json" ]; then
+        input=$(mktemp "$0.input.XXXXXX")
+        cat > "$input"
+        exec '{real_solc}' "$@" < "$input"
+    fi
+done
+exec '{real_solc}' "$@"
+"#,
+            real_solc = real_solc.solc.display(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&solc, fs::Permissions::from_mode(0o755)).unwrap();
+    solc
+}
+
+#[cfg(unix)]
+fn recorded_solc_inputs(solc: &Path) -> Vec<SolcInput> {
+    let prefix = format!("{}.input.", solc.file_name().unwrap().to_str().unwrap());
+    fs::read_dir(solc.parent().unwrap())
+        .unwrap()
+        .map(Result::unwrap)
+        .filter(|entry| entry.file_name().to_str().unwrap().starts_with(&prefix))
+        .map(|entry| read_json_file(&entry.path()).unwrap())
+        .collect()
 }

@@ -54,7 +54,7 @@ impl DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        10
+        13
     }
 
     fn preprocess(
@@ -78,7 +78,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     #[instrument(name = "DynamicTestLinkingPreprocessor::preprocess", skip_all)]
     fn preprocess_with_dependencies(
         &self,
-        _solc: &SolcCompiler,
+        solc: &SolcCompiler,
         input: &mut SolcVersionedInput,
         paths: &ProjectPathsConfig<SolcLanguage>,
         mocks: &mut HashSet<PathBuf>,
@@ -101,6 +101,16 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 .evm_version
                 .is_some_and(|version| version >= EvmVersion::Constantinople),
         };
+        // Avoid the via-IR address-return stack error with uint160, retaining canonical ABI checks.
+        // Keep this compatibility workaround scoped to the verified compiler releases.
+        // Specific compiler selection normalizes away prerelease metadata in the input version.
+        let use_uint160_return = input.input.settings.via_ir == Some(true)
+            && input.version.pre.is_empty()
+            && !matches!(solc, SolcCompiler::Specific(solc) if !solc.version.pre.is_empty())
+            && matches!(
+                (input.version.major, input.version.minor, input.version.patch),
+                (0, 8, 15..=25)
+            );
         let original_sources = input.input.sources.clone();
         let mut parser_paths = paths.clone();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
@@ -164,7 +174,9 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             sources.extend(create_deploy_helpers(gcx, constructor_context, &data));
 
             // Generate and apply preprocessor source updates.
-            apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data, &paths.root));
+            let updates =
+                remove_bytecode_dependencies(gcx, &deps, &data, &paths.root, use_uint160_return);
+            apply_updates(sources, updates);
 
             Ok(())
         });
@@ -325,7 +337,11 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
 mod tests {
     use super::*;
     use alloy_primitives::keccak256;
-    use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
+    use foundry_compilers::{
+        Compiler, CompilerInput,
+        artifacts::Source,
+        solc::{Solc, SolcSettings},
+    };
     use semver::Version;
 
     fn input() -> (tempfile::TempDir, ProjectPathsConfig<SolcLanguage>, SolcVersionedInput) {
@@ -875,5 +891,137 @@ mod tests {
                 &DynamicTestLinkingPreprocessor::default()
             )
         );
+    }
+
+    #[test]
+    fn uint160_deployment_returns_follow_compiler_settings() {
+        let mut unchanged = None;
+        for (version, via_ir, workaround) in [
+            ("0.8.11", Some(true), false),
+            ("0.8.12", Some(true), false),
+            ("0.8.13", Some(true), false),
+            ("0.8.14", Some(true), false),
+            ("0.8.15", Some(true), true),
+            ("0.8.16", Some(true), true),
+            ("0.8.17", Some(true), true),
+            ("0.8.18", Some(true), true),
+            ("0.8.19", Some(true), true),
+            ("0.8.20", Some(true), true),
+            ("0.8.21", Some(true), true),
+            ("0.8.22", Some(true), true),
+            ("0.8.23", Some(true), true),
+            ("0.8.24", Some(true), true),
+            ("0.8.25", Some(true), true),
+            ("0.8.14+commit.80d49f37", Some(true), false),
+            ("0.8.15+commit.e14f2714", Some(true), true),
+            ("0.8.24+commit.e11b9ed9", Some(true), true),
+            ("0.8.25+commit.b61c2a91", Some(true), true),
+            ("0.8.15-dev", Some(true), false),
+            ("0.8.24-dev", Some(true), false),
+            ("0.8.25-dev", Some(true), false),
+            ("0.8.26-dev", Some(true), false),
+            ("0.8.15", Some(false), false),
+            ("0.8.15", None, false),
+            ("0.8.24", Some(false), false),
+            ("0.8.25", None, false),
+            ("0.8.26", Some(true), false),
+            ("0.8.30", Some(true), false),
+        ] {
+            let (_root, paths, mut input) = input();
+            input.version = version.parse().unwrap();
+            input.input.settings.via_ir = via_ir;
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor::default(),
+                &SolcCompiler::default(),
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+            let generated = input
+                .input
+                .sources
+                .values()
+                .map(|source| source.content.as_str())
+                .collect::<String>();
+            assert_eq!(
+                generated.matches("external returns (uint160);").count(),
+                if workaround { 8 } else { 0 },
+                "{version}, via_ir={via_ir:?}"
+            );
+            assert_eq!(
+                generated.matches("external returns (address);").count(),
+                if workaround { 0 } else { 8 }
+            );
+            assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
+            assert_eq!(
+                generated
+                    .matches("function getCode(string memory _artifact) external view returns (bytes memory);")
+                    .count(),
+                1
+            );
+            if !workaround {
+                if let Some(expected) = &unchanged {
+                    assert_eq!(&input.input.sources, expected, "{version}, via_ir={via_ir:?}");
+                } else {
+                    unchanged = Some(input.input.sources);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn uint160_deployment_returns_preserve_specific_compiler_prereleases() {
+        for version in [
+            "0.8.15-dev",
+            "0.8.24-dev",
+            "0.8.25-dev",
+            "0.8.15+commit.e14f2714",
+            "0.8.24+commit.e11b9ed9",
+        ] {
+            let (_root, paths, input) = input();
+            let version = version.parse::<Version>().unwrap();
+            let workaround = version.pre.is_empty();
+            let compiler = SolcCompiler::Specific(Solc::new_with_version(
+                paths.root.join("absent-solc"),
+                version.clone(),
+            ));
+            // Compiler selection strips metadata before constructing the versioned input.
+            let selected = compiler.available_versions(&SolcLanguage::Solidity).pop().unwrap();
+            assert!(selected.as_ref().pre.is_empty());
+            let mut settings = SolcSettings::default();
+            settings.settings.via_ir = Some(true);
+            let mut input = SolcVersionedInput::build(
+                input.input.sources,
+                settings,
+                SolcLanguage::Solidity,
+                selected.as_ref().clone(),
+            );
+            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+                &DynamicTestLinkingPreprocessor::default(),
+                &compiler,
+                &mut input,
+                &paths,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let generated = input
+                .input
+                .sources
+                .values()
+                .map(|source| source.content.as_str())
+                .collect::<String>();
+            assert_eq!(
+                generated.matches("external returns (uint160);").count(),
+                if workaround { 8 } else { 0 },
+                "{version}"
+            );
+            assert_eq!(
+                generated.matches("external returns (address);").count(),
+                if workaround { 0 } else { 8 },
+                "{version}"
+            );
+        }
     }
 }
