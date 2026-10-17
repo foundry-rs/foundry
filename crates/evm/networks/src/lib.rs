@@ -56,6 +56,7 @@ use foundry_evm_hardforks::MonadHardfork;
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
 
 pub mod arbitrum;
+pub mod arc;
 pub mod celo;
 
 #[cfg(feature = "optimism")]
