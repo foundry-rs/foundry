@@ -349,7 +349,7 @@ solar = { package = "solar-compiler", version = "=0.2.0", default-features = fal
 solar-cli = { version = "=0.2.0", default-features = false }
 solar-lsp = { version = "=0.2.0", default-features = false }
 solar-lint = { version = "=0.2.0", default-features = false }
-svm = { package = "svm-rs", version = "0.5.28", default-features = false, features = [
+svm = { package = "svm-rs", version = "0.5.30", default-features = false, features = [
     "rustls",
 ] }
 
@@ -576,6 +576,11 @@ solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "83214bb3
 solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "83214bb3a96e42e75cc9d08fcd69e061b396b68f" }
 solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "83214bb3a96e42e75cc9d08fcd69e061b396b68f" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "83214bb3a96e42e75cc9d08fcd69e061b396b68f" }
+
+## soldeer
+# Temporary: https://github.com/mario-eth/soldeer/pull/411
+soldeer-commands = { git = "https://github.com/mario-eth/soldeer", rev = "f070a2084cde8e54c952e7f7c5cf4638a808b7b0" }
+soldeer-core = { git = "https://github.com/mario-eth/soldeer", rev = "f070a2084cde8e54c952e7f7c5cf4638a808b7b0" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "39c03a49ade2f74a6e97e2af308283a42d78d302" }
