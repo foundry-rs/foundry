@@ -8,6 +8,37 @@ use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::{bytecode::InstIter, ic::IcPcMap};
 use revm::bytecode::opcode;
 
+impl ItemAnchor {
+    fn from_instruction(
+        instruction: Option<usize>,
+        ic_pc_map: &IcPcMap,
+        item_id: u32,
+        loc: &SourceLocation,
+    ) -> eyre::Result<Self> {
+        let instruction = instruction.ok_or_else(|| {
+            eyre::eyre!("Could not find anchor: No matching instruction in range {loc}")
+        })?;
+        Ok(Self {
+            instruction: ic_pc_map.get(instruction as u32).ok_or_else(|| {
+                eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
+            })?,
+            item_id,
+        })
+    }
+
+    fn from_branch(item_id: u32, next_pc: usize, immediate: &[u8]) -> eyre::Result<(Self, Self)> {
+        // We do not support program counters bigger than u32.
+        ensure!(immediate.len() <= 4, "jump destination overflow");
+        let mut pc_bytes = [0u8; 4];
+        pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
+        let pc_jump = u32::from_be_bytes(pc_bytes);
+        Ok((
+            Self { item_id, instruction: (next_pc + 1).try_into()? },
+            Self { item_id, instruction: pc_jump },
+        ))
+    }
+}
+
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(
     bytecode: &[u8],
@@ -48,7 +79,7 @@ pub fn find_anchors(
             .map(|&(_, _, instruction)| instruction)
             .filter(|&instruction| is_in_source_range(&source_map[instruction], loc))
             .min();
-        anchor_at(instruction, ic_pc_map, item_id, loc)
+        ItemAnchor::from_instruction(instruction, ic_pc_map, item_id, loc)
     };
     let find_branch = |item_id, loc: &SourceLocation, exact| {
         let mut anchors = None;
@@ -62,7 +93,7 @@ pub fn find_anchors(
             } else {
                 is_in_source_range(&source_map[ic], loc)
             } {
-                let found = branch_anchors(item_id, next_pc, immediate)?;
+                let found = ItemAnchor::from_branch(item_id, next_pc, immediate)?;
                 if exact {
                     return Ok(found);
                 }
@@ -146,7 +177,7 @@ pub fn find_anchor_simple(
     loc: &SourceLocation,
 ) -> eyre::Result<ItemAnchor> {
     let instruction = source_map.iter().position(|element| is_in_source_range(element, loc));
-    anchor_at(instruction, ic_pc_map, item_id, loc)
+    ItemAnchor::from_instruction(instruction, ic_pc_map, item_id, loc)
 }
 
 /// Finds the anchor corresponding to a branch item.
@@ -221,7 +252,7 @@ fn find_anchor_branch_inner(
                     is_in_source_range(element, loc)
                 }
             {
-                let found = branch_anchors(item_id, next_pc, inst.immediate)?;
+                let found = ItemAnchor::from_branch(item_id, next_pc, inst.immediate)?;
                 if exact {
                     // Generated branch code can contain later jumps mapped to the ternary span.
                     return Ok(found);
@@ -252,39 +283,6 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     let end_of_ranges =
         (location.bytes.start + location.len()).min(element.offset() + element.length());
     start_of_ranges <= end_of_ranges
-}
-
-fn anchor_at(
-    instruction: Option<usize>,
-    ic_pc_map: &IcPcMap,
-    item_id: u32,
-    loc: &SourceLocation,
-) -> eyre::Result<ItemAnchor> {
-    let instruction = instruction.ok_or_else(|| {
-        eyre::eyre!("Could not find anchor: No matching instruction in range {loc}")
-    })?;
-    Ok(ItemAnchor {
-        instruction: ic_pc_map.get(instruction as u32).ok_or_else(|| {
-            eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
-        })?,
-        item_id,
-    })
-}
-
-fn branch_anchors(
-    item_id: u32,
-    next_pc: usize,
-    immediate: &[u8],
-) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
-    // We do not support program counters bigger than u32.
-    ensure!(immediate.len() <= 4, "jump destination overflow");
-    let mut pc_bytes = [0u8; 4];
-    pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
-    let pc_jump = u32::from_be_bytes(pc_bytes);
-    Ok((
-        ItemAnchor { item_id, instruction: (next_pc + 1).try_into()? },
-        ItemAnchor { item_id, instruction: pc_jump },
-    ))
 }
 
 #[cfg(test)]
