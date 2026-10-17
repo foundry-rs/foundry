@@ -567,10 +567,41 @@ pub(crate) fn operation_ordinal<N: Network>(
     sequences[..sequence].iter().map(|sequence| sequence.transactions.len()).sum::<usize>() + index
 }
 
+/// Returns the pending hashes of `sequence` that cannot be mined yet, because an earlier
+/// transaction on the same chain from the same sender has neither a receipt nor a pending hash.
+pub(crate) fn blocked_pending<N: Network>(
+    sequences: &[ScriptSequence<N>],
+    sequence: usize,
+) -> Vec<B256> {
+    let chain = sequences[sequence].chain;
+    let mut gap_senders = Vec::new();
+    let mut blocked = Vec::new();
+    for (index, deployment) in sequences[..=sequence].iter().enumerate() {
+        if deployment.chain != chain {
+            continue;
+        }
+        for tx in &deployment.transactions {
+            let sender = tx.tx().from();
+            match tx.hash {
+                Some(hash) if deployment.pending.contains(&hash) => {
+                    if index == sequence && gap_senders.contains(&sender) {
+                        blocked.push(hash);
+                    }
+                }
+                Some(hash) if deployment.receipts.iter().any(|r| r.transaction_hash() == hash) => {}
+                _ => gap_senders.push(sender),
+            }
+        }
+    }
+    blocked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
+    use alloy_primitives::Address;
+    use alloy_rpc_types::TransactionRequest;
     use foundry_common::TransactionMaybeSigned;
 
     #[test]
@@ -601,6 +632,35 @@ mod tests {
         assert_eq!(operation_ordinal(&sequences, 2, 0), 3);
         sequences[0].transactions[0].hash = Some(B256::repeat_byte(1));
         assert_eq!(operation_ordinal(&sequences, 2, 0), 3);
+    }
+
+    #[test]
+    fn pending_behind_a_missing_transaction_is_blocked_only_on_its_chain_and_sender() {
+        let (sender, other) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let tx = |from, hash| {
+            let mut tx = TransactionWithMetadata::from_tx_request(
+                TransactionMaybeSigned::<Ethereum>::Unsigned(
+                    TransactionRequest::default().from(from),
+                ),
+            );
+            tx.hash = Some(B256::repeat_byte(hash));
+            tx
+        };
+        let sequence = |chain, transactions: Vec<_>, pending: &[u8]| ScriptSequence {
+            chain,
+            transactions: transactions.into(),
+            pending: pending.iter().copied().map(B256::repeat_byte).collect(),
+            ..Default::default()
+        };
+        // The first transaction is neither pending nor confirmed.
+        let sequences = [
+            sequence(1, vec![tx(sender, 1), tx(sender, 2)], &[2]),
+            sequence(2, vec![tx(sender, 3)], &[3]),
+            sequence(1, vec![tx(other, 4), tx(sender, 5)], &[4, 5]),
+        ];
+        assert_eq!(blocked_pending(&sequences, 0), [B256::repeat_byte(2)]);
+        assert!(blocked_pending(&sequences, 1).is_empty());
+        assert_eq!(blocked_pending(&sequences, 2), [B256::repeat_byte(5)]);
     }
 
     fn unknown_delegated_sequence() -> (tempfile::TempDir, ScriptSequenceKind<Ethereum>, B256) {

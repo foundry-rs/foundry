@@ -63,6 +63,7 @@ use revm::{
         FrameInput, Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr, ReturnData},
     },
+    primitives::hardfork::SpecId,
 };
 use std::{
     cmp::max,
@@ -1203,8 +1204,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// If the transaction type is [TransactionType::Legacy] we need to upgrade it to
     /// [TransactionType::Eip2930] in order to use access lists. Other transaction types support
     /// access lists themselves.
+    ///
+    /// Access lists do not exist before Berlin, so they are ignored there, as they already are
+    /// outside isolated calls.
     fn apply_accesslist(&mut self, ecx: &mut FoundryContextFor<FEN>) {
-        if let Some(access_list) = &self.core.access_list {
+        if let Some(access_list) = &self.core.access_list
+            && ecx.cfg().spec().into() >= SpecId::BERLIN
+        {
             ecx.tx_mut().set_access_list(access_list.clone());
 
             if ecx.tx().tx_type() == TransactionType::Legacy as u8 {
