@@ -1,15 +1,17 @@
 //! Contains various tests related to forge script
 
 use crate::utils::KillOnDrop;
-use alloy_primitives::{Address, B256, hex, keccak256};
+use alloy_primitives::{Address, B256, address, hex, keccak256};
 use alloy_provider::Provider;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, NodeHandle, spawn};
+use foundry_config::Config;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{
         spawn_rpc_proxy_blocking_first_submission, spawn_rpc_proxy_recording_method,
         spawn_rpc_proxy_rejecting_method_when_enabled,
     },
+    util::TestProject,
 };
 use serde_json::Value;
 use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
@@ -38,9 +40,9 @@ async fn can_deploy_multi_chain_script_without_lib(prj: _, cmd: _) {
 }
 
 #[forgetest]
-async fn can_not_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
-    let (_, handle1) = spawn(NodeConfig::test()).await;
-    let (_, handle2) = spawn(NodeConfig::test()).await;
+async fn can_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
+    let (api1, handle1) = spawn(NodeConfig::test()).await;
+    let (api2, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
 
     tester
@@ -49,7 +51,189 @@ async fn can_not_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
         .add_deployer(0)
         .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
         .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
+        .broadcast(ScriptOutcome::OkBroadcast);
+
+    let deployer = tester.accounts_pub[1];
+    for (api, handle) in [(&api1, &handle1), (&api2, &handle2)] {
+        assert_eq!(api.transaction_count(deployer, None).await.unwrap().to::<u32>(), 2);
+        assert!(!handle.http_provider().get_code_at(deployer.create(1)).await.unwrap().is_empty());
+    }
+}
+
+#[forgetest]
+async fn can_not_deploy_multi_chain_script_with_lib_without_create2_deployer(prj: _, cmd: _) {
+    let (_, handle1) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let (_, handle2) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle1.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_deployer(0)
+        .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::UnsupportedLibraries);
+}
+
+const PROFILE_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+library Lib { function value() external pure returns (uint256) { return 1; } }
+contract UsesLib { function value() external pure returns (uint256) { return Lib.value(); } }
+contract Factory {
+    function deploy(bytes memory code) external returns (address deployed) {
+        assembly { deployed := create(0, add(code, 0x20), mload(code)) }
+    }
+}
+contract ProfileScript is Script {
+    function create() external {
+        vm.createSelectFork("first");
+        vm.broadcast();
+        new UsesLib();
+        vm.createSelectFork("second");
+        vm.broadcast();
+        new UsesLib();
+    }
+
+    function deployCode() external {
+        vm.createSelectFork("first");
+        vm.broadcast();
+        vm.deployCode("ProfileScript.sol:UsesLib");
+        vm.createSelectFork("second");
+        vm.broadcast();
+        vm.deployCode("ProfileScript.sol:UsesLib");
+    }
+
+    function create2() external {
+        vm.createSelectFork("first");
+        vm.broadcast();
+        new UsesLib{salt: bytes32(0)}();
+        vm.createSelectFork("second");
+        vm.broadcast();
+        new UsesLib{salt: bytes32(0)}();
+    }
+
+    function factory() external {
+        vm.createSelectFork("first");
+        vm.startBroadcast();
+        new Factory().deploy(type(UsesLib).creationCode);
+        vm.stopBroadcast();
+        vm.createSelectFork("second");
+        vm.startBroadcast();
+        new Factory().deploy(type(UsesLib).creationCode);
+        vm.stopBroadcast();
+    }
+
+    function getCode() external {
+        vm.createSelectFork("first");
+        vm.assertEq(vm.getCode("ProfileScript.sol:UsesLib"), type(UsesLib).creationCode);
+        vm.createSelectFork("second");
+        vm.assertNotEq(vm.getCode("ProfileScript.sol:UsesLib"), type(UsesLib).creationCode);
+        vm.assertNotEq(vm.getDeployedCode("ProfileScript.sol:UsesLib"), type(UsesLib).runtimeCode);
+        vm.assertEq(
+            vm.getCode("out/ProfileScript.sol/UsesLib.json"), vm.getCode("ProfileScript.sol:UsesLib")
+        );
+    }
+
+    function evmVersion() external {
+        vm.createSelectFork("first");
+        vm.assertEq(vm.getEvmVersion(), "cancun");
+        vm.createSelectFork("second");
+        vm.assertEq(vm.getEvmVersion(), "shanghai");
+        vm.createSelectFork("first");
+        vm.assertEq(vm.getEvmVersion(), "cancun");
+    }
+}
+"#;
+
+const FIRST_LIB: Address = address!("0x1111111111111111111111111111111111111111");
+const SECOND_LIB: Address = address!("0x2222222222222222222222222222222222222222");
+const PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+#[forgetest_init]
+async fn links_endpoint_profile_libraries_on_forks(prj: _, cmd: _) {
+    let handles = add_profile_script(&prj, "").await;
+
+    for sig in ["create", "deployCode", "create2", "factory"] {
+        cmd.forge_fuse()
+            .args(["script", "ProfileScript", "--sig", &format!("{sig}()"), "--broadcast"])
+            .args(["--private-key", PRIVATE_KEY])
+            .assert_success();
+        assert_profile_libraries(&prj, &handles, sig).await;
+    }
+}
+
+#[forgetest_init]
+async fn can_not_replace_creation_code_of_different_length_on_forks(prj: _, cmd: _) {
+    let _handles = add_profile_script(&prj, "optimizer = true").await;
+
+    cmd.args(["script", "ProfileScript", "--sig", "factory()", "--broadcast"])
+        .args(["--private-key", PRIVATE_KEY])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Warning: Multi chain deployment is still under development. Use with caution.
+Error: script failed: creation code of [..]/src/ProfileScript.sol:UsesLib differs in length on chain 31339
+
+"#]]);
+}
+
+#[forgetest_init]
+async fn uses_endpoint_profile_artifacts_on_forks(prj: _, cmd: _) {
+    let _handles = add_profile_script(&prj, "").await;
+
+    cmd.args(["script", "ProfileScript", "--sig", "getCode()"]).assert_success();
+}
+
+#[forgetest_init]
+async fn uses_endpoint_profile_evm_version_on_forks(prj: _, cmd: _) {
+    let _handles = add_profile_script(&prj, r#"evm_version = "shanghai""#).await;
+
+    cmd.args(["script", "ProfileScript", "--sig", "evmVersion()"]).assert_success();
+}
+
+#[forgetest_init]
+async fn can_resume_endpoint_profile_script_on_forks(prj: _, cmd: _) {
+    let handles = add_profile_script(&prj, "").await;
+
+    cmd.args(["script", "ProfileScript", "--sig", "create()", "--broadcast"])
+        .args(["--sender", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Warning: Multi chain deployment is still under development. Use with caution.
+Error: No associated wallet for addresses: [0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266]. Unlocked wallets: []
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["script", "ProfileScript", "--sig", "create()", "--broadcast", "--resume"])
+        .args(["--multi", "--private-key", PRIVATE_KEY])
+        .assert_success();
+    assert_profile_libraries(&prj, &handles, "create").await;
+}
+
+#[forgetest_init]
+async fn can_not_name_different_profiles_for_one_chain_on_forks(prj: _, cmd: _) {
+    let (_, handle) = spawn(NodeConfig::test().with_chain_id(Some(31338u64))).await;
+    prj.add_source("ProfileScript.sol", PROFILE_SCRIPT);
+    prj.create_file(
+        Config::FILE_NAME,
+        &format!(
+            r#"
+[profile.second]
+[profile.third]
+
+[rpc_endpoints]
+first = {{ endpoint = "{0}", profile = "second" }}
+second = {{ endpoint = "{0}", profile = "third" }}
+"#,
+            handle.http_endpoint()
+        ),
+    );
+
+    cmd.args(["script", "ProfileScript", "--sig", "create()"]).assert_failure().stderr_eq(str![[
+        r#"
+Error: endpoints for chain 31338 name different profiles: `second` and `third`
+
+"#
+    ]]);
 }
 
 #[forgetest]
@@ -329,5 +513,57 @@ async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
             let address = transaction["contractAddress"].as_str().unwrap().parse().unwrap();
             assert!(!provider.get_code_at(address).await.unwrap().is_empty());
         }
+    }
+}
+
+async fn add_profile_script(prj: &TestProject, second_profile: &str) -> [NodeHandle; 2] {
+    let (_, first) = spawn(NodeConfig::test().with_chain_id(Some(31338u64))).await;
+    let (_, second) = spawn(NodeConfig::test().with_chain_id(Some(31339u64))).await;
+    prj.add_source("ProfileScript.sol", PROFILE_SCRIPT);
+    prj.create_file(
+        Config::FILE_NAME,
+        &format!(
+            r#"
+[profile.default]
+evm_version = "cancun"
+libraries = ["src/ProfileScript.sol:Lib:{FIRST_LIB}"]
+
+[profile.second]
+libraries = ["src/ProfileScript.sol:Lib:{SECOND_LIB}"]
+{second_profile}
+
+[rpc_endpoints]
+first = "{}"
+second = {{ endpoint = "{}", profile = "second" }}
+"#,
+            first.http_endpoint(),
+            second.http_endpoint()
+        ),
+    );
+    [first, second]
+}
+
+async fn assert_profile_libraries(prj: &TestProject, handles: &[NodeHandle; 2], sig: &str) {
+    let path = prj.root().join(format!("broadcast/multi/ProfileScript.sol-latest/{sig}.json"));
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let deployments = sequence["deployments"].as_array().unwrap();
+    assert_eq!(deployments.len(), 2);
+    for (((deployment, handle), library), profile) in
+        deployments.iter().zip(handles).zip([FIRST_LIB, SECOND_LIB]).zip([None, Some("second")])
+    {
+        assert_eq!(deployment["profile"].as_str(), profile);
+        let transactions = deployment["transactions"].as_array().unwrap();
+        let address = transactions
+            .iter()
+            .filter(|tx| tx["contractName"] == "UsesLib")
+            .map(|tx| &tx["contractAddress"])
+            .chain(transactions.iter().flat_map(|tx| {
+                tx["additionalContracts"].as_array().into_iter().flatten().map(|c| &c["address"])
+            }))
+            .map(|address| address.as_str().unwrap().parse::<Address>().unwrap())
+            .next_back()
+            .unwrap();
+        let code = handle.http_provider().get_code_at(address).await.unwrap();
+        assert!(code.windows(20).any(|window| window == library.as_slice()));
     }
 }

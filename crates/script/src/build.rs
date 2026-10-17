@@ -9,12 +9,12 @@ use crate::{
     sequence::ScriptSequenceKind,
     session::{SignerScope, script_session_expected_sender_if_configured},
 };
-use alloy_network::{AnyNetwork, ReceiptResponse};
+use alloy_network::{AnyNetwork, Network, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
-use foundry_cheatcodes::Wallets;
+use foundry_cheatcodes::{ChainBuild, Wallets};
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
@@ -22,16 +22,19 @@ use foundry_common::{
     provider::ProviderBuilder,
 };
 use foundry_compilers::{
-    ArtifactId, ProjectCompileOutput,
+    ArtifactId, Project, ProjectCompileOutput,
     artifacts::{BytecodeObject, Libraries},
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{Language, multi::MultiCompilerLanguage},
     info::ContractInfo,
     utils::source_files_iter,
 };
+use foundry_config::{Config, figment::Figment};
 use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -46,6 +49,8 @@ pub struct BuildData {
     pub output: ProjectCompileOutput,
     /// ID of target contract artifact.
     pub target: ArtifactId,
+    /// Builds of the profiles named by `[rpc_endpoints]`.
+    pub profile_builds: Vec<ProfileBuild>,
 }
 
 impl BuildData {
@@ -54,7 +59,7 @@ impl BuildData {
     }
 
     /// Links contracts. Uses CREATE2 linking when possible, otherwise falls back to
-    /// default linking with sender nonce and address.
+    /// default linking with sender nonce and address. Also links the profile builds.
     pub async fn link<FEN: FoundryEvmNetwork>(
         self,
         script_config: &ScriptConfig<FEN>,
@@ -106,7 +111,65 @@ impl BuildData {
             )
         };
 
-        LinkedBuildData::new(libraries, predeploy_libs, self)
+        let mut profile_builds = self
+            .profile_builds
+            .iter()
+            .map(|build| {
+                let linker =
+                    Linker::new(self.project_root.clone(), build.output.artifact_ids().collect());
+                let (target, _) = build
+                    .output
+                    .artifact_ids()
+                    .find(|(id, _)| id.source == self.target.source && id.name == self.target.name)
+                    .ok_or_eyre("target not found in profile build")?;
+                let output = linker.link_with_create2_detailed(
+                    build.config.libraries_with_remappings()?,
+                    create2_deployer,
+                    build.config.create2_library_salt,
+                    [&target],
+                )?;
+                self.link_profile_build(build, output.output.libraries, output.linked_libraries)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut chain_profiles = BTreeMap::new();
+        for endpoint in script_config.config.rpc_endpoints.values() {
+            let Some(profile) = endpoint.profile.as_deref() else { continue };
+            let url = endpoint.clone().resolve().url()?;
+            let provider =
+                ProviderBuilder::<FEN::Network>::from_config_with_url(&script_config.config, &url)?
+                    .build()?;
+            let chain_id = provider.get_chain_id().await?;
+            if let Some(other) = chain_profiles.insert(chain_id, profile)
+                && other != profile
+            {
+                eyre::bail!(
+                    "endpoints for chain {chain_id} name different profiles: `{other}` and `{profile}`"
+                );
+            }
+            let build = profile_builds
+                .iter_mut()
+                .find(|build| build.profiles.iter().any(|p| p == profile))
+                .ok_or_eyre("profile build not found")?;
+            if !build.predeploy_libraries.is_empty()
+                && provider.get_code_at(create2_deployer).await?.is_empty()
+            {
+                eyre::bail!(
+                    "CREATE2 deployer {create2_deployer:#x} is not deployed on chain {chain_id}"
+                );
+            }
+            if !build.chain_ids.contains(&chain_id) {
+                build.chain_ids.push(chain_id);
+            }
+        }
+
+        let mut linked = LinkedBuildData::new(libraries, predeploy_libs, self)?;
+        linked.profile_builds = profile_builds;
+        linked.chain_profiles = chain_profiles
+            .into_iter()
+            .map(|(chain_id, profile)| (chain_id, profile.to_string()))
+            .collect();
+        Ok(linked)
     }
 
     /// Links the build data with the given libraries. Expects supplied libraries set being enough
@@ -118,6 +181,96 @@ impl BuildData {
             self,
         )
     }
+
+    /// Links a profile build with the given libraries.
+    fn link_profile_build(
+        &self,
+        build: &ProfileBuild,
+        libraries: Libraries,
+        predeploy_libraries: Vec<foundry_linking::LinkedLibrary>,
+    ) -> Result<LinkedProfileBuild> {
+        let linker = Linker::new(self.project_root.clone(), build.output.artifact_ids().collect());
+        let known_contracts = ContractsByArtifactBuilder::new(
+            linker
+                .get_linked_artifacts(&libraries)?
+                .iter()
+                .map(|(id, artifact)| (id.clone(), artifact.into())),
+        )
+        .build();
+        Ok(LinkedProfileBuild {
+            profiles: build.profiles.clone(),
+            chain_ids: Vec::new(),
+            config: build.config.clone(),
+            artifacts_dir: build.artifacts_dir.clone(),
+            known_contracts,
+            libraries,
+            predeploy_libraries,
+        })
+    }
+
+    /// Links the build data with the libraries recorded in `sequences`.
+    pub fn link_with_sequences<N: Network>(
+        self,
+        sequences: &[ScriptSequence<N>],
+    ) -> Result<LinkedBuildData> {
+        let mut libraries = None;
+        let mut profile_builds = Vec::<LinkedProfileBuild>::new();
+        let mut chain_profiles = BTreeMap::new();
+        for sequence in sequences {
+            let recorded = Libraries::parse(&sequence.libraries)?;
+            match &sequence.profile {
+                Some(profile) => {
+                    if let Some(linked) =
+                        profile_builds.iter_mut().find(|linked| linked.profiles.contains(profile))
+                    {
+                        if linked.libraries != recorded {
+                            eyre::bail!(
+                                "sequences of profile `{profile}` record different libraries"
+                            );
+                        }
+                        linked.chain_ids.push(sequence.chain);
+                    } else {
+                        let chain = sequence.chain;
+                        let build = self
+                            .profile_builds
+                            .iter()
+                            .find(|build| build.profiles.contains(profile))
+                            .ok_or_eyre(format!(
+                                "no endpoint names profile `{profile}` for chain {chain}"
+                            ))?;
+                        let mut linked = self.link_profile_build(build, recorded, Vec::new())?;
+                        linked.chain_ids.push(sequence.chain);
+                        profile_builds.push(linked);
+                    }
+                    chain_profiles.insert(sequence.chain, profile.clone());
+                }
+                None => match &libraries {
+                    Some(libraries) if *libraries != recorded => {
+                        eyre::bail!("sequences without a profile record different libraries")
+                    }
+                    Some(_) => {}
+                    None => libraries = Some(recorded),
+                },
+            }
+        }
+        let mut linked = self.link_with_libraries(libraries.unwrap_or_default())?;
+        linked.profile_builds = profile_builds;
+        linked.chain_profiles = chain_profiles;
+        Ok(linked)
+    }
+}
+
+/// Build of the profiles named by `[rpc_endpoints]` with the same compiler settings.
+#[derive(Clone, Debug)]
+pub struct ProfileBuild {
+    /// Profiles with these compiler settings.
+    pub profiles: Vec<String>,
+    /// Artifacts directory of the build.
+    pub artifacts_dir: PathBuf,
+    /// Config with these compiler settings.
+    pub config: Config,
+    /// The compiler output.
+    pub output: ProjectCompileOutput,
 }
 
 #[derive(Clone, Debug)]
@@ -140,6 +293,11 @@ impl ScriptPredeployLibraries {
             Self::Create2 { onchain, .. } => onchain.len(),
         }
     }
+
+    /// Returns whether libraries are deployed at nonce addresses.
+    pub const fn has_nonce_libraries(&self) -> bool {
+        matches!(self, Self::Default { onchain, .. } if !onchain.is_empty())
+    }
 }
 
 /// Container for the linked contracts and their dependencies
@@ -155,6 +313,10 @@ pub struct LinkedBuildData {
     pub predeploy_libraries: ScriptPredeployLibraries,
     /// Source files of the contracts. Used by debugger.
     pub sources: ContractSources,
+    /// Linked builds of the profiles named by `[rpc_endpoints]`.
+    pub profile_builds: Vec<LinkedProfileBuild>,
+    /// Profile named by the endpoints of each chain.
+    pub chain_profiles: BTreeMap<u64, String>,
 }
 
 impl LinkedBuildData {
@@ -178,7 +340,15 @@ impl LinkedBuildData {
         }))
         .build();
 
-        Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
+        Ok(Self {
+            build_data,
+            known_contracts,
+            libraries,
+            predeploy_libraries,
+            sources,
+            profile_builds: Vec::new(),
+            chain_profiles: BTreeMap::new(),
+        })
     }
 
     /// Fetches target bytecode from linked contracts.
@@ -187,6 +357,33 @@ impl LinkedBuildData {
             .get(&self.build_data.target)
             .ok_or_eyre("target not found in linked artifacts")
     }
+
+    /// Returns the linked build of `profile`.
+    pub fn profile_build(&self, profile: &str) -> Result<&LinkedProfileBuild> {
+        self.profile_builds
+            .iter()
+            .find(|build| build.profiles.iter().any(|p| p == profile))
+            .ok_or_eyre("profile build not found")
+    }
+}
+
+/// Linked contracts of a [`ProfileBuild`].
+#[derive(Clone, Debug)]
+pub struct LinkedProfileBuild {
+    /// Profiles with these compiler settings.
+    pub profiles: Vec<String>,
+    /// Chain ids of the endpoints naming these profiles.
+    pub chain_ids: Vec<u64>,
+    /// Config with these compiler settings.
+    pub config: Config,
+    /// Artifacts directory of the build.
+    pub artifacts_dir: PathBuf,
+    /// Known fully linked contracts.
+    pub known_contracts: ContractsByArtifact,
+    /// Libraries used to link the contracts.
+    pub libraries: Libraries,
+    /// CREATE2 libraries to deploy on each fork using this build.
+    pub predeploy_libraries: Vec<foundry_linking::LinkedLibrary>,
 }
 
 /// First state basically containing only inputs of the user.
@@ -224,18 +421,53 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
-        );
+        )
+        .collect::<Vec<_>>();
 
-        let compiler = ProjectCompiler::new()
-            .external_compilers(&script_config.config)
-            .files(sources_to_compile)
-            .dynamic_test_linking(script_config.config.dynamic_test_linking);
-        let compiler = if is_builtin_compiler_source(&target_path) {
-            compiler.files([target_path.clone()])
-        } else {
-            compiler.target_files([target_path.clone()])
+        let compile = |config: &Config, project: &Project| {
+            let compiler = ProjectCompiler::new()
+                .external_compilers(config)
+                .files(sources_to_compile.clone())
+                .dynamic_test_linking(config.dynamic_test_linking);
+            let compiler = if is_builtin_compiler_source(&target_path) {
+                compiler.files([target_path.clone()])
+            } else {
+                compiler.target_files([target_path.clone()])
+            };
+            compiler.compile(project)
         };
-        let output = compiler.compile(&project)?;
+        let output = compile(&script_config.config, &project)?;
+
+        let profiles = script_config
+            .config
+            .rpc_endpoints
+            .values()
+            .filter_map(|endpoint| endpoint.profile.as_deref())
+            .collect::<BTreeSet<_>>();
+        let overrides = Figment::new().merge(&args.build).merge(&args.evm).merge(&args);
+        let mut profile_builds = BTreeMap::<_, ProfileBuild>::new();
+        for profile in profiles {
+            let config =
+                script_config.config.with_profile_compiler_settings(profile, overrides.clone())?;
+            match profile_builds.entry(config.profile_cache_path()?) {
+                Entry::Occupied(mut entry) => entry.get_mut().profiles.push(profile.to_string()),
+                Entry::Vacant(entry) => {
+                    let mut project = config.project()?;
+                    project.paths.cache = entry.key().join(SOLIDITY_FILES_CACHE_FILENAME);
+                    project.paths.artifacts = entry.key().join("artifacts");
+                    project.paths.build_infos = entry.key().join("build-info");
+                    project.paths.slash_paths();
+                    let output = compile(&config, &project)?;
+                    entry.insert(ProfileBuild {
+                        profiles: vec![profile.to_string()],
+                        artifacts_dir: project.paths.artifacts.clone(),
+                        config,
+                        output,
+                    });
+                }
+            }
+        }
+        let profile_builds = profile_builds.into_values().collect();
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -278,7 +510,12 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             script_config,
             script_wallets,
             browser_wallet,
-            build_data: BuildData { output, target, project_root: project.root().to_path_buf() },
+            build_data: BuildData {
+                output,
+                target,
+                project_root: project.root().to_path_buf(),
+                profile_builds,
+            },
         })
     }
 }
@@ -295,9 +532,32 @@ pub struct CompiledState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     /// Uses provided sender address to compute library addresses and link contracts with them.
     pub async fn link(self) -> Result<LinkedState<FEN>> {
-        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
+        let Self { args, mut script_config, script_wallets, browser_wallet, build_data } = self;
 
         let build_data = build_data.link(&script_config).await?;
+        script_config.create2_libraries = match &build_data.predeploy_libraries {
+            ScriptPredeployLibraries::Create2 { onchain, .. } => {
+                onchain.iter().map(|library| (library.address, library.bytecode.clone())).collect()
+            }
+            ScriptPredeployLibraries::Default { .. } => Vec::new(),
+        };
+        for build in &build_data.profile_builds {
+            let chain_build = Arc::new(ChainBuild {
+                artifacts: build.known_contracts.clone(),
+                artifacts_dir: build.artifacts_dir.clone(),
+                create2_libraries: build
+                    .predeploy_libraries
+                    .iter()
+                    .map(|library| (library.address, library.bytecode.clone()))
+                    .collect(),
+                create2_library_salt: build.config.create2_library_salt,
+                evm_version: build.config.evm_version,
+                hardfork: build.config.hardfork,
+            });
+            for chain_id in &build.chain_ids {
+                script_config.chain_builds.insert(*chain_id, chain_build.clone());
+            }
+        }
 
         Ok(LinkedState { args, script_config, script_wallets, browser_wallet, build_data })
     }
@@ -460,14 +720,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             };
 
         // Collect libraries from sequence and link contracts with them.
-        let libraries = if sequence.is_multi() {
-            // Library linking is not supported for multi-chain sequences.
-            Libraries::default()
-        } else {
-            Libraries::parse(&sequence.sequences()[0].libraries)?
-        };
-
-        let linked_build_data = build_data.link_with_libraries(libraries)?;
+        let linked_build_data = build_data.link_with_sequences(sequence.sequences())?;
 
         Ok(BundledState {
             args,

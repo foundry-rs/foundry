@@ -523,6 +523,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_common::fs;
+    use foundry_compilers::artifacts::EvmVersion;
     use foundry_test_utils::{forgetest, str, util::SOLC_VERSION};
     use tempfile::tempdir;
 
@@ -786,5 +787,34 @@ Compiler run successful!
                 assert_eq!(error.to_string(), "encode length mismatch: expected 3 types, got 1");
             }
         }
+    }
+
+    #[forgetest]
+    async fn resolves_context_with_profile(prj: _) {
+        prj.add_source("Counter", "contract Counter {}");
+        prj.create_file(
+            Config::FILE_NAME,
+            r#"
+[profile.default]
+evm_version = "cancun"
+
+[profile.second]
+evm_version = "shanghai"
+"#,
+        );
+
+        let mut args = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--root",
+            &prj.root().to_string_lossy(),
+            "--compiler-version",
+            SOLC_VERSION,
+        ]);
+        args.profile = Some("second".to_string());
+        let context = args.resolve_context().await.unwrap();
+        assert_eq!(context.compiler_settings.solc.settings.evm_version, Some(EvmVersion::Shanghai));
+        assert!(context.config.out.starts_with(prj.root().join("cache/profiles")));
     }
 }

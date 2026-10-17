@@ -56,6 +56,8 @@ pub struct ScriptSequence<N: Network> {
     pub commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_generation: Option<TxHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 impl<N: Network> Default for ScriptSequence<N> {
@@ -71,6 +73,7 @@ impl<N: Network> Default for ScriptSequence<N> {
             chain: Default::default(),
             commit: Default::default(),
             recovery_generation: Default::default(),
+            profile: Default::default(),
         }
     }
 }

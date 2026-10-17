@@ -1,16 +1,20 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{U256, map::AddressHashMap};
-use foundry_common::{ContractsByArtifact, fs::normalize_path};
-use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
+use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashMap};
+use foundry_common::{ContractData, ContractsByArtifact, fs::normalize_path};
+use foundry_compilers::{
+    ArtifactId, ProjectPathsConfig, artifacts::EvmVersion, utils::canonicalize,
+};
 use foundry_config::{
-    Config, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
-    cache::StorageCachingConfig, fs_permissions::FsAccessKind,
+    Config, FoundryHardfork, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint,
+    RpcEndpointUrl, cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
 use foundry_evm_traces::identifier::ExternalIdentifierConfig;
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -72,6 +76,12 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
+    /// Profile builds by chain id.
+    pub chain_builds: BTreeMap<u64, Arc<ChainBuild>>,
+    /// CREATE2 libraries to deploy on each fork.
+    pub create2_libraries: Vec<(Address, Bytes)>,
+    /// CREATE2 salt to use for the library deployment in scripts.
+    pub create2_library_salt: B256,
 }
 
 impl CheatsConfig {
@@ -118,6 +128,9 @@ impl CheatsConfig {
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
+            chain_builds: BTreeMap::new(),
+            create2_libraries: Vec::new(),
+            create2_library_salt: config.create2_library_salt,
         }
     }
 
@@ -131,6 +144,8 @@ impl CheatsConfig {
             self.batch_rewrite_creates,
         );
         cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
+        cloned.chain_builds.clone_from(&self.chain_builds);
+        cloned.create2_libraries.clone_from(&self.create2_libraries);
         cloned
     }
 
@@ -265,6 +280,9 @@ impl Default for CheatsConfig {
             assertions_revert: true,
             seed: None,
             internal_expect_revert: false,
+            chain_builds: BTreeMap::new(),
+            create2_libraries: Vec::new(),
+            create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         }
     }
 }
@@ -287,11 +305,50 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
     path
 }
 
+/// Profile build used on forks of a chain.
+#[derive(Clone, Debug)]
+pub struct ChainBuild {
+    /// Linked artifacts of the build.
+    pub artifacts: ContractsByArtifact,
+    /// Artifacts directory of the build.
+    pub artifacts_dir: PathBuf,
+    /// CREATE2 libraries to deploy on each fork.
+    pub create2_libraries: Vec<(Address, Bytes)>,
+    /// CREATE2 salt to use for the library deployment in scripts.
+    pub create2_library_salt: B256,
+    /// EVM version of the profile.
+    pub evm_version: EvmVersion,
+    /// Hardfork of the profile.
+    pub hardfork: Option<FoundryHardfork>,
+}
+
+impl ChainBuild {
+    /// Returns the artifact matching `id` in this build.
+    pub fn artifact(&self, id: &ArtifactId) -> Option<&ContractData> {
+        // name might be in the form of "Counter.0.8.23".
+        let name = id.name.split('.').next()?;
+        let matches = self
+            .artifacts
+            .iter()
+            .filter(|(other, _)| {
+                other.source == id.source
+                    && other.profile == id.profile
+                    && other.name.split('.').next() == Some(name)
+            })
+            .collect::<Vec<_>>();
+        match &matches[..] {
+            [(_, data)] => Some(data),
+            _ => {
+                matches.iter().find(|(other, _)| other.version == id.version).map(|(_, data)| *data)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use alloy_primitives::Address;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 

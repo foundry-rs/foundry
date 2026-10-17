@@ -66,7 +66,7 @@ use revm::{
 };
 use std::{
     cmp::max,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt::Debug,
     ops::Range,
     sync::{Arc, OnceLock},
@@ -550,6 +550,9 @@ impl ArbitraryStorage {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
+/// Broadcaster, salt and CREATE2 libraries to deploy before the first broadcast to a fork.
+pub type ChainLibraries = (Address, B256, Vec<(Address, Bytes)>);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CreatedAccountsFrameKind {
     Call,
@@ -785,6 +788,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
+
+    /// RPC urls of the forks whose CREATE2 libraries were deployed.
+    pub chain_libraries_deployed: BTreeSet<String>,
+
+    /// Execution spec of the run, saved while a profile build's fork is active.
+    pub run_spec: Option<SpecFor<FEN>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -857,6 +866,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             isolated_snapshot_restores: Vec::new(),
             capture_isolated_snapshot_restore: false,
             deploy_code_depth: None,
+            chain_libraries_deployed: Default::default(),
+            run_spec: None,
         }
     }
 
@@ -1907,6 +1918,169 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[inline(always)]
     fn has_active_env_overrides(&self) -> bool {
         self.env_overrides.is_any_set()
+    }
+
+    /// Returns the broadcaster, salt and CREATE2 libraries to deploy before the first broadcast
+    /// to `rpc`.
+    pub fn take_chain_libraries(
+        &mut self,
+        rpc: &str,
+        chain_id: u64,
+        depth: usize,
+        caller: Address,
+    ) -> Option<ChainLibraries> {
+        let config = &self.core.config;
+        let (salt, libraries) = match config.chain_builds.get(&chain_id) {
+            Some(build) => (build.create2_library_salt, &build.create2_libraries),
+            None => (config.create2_library_salt, &config.create2_libraries),
+        };
+        let broadcast = self.broadcast.as_ref()?;
+        if libraries.is_empty()
+            || config.evm_opts.fork_url.as_deref() == Some(rpc)
+            || depth < broadcast.depth
+            || caller != broadcast.original_caller
+            || (depth != broadcast.depth && !broadcast.deploy_from_code)
+            || self.chain_libraries_deployed.contains(rpc)
+        {
+            return None;
+        }
+        self.chain_libraries_deployed.insert(rpc.to_string());
+        Some((broadcast.new_origin, salt, libraries.clone()))
+    }
+
+    /// Records a CREATE2 library deployment by `from` as a broadcastable transaction.
+    pub fn record_library_deployment(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        from: Address,
+        create2_deployer: Address,
+        input: Bytes,
+    ) {
+        let chain_id = ecx.cfg().chain_id();
+        let rpc = ecx.db().active_fork_url();
+        let fee_token = ecx.tx().fee_token();
+        let nonce = ecx.journal().evm_state()[&from].info.nonce;
+        let mut tx_req = TransactionRequestFor::<FEN>::default()
+            .with_from(from)
+            .with_to(create2_deployer)
+            .with_input(input)
+            .with_nonce(nonce)
+            .with_chain_id(chain_id);
+        if let Some(fee_token) = fee_token {
+            tx_req.set_fee_token(fee_token);
+        }
+        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+            rpc,
+            transaction: TransactionMaybeSigned::new(tx_req),
+            contract_address: None,
+        });
+        debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable library deployment");
+    }
+
+    /// Returns the input of a broadcast call with creation code taken from the build of `chain_id`.
+    pub fn chain_call_input(
+        &self,
+        chain_id: u64,
+        depth: usize,
+        caller: Address,
+        is_static: bool,
+        input: &[u8],
+    ) -> Option<Result<Bytes, String>> {
+        let build = self.core.config.chain_builds.get(&chain_id)?;
+        let broadcast = self.broadcast.as_ref()?;
+        if is_static
+            || depth != broadcast.depth
+            || broadcast.deploy_from_code
+            || caller != broadcast.original_caller
+        {
+            return None;
+        }
+
+        let mut output = None;
+        for (id, data) in self.core.config.artifact_lookup.as_ref()?.iter() {
+            let Some(code) = data.bytecode().filter(|code| !code.is_empty()) else { continue };
+            let mut start = 0;
+            while let Some(offset) = output.as_deref().unwrap_or(input)[start..]
+                .windows(code.len())
+                .position(|window| window == code.as_ref())
+            {
+                let Some(chain_code) = build.artifact(id).and_then(|data| data.bytecode()) else {
+                    return Some(Err(format!(
+                        "no artifact for {} on chain {chain_id}",
+                        id.identifier()
+                    )));
+                };
+                if chain_code.len() != code.len() {
+                    return Some(Err(format!(
+                        "creation code of {} differs in length on chain {chain_id}",
+                        id.identifier()
+                    )));
+                }
+                start += offset;
+                if chain_code != code {
+                    output.get_or_insert_with(|| input.to_vec())[start..start + code.len()]
+                        .copy_from_slice(chain_code);
+                }
+                start += code.len();
+            }
+        }
+        output.map(|output| Ok(output.into()))
+    }
+
+    /// Returns the init code of a broadcast create from the build of `chain_id`.
+    pub fn chain_init_code(
+        &self,
+        chain_id: u64,
+        depth: usize,
+        caller: Address,
+        init_code: &[u8],
+    ) -> Option<Result<Bytes, String>> {
+        let build = self.core.config.chain_builds.get(&chain_id)?;
+        let broadcast = self.broadcast.as_ref()?;
+        if depth < broadcast.depth
+            || caller != broadcast.original_caller
+            || (depth != broadcast.depth && !broadcast.deploy_from_code)
+            || self.deploy_code_depth.is_some_and(|deploy_depth| deploy_depth + 1 == depth)
+        {
+            return None;
+        }
+
+        let mut matches = self
+            .core
+            .config
+            .artifact_lookup
+            .as_ref()?
+            .iter()
+            .filter_map(|(id, data)| {
+                let code = data.bytecode()?;
+                (!code.is_empty()
+                    && init_code.starts_with(code)
+                    && (init_code.len() - code.len()).is_multiple_of(32))
+                .then_some((id, code.len()))
+            })
+            .collect::<Vec<_>>();
+        let longest = matches.iter().map(|(_, len)| *len).max()?;
+        matches.retain(|(_, len)| *len == longest);
+
+        let mut chain_codes = Vec::new();
+        for (id, _) in matches {
+            let Some(code) = build.artifact(id).and_then(|data| data.bytecode()) else {
+                return Some(Err(format!(
+                    "no artifact for {} on chain {chain_id}",
+                    id.identifier()
+                )));
+            };
+            chain_codes.push(code);
+        }
+        chain_codes.sort_unstable();
+        chain_codes.dedup();
+        let [chain_code] = &chain_codes[..] else {
+            return Some(Err(format!(
+                "init code matches several artifacts with different code on chain {chain_id}"
+            )));
+        };
+        (chain_code.as_ref() != &init_code[..longest])
+            .then(|| Ok([chain_code.as_ref(), &init_code[longest..]].concat().into()))
     }
 }
 
