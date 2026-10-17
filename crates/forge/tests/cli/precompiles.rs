@@ -843,7 +843,7 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn arc_fork_usdc_transfers(prj: _, cmd: _) {
-    prj.add_test("ArcUsdc.t.sol", include_str!("../../../../testdata/fixtures/ArcUsdc.t.sol"));
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
     cmd.env("FOUNDRY_ISOLATE", "false");
 
     cmd.args([
@@ -875,7 +875,7 @@ Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn arc_fork_usdc_transfers_created_in_setup(prj: _, cmd: _) {
-    prj.add_test("ArcUsdc.t.sol", include_str!("../../../../testdata/fixtures/ArcUsdc.t.sol"));
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
     prj.add_test(
         "ArcUsdcCheatcodeFork.t.sol",
         r#"
@@ -912,7 +912,7 @@ Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn arc_fork_usdc_transfer_created_in_test(prj: _, cmd: _) {
-    prj.add_test("ArcUsdc.t.sol", include_str!("../../../../testdata/fixtures/ArcUsdc.t.sol"));
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
     prj.add_test(
         "ArcUsdcLateFork.t.sol",
         r#"
@@ -955,7 +955,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 #[forgetest]
 async fn arc_fork_usdc_transfer_after_switching_forks(prj: _, cmd: _) {
     let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-    prj.add_test("ArcUsdc.t.sol", include_str!("../../../../testdata/fixtures/ArcUsdc.t.sol"));
+    prj.add_test("ArcUsdc.t.sol", include_str!("../fixtures/ArcUsdc.t.sol"));
     prj.add_test(
         "ArcUsdcSwitchFork.t.sol",
         &r#"
