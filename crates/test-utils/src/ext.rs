@@ -258,6 +258,7 @@ fn checkout_revision_inner(root: &str, rev: &str, recursive: bool, allowed_proto
     if recursive {
         // Initialize submodules only after selecting the fixture revision. Sync each parent's
         // URLs before updating its children, including when revisiting an existing checkout.
+        // Filter blobs rather than history so install/update regressions can resolve branch refs.
         for args in [
             &["-c", "submodule.recurse=false", "submodule", "sync"][..],
             &[
@@ -267,14 +268,14 @@ fn checkout_revision_inner(root: &str, rev: &str, recursive: bool, allowed_proto
                 "update",
                 "--init",
                 "--checkout",
-                "--depth=1",
+                "--filter=blob:none",
             ][..],
             &[
                 "submodule",
                 "foreach",
                 "--recursive",
                 "git -c submodule.recurse=false submodule sync && git -c submodule.recurse=false \
-                 submodule update --init --checkout --depth=1",
+                 submodule update --init --checkout --filter=blob:none",
             ][..],
         ] {
             let mut git = Command::new("git");
@@ -292,6 +293,7 @@ fn checkout_revision_inner(root: &str, rev: &str, recursive: bool, allowed_proto
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::Url;
     use std::fs;
 
     fn git(root: &Path, args: &[&str]) -> String {
@@ -487,6 +489,11 @@ mod tests {
         git(&dependency, &["add", "."]);
         git(&dependency, &["commit", "-m", "pinned dependency"]);
         let pinned_dependency = git(&dependency, &["rev-parse", "HEAD"]);
+        git(&dependency, &["branch", "v1"]);
+        git(&dependency, &["config", "uploadpack.allowFilter", "true"]);
+        // Use the file protocol so Git honors clone filters instead of making a local hardlink
+        // copy.
+        let dependency_url = Url::from_directory_path(&dependency).unwrap();
 
         git(&fixture, &["init"]);
         git(
@@ -496,7 +503,7 @@ mod tests {
                 "protocol.file.allow=always",
                 "submodule",
                 "add",
-                dependency.to_str().unwrap(),
+                dependency_url.as_str(),
                 "lib/dependency",
             ],
         );
@@ -523,6 +530,9 @@ mod tests {
         let submodule = checkout.join("lib/dependency");
         assert_eq!(git(&submodule, &["rev-parse", "HEAD"]), pinned_dependency);
         assert_eq!(fs::read_to_string(submodule.join("pinned.sol")).unwrap(), "pinned dependency");
+        // Install/update fixtures need named branches as well as the pinned commit.
+        git(&submodule, &["checkout", "v1"]);
+        assert_eq!(git(&submodule, &["rev-parse", "HEAD"]), pinned_dependency);
         assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
     }
 }
