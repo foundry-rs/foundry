@@ -1,0 +1,58 @@
+# Opt-in held-out targets from scfuzzbench (https://github.com/tempoxyz/scfuzzbench).
+#
+# These are real protocols with Recon-generated `CryticToFoundry` invariant suites. Their bugs are
+# not enumerated here, so `failures_are_bugs` counts every broken invariant predicate and every
+# handler assertion failure as a found bug (including any canary properties the suite plants), so
+# compare deltas rather than absolute counts. They take minutes per seed and need network access
+# for the initial clone; use them as a slow test split next to `manifest.toml`, for example:
+#
+#   foundry-fuzz-eval --manifest benches/fixtures/fuzz-eval/manifest.scfuzzbench.toml \
+#     --output-dir /tmp/fuzz-eval-scfuzzbench --seeds 3 --targets aave-v4
+#
+# Pin `ref` to a commit when recording results that must stay comparable.
+
+[defaults]
+timeout_secs = 1800
+
+[defaults.budget]
+invariant_runs = 64
+invariant_depth = 100
+invariant_timeout = 300
+
+[defaults.env]
+FOUNDRY_INVARIANT_SHRINK_RUN_LIMIT = "0"
+
+[[targets]]
+name = "aave-v4"
+split = "test"
+repo = "https://github.com/Recon-Fuzz/aave-v4-scfuzzbench.git"
+ref = "v0.5.6-recon"
+match_contract = "CryticToFoundry"
+failures_are_bugs = true
+
+# The remaining targets are opt-in. Set `ref` to the branch scfuzzbench benchmarks; the default
+# branches of these repositories do not all carry the invariant suite.
+
+# [[targets]]
+# name = "liquity-v2-gov"
+# split = "test"
+# repo = "https://github.com/Recon-Fuzz/liquity-V2-gov-scfuzzbench.git"
+# ref = "issue-74-followup-adaptations"
+# match_contract = "CryticToFoundry"
+# failures_are_bugs = true
+
+# [[targets]]
+# name = "superform-v2-periphery"
+# split = "test"
+# repo = "https://github.com/Recon-Fuzz/superform-v2-periphery-scfuzzbench.git"
+# ref = "dev-recon"
+# match_contract = "CryticToFoundry"
+# failures_are_bugs = true
+
+# [[targets]]
+# name = "nerite"
+# split = "test"
+# repo = "https://github.com/Recon-Fuzz/nerite-scfuzzbench.git"
+# ref = "dev-recon"
+# match_contract = "CryticToFoundry"
+# failures_are_bugs = true
