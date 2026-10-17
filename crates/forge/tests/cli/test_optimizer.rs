@@ -5517,22 +5517,24 @@ Error: Yul exception:Variable _8 is 1 too deep in the stack.
 "#]]);
 }
 
-// This two-file reproducer fails with a real Yul stack error on Solc 0.8.24 and 0.8.25.
+// This two-file reproducer fails with a real Yul stack error on Solc 0.8.15 through 0.8.25.
 // Its fork test is compile-only here; deployment behavior is checked separately below.
 #[cfg(unix)]
 #[forgetest]
 fn preprocess_via_ir_codegen(prj: _, cmd: _) {
-    for version in ["0.8.24", "0.8.25", "0.8.26"] {
-        let solc = recording_solc(prj.root(), version);
+    for patch in 14..=26 {
+        let version = format!("0.8.{patch}");
+        let solc = recording_solc(prj.root(), &version);
         prj.update_config(|config| {
             config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
             config.dynamic_test_linking = true;
             config.via_ir = true;
-            config.evm_version = EvmVersion::Shanghai;
+            config.evm_version = if patch < 20 { EvmVersion::London } else { EvmVersion::Shanghai };
             config.optimizer = Some(true);
             config.optimizer_runs = Some(200);
             config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
-            config.cbor_metadata = false;
+            // Solc introduced optional CBOR metadata in 0.8.18.
+            config.cbor_metadata = patch < 18;
             config.lint.lint_on_build = false;
         });
         prj.add_raw_source(
@@ -5563,7 +5565,7 @@ Compiler run successful!
                 .values()
                 .filter(|source| source.content.contains("function decodeDeploymentAddress"))
                 .count(),
-            usize::from(version != "0.8.26")
+            usize::from((15..=25).contains(&patch))
         );
 
         cmd.forge_fuse().arg("build").assert_success().stderr_eq("").stdout_eq(str![[r#"
@@ -5581,7 +5583,7 @@ fn preprocess_via_ir_deployment_semantics(prj: _, cmd: _) {
     prj.add_raw_source(
         "Names.sol",
         &format!(
-            "pragma solidity >=0.8.24 <0.9.0; function {decoder}() pure {{}} function {decoder}_() pure {{}}"
+            "pragma solidity >=0.8.15 <0.9.0; function {decoder}() pure {{}} function {decoder}_() pure {{}}"
         ),
     );
     prj.add_raw_source(
@@ -5603,7 +5605,7 @@ fn preprocess_via_ir_deployment_semantics(prj: _, cmd: _) {
         "ReverseOwner.t.sol",
         &format!(
             r#"
-pragma solidity >=0.8.24 <0.9.0;
+pragma solidity >=0.8.15 <0.9.0;
 import "./Deployments.t.sol";
 import {{Empty}} from "../src/Targets.sol";
 function {decoder}__(uint256) pure returns (address) {{ return address(0); }}
@@ -5617,13 +5619,14 @@ contract ReverseOwnerTest {{
 "#
         ),
     );
-    for version in ["0.8.24", "0.8.25", "0.8.26"] {
+    for version in ["0.8.15", "0.8.22", "0.8.24", "0.8.25", "0.8.26"] {
         let solc = recording_solc(prj.root(), version);
         prj.update_config(|config| {
             config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
             config.dynamic_test_linking = true;
             config.via_ir = true;
-            config.evm_version = EvmVersion::Shanghai;
+            config.evm_version =
+                if version == "0.8.15" { EvmVersion::London } else { EvmVersion::Shanghai };
             config.optimizer = Some(true);
             config.optimizer_runs = Some(200);
             config.lint.lint_on_build = false;
@@ -5901,14 +5904,15 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 #[cfg(unix)]
 #[forgetest]
 fn preprocess_via_ir_address_decoder(prj: _, cmd: _) {
-    prj.add_source("Target.sol", "pragma solidity >=0.8.24 <0.9.0; contract Target {}");
-    for version in ["0.8.24", "0.8.25"] {
+    prj.add_source("Target.sol", "pragma solidity >=0.8.15 <0.9.0; contract Target {}");
+    for version in ["0.8.15", "0.8.22", "0.8.24", "0.8.25"] {
         let solc = recording_solc(prj.root(), version);
         prj.update_config(|config| {
             config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
             config.dynamic_test_linking = true;
             config.via_ir = true;
-            config.evm_version = EvmVersion::Shanghai;
+            config.evm_version =
+                if version == "0.8.15" { EvmVersion::London } else { EvmVersion::Shanghai };
             config.optimizer = Some(true);
             config.optimizer_runs = Some(200);
             config.lint.lint_on_build = false;
@@ -5916,7 +5920,7 @@ fn preprocess_via_ir_address_decoder(prj: _, cmd: _) {
         let deployment = prj.add_test(
             "Deploy.t.sol",
             r#"
-pragma solidity >=0.8.24 <0.9.0;
+pragma solidity >=0.8.15 <0.9.0;
 import {Target} from "../src/Target.sol";
 contract DeployTest { function test_deploy() public { new Target(); } }
 "#,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity >=0.8.24 <0.9.0;
+pragma solidity >=0.8.15 <0.9.0;
 
 // The CLI test appends the decoder emitted by the preprocessor and replaces its name here.
 contract AddressDecoderTest {

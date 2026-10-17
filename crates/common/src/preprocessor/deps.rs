@@ -1027,7 +1027,7 @@ pub(crate) fn remove_bytecode_dependencies(
                 // instead, retaining the ABI's canonical-address check and empty revert data.
                 Source::new(format!(
                     r#"// SPDX-License-Identifier: MIT
-pragma solidity >=0.8.24 <0.9.0;
+pragma solidity >=0.8.15 <0.9.0;
 
 {vm_interface}
 

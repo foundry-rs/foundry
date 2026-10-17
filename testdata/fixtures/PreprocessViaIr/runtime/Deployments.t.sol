@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity >=0.8.22 <0.9.0;
+pragma solidity >=0.8.15 <0.9.0;
 
 import {DeploymentState, Empty, Target, Reverting} from "../src/Targets.sol";
 
