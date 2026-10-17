@@ -2445,3 +2445,106 @@ contract CounterInvariantTest {
     );
     assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);
 }
+
+#[forgetest_init]
+async fn mutation_fork_workers_keep_writes_independent(prj: _, cmd: _) {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(1_700_000_000u64))
+            .with_hardfork(Some(foundry_evm::hardforks::EthereumHardfork::Prague.into())),
+    )
+    .await;
+    api.anvil_set_balance(address!("0000000000000000000000000000000000001234"), U256::from(42))
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+contract Counter {
+    uint256 public number;
+    function increment() public { number++; }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+import "forge-std/Test.sol";
+import "../src/Counter.sol";
+contract CounterTest is Test {
+    function setUp() public {
+        assertEq(address(0x1234).balance, 42);
+        assertEq(vm.load(address(0x1234), bytes32(0)), bytes32(0));
+        vm.deal(address(0x1234), 99);
+        vm.store(address(0x1234), bytes32(0), bytes32(uint256(123)));
+    }
+
+    function testIncrement() public {
+        assertEq(block.chainid, 31338);
+        assertEq(vm.getEvmVersion(), "cancun");
+        assertEq(msg.sender, address(0x5678));
+        assertEq(tx.gasprice, 7);
+        assertEq(address(0x1234).balance, 99);
+        assertEq(vm.load(address(0x1234), bytes32(0)), bytes32(uint256(123)));
+        Counter counter = new Counter();
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        // A survivor is necessary: leaked setup writes must not turn every mutant into a kill.
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        cmd.forge_fuse().args([
+            "test",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--chain-id",
+            "31338",
+            "--evm-version",
+            "cancun",
+            "--sender",
+            "0x0000000000000000000000000000000000005678",
+            "--gas-price",
+            "7",
+            "--mutate",
+            "src/Counter.sol",
+            "--mutation-jobs",
+            "4",
+            "--threads",
+            "1",
+            "--json",
+        ]);
+        if isolate {
+            cmd.arg("--isolate");
+        }
+        cmd.assert_json_stdout(str![[r#"
+{
+  "summary": {
+    "total": 4,
+    "killed": 3,
+    "survived": 1,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 75.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {
+    "src/Counter.sol": [{
+      "line": 6,
+      "column": 35,
+      "original": "number++",
+      "mutant": "++number"
+    }]
+  }
+}
+"#]]);
+    }
+}

@@ -31,7 +31,7 @@ use crate::{
         block_txs, evm_env,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext},
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
         apply_chain_specific_tx_replay_env_changes_for_chain,
@@ -169,6 +169,35 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// empty local database.
     pub fn spawn(fork: Option<CreateFork>, env: EvmEnvFor<FEN>) -> eyre::Result<Self> {
         Self::new(MultiFork::spawn(), fork, env)
+    }
+
+    /// Creates a backend from a single resolved fork, configuring its environment before any
+    /// network state is initialized.
+    pub fn spawn_fork(
+        fork: CreateFork,
+        configure_env: impl FnOnce(&mut EvmEnvFor<FEN>, ExecutionSpecContext),
+    ) -> eyre::Result<Self> {
+        let forks = MultiFork::spawn();
+        let opts = &fork.evm_opts;
+        let resolved = forks.create_fork(fork.clone())?;
+        let context = resolved.fork.context();
+        let chain_id = opts.chain_id_override().unwrap_or(context.execution_chain_id);
+        let mut env = opts.fork_env_from_block::<FEN, AnyNetwork>(
+            chain_id,
+            context.source_chain_id,
+            &resolved.fork.block,
+        );
+        configure_env(
+            &mut env,
+            ExecutionSpecContext::fork(context.source_chain_id, context.hardfork),
+        );
+
+        let mut backend = Self::with_fork_manager(forks, EmptyDB::default(), env);
+        let id = backend.insert_prepared_fork(fork.url, resolved, env);
+        let mut evm = backend.lifecycle.create_evm();
+        let _ = backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
+        backend.lifecycle.park(evm);
+        Ok(backend)
     }
 
     /// Creates a backend that uses `forks` for remote fork caches.
@@ -1125,13 +1154,25 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<LocalForkId> {
         let url = fork.url.clone();
         let opts = fork.evm_opts.clone();
-        let ForkResult { id, backend, fork: remote } = self.forks.create_fork(fork)?;
+        let resolved = self.forks.create_fork(fork)?;
         let env = env.unwrap_or_else(|| {
-            self.fork_env(&opts, &remote, &remote.block, self.lifecycle.active().env.spec)
+            let remote = &resolved.fork;
+            self.fork_env(&opts, remote, &remote.block, self.lifecycle.active().env.spec)
         });
+        Ok(self.insert_prepared_fork(url, resolved, env))
+    }
+
+    /// Registers a resolved RPC fork without fetching its block again.
+    fn insert_prepared_fork(
+        &mut self,
+        url: String,
+        resolved: ForkResult,
+        env: EvmEnvFor<FEN>,
+    ) -> LocalForkId {
+        let ForkResult { id, backend, fork: remote } = resolved;
         let db = ForkDb::new(backend, remote.context().source_chain_id);
         let info = ForkInfo { id, url, block: Some(remote.number()), remote: Some(remote) };
-        Ok(self.lifecycle.create_fork(info, db, env))
+        self.lifecycle.create_fork(info, db, env)
     }
 
     /// Returns the environment of `remote` at `block` with `spec`.
