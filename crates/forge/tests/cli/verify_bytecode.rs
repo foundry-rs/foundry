@@ -1,11 +1,12 @@
 use crate::utils;
 use alloy_chains::Chain;
 use alloy_network::ReceiptResponse;
-use alloy_primitives::{Address, B256, Bytes, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::Provider;
 use axum::{Json, Router, extract::Query};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
+use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand, TestProject,
@@ -18,7 +19,57 @@ use tokio::net::TcpListener;
 
 #[forgetest_init]
 async fn can_verify_bytecode_with_local_creation_data_fork(prj: _, cmd: _) {
+    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 0, false).await;
+}
+
+#[forgetest_init]
+async fn can_verify_bytecode_with_local_eip2930_creation_data_fork(prj: _, cmd: _) {
+    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 1, false).await;
+}
+
+#[forgetest_init]
+async fn can_verify_bytecode_with_local_eip1559_creation_data_fork(prj: _, cmd: _) {
+    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 2, false).await;
+}
+
+#[forgetest_init]
+async fn can_verify_bytecode_with_local_create2_data_fork(prj: _, cmd: _) {
+    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 2, true).await;
+}
+
+async fn test_verify_bytecode_with_local_creation_data(
+    prj: &TestProject,
+    cmd: &mut TestCommand,
+    transaction_type: u8,
+    create2: bool,
+) {
     prj.initialize_default_contracts();
+    if transaction_type != 0 {
+        // These immutables make lost fees, value, sender, gas or access-list fields visible in
+        // the runtime comparison, rather than merely checking that some deployment succeeded.
+        prj.add_source(
+            "Counter",
+            r#"
+contract Counter {
+    uint256 public immutable initialGas;
+    uint256 public immutable gasPrice;
+    uint256 public immutable value;
+    address public immutable sender;
+    uint256 public number;
+
+    function setNumber(uint256 n) public { number = n; }
+    function increment() public { number++; }
+
+    constructor() payable {
+        initialGas = gasleft();
+        gasPrice = tx.gasprice;
+        value = msg.value;
+        sender = msg.sender;
+    }
+}
+"#,
+        );
+    }
     cmd.forge_fuse().arg("build").assert_success();
 
     let artifact: serde_json::Value = serde_json::from_slice(
@@ -47,22 +98,43 @@ async fn can_verify_bytecode_with_local_creation_data_fork(prj: _, cmd: _) {
         )
         .await
         .unwrap();
-    let transaction_hash: B256 = provider
-        .client()
-        .request(
-            "eth_sendTransaction",
-            [serde_json::json!({
-                "from": accounts[0],
-                "data": bytecode,
-                "gasPrice": format!("0x{gas_price:x}"),
-            })],
-        )
-        .await
-        .unwrap();
+    let mut creation = serde_json::json!({
+        "from": accounts[0],
+        "data": bytecode,
+        "gasPrice": format!("0x{gas_price:x}"),
+    });
+    if transaction_type != 0 {
+        api.anvil_set_nonce(accounts[0], U256::from(7)).await.unwrap();
+        creation["type"] = format!("0x{transaction_type:x}").into();
+        creation["nonce"] = "0x7".into();
+        creation["value"] = "0x13".into();
+        creation["gas"] = "0x100000".into();
+        creation["accessList"] = serde_json::json!([{
+            "address": accounts[2], "storageKeys": [B256::with_last_byte(9)],
+        }]);
+        if transaction_type == 2 {
+            creation.as_object_mut().unwrap().remove("gasPrice");
+            creation["maxFeePerGas"] = format!("0x{gas_price:x}").into();
+            creation["maxPriorityFeePerGas"] = "0x3".into();
+        }
+    }
+    let salt = B256::with_last_byte(42);
+    if create2 {
+        creation["to"] = serde_json::json!(DEFAULT_CREATE2_DEPLOYER);
+        creation["data"] = serde_json::json!(Bytes::from([salt.as_slice(), &bytecode].concat()));
+    }
+    let transaction_hash: B256 =
+        provider.client().request("eth_sendTransaction", [creation]).await.unwrap();
     api.mine_one().await.unwrap();
     let receipt = provider.get_transaction_receipt(transaction_hash).await.unwrap().unwrap();
     assert_eq!(receipt.transaction_index(), Some(1));
-    let address = receipt.contract_address().unwrap().to_string();
+    assert!(receipt.status());
+    let address = if create2 {
+        DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, &bytecode)
+    } else {
+        receipt.contract_address().unwrap()
+    }
+    .to_string();
 
     // Local explorer data forces a nonempty creation-block replay and shared completion path.
     let creation_data = serde_json::json!({"status":"1", "message":"OK", "result":[{
