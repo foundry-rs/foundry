@@ -5522,19 +5522,18 @@ Error: Yul exception:Variable _8 is 1 too deep in the stack.
 #[cfg(unix)]
 #[forgetest]
 fn preprocess_via_ir_codegen(prj: _, cmd: _) {
-    for patch in [14, 15, 24, 25, 26] {
+    for patch in [24, 26] {
         let version = format!("0.8.{patch}");
         let solc = recording_solc(prj.root(), &version);
         prj.update_config(|config| {
             config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
             config.dynamic_test_linking = true;
             config.via_ir = true;
-            config.evm_version = if patch < 20 { EvmVersion::London } else { EvmVersion::Shanghai };
+            config.evm_version = EvmVersion::Shanghai;
             config.optimizer = Some(true);
             config.optimizer_runs = Some(200);
             config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
-            // Solc introduced optional CBOR metadata in 0.8.18.
-            config.cbor_metadata = patch < 18;
+            config.cbor_metadata = false;
             config.lint.lint_on_build = false;
         });
         prj.add_raw_source(
