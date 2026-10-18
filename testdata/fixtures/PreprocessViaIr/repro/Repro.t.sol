@@ -2,24 +2,36 @@
 pragma solidity 0.8.24;
 
 interface Vm {
- function envOr(string calldata name, string calldata def) external returns (string memory);
- function createSelectFork(string calldata rpc) external returns (uint256);
- function startPrank(address a) external;
- function prank(address a) external;
- function stopPrank() external;
- function expectRevert(bytes4 e) external;
- function assertGt(uint256 a, uint256 b) external pure;
- function assertEq(uint256 a, uint256 b) external pure;
+    function envOr(string calldata name, string calldata def) external returns (string memory);
+    function createSelectFork(string calldata rpc) external returns (uint256);
+    function startPrank(address a) external;
+    function prank(address a) external;
+    function stopPrank() external;
+    function expectRevert(bytes4 e) external;
+    function assertGt(uint256 a, uint256 b) external pure;
+    function assertEq(uint256 a, uint256 b) external pure;
 }
 import {HedgerPool} from "../src/core/HedgerPool.sol";
 
-interface IERC20 { function balanceOf(address a) external view returns(uint256); }
-library HedgerPoolErrorLibrary { error PositionClosureRestricted(); }
+interface IERC20 {
+    function balanceOf(address a) external view returns (uint256);
+}
+
+library HedgerPoolErrorLibrary {
+    error PositionClosureRestricted();
+}
+
 abstract contract Test {
- Vm internal constant vm=Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
- event log(string);
- function assertGt(uint256 a,uint256 b) internal pure {if(a<=b)vm.assertGt(a,b);}
- function assertEq(uint256 a,uint256 b) internal pure {if(a!=b)vm.assertEq(a,b);}
+    Vm internal constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    event log(string);
+
+    function assertGt(uint256 a, uint256 b) internal pure {
+        if (a <= b) vm.assertGt(a, b);
+    }
+
+    function assertEq(uint256 a, uint256 b) internal pure {
+        if (a != b) vm.assertEq(a, b);
+    }
 }
 
 contract HedgerPoolDustDeadlockForkTest is Test {
@@ -49,7 +61,7 @@ contract HedgerPoolDustDeadlockForkTest is Test {
         vm.prank(TIMELOCK);
         pool.upgradeToAndCall(address(newImpl), "");
 
-        (, , , uint96 marginBefore, , , , , , , , , ) = pool.positions(POSITION_ID);
+        (,,, uint96 marginBefore,,,,,,,,,) = pool.positions(POSITION_ID);
         assertGt(uint256(marginBefore), 0);
         uint256 hedgerUsdcBefore = IERC20(USDC).balanceOf(HEDGER);
 
