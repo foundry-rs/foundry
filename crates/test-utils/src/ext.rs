@@ -354,6 +354,9 @@ mod tests {
     use super::*;
     use reqwest::Url;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
     fn git(root: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
             .current_dir(root)
@@ -628,5 +631,23 @@ mod tests {
         assert!(!target.join("src").exists());
         assert!(target.join("out/old").exists());
         assert!(target.join("cache/solidity-files-cache.json").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cached_project_skips_fixture_python_environment() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let target = temp.path().join("cached");
+        let venv = source.join(".foundry-ext-venv");
+        fs::create_dir_all(venv.join("lib")).unwrap();
+        symlink("lib", venv.join("lib64")).unwrap();
+        fs::write(source.join("Current.sol"), "fresh source").unwrap();
+
+        prepare_cached_project(&source, &target);
+
+        assert_eq!(fs::read_to_string(target.join("Current.sol")).unwrap(), "fresh source");
+        assert!(!target.join(".foundry-ext-venv").exists());
+        assert_eq!(fs::read_link(venv.join("lib64")).unwrap(), Path::new("lib"));
     }
 }
