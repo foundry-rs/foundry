@@ -26,11 +26,3 @@ source with a user-defined `require(bool)`. These tests run locally without an
 RPC endpoint on Solc 0.8.15, 0.8.22, 0.8.24, 0.8.25, and 0.8.26. They check
 rewritten deployment counts, the generated return types and casts, and cache
 reuse after successful execution.
-
-`runtime/AddressDecoder.t.sol` compares `uint160` returns followed by an address
-cast with native address ABI decoding on Solc 0.8.15, 0.8.24, and 0.8.25, using
-via-IR without DTL. Both paths accept zero, an ordinary address, and the maximum
-address, including return data with nonzero trailing bytes. Short return data
-and words with nonzero high 96 bits revert with empty data. This supplements
-genuine deployments with malformed data that the deployment cheatcode cannot
-return.

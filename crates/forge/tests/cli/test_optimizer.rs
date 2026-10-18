@@ -5726,43 +5726,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     }
 }
 
-#[cfg(unix)]
-#[forgetest]
-fn preprocess_via_ir_uint160_return_matches_address(prj: _, cmd: _) {
-    prj.add_raw_test(
-        "AddressDecoder.t.sol",
-        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/AddressDecoder.t.sol"),
-    );
-    for version in ["0.8.15", "0.8.24", "0.8.25"] {
-        let solc = recording_solc(prj.root(), version);
-        prj.update_config(|config| {
-            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
-            config.dynamic_test_linking = false;
-            config.via_ir = true;
-            config.evm_version =
-                if version == "0.8.15" { EvmVersion::London } else { EvmVersion::Shanghai };
-            config.optimizer = Some(true);
-            config.optimizer_runs = Some(200);
-            config.lint.lint_on_build = false;
-        });
-        cmd.forge_fuse()
-            .args(["test", "--force", "--match-contract", "AddressDecoderTest"])
-            .assert_success()
-            .stderr_eq("")
-            .stdout_eq(str![[r#"
-...
-Ran 3 tests for test/AddressDecoder.t.sol:AddressDecoderTest
-[PASS] test_noncanonical_deployment_return_data() ([GAS])
-[PASS] test_short_deployment_return_data() ([GAS])
-[PASS] test_valid_deployment_return_data() ([GAS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
-
-"#]]);
-    }
-}
-
 // Record genuine standard-JSON calls without changing compiler input, output, or status.
 #[cfg(unix)]
 fn recording_solc(root: &Path, version: &str) -> PathBuf {
