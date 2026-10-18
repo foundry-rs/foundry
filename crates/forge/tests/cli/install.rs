@@ -977,6 +977,8 @@ fn update_rejects_unresolved_ref_override(prj: _, cmd: _) {
     cmd.git_add();
     cmd.git_commit("pin dependency fixture");
     let original_lock = fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap();
+    let original_sources = [&path, &other_path]
+        .map(|path| fs::read(prj.root().join(path).join("source.txt")).unwrap());
 
     cmd.forge_fuse();
     cmd.env("GIT_ALLOW_PROTOCOL", "file");
@@ -992,10 +994,7 @@ Context:
 "#]]);
     assert_eq!(dependency_git.head().unwrap(), first);
     assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
-    assert_eq!(
-        fs::read_to_string(prj.root().join(&path).join("source.txt")).unwrap(),
-        "dependency source\n"
-    );
+    assert_eq!(fs::read(prj.root().join(&path).join("source.txt")).unwrap(), original_sources[0]);
 
     // Create refs only after installation so resolution must fetch without checking out.
     fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
@@ -1021,12 +1020,9 @@ Context:
 - git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
 
 "#]]);
-    for path in [&path, &other_path] {
+    for (path, original_source) in [&path, &other_path].into_iter().zip(&original_sources) {
         assert_eq!(Git::new(&prj.root().join(path)).head().unwrap(), first);
-        assert_eq!(
-            fs::read_to_string(prj.root().join(path).join("source.txt")).unwrap(),
-            "dependency source\n"
-        );
+        assert_eq!(&fs::read(prj.root().join(path).join("source.txt")).unwrap(), original_source);
     }
     assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
 
@@ -1740,6 +1736,64 @@ Run `forge soldeer install` in [..]/lib/parent to retry.
     assert!(prj.root().join("lib/parent/source.txt").exists());
 }
 
+#[forgetest]
+fn install_reports_unavailable_locked_revision(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let source_git = Git::new(source.path());
+    let head = source_git.head().unwrap();
+    fs::write(source.path().join("source.txt"), "updated source\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("update").unwrap();
+    add_local_submodule(prj.root(), source.path());
+
+    // Keep the worktree away from its gitlink, which `update = none` leaves untouched.
+    let dep = prj.root().join("lib/dep");
+    Git::new(&dep).checkout(false, &head).unwrap();
+    set_gitmodules_option(prj.root(), "update", "none");
+
+    let stale_rev = "0123456789abcdef0123456789abcdef01234567";
+    let stale_lock = format!(r#"{{"lib/dep":{{"rev":"{stale_rev}"}}}}"#);
+    fs::write(prj.root().join(FOUNDRY_LOCK), &stale_lock).unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_failure().stdout_eq(str![""]).stderr_eq(format!(
+        "\
+[UPDATING_DEPENDENCIES]
+Skipping submodule 'lib/dep'
+Error: Failed to check out `{stale_rev}` for dependency `lib/dep`
+`lib/dep` is locked to rev={stale_rev} in foundry.lock. If that ref is no longer available from the dependency's remote, update the `lib/dep` entry in foundry.lock.
+
+Context:
+- git checkout exited with code 128: fatal: [..]
+"
+    ));
+    assert_eq!(fs::read_to_string(prj.root().join(FOUNDRY_LOCK)).unwrap(), stale_lock);
+    assert_eq!(Git::new(&dep).head().unwrap(), head);
+}
+
+#[forgetest]
+fn install_reports_missing_gitmodules_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    add_local_submodule(prj.root(), source.path());
+    set_gitmodules_option(prj.root(), "branch", "missing");
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
+[UPDATING_DEPENDENCIES]
+Error: Failed to check out `missing` for dependency `lib/dep`
+Branch `missing` comes from the `branch` setting for `lib/dep` in .gitmodules. If it no longer exists on the dependency's remote, update .gitmodules; if it does, the local clone may be missing it, for example after a `--shallow` install.
+
+Context:
+- git checkout exited with code 128: fatal: [..]
+
+"#]]);
+    assert!(!prj.root().join(FOUNDRY_LOCK).exists());
+}
+
 fn init_local_install_source(path: &Path) {
     fs::create_dir_all(path).unwrap();
     let git = Git::new(path);
@@ -1814,4 +1868,24 @@ fn install_with_quoted_submodule_branch(prj: _, cmd: _) {
         lockfile_get(prj.root(), Path::new("lib/dep")),
         Some(DepIdentifier::Branch { name: "v1".to_string(), rev: updated_rev, r#override: false })
     );
+}
+
+fn add_local_submodule(root: &Path, source: &Path) {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source)
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+fn set_gitmodules_option(root: &Path, key: &str, value: &str) {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["config", "-f", ".gitmodules", &format!("submodule.lib/dep.{key}"), value])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }
