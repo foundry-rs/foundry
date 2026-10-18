@@ -1,6 +1,10 @@
-use crate::prj::{TestCommand, TestProject, setup_forge};
+use crate::{
+    prj::{TestCommand, TestProject, setup_forge},
+    util::copy_dir_filtered,
+};
 use foundry_compilers::PathStyle;
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -20,6 +24,7 @@ pub struct ExtTester {
     pub install_commands: Vec<Vec<String>>,
     pub python_packages: Vec<String>,
     pub verbosity: String,
+    pub cache_build: bool,
 }
 
 impl ExtTester {
@@ -37,6 +42,7 @@ impl ExtTester {
             install_commands: vec![],
             python_packages: vec![],
             verbosity: "-vvv".to_string(),
+            cache_build: false,
         }
     }
 
@@ -206,8 +212,27 @@ impl ExtTester {
     pub fn run(&self) {
         let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
+        // Stable paths preserve compiler-cache remappings across fresh fixture checkouts.
+        let cached_root = self
+            .cache_build
+            .then(|| std::env::var_os("FOUNDRY_EXTERNAL_TEST_CACHE"))
+            .flatten()
+            .map(|root| PathBuf::from(root).join(self.org).join(self.name).join(self.rev));
+        let mut cache_lock = cached_root.as_ref().map(|root| {
+            fs::create_dir_all(root.parent().unwrap()).unwrap();
+            crate::fd_lock::new_lock(root.with_extension("lock"))
+        });
+        let _cache_guard = cache_lock.as_mut().map(|lock| lock.write().unwrap());
+        let root = if let Some(root) = &cached_root {
+            prepare_cached_project(prj.root(), root);
+            root.as_path()
+        } else {
+            prj.root()
+        };
+        test_cmd.current_dir(root);
+
         // Run installation command.
-        self.run_install_commands(prj.root().to_str().unwrap());
+        self.run_install_commands(root.to_str().unwrap());
 
         // Run the tests.
         test_cmd.arg("test");
@@ -227,6 +252,51 @@ impl ExtTester {
         test_cmd.env("FOUNDRY_ALLOW_INTERNAL_EXPECT_REVERT", "true");
 
         test_cmd.assert_success();
+        if let Some(root) = &cached_root {
+            retain_compiler_artifacts(root);
+        }
+    }
+
+    /// Reuses compiler artifacts when `FOUNDRY_EXTERNAL_TEST_CACHE` is set.
+    ///
+    /// Fixtures must use the default `out` and `cache` directories. Sources and test-state caches
+    /// are refreshed for every run; Forge still validates compiler settings and source hashes.
+    pub const fn cache_build(mut self) -> Self {
+        self.cache_build = true;
+        self
+    }
+}
+
+/// Refreshes a cached fixture, retaining only compiler artifacts and their cache metadata.
+fn prepare_cached_project(source: &Path, target: &Path) {
+    retain_compiler_artifacts(target);
+    copy_dir_filtered(source, target).unwrap();
+}
+
+fn retain_compiler_artifacts(target: &Path) {
+    fs::create_dir_all(target).unwrap();
+    for entry in fs::read_dir(target).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() != "out" && entry.file_name() != "cache" {
+            remove_cache_entry(&entry);
+        }
+    }
+    let cache = target.join("cache");
+    if cache.is_dir() {
+        for entry in fs::read_dir(&cache).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name() != "solidity-files-cache.json" {
+                remove_cache_entry(&entry);
+            }
+        }
+    }
+}
+
+fn remove_cache_entry(entry: &fs::DirEntry) {
+    if entry.file_type().unwrap().is_dir() {
+        fs::remove_dir_all(entry.path()).unwrap();
+    } else {
+        fs::remove_file(entry.path()).unwrap();
     }
 }
 
@@ -534,5 +604,41 @@ mod tests {
         git(&submodule, &["checkout", "v1"]);
         assert_eq!(git(&submodule, &["rev-parse", "HEAD"]), pinned_dependency);
         assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+    }
+
+    #[test]
+    fn cached_project_retains_only_compiler_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let target = temp.path().join("cached");
+        fs::create_dir_all(source.join("src")).unwrap();
+        fs::write(source.join("src/Current.sol"), "fresh source").unwrap();
+        prepare_cached_project(&source, &target);
+
+        for dir in ["out", "cache/invariant", "cache/fuzz", "src", "node_modules", "broadcast"] {
+            fs::create_dir_all(target.join(dir)).unwrap();
+            fs::write(target.join(dir).join("old"), "stale state").unwrap();
+        }
+        fs::write(target.join("cache/solidity-files-cache.json"), "compiler metadata").unwrap();
+        fs::write(target.join("src/Current.sol"), "modified by previous test").unwrap();
+        fs::write(target.join("unexpected"), "test side effect").unwrap();
+
+        prepare_cached_project(&source, &target);
+
+        assert_eq!(fs::read_to_string(target.join("src/Current.sol")).unwrap(), "fresh source");
+        assert_eq!(fs::read_to_string(target.join("out/old")).unwrap(), "stale state");
+        assert_eq!(
+            fs::read_to_string(target.join("cache/solidity-files-cache.json")).unwrap(),
+            "compiler metadata"
+        );
+        for path in
+            ["cache/invariant", "cache/fuzz", "src/old", "node_modules", "broadcast", "unexpected"]
+        {
+            assert!(!target.join(path).exists(), "retained test state: {path}");
+        }
+        retain_compiler_artifacts(&target);
+        assert!(!target.join("src").exists());
+        assert!(target.join("out/old").exists());
+        assert!(target.join("cache/solidity-files-cache.json").exists());
     }
 }

@@ -134,6 +134,7 @@ jobs:
             ~/.config/.foundry/cache
             testdata/cache
             testdata/out
+            ${{ runner.temp }}/foundry-external-tests
           # Use a unique key for each run to always update the cache.
           key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
           restore-keys: |
@@ -175,6 +176,7 @@ jobs:
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
+          FOUNDRY_EXTERNAL_TEST_CACHE: ${{ runner.temp }}/foundry-external-tests
         shell: bash
         run: |
           args=(-E "$NEXTEST_FILTER")
