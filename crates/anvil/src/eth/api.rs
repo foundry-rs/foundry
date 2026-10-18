@@ -2352,11 +2352,11 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugClearTxpool(_) => self.debug_clear_txpool().await.to_rpc_result(),
             // non eth-standard rpc calls
             EthRequest::DebugTraceTransaction(tx, opts) => {
-                self.debug_trace_transaction(tx, opts).await.to_trace_rpc_result()
+                self.debug_trace_transaction(tx, opts).await.to_rpc_result()
             }
             // non eth-standard rpc calls
             EthRequest::DebugTraceCall(tx, block, opts) => {
-                self.debug_trace_call(tx, block, opts).await.to_trace_rpc_result()
+                self.debug_trace_call(tx, block, opts).await.to_rpc_result()
             }
             EthRequest::DebugCodeByHash(hash, block) => {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
@@ -2373,32 +2373,28 @@ impl EthApi<FoundryNetwork> {
                 self.debug_execution_witness(block).await.to_rpc_result()
             }
             EthRequest::DebugTraceBlock(rlp_block, opts) => {
-                self.debug_trace_block(rlp_block, opts).await.to_trace_rpc_result()
+                self.debug_trace_block(rlp_block, opts).await.to_rpc_result()
             }
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
-                self.debug_trace_block_by_hash(block_hash, opts).await.to_trace_rpc_result()
+                self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
             EthRequest::DebugTraceBlockByNumber(block_number, opts) => {
-                self.debug_trace_block_by_number(block_number, opts).await.to_trace_rpc_result()
+                self.debug_trace_block_by_number(block_number, opts).await.to_rpc_result()
             }
             EthRequest::TraceCall(tx, trace_types, block) => {
-                self.trace_call(tx, trace_types, block).await.to_trace_rpc_result()
+                self.trace_call(tx, trace_types, block).await.to_rpc_result()
             }
-            EthRequest::TraceTransaction(tx) => {
-                self.trace_transaction(tx).await.to_trace_rpc_result()
-            }
-            EthRequest::TraceBlock(block) => self.trace_block(block).await.to_trace_rpc_result(),
-            EthRequest::TraceFilter(filter) => {
-                self.trace_filter(filter).await.to_trace_rpc_result()
-            }
+            EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
+            EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
+            EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
             EthRequest::TraceGet(hash, indices) => {
-                self.trace_get(hash, indices).await.to_trace_rpc_result()
+                self.trace_get(hash, indices).await.to_rpc_result()
             }
             EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
-                self.trace_replay_block_transactions(block, trace_types).await.to_trace_rpc_result()
+                self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
             }
             EthRequest::TraceReplayTransaction(transaction, trace_types) => {
-                self.trace_replay_transaction(transaction, trace_types).await.to_trace_rpc_result()
+                self.trace_replay_transaction(transaction, trace_types).await.to_rpc_result()
             }
             EthRequest::TraceTransactionOpcodeGas(tx_hash) => {
                 self.trace_transaction_opcode_gas(tx_hash).await.to_rpc_result()
@@ -2406,12 +2402,11 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TraceBlockOpcodeGas(block_id) => {
                 self.trace_block_opcode_gas(block_id).await.to_rpc_result()
             }
-            EthRequest::TraceRawTransaction(tx, trace_types, block_number) => self
-                .trace_raw_transaction(tx, trace_types, block_number)
-                .await
-                .to_trace_rpc_result(),
+            EthRequest::TraceRawTransaction(tx, trace_types, block_number) => {
+                self.trace_raw_transaction(tx, trace_types, block_number).await.to_rpc_result()
+            }
             EthRequest::TraceCallMany(calls, block_number) => {
-                self.trace_call_many(calls, block_number).await.to_trace_rpc_result()
+                self.trace_call_many(calls, block_number).await.to_rpc_result()
             }
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()

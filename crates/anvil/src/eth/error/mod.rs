@@ -17,7 +17,6 @@ use revm::{
     interpreter::InstructionResult,
 };
 use serde::Serialize;
-use serde_json::value::RawValue;
 use tempo_revm::TempoInvalidTransaction;
 use tokio::time::Duration;
 
@@ -462,22 +461,11 @@ impl From<InvalidTransaction> for InvalidTransactionError {
 /// Helper trait to easily convert results to rpc results
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
-
-    /// Like [`to_rpc_result`](Self::to_rpc_result), but serializes the result directly instead of
-    /// through a `serde_json::Value`.
-    ///
-    /// Traces can be much larger as a `Value` tree than as JSON. Only use this for types that never
-    /// serialize duplicate keys, which the `Value` round trip merges.
-    fn to_trace_rpc_result(self) -> ResponseResult;
 }
 
 /// Converts a serializable value into a `ResponseResult`
 pub fn to_rpc_result<T: Serialize>(val: T) -> ResponseResult {
-    raw_rpc_result(serde_json::to_value(val).and_then(|val| serde_json::value::to_raw_value(&val)))
-}
-
-fn raw_rpc_result(result: serde_json::Result<Box<RawValue>>) -> ResponseResult {
-    match result {
+    match serde_json::value::to_raw_value(&val) {
         Ok(success) => ResponseResult::Success(success),
         Err(err) => {
             error!(%err, "Failed serialize rpc response");
@@ -487,13 +475,6 @@ fn raw_rpc_result(result: serde_json::Result<Box<RawValue>>) -> ResponseResult {
 }
 
 impl<T: Serialize> ToRpcResponseResult for Result<T> {
-    fn to_trace_rpc_result(self) -> ResponseResult {
-        match self {
-            Ok(val) => raw_rpc_result(serde_json::value::to_raw_value(&val)),
-            Err(err) => Err::<(), _>(err).to_rpc_result(),
-        }
-    }
-
     fn to_rpc_result(self) -> ResponseResult {
         match self {
             Ok(val) => to_rpc_result(val),
