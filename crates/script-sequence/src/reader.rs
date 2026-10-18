@@ -1,9 +1,10 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
 use alloy_network::{Network, ReceiptResponse};
 use eyre::{Result, bail};
-use foundry_common::fs;
+use foundry_common::{errors::FsPathError, fs};
 use revm_inspectors::tracing::types::CallKind;
 use serde::Deserialize;
+use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 
 /// This type reads broadcast files in the
@@ -75,11 +76,16 @@ impl BroadcastReader {
                 if path.components().any(|c| c == Component::Normal("multi".as_ref())) {
                     // Parse as MultiScriptSequence
 
-                    let broadcast = fs::read_json_file::<serde_json::Value>(path)?;
+                    let broadcast = fs::read_json_file::<Value>(path)?;
                     let multichain_deployments = broadcast
                         .get("deployments")
+                        .and_then(Value::as_array)
                         .and_then(|deployments| {
-                            serde_json::from_value::<Vec<ScriptSequence<N>>>(deployments.clone())
+                            deployments
+                                .iter()
+                                .cloned()
+                                .map(parse_sequence)
+                                .collect::<serde_json::Result<Vec<_>>>()
                                 .ok()
                         })
                         .unwrap_or_default();
@@ -88,7 +94,8 @@ impl BroadcastReader {
                     continue;
                 }
 
-                let broadcast = fs::read_json_file::<ScriptSequence<N>>(path)?;
+                let broadcast = parse_sequence(fs::read_json_file(path)?)
+                    .map_err(|source| FsPathError::ReadJson { source, path: path.into() })?;
                 broadcasts.push(broadcast);
             }
         }
@@ -172,11 +179,27 @@ impl BroadcastReader {
     }
 }
 
+/// Deserializes a broadcast sequence, treating receipts without a `type` as legacy like
+/// Ethereum's receipt envelope does, so every network accepts the same files.
+fn parse_sequence<N: Network>(mut sequence: Value) -> serde_json::Result<ScriptSequence<N>>
+where
+    N::TxEnvelope: for<'d> Deserialize<'d>,
+{
+    if let Some(receipts) = sequence.get_mut("receipts").and_then(Value::as_array_mut) {
+        for receipt in receipts.iter_mut().filter_map(Value::as_object_mut) {
+            if receipt.get("type").is_none_or(Value::is_null) {
+                receipt.insert("type".to_string(), "0x0".into());
+            }
+        }
+    }
+    serde_json::from_value(sequence)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_network::Ethereum;
-    use alloy_primitives::Address;
+    use alloy_network::{AnyNetwork, Ethereum};
+    use alloy_primitives::{Address, B256, Bloom};
     use foundry_common::TransactionMaybeSigned;
 
     fn deployment(address: Address) -> ScriptSequence<Ethereum> {
@@ -206,6 +229,63 @@ mod tests {
             .read_latest::<Ethereum>()
             .unwrap();
         assert_eq!(latest.transactions[0].contract_address, Some(newer));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_receipts_without_type_as_legacy() {
+        let root = std::env::temp_dir().join(format!("broadcast-typeless-{}", std::process::id()));
+        let hash = B256::with_last_byte(1);
+        let sequence = |address: Address, ty: Option<serde_json::Value>| {
+            let mut sequence = deployment(address);
+            sequence.transactions[0].hash = Some(hash);
+            let mut sequence = serde_json::to_value(sequence).unwrap();
+            let mut receipt = serde_json::json!({
+                "status": "0x1",
+                "cumulativeGasUsed": "0x5208",
+                "logs": [],
+                "logsBloom": Bloom::ZERO,
+                "transactionHash": hash,
+                "transactionIndex": "0x0",
+                "blockHash": B256::ZERO,
+                "blockNumber": "0x7",
+                "gasUsed": "0x5208",
+                "effectiveGasPrice": "0x1",
+                "from": Address::ZERO,
+                "to": null,
+                "contractAddress": address,
+            });
+            if let Some(ty) = ty {
+                receipt["type"] = ty;
+            }
+            sequence["receipts"] = serde_json::json!([receipt]);
+            sequence
+        };
+        let dir = root.join("Counter.s.sol").join("1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let reader = BroadcastReader::new("Counter".to_string(), 1, &root).unwrap();
+        fs::write_json_file(&dir.join("run-1.json"), &sequence(Address::with_last_byte(1), None))
+            .unwrap();
+        let latest = reader.read_latest::<AnyNetwork>().unwrap();
+        let receipts = reader.into_tx_receipts(latest);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].1.block_number(), Some(7));
+        assert!(receipts[0].1.status());
+        std::fs::remove_dir_all(&root).unwrap();
+
+        let dir = root.join("multi").join("Counter.s.sol-1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let deployments = [
+            sequence(Address::with_last_byte(2), Some(serde_json::Value::Null)),
+            sequence(Address::with_last_byte(3), Some("0x2".into())),
+        ];
+        fs::write_json_file(
+            &dir.join("deploy.json"),
+            &serde_json::json!({ "deployments": deployments }),
+        )
+        .unwrap();
+        assert_eq!(reader.read::<AnyNetwork>().unwrap().len(), 2);
 
         std::fs::remove_dir_all(root).unwrap();
     }
