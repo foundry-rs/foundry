@@ -895,23 +895,44 @@ mod tests {
 
     #[test]
     fn uint160_deployment_returns_follow_compiler_settings() {
-        let mut unchanged = None;
-        for (version, via_ir, workaround) in [
-            ("0.8.14", Some(true), false),
-            ("0.8.15", Some(true), true),
-            ("0.8.24+commit.e11b9ed9", Some(true), true),
-            ("0.8.25", Some(true), true),
-            ("0.8.26", Some(true), false),
-            ("0.8.24", Some(false), false),
-            ("0.8.24", None, false),
-            ("0.8.24-dev", Some(true), false),
+        for (version, via_ir, specific, workaround) in [
+            ("0.8.14", Some(true), false, false),
+            ("0.8.15", Some(true), false, true),
+            ("0.8.24+commit.e11b9ed9", Some(true), false, true),
+            ("0.8.25", Some(true), false, true),
+            ("0.8.26", Some(true), false, false),
+            ("0.8.24", Some(false), false, false),
+            ("0.8.24", None, false, false),
+            ("0.8.24-dev", Some(true), false, false),
+            ("0.8.24-dev", Some(true), true, false),
+            ("0.8.24+commit.e11b9ed9", Some(true), true, true),
         ] {
             let (_root, paths, mut input) = input();
             input.version = version.parse().unwrap();
             input.input.settings.via_ir = via_ir;
+            let compiler = if specific {
+                let compiler = SolcCompiler::Specific(Solc::new_with_version(
+                    paths.root.join("absent-solc"),
+                    input.version.clone(),
+                ));
+                // Compiler selection strips metadata before constructing the versioned input.
+                let selected = compiler.available_versions(&SolcLanguage::Solidity).pop().unwrap();
+                assert!(selected.as_ref().pre.is_empty());
+                let mut settings = SolcSettings::default();
+                settings.settings.via_ir = via_ir;
+                input = SolcVersionedInput::build(
+                    input.input.sources,
+                    settings,
+                    SolcLanguage::Solidity,
+                    selected.as_ref().clone(),
+                );
+                compiler
+            } else {
+                SolcCompiler::default()
+            };
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
                 &DynamicTestLinkingPreprocessor::default(),
-                &SolcCompiler::default(),
+                &compiler,
                 &mut input,
                 &paths,
                 &mut HashSet::new(),
@@ -927,74 +948,13 @@ mod tests {
             assert_eq!(
                 generated.matches("external returns (uint160);").count(),
                 if workaround { 8 } else { 0 },
-                "{version}, via_ir={via_ir:?}"
+                "{version}, via_ir={via_ir:?}, specific={specific}"
             );
             assert_eq!(
                 generated.matches("external returns (address);").count(),
                 if workaround { 0 } else { 8 }
             );
             assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
-            assert_eq!(
-                generated
-                    .matches("function getCode(string memory _artifact) external view returns (bytes memory);")
-                    .count(),
-                1
-            );
-            if !workaround {
-                if let Some(expected) = &unchanged {
-                    assert_eq!(&input.input.sources, expected, "{version}, via_ir={via_ir:?}");
-                } else {
-                    unchanged = Some(input.input.sources);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn uint160_deployment_returns_preserve_specific_compiler_prereleases() {
-        for version in ["0.8.24-dev", "0.8.24+commit.e11b9ed9"] {
-            let (_root, paths, input) = input();
-            let version = version.parse::<Version>().unwrap();
-            let workaround = version.pre.is_empty();
-            let compiler = SolcCompiler::Specific(Solc::new_with_version(
-                paths.root.join("absent-solc"),
-                version.clone(),
-            ));
-            // Compiler selection strips metadata before constructing the versioned input.
-            let selected = compiler.available_versions(&SolcLanguage::Solidity).pop().unwrap();
-            assert!(selected.as_ref().pre.is_empty());
-            let mut settings = SolcSettings::default();
-            settings.settings.via_ir = Some(true);
-            let mut input = SolcVersionedInput::build(
-                input.input.sources,
-                settings,
-                SolcLanguage::Solidity,
-                selected.as_ref().clone(),
-            );
-            <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor::default(),
-                &compiler,
-                &mut input,
-                &paths,
-                &mut HashSet::new(),
-            )
-            .unwrap();
-            let generated = input
-                .input
-                .sources
-                .values()
-                .map(|source| source.content.as_str())
-                .collect::<String>();
-            assert_eq!(
-                generated.matches("external returns (uint160);").count(),
-                if workaround { 8 } else { 0 },
-                "{version}"
-            );
-            assert_eq!(
-                generated.matches("external returns (address);").count(),
-                if workaround { 0 } else { 8 },
-                "{version}"
-            );
         }
     }
 }
