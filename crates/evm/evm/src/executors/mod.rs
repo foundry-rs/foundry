@@ -652,13 +652,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let (execution, mut evm) = execute(&mut backend, evm_env, tx, ext, &mut stack)?;
+        let (execution, evm) = execute(&mut backend, evm_env, tx, ext, &mut stack)?;
         // A lifecycle operation can accept writes outside the transaction's pending state.
-        // Preserve the backend it already cloned, without cloning ordinary read-only calls.
-        if let Cow::Owned(backend) = &mut backend.backend {
-            evm.commit_source(&execution.state);
-            backend.park(evm);
-        }
+        // Retain those writes, but leave the pending state unapplied until commit.
+        backend.park_detached(evm);
         let mut result = convert_executed_result(execution, stack, &backend)?;
         if let Cow::Owned(backend) = backend.backend {
             result.post_execution_backend = Some(Box::new(backend));
@@ -772,15 +769,16 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     /// Commits the state changes of a call to the backend and persists its inspector state, as if
-    /// it had been executed with `transact*`.
+    /// it had been executed with `transact*`. Commit a detached result before any unrelated
+    /// backend mutation: its owned backend, when present, replaces the executor's backend.
     #[instrument(name = "commit", level = "debug", skip_all)]
     fn commit(&mut self, result: &mut RawCallResult<FEN>) {
-        if let Some(backend) = result.post_execution_backend.take() {
-            // This backend already includes the pending state; do not apply it twice.
+        if let Some(mut backend) = result.post_execution_backend.take() {
+            // A failure observed while restoring a snapshot belongs to this call's result.
+            backend.set_state_snapshot_failure(self.backend().has_state_snapshot_failure());
             self.backend = Arc::new(*backend);
-        } else {
-            self.backend_mut().commit_pending(&result.state_changeset);
         }
+        self.backend_mut().commit_pending(&result.state_changeset);
         self.persist_inspector_state(result);
     }
 
@@ -952,20 +950,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             for address in [address, CHEATCODE_ADDRESS] {
                 let Ok(acc) = source.basic(address) else { return false };
                 backend.insert_account_info(address, acc.unwrap_or_default());
-                // A fork switch may already have accepted the assertion flag, leaving it
-                // outside the pending changeset.
-                if let Some(cache) = &source.lifecycle().active().cache
-                    && let Some(storage) = cache.storage.get(&address)
-                {
-                    for (&slot, &value) in &storage.slots {
-                        if !pending_global_failure_only
-                            || address != CHEATCODE_ADDRESS
-                            || slot != GLOBAL_FAIL_SLOT
-                        {
-                            backend.insert_account_storage(address, slot, value);
-                        }
-                    }
-                }
             }
 
             // If this test failed any asserts, then this changeset will contain changes
@@ -1351,8 +1335,9 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// the executor before results are classified.
     pub skip_payloads: Vec<Bytes>,
     /// An already-cloned backend changed by this call, including its accepted execution state.
-    /// Consumed on commit; dropping the result discards it without changing the executor.
-    pub post_execution_backend: Option<Box<Backend<FEN>>>,
+    /// Does not include `state_changeset`, which is applied only on commit. Dropping the result
+    /// discards both without changing the executor.
+    pub(crate) post_execution_backend: Option<Box<Backend<FEN>>>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
@@ -2521,14 +2506,19 @@ mod tests {
                 )
                 .unwrap();
             assert!(!restored.reverted);
-            assert!(!executor.is_raw_call_success(
-                target,
-                Cow::Borrowed(&restored.state_changeset),
-                &restored,
-            ));
+            // The global flag includes accepted state; legacy failed() only observes pending
+            // storage, not a flag that was already committed before the captured transaction.
+            assert_eq!(
+                executor.is_raw_call_success(
+                    target,
+                    Cow::Borrowed(&restored.state_changeset),
+                    &restored,
+                ),
+                legacy,
+            );
             assert_eq!(executor.backend().storage(account, slot).unwrap(), U256::ZERO);
             executor.commit(&mut restored);
-            assert!(!executor.is_raw_call_mut_success(target, &mut restored));
+            assert_eq!(executor.is_raw_call_mut_success(target, &mut restored), legacy);
             assert_eq!(executor.backend().storage(account, slot).unwrap(), U256::ONE);
         }
     }
