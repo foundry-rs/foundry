@@ -42,8 +42,6 @@ fn sablier_v2_core() {
     // Keep the standalone v1.2.0 fixture; newer revisions use a different monorepo layout.
     let mut tester =
         ExtTester::new("sablier-labs", "v2-core", "73356945b53e8dd4112f34f3e2c63c278c4a5239")
-            // Solc compilation dominates this fixture; retain its artifacts in CI.
-            .cache_build()
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956

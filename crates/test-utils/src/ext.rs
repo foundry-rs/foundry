@@ -24,7 +24,6 @@ pub struct ExtTester {
     pub install_commands: Vec<Vec<String>>,
     pub python_packages: Vec<String>,
     pub verbosity: String,
-    pub cache_build: bool,
 }
 
 impl ExtTester {
@@ -42,7 +41,6 @@ impl ExtTester {
             install_commands: vec![],
             python_packages: vec![],
             verbosity: "-vvv".to_string(),
-            cache_build: false,
         }
     }
 
@@ -208,15 +206,15 @@ impl ExtTester {
         assert!(self.install_commands.is_empty(), "all dependency installation commands failed");
     }
 
-    /// Runs the test.
+    /// Runs the test, reusing compiler artifacts when `FOUNDRY_EXTERNAL_TEST_CACHE` is set.
+    ///
+    /// Fixtures must use the default `out` and `cache` directories. Sources and test-state caches
+    /// are refreshed for every run; Forge still validates compiler settings and source hashes.
     pub fn run(&self) {
         let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
         // Stable paths preserve compiler-cache remappings across fresh fixture checkouts.
-        let cached_root = self
-            .cache_build
-            .then(|| std::env::var_os("FOUNDRY_EXTERNAL_TEST_CACHE"))
-            .flatten()
+        let cached_root = std::env::var_os("FOUNDRY_EXTERNAL_TEST_CACHE")
             .map(|root| PathBuf::from(root).join(self.org).join(self.name).join(self.rev));
         let mut cache_lock = cached_root.as_ref().map(|root| {
             fs::create_dir_all(root.parent().unwrap()).unwrap();
@@ -255,15 +253,6 @@ impl ExtTester {
         if let Some(root) = &cached_root {
             retain_compiler_artifacts(root);
         }
-    }
-
-    /// Reuses compiler artifacts when `FOUNDRY_EXTERNAL_TEST_CACHE` is set.
-    ///
-    /// Fixtures must use the default `out` and `cache` directories. Sources and test-state caches
-    /// are refreshed for every run; Forge still validates compiler settings and source hashes.
-    pub const fn cache_build(mut self) -> Self {
-        self.cache_build = true;
-        self
     }
 }
 
