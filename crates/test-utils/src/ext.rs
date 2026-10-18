@@ -364,7 +364,6 @@ fn checkout_revision_inner(root: &str, rev: &str, recursive: bool, allowed_proto
 mod tests {
     use super::*;
     use reqwest::Url;
-    use std::fs;
 
     fn git(root: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
