@@ -33,18 +33,6 @@ library Fee {
 }
 "#;
 
-const ARITHMETIC: &str = r#"
-pragma solidity ^0.8.20;
-
-contract Arithmetic {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3;
-    }
-}
-"#;
-
 /// Writes the brief and the generator script and returns the common arguments.
 fn properties_args(prj: &TestProject, script: &str) -> Vec<String> {
     let brief = prj.root().join("brief.md");
@@ -85,11 +73,9 @@ fn properties_reports_possible_bugs_by_evidence(prj: _, cmd: _) {
     let mut args = properties_args(
         &prj,
         r#"
-grep -q '^  "phase": "audit"' "$prompt"
 grep -q 'audit first, test second' "$prompt"
 grep -q '"path": "src/Fee.sol"' "$prompt"
 grep -q 'context-marker: rounding notes' "$prompt"
-if grep -q '"survivors"' "$prompt"; then exit 1; fi
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
@@ -140,7 +126,6 @@ added 1 generated test file(s):
 "#]]);
 
     assert!(!prj.root().join("test/generated/FeeAudit.t.sol").exists());
-    assert!(!prj.root().join("cache/properties/baseline").exists());
 }
 
 // A kept property must keep its imported helper, while an unrelated proposal file can be dropped.
@@ -224,92 +209,11 @@ Error: generator failed in round 2 (exit status: 3): generator quota exceeded
     assert!(journal["source"].as_str().unwrap().contains("function testDocumentedCap()"));
 }
 
-// After the audit, `--mutation` keeps a new file only if it kills a survivor on every seed. The
-// mutation runs select the generated tests although configured filters exclude them.
+// The target is in a linked dependency directory. It imports a library through a remapping and the
+// test imports the library by its project path; both must name the same file in the workspace, or
+// the types differ.
 #[forgetest_init]
-fn properties_mutation_keeps_survivor_killing_tests(prj: _, cmd: _) {
-    prj.add_source("Arithmetic.sol", ARITHMETIC);
-    prj.add_test(
-        "Arithmetic.t.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-import {Arithmetic} from "../src/Arithmetic.sol";
-
-contract ArithmeticTest {
-    Arithmetic internal arithmetic = new Arithmetic();
-
-    function testSmallValue() public view {
-        require(arithmetic.bucket(1) == 1);
-    }
-}
-"#,
-    );
-    prj.update_config(|config| {
-        config.test_pattern = Some(regex::Regex::new(r"^testSmall\w*\(").unwrap().into());
-    });
-    let file = |name: &str, body: &str| {
-        format!(
-            r#"cat > "$output" <<'JSON'
-{{"schema": "foundry/properties-candidate-v1", "rationale": "{name}", "files": [{{"path": "test/generated/{name}.t.sol", "content": "pragma solidity ^0.8.20;\nimport {{Arithmetic}} from \"../../src/Arithmetic.sol\";\ncontract {name}Test {{\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testProperty() public view {{\n        {body}\n    }}\n}}\n"}}]}}
-JSON
-exit 0
-"#
-        )
-    };
-    let script = format!(
-        r#"
-if grep -q '^  "phase": "audit"' "$prompt"; then
-    if grep -q '"survivors"' "$prompt"; then exit 1; fi
-    if grep -q '^  "round": 1,' "$prompt"; then
-{}    fi
-{}fi
-grep -q '^  "phase": "mutation"' "$prompt"
-grep -q '"survives_all_seeds": true' "$prompt"
-grep -q '"source_context"' "$prompt"
-if grep -q '^  "round": 3,' "$prompt"; then
-{}fi
-grep -q 'ArithmeticNoGainTest' "$prompt"
-{}"#,
-        file("ArithmeticLarge", r"require(arithmetic.bucket(1000) == 3);"),
-        file("ArithmeticMiddle", r"require(arithmetic.bucket(50) == 2);"),
-        file("ArithmeticNoGain", r"require(arithmetic.bucket(1) == 1);"),
-        file(
-            "ArithmeticLower",
-            r"require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);"
-        ),
-    );
-    cmd.args(properties_args(&prj, &script))
-        .args(["--target", "src/Arithmetic.sol", "--rounds", "2", "--mutation"])
-        .args(["--match-contract", "^ArithmeticTest$"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-added 3 generated test file(s):
-  test/generated/ArithmeticLarge.t.sol
-  test/generated/ArithmeticMiddle.t.sol
-  test/generated/ArithmeticLower.t.sol
-the mutation phase killed 1 survivor(s); 1 remain
-
-"#]]);
-
-    let rounds = rounds(&prj);
-    assert_data_eq!(
-        serde_json::to_string_pretty(&rounds[2]["reasons"]).unwrap(),
-        str![[r#"
-[
-  "the passing files kill no surviving mutant on every seed"
-]
-"#]]
-    );
-    assert!(rounds[3]["killed_survivors"].as_u64().unwrap() > 0);
-    assert!(!prj.root().join("test/generated/ArithmeticNoGain.t.sol").exists());
-}
-
-// The target is in a linked dependency directory, so mutation runs must copy it into the nested
-// workspace. It imports a library through a remapping and the test imports the library by its
-// project path; both must name the same file there, or the types differ.
-#[forgetest_init]
-fn properties_keeps_library_paths_in_nested_workspaces(prj: _, cmd: _) {
+fn properties_keeps_library_paths_in_workspaces(prj: _, cmd: _) {
     fs::create_dir_all(prj.root().join("lib/example")).unwrap();
     fs::write(
         prj.root().join("lib/example/Kind.sol"),
@@ -368,24 +272,17 @@ contract ArithmeticTest {
 grep -q 'bucket-spec-marker' "$prompt"
 name=Lower
 body='require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);'
-if grep -q '^  "phase": "mutation"' "$prompt"; then
-    name=Upper
-    body='require(arithmetic.bucket(99) == 2); require(arithmetic.bucket(100) == 3);'
-fi
 cat > "$output" <<JSON
 {"schema": "foundry/properties-candidate-v1", "rationale": "$name", "files": [{"path": "test/generated/Arithmetic$name.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"bucket/Arithmetic.sol\";\ncontract Arithmetic${name}Test {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testBoundary() public view {\n        $body\n    }\n}\n"}]}
 JSON
 "#,
     );
     cmd.args(args)
-        .args(["--target", "node_modules/bucket/Arithmetic.sol", "--mutation"])
-        .args(["--match-contract", "^ArithmeticTest$"])
+        .args(["--target", "node_modules/bucket/Arithmetic.sol"])
         .assert_success()
         .stdout_eq(str![[r#"
-added 2 generated test file(s):
+added 1 generated test file(s):
   test/generated/ArithmeticLower.t.sol
-  test/generated/ArithmeticUpper.t.sol
-the mutation phase killed 2 survivor(s); 3 remain
 
 "#]]);
 }

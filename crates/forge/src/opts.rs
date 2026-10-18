@@ -49,7 +49,6 @@ pub enum ForgeSubcommand {
     ///
     /// Examples:
     /// - forge properties --target src/A.sol --brief b.md --generator ./gen.sh --seed 1 --seed 2
-    /// - forge properties --mutation ... (then add tests that kill surviving mutants)
     #[command(verbatim_doc_comment)]
     Properties(PropertiesArgs),
 

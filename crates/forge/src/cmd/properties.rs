@@ -1,11 +1,9 @@
 //! The `forge properties` command: an external generator audits the targets and writes their
 //! documented properties as tests. Forge reports the tests that fail on every seed as possible bugs
-//! and keeps the tests that pass. With `--mutation`, a second phase sends the mutants that survive
-//! the kept tests to the generator and keeps a passing batch only if it kills one on every seed.
+//! and keeps the tests that pass.
 
 use crate::{
     cmd::test::RerunFailure,
-    mutation::{MutationJsonOutput, SurvivedMutantJson},
     result::{TestResult, TestStatus},
     workspace,
 };
@@ -113,7 +111,7 @@ pub struct PropertiesArgs {
     #[arg(
         long,
         value_name = "CANDIDATE_JSON",
-        conflicts_with_all = ["target", "brief", "generator", "mutation"]
+        conflicts_with_all = ["target", "brief", "generator"]
     )]
     check: Option<PathBuf>,
 
@@ -121,22 +119,9 @@ pub struct PropertiesArgs {
     #[arg(long, required = true, action = clap::ArgAction::Append, value_name = "SEED")]
     seed: Vec<U256>,
 
-    /// Maximum number of generator rounds in each phase.
+    /// Maximum number of generator rounds.
     #[arg(long, default_value_t = 1, value_name = "N")]
     rounds: usize,
-
-    /// After the audit, mutate the targets and ask the generator for tests that kill the mutants
-    /// that survive. Forge keeps a passing batch only if it kills a survivor on every seed.
-    #[arg(long)]
-    mutation: bool,
-
-    /// Best-effort timeout for each mutant.
-    #[arg(long, requires = "mutation", value_name = "SECONDS")]
-    mutation_timeout: Option<u32>,
-
-    /// Run only matching existing test contracts against the mutants. Generated tests always run.
-    #[arg(long, requires = "mutation", value_name = "REGEX")]
-    match_contract: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -221,21 +206,9 @@ struct CandidateFile {
     content: String,
 }
 
-/// The phase of a round.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Phase {
-    /// Audit the targets and prove each hypothesis with a test.
-    #[default]
-    Audit,
-    /// Kill the mutants that survive the kept tests.
-    Mutation,
-}
-
 #[derive(Debug, Serialize)]
 struct GeneratorPrompt<'a> {
     schema: &'static str,
-    phase: Phase,
     round: usize,
     project: &'a Path,
     brief: &'a str,
@@ -245,9 +218,6 @@ struct GeneratorPrompt<'a> {
     guidance: &'static [&'static str],
     targets: &'a [PathBuf],
     seeds: &'a [U256],
-    /// The mutants that the tests do not kill. Only in the mutation phase.
-    #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    survivors: &'a [Survivor],
     project_context: &'a ProjectContext,
     #[serde(skip_serializing_if = "Option::is_none")]
     current_candidate: Option<&'a Candidate>,
@@ -288,30 +258,9 @@ struct OutputContract {
     check_command: Vec<String>,
 }
 
-/// A mutant that a mutation run did not kill.
-#[derive(Debug, Serialize)]
-struct Survivor {
-    path: PathBuf,
-    line: usize,
-    column: usize,
-    original: String,
-    mutant: String,
-    seeds: Vec<U256>,
-    survives_all_seeds: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source_context: Option<String>,
-}
-
-/// The mutation testing result of one seed.
-struct SeedMutation {
-    seed: U256,
-    output: MutationJsonOutput,
-}
-
 /// The result of one round, in `rounds.json` and in the feedback of later prompts.
 #[derive(Debug, Default, Serialize)]
 struct Round {
-    phase: Phase,
     round: usize,
     /// Digest of the evaluated candidate, which is in `<digest>/candidate.json`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -329,9 +278,6 @@ struct Round {
     /// Tests that fail on every seed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     possible_bugs: Vec<CheckFailure>,
-    /// Survivors that the kept files kill on every seed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    killed_survivors: Option<usize>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     warnings: Vec<String>,
 }
@@ -428,8 +374,6 @@ struct TestRun {
     failing_files: HashSet<PathBuf>,
 }
 
-type MutantId = (String, usize, usize, String, String);
-
 impl PropertiesArgs {
     pub fn run(self) -> Result<()> {
         ensure!(self.seed.len() >= 2, "at least two --seed values are required");
@@ -460,9 +404,6 @@ impl PropertiesArgs {
             current: None,
             current_tests: vec![],
             rejected_sources: vec![],
-            mutants: vec![],
-            baseline_tests: vec![],
-            killed: 0,
         };
         if let Some(path) = &self.check {
             return campaign.check(path);
@@ -487,12 +428,6 @@ struct Campaign<'a> {
     current_tests: Vec<RerunFailure>,
     /// The rejected files of the latest round.
     rejected_sources: Vec<PromptSource>,
-    /// The latest accepted mutation results, one per seed.
-    mutants: Vec<SeedMutation>,
-    /// The existing tests that run against the mutants.
-    baseline_tests: Vec<RerunFailure>,
-    /// The survivors that the mutation phase killed.
-    killed: usize,
 }
 
 impl Campaign<'_> {
@@ -537,32 +472,16 @@ impl Campaign<'_> {
             )
             .collect::<Vec<_>>();
 
-        let mut phases = vec![Phase::Audit];
-        if self.args.mutation {
-            phases.push(Phase::Mutation);
-        }
         // An error ends the run after the report, so the kept files are not lost.
         let mut error = None;
-        'phases: for phase in phases {
-            if phase == Phase::Mutation
-                && let Err(start_error) = self.start_mutation_phase()
-            {
-                error = Some(start_error);
-                break;
-            }
-            for _ in 0..self.args.rounds {
-                let survivors = survivors(&self.config.root, &self.mutants);
-                if phase == Phase::Mutation && survivors.is_empty() {
-                    break;
-                }
-                let round = self.rounds.len() + 1;
-                let round_dir = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
-                let prompt_path = round_dir.path().join("prompt.json");
-                let candidate_path = round_dir.path().join("candidate.json");
-                let example_contract = format!("GeneratedRound{round}Test");
-                let prompt = GeneratorPrompt {
+        for _ in 0..self.args.rounds {
+            let round = self.rounds.len() + 1;
+            let round_dir = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
+            let prompt_path = round_dir.path().join("prompt.json");
+            let candidate_path = round_dir.path().join("candidate.json");
+            let example_contract = format!("GeneratedRound{round}Test");
+            let prompt = GeneratorPrompt {
                     schema: PROMPT_SCHEMA,
-                    phase,
                     round,
                     project: &self.config.root,
                     brief: &brief,
@@ -571,7 +490,6 @@ impl Campaign<'_> {
                     guidance: &GUIDANCE,
                     targets: &self.targets,
                     seeds: &self.args.seed,
-                    survivors: &survivors,
                     project_context: &project_context,
                     current_candidate: self.current.as_ref(),
                     last_rejected_sources: &self.rejected_sources,
@@ -615,54 +533,52 @@ impl Campaign<'_> {
                         note: "Return one JSON object with exactly this shape. Keep schema unchanged and replace the example's rationale, files, generator metadata, hypotheses, and evidence. Forge runs every test in the files on every seed. It keeps a file only if all of its tests pass on every seed, and it reports the tests that fail on every seed as possible bugs. Each file path must be new relative to current_candidate. The generator object is optional. List every hypothesis of the audit in hypotheses, with its result. Add one evidence entry, keyed by Contract::test, for every test that fails against the current implementation.",
                     },
                 };
-                fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
-                self.rejected_sources.clear();
+            fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
+            self.rejected_sources.clear();
 
-                let output = Command::new(&generator)
-                    .args(&self.args.generator_arg)
-                    .arg(&prompt_path)
-                    .arg(&candidate_path)
-                    .current_dir(&self.config.root)
-                    .output()
-                    .wrap_err("failed to invoke generator")?;
-                if !output.status.success() {
-                    error = Some(eyre!(
-                        "generator failed in round {round} ({}): {}",
-                        output.status,
-                        stderr(&output)
-                    ));
-                    break 'phases;
-                }
-                let mut record = Round { phase, round, ..Default::default() };
-                match read_candidate(&candidate_path, &self.generated_tests) {
-                    Ok(proposal) => {
-                        record.generator = proposal.generator.clone();
-                        record.rationale = Some(proposal.rationale.clone());
-                        record.audit = AuditSummary::new(&proposal.hypotheses);
-                        if let Err(error) = self.evaluate(&proposal, &mut record) {
-                            record.reasons.push(error.to_string());
-                        }
-                        self.rejected_sources = prompt_sources(
-                            proposal
-                                .files
-                                .iter()
-                                .filter(|file| !record.kept.contains(&file.path))
-                                .map(|file| (file.path.as_path(), file.content.as_str())),
-                            MAX_PROMPT_SOURCE_BYTES,
-                        );
-                    }
-                    Err(error) => record.reasons.push(error.to_string()),
-                }
-                self.rounds.push(record);
+            let output = Command::new(&generator)
+                .args(&self.args.generator_arg)
+                .arg(&prompt_path)
+                .arg(&candidate_path)
+                .current_dir(&self.config.root)
+                .output()
+                .wrap_err("failed to invoke generator")?;
+            if !output.status.success() {
+                error = Some(eyre!(
+                    "generator failed in round {round} ({}): {}",
+                    output.status,
+                    stderr(&output)
+                ));
+                break;
             }
+            let mut record = Round { round, ..Default::default() };
+            match read_candidate(&candidate_path, &self.generated_tests) {
+                Ok(proposal) => {
+                    record.generator = proposal.generator.clone();
+                    record.rationale = Some(proposal.rationale.clone());
+                    record.audit = AuditSummary::new(&proposal.hypotheses);
+                    if let Err(error) = self.evaluate(&proposal, &mut record) {
+                        record.reasons.push(error.to_string());
+                    }
+                    self.rejected_sources = prompt_sources(
+                        proposal
+                            .files
+                            .iter()
+                            .filter(|file| !record.kept.contains(&file.path))
+                            .map(|file| (file.path.as_path(), file.content.as_str())),
+                        MAX_PROMPT_SOURCE_BYTES,
+                    );
+                }
+                Err(error) => record.reasons.push(error.to_string()),
+            }
+            self.rounds.push(record);
         }
         fs::write(self.cache_root.join("rounds.json"), serde_json::to_vec_pretty(&self.rounds)?)?;
         self.report(&journal)?;
         error.map_or(Ok(()), Err)
     }
 
-    /// Evaluates a proposal and keeps its files whose tests pass on every seed. In the mutation
-    /// phase, the kept files must also kill a survivor on every seed.
+    /// Evaluates a proposal and keeps its files whose tests pass on every seed.
     ///
     /// Problems with the proposal are errors that become rejection reasons; failures of Forge
     /// itself also stop only this round.
@@ -687,7 +603,7 @@ impl Campaign<'_> {
         fs::write(cache.join("candidate.json"), serde_json::to_vec_pretty(&candidate)?)?;
         record.candidate_digest = Some(digest);
 
-        let workspace = candidate_workspace(self.config, &candidate.files, &self.targets)?;
+        let workspace = candidate_workspace(self.config, &candidate.files)?;
         let run = self.run_tests(workspace.path(), &candidate)?;
         record.reasons = run.reasons;
         record.possible_bugs = run.possible_bugs;
@@ -700,7 +616,7 @@ impl Campaign<'_> {
             })
             .map(|file| file.path.clone())
             .collect::<HashSet<_>>();
-        let mut kept = required_candidate_files(
+        let kept = required_candidate_files(
             self.config,
             workspace.path(),
             &candidate.files,
@@ -720,33 +636,6 @@ impl Campaign<'_> {
             })
             .collect::<Vec<_>>();
 
-        if record.phase == Phase::Mutation && !kept.is_empty() {
-            let selection = self.baseline_tests.iter().chain(&tests).cloned().collect::<Vec<_>>();
-            let results = self.run_mutations(workspace.path(), &selection, &cache)?;
-            let killed = killed_survivors(&self.mutants, &results);
-            for (before, after) in self.mutants.iter().zip(&results) {
-                // Generated files only add tests, so this comes from timeouts, adaptive span
-                // skipping, or timing-dependent tests.
-                let revived =
-                    not_killed(&after.output).difference(&not_killed(&before.output)).count();
-                if revived > 0 {
-                    record.warnings.push(format!(
-                        "the candidate run did not kill {revived} mutant(s) that the previous run killed on seed {}",
-                        before.seed
-                    ));
-                }
-            }
-            if killed.is_empty() {
-                record
-                    .reasons
-                    .push("the passing files kill no surviving mutant on every seed".to_string());
-                kept.clear();
-            } else {
-                record.killed_survivors = Some(killed.len());
-                self.killed += killed.len();
-                self.mutants = results;
-            }
-        }
         if !kept.is_empty() {
             let mut current = candidate;
             current.files.retain(|file| {
@@ -759,52 +648,6 @@ impl Campaign<'_> {
             self.current_tests = tests;
         }
         record.kept = kept;
-        Ok(())
-    }
-
-    /// Runs mutation testing on the targets with the existing tests and the kept tests.
-    fn start_mutation_phase(&mut self) -> Result<()> {
-        let filter = self
-            .args
-            .match_contract
-            .iter()
-            .flat_map(|contract| ["--match-contract", contract.as_str()]);
-        let output = Command::new(&self.forge)
-            .current_dir(&self.config.root)
-            .args(["test", "--list", "--json"])
-            .args(filter)
-            .output()
-            .wrap_err("failed to list tests")?;
-        ensure!(output.status.success(), "failed to list tests: {}", stderr(&output));
-        let files = serde_json::from_slice::<BTreeMap<String, BTreeMap<String, Vec<String>>>>(
-            &output.stdout,
-        )
-        .wrap_err("invalid test list JSON")?;
-        self.baseline_tests = files
-            .into_iter()
-            .flat_map(|(path, contracts)| {
-                contracts.into_iter().flat_map(move |(contract, tests)| {
-                    let contract = format!("{path}:{contract}");
-                    tests
-                        .into_iter()
-                        .map(move |test| RerunFailure { contract: contract.clone(), test })
-                })
-            })
-            .collect();
-        for path in self.baseline_tests.iter().map(test_path).collect::<HashSet<_>>() {
-            let source = fs::read_to_string(self.config.root.join(&path))?;
-            ensure!(
-                !has_inline_fuzz_seed(&source),
-                "test {} sets a seed in inline config",
-                path.display()
-            );
-        }
-        let files = self.current.as_ref().map_or(&[][..], |current| &current.files);
-        let workspace = candidate_workspace(self.config, files, &self.targets)?;
-        let selection =
-            self.baseline_tests.iter().chain(&self.current_tests).cloned().collect::<Vec<_>>();
-        self.mutants =
-            self.run_mutations(workspace.path(), &selection, &self.cache_root.join("baseline"))?;
         Ok(())
     }
 
@@ -846,11 +689,7 @@ impl Campaign<'_> {
         }
         for round in &self.rounds {
             if let Some(audit) = &round.audit {
-                let phase = match round.phase {
-                    Phase::Audit => "audit",
-                    Phase::Mutation => "mutation",
-                };
-                sh_println!("{phase} round {}: {audit}", round.round)?;
+                sh_println!("audit round {}: {audit}", round.round)?;
             }
         }
 
@@ -873,20 +712,13 @@ impl Campaign<'_> {
         for file in &current.files {
             sh_println!("  {}", file.path.display())?;
         }
-        if self.args.mutation {
-            let remaining = survivors(&self.config.root, &self.mutants).len();
-            sh_println!(
-                "the mutation phase killed {} survivor(s); {remaining} remain",
-                self.killed
-            )?;
-        }
         Ok(())
     }
 
     /// Runs the `--check` command.
     fn check(&self, path: &Path) -> Result<()> {
         let candidate = read_candidate(path, &self.generated_tests)?;
-        let workspace = candidate_workspace(self.config, &candidate.files, &[])?;
+        let workspace = candidate_workspace(self.config, &candidate.files)?;
         let mut run = self.run_tests(workspace.path(), &candidate)?;
         let output = serde_json::to_string_pretty(&serde_json::json!({
             "passed": run.reasons.is_empty(),
@@ -987,69 +819,6 @@ impl Campaign<'_> {
         Ok(run)
     }
 
-    /// Runs mutation testing for every seed concurrently with exactly the selected tests. Each
-    /// seed builds into its own directories and writes its stderr to `log_dir`.
-    fn run_mutations(
-        &self,
-        workspace: &Path,
-        selection: &[RerunFailure],
-        log_dir: &Path,
-    ) -> Result<Vec<SeedMutation>> {
-        fs::create_dir_all(log_dir)?;
-        // Seeds run concurrently, so each seed gets an equal share of the cores. Mutation results
-        // do not depend on the worker count.
-        let jobs = std::thread::available_parallelism()
-            .map_or(1, |cores| (cores.get() / self.args.seed.len()).max(1));
-        std::thread::scope(|scope| {
-            let runs = self
-                .args
-                .seed
-                .iter()
-                .map(|seed| {
-                    scope.spawn(move || {
-                        let seed_dir = seed_dir(self.config, workspace, seed);
-                        fs::create_dir_all(&seed_dir)?;
-                        // `--rerun` selects exact contract and test pairs; the broad patterns keep
-                        // configured filters from removing any of them.
-                        fs::write(
-                            seed_dir.join("test-failures"),
-                            serde_json::to_vec(
-                                &serde_json::json!({ "version": 1, "failures": selection }),
-                            )?,
-                        )?;
-                        let mut command = self.forge_command(workspace, seed);
-                        command
-                            .env("FOUNDRY_OUT", seed_dir.join("out"))
-                            .env("FOUNDRY_CACHE_PATH", seed_dir.join("cache"))
-                            .args(["test", "--json", "--mutate"])
-                            .args(&self.targets)
-                            .args(["--rerun", "--match-path", "**"])
-                            .args(SELECT_ALL_TESTS)
-                            .args(["--mutation-jobs", &jobs.to_string()]);
-                        if let Some(timeout) = self.args.mutation_timeout {
-                            command.args(["--mutation-timeout", &timeout.to_string()]);
-                        }
-                        let run = command.output().wrap_err("failed to run mutation testing")?;
-                        fs::write(log_dir.join(format!("mutation-{seed:#x}.log")), &run.stderr)?;
-                        fs::write(log_dir.join(format!("mutation-{seed:#x}.json")), &run.stdout)?;
-                        ensure!(
-                            run.status.success(),
-                            "mutation testing failed for seed {seed}: {}",
-                            stderr(&run)
-                        );
-                        Ok(SeedMutation {
-                            seed: *seed,
-                            output: serde_json::from_slice(&run.stdout).wrap_err_with(|| {
-                                format!("invalid mutation JSON for seed {seed}")
-                            })?,
-                        })
-                    })
-                })
-                .collect::<Vec<_>>();
-            runs.into_iter().map(|run| run.join().expect("mutation thread panicked")).collect()
-        })
-    }
-
     /// Returns a Forge command for one seed. Each seed persists fuzz and invariant failures in
     /// its own directory, so a counterexample found with one seed is not replayed with another.
     fn forge_command(&self, workspace: &Path, seed: &U256) -> Command {
@@ -1072,11 +841,7 @@ impl Campaign<'_> {
 }
 
 /// Copies the project into a temporary workspace and adds the files.
-fn candidate_workspace(
-    config: &Config,
-    files: &[CandidateFile],
-    targets: &[PathBuf],
-) -> Result<TempDir> {
+fn candidate_workspace(config: &Config, files: &[CandidateFile]) -> Result<TempDir> {
     let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
     workspace::copy_project(config, workspace.path())?;
     // Internal runs see the project's resolved config, including inherited `extends` values,
@@ -1093,42 +858,6 @@ fn candidate_workspace(
     let remappings = workspace.path().join("remappings.txt");
     if remappings.exists() {
         fs::remove_file(remappings)?;
-    }
-    // Mutation testing copies this workspace again. Its library links must point into this
-    // workspace, or the nested copy reaches the project through two paths. `copy_project` also
-    // links `node_modules` and `dependencies` when they are not in `libs`.
-    for lib in config
-        .libs
-        .iter()
-        .map(PathBuf::as_path)
-        .chain(["node_modules", "dependencies"].map(Path::new))
-    {
-        let source = config.root.join(lib);
-        let Ok(relative) = source.strip_prefix(&config.root) else { continue };
-        let target = workspace.path().join(relative);
-        if !workspace::is_safe_relative_path(relative)
-            || !source.is_dir()
-            || !fs::symlink_metadata(&target).is_ok_and(|metadata| metadata.is_symlink())
-        {
-            continue;
-        }
-        #[cfg(unix)]
-        fs::remove_file(&target)?;
-        #[cfg(windows)]
-        fs::remove_dir(&target)?;
-        fs::create_dir(&target)?;
-        for entry in fs::read_dir(&source)? {
-            let entry = entry?;
-            let destination = target.join(entry.file_name());
-            if !entry.path().is_dir() {
-                fs::copy(entry.path(), destination)?;
-            } else if targets.iter().any(|path| path.starts_with(relative.join(entry.file_name())))
-                || workspace::symlink_dir(&entry.path(), &destination).is_err()
-            {
-                // Mutation testing accepts only targets inside its workspace.
-                workspace::copy_dir_recursive(&entry.path(), &destination)?;
-            }
-        }
     }
     for file in files {
         let path = workspace.path().join(&file.path);
@@ -1445,91 +1174,6 @@ fn base_names(source: &str) -> Vec<String> {
         }
     }
     names
-}
-
-/// Returns the surviving mutants of all seeds, the ones that survive every seed first, with the
-/// source lines around each.
-fn survivors(root: &Path, results: &[SeedMutation]) -> Vec<Survivor> {
-    let mut seeds = BTreeMap::<MutantId, Vec<U256>>::new();
-    for result in results {
-        for id in mutant_ids(&result.output.survived_mutants) {
-            seeds.entry(id).or_default().push(result.seed);
-        }
-    }
-    let mut sources = HashMap::<String, Option<String>>::new();
-    let mut survivors = seeds
-        .into_iter()
-        .map(|((path, line, column, original, mutant), seeds)| {
-            let source = sources
-                .entry(path.clone())
-                .or_insert_with(|| fs::read_to_string(root.join(&path)).ok());
-            let source_context = source.as_ref().map(|source| {
-                source
-                    .lines()
-                    .enumerate()
-                    .skip(line.saturating_sub(4))
-                    .take(7)
-                    .map(|(index, text)| format!("{:>4}: {text}", index + 1))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            });
-            Survivor {
-                path: path.into(),
-                line,
-                column,
-                original,
-                mutant,
-                survives_all_seeds: seeds.len() == results.len(),
-                seeds,
-                source_context,
-            }
-        })
-        .collect::<Vec<_>>();
-    survivors.sort_by_key(|survivor| !survivor.survives_all_seeds);
-    survivors
-}
-
-/// Returns the survivors of `before` that `after` kills on every seed.
-///
-/// A mutant is killed only if it did not survive, time out, become invalid, or get skipped:
-/// adaptive span skipping can remove a survivor without a kill.
-fn killed_survivors(before: &[SeedMutation], after: &[SeedMutation]) -> BTreeSet<MutantId> {
-    let not_killed = after.iter().map(|result| not_killed(&result.output)).collect::<Vec<_>>();
-    before
-        .iter()
-        .flat_map(|result| mutant_ids(&result.output.survived_mutants))
-        .filter(|id| not_killed.iter().all(|not_killed| !not_killed.contains(id)))
-        .collect()
-}
-
-/// Returns the mutants that a run did not kill.
-fn not_killed(output: &MutationJsonOutput) -> BTreeSet<MutantId> {
-    [
-        &output.survived_mutants,
-        &output.timed_out_mutants,
-        &output.invalid_mutants,
-        &output.skipped_mutants,
-    ]
-    .into_iter()
-    .flat_map(mutant_ids)
-    .collect()
-}
-
-fn mutant_ids(mutants: &BTreeMap<String, Vec<SurvivedMutantJson>>) -> BTreeSet<MutantId> {
-    mutants
-        .iter()
-        .flat_map(|(path, mutants)| {
-            mutants.iter().map(|mutant| {
-                (
-                    path.clone(),
-                    mutant.line,
-                    mutant.column,
-                    mutant.original.clone(),
-                    mutant.mutant.clone(),
-                )
-            })
-        })
-        .collect()
 }
 
 /// Adds the proposal's files to the kept files.
