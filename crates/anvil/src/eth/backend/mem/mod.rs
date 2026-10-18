@@ -122,7 +122,7 @@ use chrono::Datelike;
 use evm2::{
     AccountInfo,
     bytecode::Bytecode,
-    evm::{BlockStateAccumulator, PendingState, StateChangeSource},
+    evm::{BalContext, BlockAccessIndex, BlockStateAccumulator, PendingState, StateChangeSource},
     interpreter::InstrStop,
 };
 use evm2_inspectors::{
@@ -2765,9 +2765,9 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         parent_hash: B256,
         transitions: EthereumBlockTransitions,
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<BalContext, BlockchainError> {
         let opts = self.evm_options(evm_env);
-        let state = {
+        let (state, bal) = {
             let mut executor = self.block_executor::<EthEvmNetwork>(
                 &*db as &dyn DatabaseRef,
                 evm_env,
@@ -2778,10 +2778,11 @@ impl<N: Network> Backend<N> {
                 u64::MAX,
             )?;
             executor.apply_pre_execution_changes()?;
-            executor.state
+            let bal = std::mem::take(&mut executor.evm.overlay_db_mut().bal_context);
+            (executor.state, bal)
         };
         db.commit(&state);
-        Ok(())
+        Ok(bal)
     }
 
     /// Applies Ethereum post-block transitions to a disposable simulation candidate.
@@ -2791,9 +2792,10 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         transitions: EthereumBlockTransitions,
         receipts: &[FoundryReceiptEnvelope],
-    ) -> Result<alloy_eips::eip7685::Requests, BlockchainError> {
+        bal: BalContext,
+    ) -> Result<(alloy_eips::eip7685::Requests, Option<BlockAccessList>), BlockchainError> {
         let opts = self.evm_options(evm_env);
-        let (result, state) = {
+        let (result, state, bal) = {
             let mut executor = self.block_executor::<EthEvmNetwork>(
                 &*db as &dyn DatabaseRef,
                 evm_env,
@@ -2803,12 +2805,12 @@ impl<N: Network> Backend<N> {
                 AnvilInspector::default(),
                 u64::MAX,
             )?;
+            executor.evm.overlay_db_mut().bal_context = bal;
             executor.receipts = receipts.to_vec();
-            let (result, state, _) = executor.finish()?;
-            (result, state)
+            executor.finish()?
         };
         db.commit(&state);
-        Ok(result.requests)
+        Ok((result.requests, bal))
     }
 
     /// ## EVM settings
@@ -8615,18 +8617,16 @@ impl Backend<FoundryNetwork> {
                 }
 
                 // Overrides define the starting state, so only execution contributes BAL writes.
-                let mut block_access_list = ethereum_transitions
-                    .is_some_and(|transitions| transitions.hardfork >= EthereumHardfork::Amsterdam)
-                    .then(evm2::evm::Bal::new);
-
-                if let Some(transitions) = ethereum_transitions {
+                let mut block_access_list = if let Some(transitions) = ethereum_transitions {
                     self.apply_simulation_pre_execution_changes(
                         &mut cache_db,
                         &simulation_evm_env,
                         parent_hash,
                         transitions,
-                    )?;
-                }
+                    )?
+                } else {
+                    BalContext::default()
+                };
 
                 // execute all calls in that block
                 for (req_idx, mut request) in calls.into_iter().enumerate() {
@@ -8909,12 +8909,8 @@ impl Backend<FoundryNetwork> {
                     // Commit after calculating the footprint so the scalar comes from pre-tx
                     // state, matching the upstream OP block executor.
                     commit_pending(&mut cache_db, &state);
-                    if let Some(bal) = &mut block_access_list {
-                        bal.commit(
-                            evm2::evm::BlockAccessIndex::new(req_idx as u64 + 1),
-                            state.clone(),
-                        );
-                    }
+                    block_access_list.set_bal_index(BlockAccessIndex::new(req_idx as u64 + 1));
+                    block_access_list.commit_pending(&state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     #[cfg(any(feature = "base", feature = "optimism"))]
                     let receipt = if tx.as_ref().is_deposit() {
@@ -9009,12 +9005,14 @@ impl Backend<FoundryNetwork> {
                 } else {
                     cumulative_gas_used
                 };
-                let requests = if let Some(transitions) = ethereum_transitions {
+                let (requests, block_access_list) = if let Some(transitions) = ethereum_transitions
+                {
                     self.apply_simulation_post_execution_changes(
                         &mut cache_db,
                         &simulation_evm_env,
                         transitions,
                         &receipts,
+                        block_access_list,
                     )?
                 } else {
                     Default::default()
@@ -9054,8 +9052,8 @@ impl Backend<FoundryNetwork> {
                         })
                         .unwrap_or_default()
                 };
-                let block_access_list_hash = block_access_list
-                    .map(|bal| compute_block_access_list_hash(bal.to_alloy_bal().as_slice()));
+                let block_access_list_hash =
+                    block_access_list.map(|bal| compute_block_access_list_hash(bal.as_slice()));
                 let header = Header {
                     block_access_list_hash,
                     logs_bloom: receipts.iter().fold(Bloom::ZERO, |mut bloom, receipt| {

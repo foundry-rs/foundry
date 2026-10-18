@@ -91,6 +91,7 @@ async fn test_simulate_block_access_list_hash_rpc() {
     for address in system_contracts {
         overrides.insert(address.to_string(), json!({"code": "0x", "state": {}}));
     }
+    let no_system_writes = json!({"stateOverrides": overrides.clone()});
     // Deterministic system writes expose the pre/post-block access indices in the BAL hash.
     for address in [HISTORY_STORAGE_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS] {
         overrides.insert(address.to_string(), json!({"code": "0x602a5f5500", "state": {}}));
@@ -127,17 +128,26 @@ async fn test_simulate_block_access_list_hash_rpc() {
     expected.push(AccountChanges::new(beneficiary));
     expected.sort_by_key(|account| account.address());
     let expected_hash = compute_block_access_list_hash(&expected);
+    let mut reads_only = system_contracts.map(AccountChanges::new).to_vec();
+    reads_only.sort_by_key(|account| account.address());
+    let no_writes_hash = compute_block_access_list_hash(&reads_only);
+    for address in [HISTORY_STORAGE_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS] {
+        reads_only.iter_mut().find(|account| account.address() == address).unwrap().storage_reads =
+            vec![U256::ZERO];
+    }
+    let unchanged_writes_hash = compute_block_access_list_hash(&reads_only);
 
     for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
-        let (_api, handle) =
+        let (api, handle) =
             spawn(NodeConfig::test().with_hardfork(Some(hardfork.into())).with_base_fee(Some(0)))
                 .await;
+        let live_state_root = api.state_root().await.unwrap();
         for trace_transfers in [false, true] {
             let response = rpc_request(
                 &handle.http_endpoint(),
                 "eth_simulateV1",
                 json!([{
-                    "blockStateCalls": [block.clone(), block.clone(), {}],
+                    "blockStateCalls": [block.clone(), block.clone(), {}, no_system_writes],
                     "traceTransfers": trace_transfers,
                     "returnFullTransactions": true
                 }, "latest"]),
@@ -145,7 +155,7 @@ async fn test_simulate_block_access_list_hash_rpc() {
             .await;
             assert!(response.get("error").is_none(), "{response}");
             let blocks = response["result"].as_array().unwrap();
-            assert_eq!(blocks.len(), 3);
+            assert_eq!(blocks.len(), 4);
             for block in &blocks[..2] {
                 assert_eq!(block["calls"][0]["status"], "0x1");
                 if hardfork == EthereumHardfork::Amsterdam {
@@ -158,12 +168,14 @@ async fn test_simulate_block_access_list_hash_rpc() {
                 assert_eq!(block["transactions"][0]["blockHash"], block["hash"]);
             }
             if hardfork == EthereumHardfork::Amsterdam {
-                assert!(blocks[2]["blockAccessListHash"].is_string());
+                assert_eq!(blocks[2]["blockAccessListHash"], json!(unchanged_writes_hash));
                 assert_ne!(blocks[2]["blockAccessListHash"], json!(expected_hash));
+                assert_eq!(blocks[3]["blockAccessListHash"], json!(no_writes_hash));
             }
             for pair in blocks.windows(2) {
                 assert_eq!(pair[1]["parentHash"], pair[0]["hash"]);
             }
+            assert_eq!(api.state_root().await.unwrap(), live_state_root);
         }
     }
 }
@@ -1109,7 +1121,9 @@ async fn test_simulate_returns_unchanged_state_root_rpc() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
-    for hardfork in [EthereumHardfork::Cancun, EthereumHardfork::Prague] {
+    for hardfork in
+        [EthereumHardfork::Cancun, EthereumHardfork::Prague, EthereumHardfork::Amsterdam]
+    {
         let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
         let provider = handle.http_provider();
         let genesis = provider
@@ -1145,6 +1159,10 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
             mined.header.parent_beacon_block_root
         );
         assert_eq!(mined.header.parent_beacon_block_root, Some(B256::ZERO));
+        assert_eq!(
+            simulated.inner.header.block_access_list_hash,
+            mined.header.block_access_list_hash
+        );
 
         if hardfork >= EthereumHardfork::Prague {
             assert_eq!(simulated.inner.header.requests_hash, mined.header.requests_hash);
@@ -1421,27 +1439,31 @@ impl PrecompileFactory for FailingWithdrawalPrecompileFactory {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_discards_candidate_after_post_block_failure_rpc() {
-    let (api, handle) = spawn(
-        NodeConfig::test()
-            .with_hardfork(Some(EthereumHardfork::Prague.into()))
-            .with_precompile_factory(FailingWithdrawalPrecompileFactory),
-    )
-    .await;
-    let state_root = api.state_root().await.unwrap();
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{"blockStateCalls": [{
-            "stateOverrides": {
-                "0xc000000000000000000000000000000000000000": {"balance": "0x1"}
-            }
-        }]}]),
-    )
-    .await;
+    for hardfork in [EthereumHardfork::Prague, EthereumHardfork::Amsterdam] {
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_hardfork(Some(hardfork.into()))
+                .with_precompile_factory(FailingWithdrawalPrecompileFactory),
+        )
+        .await;
+        let state_root = api.state_root().await.unwrap();
+        let response = rpc_request(
+            &handle.http_endpoint(),
+            "eth_simulateV1",
+            json!([{"blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc000000000000000000000000000000000000000": {"balance": "0x1"}
+                }
+            }]}]),
+        )
+        .await;
 
-    assert!(response["error"]["message"].as_str().unwrap().contains(SIMULATION_POST_BLOCK_ERROR));
-    assert_eq!(api.state_root().await.unwrap(), state_root);
-    assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
+        assert!(
+            response["error"]["message"].as_str().unwrap().contains(SIMULATION_POST_BLOCK_ERROR)
+        );
+        assert_eq!(api.state_root().await.unwrap(), state_root);
+        assert_eq!(handle.http_provider().get_block_number().await.unwrap(), 0);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2869,4 +2891,35 @@ async fn spawn_hash_aware_rpc_proxy(
 
 fn quantity(value: &Value) -> u64 {
     u64::from_str_radix(value.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_amsterdam_builder_requests_rpc() {
+    for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
+        let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let state_root = api.state_root().await.unwrap();
+        let response = rpc_request(
+            &handle.http_endpoint(),
+            "eth_simulateV1",
+            json!([{"blockStateCalls": [{"stateOverrides": {
+                BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS.to_string(): {
+                    "code": "0x602a5f5560aa5f5360015ff3"
+                },
+                BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS.to_string(): {
+                    "code": "0x602b5f5560bb5f5360015ff3"
+                }
+            }}]}]),
+        )
+        .await;
+        assert!(response.get("error").is_none(), "{response}");
+        // EIP-8282 appends deposit (0x03) then exit (0x04) requests after Prague requests.
+        let expected = if hardfork == EthereumHardfork::Amsterdam {
+            Requests::new(vec![Bytes::from_static(&[3, 0xaa]), Bytes::from_static(&[4, 0xbb])])
+                .requests_hash()
+        } else {
+            EMPTY_REQUESTS_HASH
+        };
+        assert_eq!(response["result"][0]["requestsHash"], json!(expected));
+        assert_eq!(api.state_root().await.unwrap(), state_root);
+    }
 }
