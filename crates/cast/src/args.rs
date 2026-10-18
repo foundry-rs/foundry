@@ -457,10 +457,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::DecodeString { data }) => {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
         }
-        CastSubcommand::Abi(AbiSubcommand::DecodeEvent { sig, data }) => {
+        CastSubcommand::Abi(AbiSubcommand::DecodeEvent { sig, data, topics }) => {
             let decoded_values = if let Some(event_sig) = sig {
                 let event = get_event(&event_sig)?;
-                abi_decode_event_data(&event, &hex::decode(data)?)?
+                let data = hex::decode(data)?;
+                if topics.is_empty() {
+                    abi_decode_event_data(&event, &data)?
+                } else {
+                    let decoded = event.decode_log_parts(topics, &data)?;
+                    let mut indexed = decoded.indexed.into_iter();
+                    let mut body = decoded.body.into_iter();
+                    event
+                        .inputs
+                        .iter()
+                        .map(|input| {
+                            if input.indexed { indexed.next() } else { body.next() }
+                                .expect("decoded event has a value for each input")
+                        })
+                        .collect()
+                }
             } else {
                 let data = strip_0x(&data);
                 let selector: B256 = data.get(..64).unwrap_or_default().parse()?;
