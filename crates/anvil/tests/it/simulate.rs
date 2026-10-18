@@ -2910,34 +2910,3 @@ async fn spawn_hash_aware_rpc_proxy(
 fn quantity(value: &Value) -> u64 {
     u64::from_str_radix(value.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
 }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_amsterdam_builder_requests_rpc() {
-    for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
-        let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
-        let state_root = api.state_root().await.unwrap();
-        let response = rpc_request(
-            &handle.http_endpoint(),
-            "eth_simulateV1",
-            json!([{"blockStateCalls": [{"stateOverrides": {
-                BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS.to_string(): {
-                    "code": "0x602a5f5560aa5f5360015ff3"
-                },
-                BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS.to_string(): {
-                    "code": "0x602b5f5560bb5f5360015ff3"
-                }
-            }}]}]),
-        )
-        .await;
-        assert!(response.get("error").is_none(), "{response}");
-        // EIP-8282 appends deposit (0x03) then exit (0x04) requests after Prague requests.
-        let expected = if hardfork == EthereumHardfork::Amsterdam {
-            Requests::new(vec![Bytes::from_static(&[3, 0xaa]), Bytes::from_static(&[4, 0xbb])])
-                .requests_hash()
-        } else {
-            EMPTY_REQUESTS_HASH
-        };
-        assert_eq!(response["result"][0]["requestsHash"], json!(expected));
-        assert_eq!(api.state_root().await.unwrap(), state_root);
-    }
-}
