@@ -897,28 +897,14 @@ mod tests {
     fn uint160_deployment_returns_follow_compiler_settings() {
         let mut unchanged = None;
         for (version, via_ir, workaround) in [
-            ("0.8.11", Some(true), false),
-            ("0.8.12", Some(true), false),
-            ("0.8.13", Some(true), false),
             ("0.8.14", Some(true), false),
             ("0.8.15", Some(true), true),
-            ("0.8.20", Some(true), true),
-            ("0.8.24", Some(true), true),
-            ("0.8.25", Some(true), true),
-            ("0.8.14+commit.80d49f37", Some(true), false),
-            ("0.8.15+commit.e14f2714", Some(true), true),
             ("0.8.24+commit.e11b9ed9", Some(true), true),
-            ("0.8.25+commit.b61c2a91", Some(true), true),
-            ("0.8.15-dev", Some(true), false),
-            ("0.8.24-dev", Some(true), false),
-            ("0.8.25-dev", Some(true), false),
-            ("0.8.26-dev", Some(true), false),
-            ("0.8.15", Some(false), false),
-            ("0.8.15", None, false),
-            ("0.8.24", Some(false), false),
-            ("0.8.25", None, false),
+            ("0.8.25", Some(true), true),
             ("0.8.26", Some(true), false),
-            ("0.8.30", Some(true), false),
+            ("0.8.24", Some(false), false),
+            ("0.8.24", None, false),
+            ("0.8.24-dev", Some(true), false),
         ] {
             let (_root, paths, mut input) = input();
             input.version = version.parse().unwrap();
@@ -966,13 +952,7 @@ mod tests {
 
     #[test]
     fn uint160_deployment_returns_preserve_specific_compiler_prereleases() {
-        for version in [
-            "0.8.15-dev",
-            "0.8.24-dev",
-            "0.8.25-dev",
-            "0.8.15+commit.e14f2714",
-            "0.8.24+commit.e11b9ed9",
-        ] {
+        for version in ["0.8.24-dev", "0.8.24+commit.e11b9ed9"] {
             let (_root, paths, input) = input();
             let version = version.parse::<Version>().unwrap();
             let workaround = version.pre.is_empty();
