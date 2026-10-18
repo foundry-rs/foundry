@@ -1132,6 +1132,19 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
             .unwrap()
             .expect("genesis block should exist");
         let next_timestamp = genesis.header.timestamp + 12;
+        let expected_requests_hash = if hardfork == EthereumHardfork::Amsterdam {
+            for (address, code) in [
+                (BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, "0x602a5f5560aa5f5360015ff3"),
+                (BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS, "0x602b5f5560bb5f5360015ff3"),
+            ] {
+                api.anvil_set_code(address, code.parse().unwrap()).await.unwrap();
+            }
+            Requests::new(vec![Bytes::from_static(&[3, 0xaa]), Bytes::from_static(&[4, 0xbb])])
+                .requests_hash()
+        } else {
+            EMPTY_REQUESTS_HASH
+        };
+        let live_state_root = api.state_root().await.unwrap();
 
         let simulated = api
             .simulate_v1(
@@ -1144,6 +1157,7 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
             .await
             .unwrap()
             .remove(0);
+        assert_eq!(api.state_root().await.unwrap(), live_state_root);
 
         api.evm_set_next_block_timestamp(next_timestamp).unwrap();
         api.mine_one().await.unwrap();
@@ -1164,9 +1178,13 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
             mined.header.block_access_list_hash
         );
 
+        if hardfork == EthereumHardfork::Amsterdam {
+            assert!(mined.header.block_access_list_hash.is_some());
+            assert_ne!(expected_requests_hash, EMPTY_REQUESTS_HASH);
+        }
         if hardfork >= EthereumHardfork::Prague {
             assert_eq!(simulated.inner.header.requests_hash, mined.header.requests_hash);
-            assert_eq!(mined.header.requests_hash, Some(EMPTY_REQUESTS_HASH));
+            assert_eq!(mined.header.requests_hash, Some(expected_requests_hash));
         }
     }
 }
