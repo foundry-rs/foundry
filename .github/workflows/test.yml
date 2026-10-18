@@ -166,7 +166,6 @@ jobs:
           git config --global user.email "<>"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
       - name: Test
-        id: tests
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
@@ -178,22 +177,9 @@ jobs:
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
         shell: bash
         run: |
-          # A compilation failure must not publish a report restored from an earlier run's cache.
-          rm -f target/nextest/ci/junit.xml
           args=(-E "$NEXTEST_FILTER")
           if [[ -n "$NEXTEST_PARTITION" ]]; then
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
           cargo nextest run --locked --features base,monad --profile ci "${args[@]}"
-      - name: Summarize test timings
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && hashFiles('target/nextest/ci/junit.xml') != '' }}
-        shell: bash
-        run: python3 .github/scripts/test-timings.py target/nextest/ci/junit.xml >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload test timings
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && hashFiles('target/nextest/ci/junit.xml') != '' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: test-timings-${{ matrix.target }}-${{ contains(matrix.name, 'external') && 'external' || 'all' }}-${{ matrix.partition }}
-          path: target/nextest/ci/junit.xml
-          retention-days: 14

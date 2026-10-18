@@ -41,10 +41,7 @@ test-group = "tempo-canary"
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0
 
-# Inherit the default filters, retries, timeouts, and groups, and retain CI timings.
-[profile.ci.junit]
-path = "junit.xml"
-
+# The CI profile inherits the default filters, retries, timeouts, and groups.
 # Start the long tail before the short tests so it does not keep the runner idle at the end.
 [[profile.ci.overrides]]
 filter = "package(=forge) & binary(=cli) & (test(=test_cmd::testdata) | test(=test_cmd::symbolic_parity::halmos::minivat_linear_smoke_parity) | test(=test_cmd::symbolic_parity::openzeppelin::erc721_unique_ownership_passes) | test(=test_cmd::symbolic_invariant::symbolic_transient_storage_clears_between_sequence_steps))"
