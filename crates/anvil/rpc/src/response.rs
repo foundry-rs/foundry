@@ -2,7 +2,8 @@ use crate::{
     error::RpcError,
     request::{Id, Version},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::value::RawValue;
 
 /// Response of a _single_ rpc call
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,11 +33,12 @@ impl RpcResponse {
 }
 
 /// Represents the result of a call either success or error
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ResponseResult {
-    #[serde(rename = "result")]
-    Success(serde_json::Value),
+    /// Serialized JSON, which avoids building a `serde_json::Value` tree for large results.
+    #[serde(rename = "result", deserialize_with = "deserialize_raw_value")]
+    Success(Box<RawValue>),
     #[serde(rename = "error")]
     Error(RpcError),
 }
@@ -46,7 +48,7 @@ impl ResponseResult {
     where
         S: Serialize + 'static,
     {
-        Self::Success(serde_json::to_value(&content).unwrap())
+        Self::Success(serde_json::value::to_raw_value(&content).unwrap())
     }
 
     pub const fn error(error: RpcError) -> Self {
@@ -54,11 +56,32 @@ impl ResponseResult {
     }
 }
 
+impl PartialEq for ResponseResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Success(a), Self::Success(b)) => a.get() == b.get(),
+            (Self::Error(a), Self::Error(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ResponseResult {}
+
 impl From<RpcError> for ResponseResult {
     fn from(err: RpcError) -> Self {
         Self::error(err)
     }
 }
+
+/// `RawValue` cannot be deserialized through `#[serde(flatten)]`, so parse a `Value` first.
+fn deserialize_raw_value<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Box<RawValue>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    serde_json::value::to_raw_value(&value).map_err(serde::de::Error::custom)
+}
+
 /// Synchronous response
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,5 +109,21 @@ impl From<RpcError> for Response {
 impl From<RpcResponse> for Response {
     fn from(resp: RpcResponse) -> Self {
         Self::Single(resp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn success_response_roundtrip() {
+        let response = Response::Single(RpcResponse::new(
+            Id::Number(1),
+            ResponseResult::success(serde_json::json!({ "gas": 21000, "logs": ["0x01"] })),
+        ));
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(json, r#"{"jsonrpc":"2.0","id":1,"result":{"gas":21000,"logs":["0x01"]}}"#);
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
     }
 }
