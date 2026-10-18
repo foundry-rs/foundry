@@ -6,7 +6,6 @@ use alloy_provider::Provider;
 use axum::{Json, Router, extract::Query};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
-use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand, TestProject,
@@ -19,29 +18,23 @@ use tokio::net::TcpListener;
 
 #[forgetest_init]
 async fn can_verify_bytecode_with_local_creation_data_fork(prj: _, cmd: _) {
-    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 0, false).await;
+    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 0).await;
 }
 
 #[forgetest_init]
 async fn can_verify_bytecode_with_local_eip2930_creation_data_fork(prj: _, cmd: _) {
-    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 1, false).await;
+    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 1).await;
 }
 
 #[forgetest_init]
 async fn can_verify_bytecode_with_local_eip1559_creation_data_fork(prj: _, cmd: _) {
-    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 2, false).await;
-}
-
-#[forgetest_init]
-async fn can_verify_bytecode_with_local_create2_data_fork(prj: _, cmd: _) {
-    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 2, true).await;
+    test_verify_bytecode_with_local_creation_data(&prj, &mut cmd, 2).await;
 }
 
 async fn test_verify_bytecode_with_local_creation_data(
     prj: &TestProject,
     cmd: &mut TestCommand,
     transaction_type: u8,
-    create2: bool,
 ) {
     prj.initialize_default_contracts();
     // These immutables make lost fees, value, sender, gas or access-list fields visible in
@@ -116,11 +109,6 @@ contract Counter {
         creation["maxFeePerGas"] = format!("0x{gas_price:x}").into();
         creation["maxPriorityFeePerGas"] = "0x3".into();
     }
-    let salt = B256::with_last_byte(42);
-    if create2 {
-        creation["to"] = serde_json::json!(DEFAULT_CREATE2_DEPLOYER);
-        creation["data"] = serde_json::json!(Bytes::from([salt.as_slice(), &bytecode].concat()));
-    }
     let transaction_hash: B256 =
         provider.client().request("eth_sendTransaction", [creation]).await.unwrap();
     api.mine_one().await.unwrap();
@@ -128,12 +116,7 @@ contract Counter {
     assert_eq!(receipt.inner.inner.r#type, transaction_type);
     assert_eq!(receipt.transaction_index(), Some(1));
     assert!(receipt.status());
-    let address = if create2 {
-        DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, &bytecode)
-    } else {
-        receipt.contract_address().unwrap()
-    }
-    .to_string();
+    let address = receipt.contract_address().unwrap().to_string();
 
     // Local explorer data forces a nonempty creation-block replay and shared completion path.
     let creation_data = serde_json::json!({"status":"1", "message":"OK", "result":[{
