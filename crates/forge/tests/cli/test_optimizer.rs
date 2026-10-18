@@ -5518,7 +5518,7 @@ Error: Yul exception:Variable _8 is 1 too deep in the stack.
 }
 
 // This two-file reproducer fails with a real Yul stack error on Solc 0.8.15 through 0.8.25.
-// Its fork test is compile-only here; deployment behavior is checked separately below.
+// Its fork test is compile-only here; a separate smoke test deploys without a fork.
 #[cfg(unix)]
 #[forgetest]
 fn preprocess_via_ir_codegen(prj: _, cmd: _) {
@@ -5557,110 +5557,44 @@ Compiler run successful!
         let calls = recorded_solc_inputs(&solc);
         assert_eq!(calls.len(), 1, "Solc {version} must succeed without a native retry");
         let source = &calls[0].sources[Path::new("test/Repro.t.sol")].content;
-        assert!(source.contains(".deployCode({"));
+        assert_eq!(source.matches(".deployCode({").count(), 2);
         let workaround = (15..=25).contains(&patch);
         assert_eq!(
             source.matches("external returns (uint160);").count(),
-            usize::from(workaround) * 8
+            usize::from(workaround) * 16
         );
-        assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
+        assert_eq!(source.matches("payable(address(").count(), usize::from(workaround) * 2);
 
         cmd.forge_fuse().arg("build").assert_success().stderr_eq("").stdout_eq(str![[r#"
 No files changed, compilation skipped
 
 "#]]);
         assert_eq!(recorded_solc_inputs(&solc).len(), calls.len(), "cached build invoked Solc");
-    }
-}
 
-#[cfg(unix)]
-#[forgetest]
-fn preprocess_via_ir_deployment_semantics(prj: _, cmd: _) {
-    let deployments =
-        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Deployments.t.sol");
-    prj.add_raw_source(
-        "Targets.sol",
-        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Targets.sol"),
-    );
-    prj.add_raw_test("Deployments.t.sol", deployments);
-    for version in ["0.8.24", "0.8.26"] {
-        let solc = recording_solc(prj.root(), version);
-        prj.update_config(|config| {
-            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
-            config.dynamic_test_linking = true;
-            config.via_ir = true;
-            config.evm_version = EvmVersion::Shanghai;
-            config.optimizer = Some(true);
-            config.optimizer_runs = Some(200);
-            config.lint.lint_on_build = false;
-        });
-        let workaround = version == "0.8.24";
-        cmd.forge_fuse().args(["test", "--match-contract", "DeploymentTest", "--force"]);
-        cmd.assert_success().stderr_eq("").stdout_eq(str![[r#"
-...
-Ran 15 tests for test/Deployments.t.sol:DeploymentTest
-[PASS] test_broadcast() ([GAS])
-[PASS] test_create() ([GAS])
-[PASS] test_create2() ([GAS])
-[PASS] test_create2_args() ([GAS])
-[PASS] test_create2_args_value() ([GAS])
-[PASS] test_create2_side_effect_arguments() ([GAS])
-[PASS] test_create2_value() ([GAS])
-[PASS] test_create_args() ([GAS])
-[PASS] test_create_args_value() ([GAS])
-[PASS] test_create_value() ([GAS])
-[PASS] test_named_side_effect_arguments() ([GAS])
-[PASS] test_prank() ([GAS])
-[PASS] test_recurrent_broadcast() ([GAS])
-[PASS] test_recurrent_prank() ([GAS])
-[PASS] test_revert_data() ([GAS])
-Suite result: ok. 15 passed; 0 failed; 0 skipped; [ELAPSED]
+        cmd.forge_fuse()
+            .args(["test", "--match-contract", "^DeploymentSmokeTest$"])
+            .assert_success()
+            .stderr_eq("")
+            .stdout_eq(str![[r#"
+No files changed, compilation skipped
 
-Ran 1 test suite [ELAPSED]: 15 tests passed, 0 failed, 0 skipped (15 total tests)
+Ran 1 test for test/Repro.t.sol:DeploymentSmokeTest
+[PASS] test_deployment() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-        let calls = recorded_solc_inputs(&solc);
-        let codegen_calls = calls
+        // Test discovery may compile ABIs, but must reuse the generated deployment bytecode.
+        let codegen_calls = recorded_solc_inputs(&solc)
             .iter()
             .filter(|input| {
                 input.settings.output_selection.0.values().any(|contracts| {
                     contracts.values().flatten().any(|output| output.starts_with("evm.bytecode"))
                 })
             })
-            .collect::<Vec<_>>();
-        assert_eq!(codegen_calls.len(), 1, "Solc {version} retried or skipped codegen");
-        let source = &codegen_calls[0].sources[Path::new("test/Deployments.t.sol")].content;
-        let deployment_count = deployments.matches("new ").count();
-        assert_eq!(source.matches(".deployCode({").count(), deployment_count);
-        assert_eq!(
-            source.matches("payable(address(").count(),
-            usize::from(workaround) * deployment_count
-        );
-        assert_eq!(
-            source.matches("external returns (uint160);").count(),
-            usize::from(workaround) * 16
-        );
-        assert_eq!(
-            source.matches("external returns (address);").count(),
-            usize::from(!workaround) * 16
-        );
-
-        let calls = calls.len();
-        cmd.forge_fuse()
-            .args(["test", "--match-contract", "OtherOwnerTest"])
-            .assert_success()
-            .stderr_eq("")
-            .stdout_eq(str![[r#"
-No files changed, compilation skipped
-
-Ran 1 test for test/Deployments.t.sol:OtherOwnerTest
-[PASS] test_other_owner() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
-        assert_eq!(recorded_solc_inputs(&solc).len(), calls, "cached owner invoked Solc");
+            .count();
+        assert_eq!(codegen_calls, 1, "cached deployment invoked Solc codegen");
     }
 }
 

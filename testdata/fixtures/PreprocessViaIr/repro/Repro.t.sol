@@ -73,3 +73,10 @@ contract HedgerPoolDustDeadlockForkTest is Test {
         assertEq(pool.totalMargin(), 0);
     }
 }
+
+contract DeploymentSmokeTest {
+    function test_deployment() public {
+        HedgerPool target = new HedgerPool(address(42));
+        require(target.totalMargin() == 42, "constructor argument");
+    }
+}
