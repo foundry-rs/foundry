@@ -6,7 +6,7 @@ use crate::{
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
     recovery::recovery_exists,
-    sequence::ScriptSequenceKind,
+    sequence::{ScriptSequenceKind, blocked_pending},
     session::{SignerScope, script_session_expected_sender_if_configured},
 };
 use alloy_network::{AnyNetwork, ReceiptResponse};
@@ -370,6 +370,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     continue;
                 }
                 let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
+                let blocked = blocked_pending(sequence.sequences(), index);
                 let result = progress
                     .wait_for_pending(
                         index,
@@ -378,6 +379,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
                         (&durable_hashes, &replayable_hashes),
+                        &blocked,
                     )
                     .await;
                 sequence.save(true, false)?;

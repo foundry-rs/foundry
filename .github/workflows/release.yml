@@ -300,7 +300,7 @@ jobs:
           fi
           printf '%s\n' "$DIGEST" > release-docker-digest.txt
       - name: Upload release Docker digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-docker-digest
           path: release-docker-digest.txt
@@ -351,7 +351,8 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: alpine
             arch: arm64
-          - runner: macos-15-large
+          # Cross-compiled on Apple Silicon, which builds faster than the Intel runner.
+          - runner: macos-15-xlarge
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
@@ -378,7 +379,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -406,12 +407,10 @@ jobs:
               # Apple Silicon and the Touch ID shim require macOS 11 or newer.
               printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n'
             fi
-            if [[ '${{ matrix.target }}' == 'aarch64-apple-darwin' ]]; then
-              # Keep the release independent of Homebrew's libusb installation.
-              printf 'LIBUSB_STATIC=1\n'
-              # The ARM64 runner has less memory than the Intel large runner.
-              printf 'CARGO_BUILD_JOBS=2\n'
-            fi
+            # Keep the release independent of Homebrew's libusb installation.
+            printf 'LIBUSB_STATIC=1\n'
+            # Limit parallel fat-LTO jobs to fit in the ARM64 runner's 14 GB of memory.
+            printf 'CARGO_BUILD_JOBS=2\n'
           } >> "$GITHUB_ENV"
           xcrun --find clang
           xcrun --find ld
@@ -481,6 +480,9 @@ jobs:
             ldd "$bin" || true
             if [[ "$TARGET" == "$host_target" ]]; then
               "$bin" --version
+            elif [[ "$TARGET" == "x86_64-apple-darwin" ]]; then
+              # Run the Intel binary through Rosetta 2 on the Apple Silicon runner.
+              arch -x86_64 "$bin" --version
             else
               echo "Skipping execution of $name: target $TARGET differs from host $host_target"
             fi
@@ -548,7 +550,7 @@ jobs:
             -o spdx-json="$FOUNDRY_SBOM"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: 1
           name: ${{ steps.artifacts.outputs.file_name }}
