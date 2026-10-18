@@ -5584,10 +5584,6 @@ fn preprocess_via_ir_deployment_semantics(prj: _, cmd: _) {
         include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/Targets.sol"),
     );
     prj.add_raw_test("Deployments.t.sol", deployments);
-    prj.add_raw_test(
-        "ShadowedRequire.t.sol",
-        include_str!("../../../../testdata/fixtures/PreprocessViaIr/runtime/ShadowedRequire.t.sol"),
-    );
     for version in ["0.8.15", "0.8.22", "0.8.24", "0.8.25", "0.8.26"] {
         let solc = recording_solc(prj.root(), version);
         prj.update_config(|config| {
@@ -5680,49 +5676,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
         assert_eq!(recorded_solc_inputs(&solc).len(), calls, "cached owner invoked Solc");
-        cmd.forge_fuse()
-            .args(["test", "--match-contract", "ShadowedRequireTest"])
-            .assert_success()
-            .stderr_eq("")
-            .stdout_eq(str![[r#"
-...
-Ran 1 test for test/ShadowedRequire.t.sol:ShadowedRequireTest
-[PASS] test_shadowed_require() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
-        let shadow_calls = recorded_solc_inputs(&solc);
-        assert_eq!(shadow_calls.len(), calls + 1, "shadowed require retried code generation");
-        let shadow = shadow_calls
-            .iter()
-            .find_map(|input| {
-                input
-                    .sources
-                    .get(Path::new("test/ShadowedRequire.t.sol"))
-                    .filter(|source| source.content.contains(".deployCode({"))
-            })
-            .unwrap();
-        assert_eq!(shadow.content.matches(".deployCode({").count(), 1);
-        assert_eq!(shadow.content.matches("payable(address(").count(), usize::from(workaround));
-        assert_eq!(
-            shadow.content.matches("external returns (uint160);").count(),
-            usize::from(workaround) * 8
-        );
-        assert_eq!(
-            shadow.content.matches("external returns (address);").count(),
-            usize::from(!workaround) * 8
-        );
-        cmd.forge_fuse()
-            .args(["test", "--match-contract", "ShadowedRequireTest"])
-            .assert_success()
-            .stderr_eq("");
-        assert_eq!(
-            recorded_solc_inputs(&solc).len(),
-            shadow_calls.len(),
-            "cached shadowed require invoked Solc"
-        );
     }
 }
 

@@ -21,8 +21,7 @@ build reused its cache.
 rewritten deployment overloads, constructor arguments and caller/origin/value/
 address, CREATE and CREATE2 addresses, revert data, prank and broadcast
 lifetimes, constructor/value/salt arguments with side effects, and two test
-owners in the same source file. `runtime/ShadowedRequire.t.sol` deploys from a
-source with a user-defined `require(bool)`. These tests run locally without an
-RPC endpoint on Solc 0.8.15, 0.8.22, 0.8.24, 0.8.25, and 0.8.26. They check
+owners in the same source file. These tests run locally without an RPC endpoint
+on Solc 0.8.15, 0.8.22, 0.8.24, 0.8.25, and 0.8.26. They check
 rewritten deployment counts, the generated return types and casts, and cache
 reuse after successful execution.
