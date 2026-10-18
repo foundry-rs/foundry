@@ -206,6 +206,7 @@ frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
+corpus_max_memory_mb = 1024
 show_edge_coverage = false
 evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
@@ -244,6 +245,7 @@ frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
+corpus_max_memory_mb = 1024
 show_edge_coverage = false
 evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
@@ -2289,6 +2291,7 @@ fn test_default_config(prj: _, cmd: _) {
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
+    "corpus_max_memory_mb": 1024,
     "show_edge_coverage": false,
     "evm_edge_coverage_collision_free": true,
     "evm_edge_coverage_include_call_depth": false,
@@ -2330,6 +2333,7 @@ fn test_default_config(prj: _, cmd: _) {
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
+    "corpus_max_memory_mb": 1024,
     "show_edge_coverage": false,
     "evm_edge_coverage_collision_free": true,
     "evm_edge_coverage_include_call_depth": false,

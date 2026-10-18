@@ -91,6 +91,8 @@ const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
 
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
 
+const MIB: usize = 1024 * 1024;
+
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
@@ -194,6 +196,25 @@ impl CorpusEntry {
         }
         let size: usize = self.tx_seq.iter().map(|tx| tx.estimate_serialized_size()).sum();
         size > GZIP_THRESHOLD
+    }
+
+    /// Approximate heap size of the call sequence and comparison hints, in bytes.
+    ///
+    /// Shared `Bytes` buffers are counted once per entry, so this can overestimate.
+    fn memory_size(&self) -> usize {
+        let tx_bytes: usize = self
+            .tx_seq
+            .iter()
+            .map(|tx| size_of::<BasicTxDetails>() + tx.call_details.calldata.len())
+            .sum();
+        let cmp_bytes: usize = self
+            .cmp_seq
+            .iter()
+            .map(|hints| {
+                size_of::<Vec<ComparisonHint>>() + hints.len() * size_of::<ComparisonHint>()
+            })
+            .sum();
+        tx_bytes + cmp_bytes
     }
 }
 
@@ -650,6 +671,8 @@ pub struct WorkerCorpus {
     /// In-memory corpus entries populated from the persisted files and
     /// runs administered by this worker.
     in_memory_corpus: Vec<CorpusEntry>,
+    /// Approximate memory size of [`WorkerCorpus::in_memory_corpus`], in bytes.
+    in_memory_bytes: usize,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
     /// Stable dense EVM edge IDs for this worker's history map.
@@ -928,9 +951,11 @@ impl WorkerCorpus {
             None
         };
 
-        Ok(Self {
+        let in_memory_bytes = seed.in_memory_corpus.iter().map(CorpusEntry::memory_size).sum();
+        let mut corpus = Self {
             id,
             in_memory_corpus: seed.in_memory_corpus,
+            in_memory_bytes,
             history_map: seed.history_map,
             edge_indices: seed.edge_indices,
             sancov_history_map: seed.sancov_history_map,
@@ -948,7 +973,9 @@ impl WorkerCorpus {
             optimization_best_value: seed.optimization_best_value,
             optimization_best_sequence: seed.optimization_best_sequence,
             last_new_edge_at: seed.last_new_edge_at,
-        })
+        };
+        corpus.enforce_memory_budget();
+        Ok(corpus)
     }
 
     /// Updates stats for the given call sequence, if new coverage produced.
@@ -1111,7 +1138,9 @@ impl WorkerCorpus {
             self.new_entry_indices.push(new_index);
         }
         self.metrics.corpus_count += 1;
+        self.in_memory_bytes += corpus.memory_size();
         self.in_memory_corpus.push(corpus);
+        self.enforce_memory_budget();
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -1295,31 +1324,70 @@ impl WorkerCorpus {
     /// or pending synchronization.
     fn evict_oldest_corpus(&mut self) -> Result<()> {
         if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
-            && let Some(index) =
-                self.in_memory_corpus.iter().enumerate().position(|(index, corpus)| {
-                    self.new_entry_indices.binary_search(&index).is_err()
-                        && corpus.total_mutations > self.config.corpus_min_mutations
-                        && !corpus.is_favored
-                })
+            && let Some(index) = self.evictable_index()
         {
-            let corpus = &self.in_memory_corpus[index];
-
-            trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
-
-            // Remove corpus from memory.
-            self.in_memory_corpus.remove(index);
-
-            // Adjust the tracked indices.
-            self.new_entry_indices.retain_mut(|i| {
-                if *i > index {
-                    *i -= 1; // Shift indices down.
-                    true // Keep this index.
-                } else {
-                    *i != index // Remove if it's the deleted index, keep otherwise.
-                }
-            });
+            self.remove_corpus_entry(index);
         }
         Ok(())
+    }
+
+    /// Returns the index of the oldest entry that the regular eviction policy allows to flush.
+    fn evictable_index(&self) -> Option<usize> {
+        self.in_memory_corpus.iter().enumerate().position(|(index, corpus)| {
+            !self.is_pending_sync(index)
+                && corpus.total_mutations > self.config.corpus_min_mutations
+                && !corpus.is_favored
+        })
+    }
+
+    fn is_pending_sync(&self, index: usize) -> bool {
+        self.new_entry_indices.binary_search(&index).is_ok()
+    }
+
+    /// Evicts entries from memory until the corpus fits in `corpus_max_memory_mb`.
+    ///
+    /// Entries allowed by the regular eviction policy go first. If none is left, the oldest
+    /// entry that is not pending synchronization goes next. Evicted entries stay on disk.
+    fn enforce_memory_budget(&mut self) {
+        let max_bytes = self.config.corpus_max_memory_mb.saturating_mul(MIB);
+        if max_bytes == 0 {
+            return;
+        }
+        while self.in_memory_bytes > max_bytes
+            && self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
+        {
+            let Some(index) = self.evictable_index().or_else(|| {
+                (0..self.in_memory_corpus.len()).find(|&index| !self.is_pending_sync(index))
+            }) else {
+                break;
+            };
+            self.remove_corpus_entry(index);
+        }
+    }
+
+    /// Removes one entry from memory and keeps the tracked indices and metrics consistent.
+    fn remove_corpus_entry(&mut self, index: usize) {
+        let corpus = self.in_memory_corpus.remove(index);
+
+        trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
+
+        self.in_memory_bytes = self.in_memory_bytes.saturating_sub(corpus.memory_size());
+        self.metrics.update_favored(false, corpus.is_favored);
+
+        // Adjust the tracked indices.
+        self.new_entry_indices.retain_mut(|i| {
+            if *i > index {
+                *i -= 1; // Shift indices down.
+                true // Keep this index.
+            } else {
+                *i != index // Remove if it's the deleted index, keep otherwise.
+            }
+        });
+        self.current_mutated_index = match self.current_mutated_index {
+            Some(i) if i == index => None,
+            Some(i) if i > index => Some(i - 1),
+            other => other,
+        };
     }
     // Sync Methods.
 
@@ -1396,7 +1464,9 @@ impl WorkerCorpus {
         if self.worker_sync_enabled && self.id == 0 {
             self.new_entry_indices.push(self.in_memory_corpus.len());
         }
+        self.in_memory_bytes += corpus.memory_size();
         self.in_memory_corpus.push(corpus);
+        self.enforce_memory_budget();
     }
 
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
@@ -3408,6 +3478,43 @@ mod tests {
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert!(manager.in_memory_corpus.iter().all(|entry| entry.uuid != evictable_uuid));
         assert!(manager.new_entry_indices.is_empty());
+    }
+
+    #[test]
+    fn memory_budget_evicts_until_corpus_fits() {
+        let config =
+            FuzzCorpusConfig { corpus_max_memory_mb: 1, ..corpus_config(temp_corpus_dir()) };
+        let generator =
+            test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
+        let mut manager =
+            WorkerCorpus::from_seed(0, config, generator, WorkerCorpusSeed::default()).unwrap();
+        let large_entry = || CorpusEntry::new(vec![basic_tx_with_calldata(vec![0u8; 400 * 1024])]);
+
+        // Under the budget, nothing is evicted, even without mutations.
+        manager.insert_corpus_entry(large_entry(), CorpusInsertionMode::Live);
+        manager.insert_corpus_entry(large_entry(), CorpusInsertionMode::Live);
+        assert_eq!(manager.in_memory_corpus.len(), 2);
+
+        // Over the budget, the oldest entry is evicted although the regular policy rejects it.
+        let newest = large_entry();
+        let newest_uuid = newest.uuid;
+        manager.in_memory_corpus[0].is_favored = true;
+        manager.metrics.favored_items = 1;
+        manager.insert_corpus_entry(newest, CorpusInsertionMode::Live);
+
+        assert_eq!(manager.in_memory_corpus.len(), 2);
+        assert_eq!(manager.metrics.favored_items, 0);
+        assert_eq!(manager.in_memory_corpus[1].uuid, newest_uuid);
+        assert_eq!(
+            manager.in_memory_bytes,
+            manager.in_memory_corpus.iter().map(CorpusEntry::memory_size).sum::<usize>()
+        );
+        assert!(manager.in_memory_bytes <= MIB);
+        // Evicted entries stay on disk.
+        assert_eq!(
+            read_corpus_dir(&manager.worker_dir.clone().unwrap().join(CORPUS_DIR)).count(),
+            3
+        );
     }
 
     #[test]

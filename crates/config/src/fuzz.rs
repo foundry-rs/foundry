@@ -132,6 +132,10 @@ pub struct FuzzCorpusConfig {
     pub corpus_min_mutations: usize,
     // Number of corpus that won't be evicted from memory.
     pub corpus_min_size: usize,
+    /// Approximate memory budget in MiB for each worker's in-memory corpus. When the corpus
+    /// grows over this budget, entries are evicted from memory until it fits again. Evicted
+    /// entries stay on disk. Set to 0 to disable the budget.
+    pub corpus_max_memory_mb: usize,
     /// Whether to collect and display edge coverage metrics.
     pub show_edge_coverage: bool,
     /// Whether EVM edge coverage should use collision-free dense IDs.
@@ -161,6 +165,8 @@ impl FuzzCorpusConfig {
     pub const DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 10;
     pub const ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 50;
     pub const DEFAULT_FRONTIER_LIMIT: usize = 256;
+    /// Default in-memory corpus budget per worker, in MiB.
+    pub const DEFAULT_CORPUS_MAX_MEMORY_MB: usize = 1024;
 
     pub fn with_test(&mut self, contract: &str, test: &str) {
         if let Some(corpus_dir) = &self.corpus_dir {
@@ -244,6 +250,7 @@ impl Default for FuzzCorpusConfig {
             corpus_gzip: true,
             corpus_min_mutations: 5,
             corpus_min_size: 0,
+            corpus_max_memory_mb: Self::DEFAULT_CORPUS_MAX_MEMORY_MB,
             show_edge_coverage: false,
             evm_edge_coverage_collision_free: true,
             evm_edge_coverage_include_call_depth: false,
