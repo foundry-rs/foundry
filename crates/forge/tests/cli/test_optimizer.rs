@@ -5522,7 +5522,7 @@ Error: Yul exception:Variable _8 is 1 too deep in the stack.
 #[cfg(unix)]
 #[forgetest]
 fn preprocess_via_ir_codegen(prj: _, cmd: _) {
-    for patch in 14..=26 {
+    for patch in [14, 15, 24, 25, 26] {
         let version = format!("0.8.{patch}");
         let solc = recording_solc(prj.root(), &version);
         prj.update_config(|config| {

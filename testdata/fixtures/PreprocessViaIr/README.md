@@ -3,9 +3,9 @@
 `repro/` preserves the supplied two-file compiler reproducer, with trailing blank
 lines normalized. The CLI regression copies these files into
 `src/core/HedgerPool.sol` and `test/Repro.t.sol`, changing only the exact Solidity
-pragma to match the selected compiler. It compiles every real Solc release from
-0.8.14 through 0.8.26 with via-IR and the optimizer with 200 runs. Solc 0.8.14
-through 0.8.19 use London, and 0.8.20 through 0.8.26 use Shanghai. Metadata
+pragma to match the selected compiler. It compiles with real Solc 0.8.14, 0.8.15,
+0.8.24, 0.8.25, and 0.8.26 using via-IR and the optimizer with 200 runs. Solc
+0.8.14 and 0.8.15 use London; the remaining versions use Shanghai. Metadata
 hashing is disabled; CBOR metadata is disabled where supported (0.8.18 onward).
 The fork-dependent Solidity test in this reproducer is not executed.
 
