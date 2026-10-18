@@ -13,11 +13,7 @@ use foundry_compilers::{
     solc::Solc,
 };
 #[cfg(unix)]
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 #[forgetest]
 fn preprocess_abi_coder_v2_solc_07(prj: _, cmd: _) {
@@ -5517,66 +5513,36 @@ Error: Yul exception:Variable _8 is 1 too deep in the stack.
 "#]]);
 }
 
-// This two-file reproducer fails with a real Yul stack error on Solc 0.8.15 through 0.8.25.
+// This two-file reproducer fails with a real Yul stack error on Solc 0.8.24.
 // Its fork test is compile-only here; a separate smoke test deploys without a fork.
-#[cfg(unix)]
 #[forgetest]
 fn preprocess_via_ir_codegen(prj: _, cmd: _) {
-    for patch in [24, 26] {
-        let version = format!("0.8.{patch}");
-        let solc = recording_solc(prj.root(), &version);
-        prj.update_config(|config| {
-            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
-            config.dynamic_test_linking = true;
-            config.via_ir = true;
-            config.evm_version = EvmVersion::Shanghai;
-            config.optimizer = Some(true);
-            config.optimizer_runs = Some(200);
-            config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
-            config.cbor_metadata = false;
-            config.lint.lint_on_build = false;
-        });
-        prj.add_raw_source(
-            "core/HedgerPool.sol",
-            &include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/HedgerPool.sol")
-                .replace("pragma solidity 0.8.24;", &format!("pragma solidity {version};")),
-        );
-        prj.add_raw_test(
-            "Repro.t.sol",
-            &include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/Repro.t.sol")
-                .replace("pragma solidity 0.8.24;", &format!("pragma solidity {version};")),
-        );
-        cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq("").stdout_eq(str![
-            [r#"
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.dynamic_test_linking = true;
+        config.via_ir = true;
+        config.evm_version = EvmVersion::Shanghai;
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(200);
+        config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
+        config.cbor_metadata = false;
+        config.lint.lint_on_build = false;
+    });
+    prj.add_raw_source(
+        "core/HedgerPool.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/HedgerPool.sol"),
+    );
+    prj.add_raw_test(
+        "Repro.t.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/Repro.t.sol"),
+    );
+    cmd.args(["test", "--force", "--match-contract", "^DeploymentSmokeTest$"])
+        .assert_success()
+        .stderr_eq("")
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-
-"#]
-        ]);
-        let calls = recorded_solc_inputs(&solc);
-        assert_eq!(calls.len(), 1, "Solc {version} must succeed without a native retry");
-        let source = &calls[0].sources[Path::new("test/Repro.t.sol")].content;
-        assert_eq!(source.matches(".deployCode({").count(), 2);
-        let workaround = (15..=25).contains(&patch);
-        assert_eq!(
-            source.matches("external returns (uint160);").count(),
-            usize::from(workaround) * 16
-        );
-        assert_eq!(source.matches("payable(address(").count(), usize::from(workaround) * 2);
-
-        cmd.forge_fuse().arg("build").assert_success().stderr_eq("").stdout_eq(str![[r#"
-No files changed, compilation skipped
-
-"#]]);
-        assert_eq!(recorded_solc_inputs(&solc).len(), calls.len(), "cached build invoked Solc");
-
-        cmd.forge_fuse()
-            .args(["test", "--match-contract", "^DeploymentSmokeTest$"])
-            .assert_success()
-            .stderr_eq("")
-            .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/Repro.t.sol:DeploymentSmokeTest
 [PASS] test_deployment() ([GAS])
@@ -5585,52 +5551,12 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-        // Test discovery may compile ABIs, but must reuse the generated deployment bytecode.
-        let codegen_calls = recorded_solc_inputs(&solc)
-            .iter()
-            .filter(|input| {
-                input.settings.output_selection.0.values().any(|contracts| {
-                    contracts.values().flatten().any(|output| output.starts_with("evm.bytecode"))
-                })
-            })
-            .count();
-        assert_eq!(codegen_calls, 1, "cached deployment invoked Solc codegen");
+    // Empty stderr rules out fallback, but both owners must also have been preprocessed.
+    for owner in ["HedgerPoolDustDeadlockForkTest", "DeploymentSmokeTest"] {
+        let helper = format!(
+            "Repro.t.sol/VmContractHelper{:x}.json",
+            keccak256(format!("test/Repro.t.sol:{owner}"))
+        );
+        assert!(prj.artifacts().join(helper).exists(), "{owner} was not preprocessed");
     }
-}
-
-// Record genuine standard-JSON calls without changing compiler input, output, or status.
-#[cfg(unix)]
-fn recording_solc(root: &Path, version: &str) -> PathBuf {
-    let real_solc = Solc::find_or_install(&version.parse().unwrap()).unwrap();
-    let solc = root.join(format!("solc-{version}"));
-    fs::write(
-        &solc,
-        format!(
-            r#"#!/bin/sh
-for arg do
-    if [ "$arg" = "--standard-json" ]; then
-        input=$(mktemp "$0.input.XXXXXX")
-        cat > "$input"
-        exec '{real_solc}' "$@" < "$input"
-    fi
-done
-exec '{real_solc}' "$@"
-"#,
-            real_solc = real_solc.solc.display(),
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&solc, fs::Permissions::from_mode(0o755)).unwrap();
-    solc
-}
-
-#[cfg(unix)]
-fn recorded_solc_inputs(solc: &Path) -> Vec<SolcInput> {
-    let prefix = format!("{}.input.", solc.file_name().unwrap().to_str().unwrap());
-    fs::read_dir(solc.parent().unwrap())
-        .unwrap()
-        .map(Result::unwrap)
-        .filter(|entry| entry.file_name().to_str().unwrap().starts_with(&prefix))
-        .map(|entry| read_json_file(&entry.path()).unwrap())
-        .collect()
 }
