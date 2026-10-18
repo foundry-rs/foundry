@@ -7252,6 +7252,87 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#]]);
 }
 
+#[forgetest_init]
+fn storage_discovery_excludes_setup_only_slots(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fs_permissions = foundry_config::fs_permissions::FsPermissions::new(vec![
+            foundry_config::fs_permissions::PathPermission::read_write("./"),
+        ]);
+    });
+    prj.add_test(
+        "StorageDiscovery.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract StorageDiscovery is Test {
+    address constant source = address(0x10000);
+    address constant target = address(0x20000);
+
+    function setUp() public {
+        vm.etch(source, hex"6000");
+        vm.store(source, bytes32(uint256(7)), bytes32(uint256(17)));
+        vm.store(source, bytes32(uint256(8)), bytes32(uint256(29)));
+    }
+
+    function loadCurrentSlots() internal {
+        assertEq(uint256(vm.load(source, bytes32(uint256(7)))), 17);
+        vm.store(source, bytes32(uint256(9)), bytes32(uint256(31)));
+    }
+
+    function assertCopiedSlots() internal {
+        assertEq(uint256(vm.load(target, bytes32(uint256(7)))), 17);
+        assertEq(uint256(vm.load(target, bytes32(uint256(9)))), 31);
+        assertEq(uint256(vm.load(target, bytes32(uint256(8)))), 0);
+    }
+
+    function testCloneAfterSnapshot() public {
+        vm.snapshotState();
+        loadCurrentSlots();
+        vm.cloneAccount(source, target);
+        assertCopiedSlots();
+    }
+
+    function testCopyAfterSnapshot() public {
+        vm.snapshotState();
+        loadCurrentSlots();
+        vm.copyStorage(source, target);
+        assertCopiedSlots();
+    }
+
+    function testCopyWithoutSnapshot() public {
+        loadCurrentSlots();
+        vm.copyStorage(source, target);
+        assertCopiedSlots();
+    }
+
+    function testDumpAfterSnapshot() public {
+        vm.snapshotState();
+        loadCurrentSlots();
+        vm.dumpState("storage-discovery.json");
+        string memory json = vm.readFile("storage-discovery.json");
+        string memory key = ".0x0000000000000000000000000000000000010000.storage";
+        assertEq(vm.parseJsonKeys(json, key).length, 2);
+        assertEq(uint256(vm.parseJsonBytes32(json, string.concat(key, ".", vm.toString(bytes32(uint256(7)))))), 17);
+        assertEq(uint256(vm.parseJsonBytes32(json, string.concat(key, ".", vm.toString(bytes32(uint256(9)))))), 31);
+        assertFalse(vm.keyExistsJson(json, string.concat(key, ".", vm.toString(bytes32(uint256(8))))));
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--match-contract", "StorageDiscovery"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 4 tests for test/StorageDiscovery.t.sol:StorageDiscovery
+[PASS] testCloneAfterSnapshot() ([GAS])
+[PASS] testCopyAfterSnapshot() ([GAS])
+[PASS] testCopyWithoutSnapshot() ([GAS])
+[PASS] testDumpAfterSnapshot() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/10544>
 #[forgetest_init]
 fn flaky_should_not_panic_on_cool(prj: _, cmd: _) {
