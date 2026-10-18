@@ -44,12 +44,11 @@ async fn test_verify_bytecode_with_local_creation_data(
     create2: bool,
 ) {
     prj.initialize_default_contracts();
-    if transaction_type != 0 {
-        // These immutables make lost fees, value, sender, gas or access-list fields visible in
-        // the runtime comparison, rather than merely checking that some deployment succeeded.
-        prj.add_source(
-            "Counter",
-            r#"
+    // These immutables make lost fees, value, sender, gas or access-list fields visible in
+    // the runtime comparison, rather than merely checking that some deployment succeeded.
+    prj.add_source(
+        "Counter",
+        r#"
 contract Counter {
     uint256 public immutable initialGas;
     uint256 public immutable gasPrice;
@@ -68,8 +67,7 @@ contract Counter {
     }
 }
 "#,
-        );
-    }
+    );
     cmd.forge_fuse().arg("build").assert_success();
 
     let artifact: serde_json::Value = serde_json::from_slice(
@@ -98,25 +96,25 @@ contract Counter {
         )
         .await
         .unwrap();
+    api.anvil_set_nonce(accounts[0], U256::from(7)).await.unwrap();
     let mut creation = serde_json::json!({
         "from": accounts[0],
         "data": bytecode,
+        "type": format!("0x{transaction_type:x}"),
+        "nonce": "0x7",
+        "value": "0x13",
+        "gas": "0x100000",
         "gasPrice": format!("0x{gas_price:x}"),
     });
     if transaction_type != 0 {
-        api.anvil_set_nonce(accounts[0], U256::from(7)).await.unwrap();
-        creation["type"] = format!("0x{transaction_type:x}").into();
-        creation["nonce"] = "0x7".into();
-        creation["value"] = "0x13".into();
-        creation["gas"] = "0x100000".into();
         creation["accessList"] = serde_json::json!([{
             "address": accounts[2], "storageKeys": [B256::with_last_byte(9)],
         }]);
-        if transaction_type == 2 {
-            creation.as_object_mut().unwrap().remove("gasPrice");
-            creation["maxFeePerGas"] = format!("0x{gas_price:x}").into();
-            creation["maxPriorityFeePerGas"] = "0x3".into();
-        }
+    }
+    if transaction_type == 2 {
+        creation.as_object_mut().unwrap().remove("gasPrice");
+        creation["maxFeePerGas"] = format!("0x{gas_price:x}").into();
+        creation["maxPriorityFeePerGas"] = "0x3".into();
     }
     let salt = B256::with_last_byte(42);
     if create2 {
@@ -127,6 +125,7 @@ contract Counter {
         provider.client().request("eth_sendTransaction", [creation]).await.unwrap();
     api.mine_one().await.unwrap();
     let receipt = provider.get_transaction_receipt(transaction_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.inner.inner.r#type, transaction_type);
     assert_eq!(receipt.transaction_index(), Some(1));
     assert!(receipt.status());
     let address = if create2 {
