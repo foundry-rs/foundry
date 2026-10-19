@@ -1315,11 +1315,6 @@ impl<N: Network> Backend<N> {
         self.blockchain.storage.read().best_number
     }
 
-    /// Sets the block number
-    pub fn set_block_number(&self, number: u64) {
-        self.evm_env.write().block_env.number = U256::from(number);
-    }
-
     /// Returns the client coinbase address.
     pub fn coinbase(&self) -> Address {
         self.evm_env.read().block_env.beneficiary
@@ -1419,27 +1414,27 @@ impl<N: Network> Backend<N> {
 
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::LONDON as u8)
+        self.spec_id().is_enabled_in(SpecId::LONDON)
     }
 
     /// Returns true for post Merge
     pub fn is_eip3675(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::MERGE as u8)
+        self.spec_id().is_enabled_in(SpecId::MERGE)
     }
 
     /// Returns true for post Berlin
     pub fn is_eip2930(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
+        self.spec_id().is_enabled_in(SpecId::BERLIN)
     }
 
     /// Returns true for post Cancun
     pub fn is_eip4844(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::CANCUN as u8)
+        self.spec_id().is_enabled_in(SpecId::CANCUN)
     }
 
     /// Returns true for post Prague
     pub fn is_eip7702(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
+        self.spec_id().is_enabled_in(SpecId::PRAGUE)
     }
 
     /// Returns true if op-stack deposits are active.
@@ -1806,13 +1801,6 @@ impl<N: Network> Backend<N> {
             return Ok(());
         }
         Err(BlockchainError::DepositTransactionUnsupported)
-    }
-
-    /// Returns an error if Base EIP-8130 transactions are not active.
-    #[cfg(feature = "base")]
-    pub fn ensure_base_eip8130_active(&self) -> Result<(), BlockchainError> {
-        let timestamp = self.evm_env.read().block_env.timestamp.saturating_to();
-        self.ensure_base_eip8130_active_at(timestamp)
     }
 
     /// Returns an error if Base EIP-8130 RPC features are not active at `timestamp`.
@@ -3771,16 +3759,6 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    pub fn call_with_state(
-        &self,
-        state: &dyn DatabaseRef,
-        request: WithOtherFields<TransactionRequest>,
-        fee_details: FeeDetails,
-        block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
-        self.call_with_state_and_context(state, request, fee_details, block_env, None)
-    }
-
     pub(crate) fn call_with_state_and_context(
         &self,
         state: &dyn DatabaseRef,
@@ -3891,16 +3869,6 @@ impl<N: Network> Backend<N> {
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
         Ok((exit_reason, out, gas_used as u128, state))
-    }
-
-    pub fn build_access_list_with_state(
-        &self,
-        state: &dyn DatabaseRef,
-        request: WithOtherFields<TransactionRequest>,
-        fee_details: FeeDetails,
-        block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        self.build_access_list_with_state_and_context(state, request, fee_details, block_env, None)
     }
 
     pub(crate) fn build_access_list_with_state_and_context(
@@ -5596,57 +5564,27 @@ impl<N: Network> Backend<N> {
         self.fees.restore(fees);
         Ok(true)
     }
-
-    /// executes the transactions without writing to the underlying database
-    pub async fn inspect_tx(
-        &self,
-        tx: Arc<PoolTransaction<FoundryTxEnvelope>>,
-    ) -> Result<
-        (InstructionResult, Option<Output>, u64, StateChangeset, Vec<revm::primitives::Log>),
-        BlockchainError,
-    > {
-        let db = self.db.read().await;
-        let evm_env = self.next_evm_env(&**db)?;
-        let mut inspector = self.build_inspector();
-        #[cfg(feature = "monad")]
-        let mut monad_context = self
-            .is_monad()
-            .then(|| self.monad_context_for_child_of(self.best_hash()))
-            .transpose()?;
-        #[cfg(not(feature = "monad"))]
-        let mut monad_context = None;
-        let (ResultAndState { result, state }, _) = self
-            .transact_envelope_with_inspector_ref_and_context(
-                &**db,
-                &evm_env,
-                &mut inspector,
-                &tx.pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
-            )?;
-        let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
-
-        inspector.print_logs();
-
-        if self.print_traces {
-            inspector.print_traces(self.call_trace_decoder());
-        }
-
-        Ok((exit_reason, out, gas_used, state, logs))
-    }
 }
 
 impl<N: Network> Backend<N>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    /// Returns all `Log`s mined by the node that were emitted in the `block` and match the `Filter`
-    fn mined_logs_for_block(&self, filter: Filter, block: Block, block_hash: B256) -> Vec<Log> {
-        let mut all_logs = Vec::new();
+    /// Appends all `Log`s mined by the node that were emitted in the `block` and match the
+    /// `Filter`.
+    fn mined_logs_for_block(
+        storage: &BlockchainStorage<N>,
+        filter: &Filter,
+        block: &Block,
+        block_hash: B256,
+        all_logs: &mut Vec<Log>,
+    ) {
+        if !filter.matches_bloom(block.header.logs_bloom) {
+            return;
+        }
+
         let mut block_log_index = 0u32;
-
-        let storage = self.blockchain.storage.read();
-
-        for tx in block.body.transactions {
+        for tx in &block.body.transactions {
             let Some(tx) = storage.transactions.get(&tx.hash()) else {
                 continue;
             };
@@ -5670,7 +5608,6 @@ where
                 block_log_index += 1;
             }
         }
-        all_logs
     }
 
     /// Returns all logs of the blocks with a number greater than `block_number`, marked as
@@ -5717,8 +5654,13 @@ where
         filter: Filter,
         hash: B256,
     ) -> Result<Vec<Log>, BlockchainError> {
-        if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
-            return Ok(self.mined_logs_for_block(filter, block, hash));
+        {
+            let storage = self.blockchain.storage.read();
+            if let Some(block) = storage.blocks.get(&hash) {
+                let mut logs = Vec::new();
+                Self::mined_logs_for_block(&storage, &filter, block, hash, &mut logs);
+                return Ok(logs);
+            }
         }
 
         if let Some(fork) = self.get_fork() {
@@ -5756,9 +5698,12 @@ where
             }
         }
 
+        let storage = self.blockchain.storage.read();
         for number in from..=to {
-            if let Some((block, hash)) = self.get_block_with_hash(number) {
-                all_logs.extend(self.mined_logs_for_block(filter.clone(), block, hash));
+            if let Some(&hash) = storage.hashes.get(&number)
+                && let Some(block) = storage.blocks.get(&hash)
+            {
+                Self::mined_logs_for_block(&storage, filter, block, hash, &mut all_logs);
             }
         }
 
@@ -6671,44 +6616,6 @@ where
         );
 
         Ok(f(Box::new(cache_db), block_info))
-    }
-
-    /// Returns the ERC20/TIP20 token balance for an account.
-    ///
-    /// Calls `balanceOf(address)` on the token contract. Returns `U256::ZERO` if
-    /// the call fails (e.g. the token contract doesn't exist).
-    pub async fn get_fee_token_balance(
-        &self,
-        token: Address,
-        account: Address,
-    ) -> Result<U256, BlockchainError> {
-        // balanceOf(address) selector: 0x70a08231
-        let mut calldata = vec![0x70, 0xa0, 0x82, 0x31];
-        // ABI-encode the address (left-padded to 32 bytes)
-        calldata.extend_from_slice(&[0u8; 12]);
-        calldata.extend_from_slice(account.as_slice());
-
-        let request = WithOtherFields::new(TransactionRequest {
-            from: Some(Address::ZERO),
-            to: Some(TxKind::Call(token)),
-            input: calldata.into(),
-            ..Default::default()
-        });
-
-        let fee_details = FeeDetails::zero();
-        let (exit, out, _, _) = self.call(request, fee_details, None, Default::default()).await?;
-
-        // Check if call succeeded
-        if exit != InstructionResult::Return && exit != InstructionResult::Stop {
-            // Return zero balance if call failed (token might not exist)
-            return Ok(U256::ZERO);
-        }
-
-        // Decode U256 from output
-        match out {
-            Some(Output::Call(data)) if data.len() >= 32 => Ok(U256::from_be_slice(&data[..32])),
-            _ => Ok(U256::ZERO),
-        }
     }
 
     /// Returns the account used to sponsor Tempo fee-payer requests handled by this node.
@@ -10421,6 +10328,8 @@ pub fn transaction_build(
 
         match maybe_deposit_fields {
             Ok(mut fields) => {
+                fields.remove("hash");
+                fields.remove("from");
                 // Add zeroed signature fields for backwards compatibility
                 // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
                 fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
@@ -10465,9 +10374,15 @@ pub fn transaction_build(
                 .expect("could not serialize canonical EIP-8130 transaction"),
         )
         .expect("EIP-8130 transaction must serialize to an object");
-        for key in
-            ["hash", "from", "blockHash", "blockNumber", "transactionIndex", "effectiveGasPrice"]
-        {
+        for key in [
+            "hash",
+            "type",
+            "from",
+            "blockHash",
+            "blockNumber",
+            "transactionIndex",
+            "effectiveGasPrice",
+        ] {
             fields.remove(key);
         }
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
@@ -10504,7 +10419,8 @@ pub fn transaction_build(
         let maybe_tempo_fields = OtherFields::try_from(ser);
 
         match maybe_tempo_fields {
-            Ok(fields) => {
+            Ok(mut fields) => {
+                fields.remove("hash");
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(TEMPO_TX_TYPE_ID),
                     fields,

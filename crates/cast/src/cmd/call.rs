@@ -24,10 +24,7 @@ use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
-    trace::geth::{
-        GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-        GethDebugTracingOptions,
-    },
+    trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
 };
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -231,11 +228,8 @@ pub enum CallSubcommands {
 
 /// The `callTracer` options shared by `--debug-trace-call` and its `--curl` rendering.
 fn call_tracer_options() -> GethDebugTracingCallOptions {
-    GethDebugTracingCallOptions::default().with_tracing_options(
-        GethDebugTracingOptions::default()
-            .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-            .with_call_config(call_tracer_config()),
-    )
+    GethDebugTracingCallOptions::default()
+        .with_tracing_options(GethDebugTracingOptions::call_tracer(call_tracer_config()))
 }
 
 impl CallArgs {
