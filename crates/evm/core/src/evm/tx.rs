@@ -5,7 +5,7 @@
 //! [`TxEnvelope`](alloy_network::Network::TxEnvelope), mutate common fields through Alloy's
 //! [`TransactionBuilder`](alloy_network::TransactionBuilder), and convert once, right before
 //! execution, into the family's evm2 transaction with
-//! [`FoundryEvmNetwork`](super::FoundryEvmNetwork). Signed, resumed and replayed transactions
+//! [`FoundryEvmNetwork`]. Signed, resumed and replayed transactions
 //! convert from exactly the payload that was signed; nothing is rebuilt from Ethereum-shaped
 //! fields.
 
@@ -85,7 +85,7 @@ pub fn eth_envelope_from_any_rpc(
 }
 
 /// Transactions of a block and its two ancestors, for network state that depends on the block
-/// position of a transaction (see [`FoundryEvmExt::for_block`](super::FoundryEvmExt::for_block)).
+/// position of a transaction (see [`FoundryEvmExt::for_block`]).
 #[derive(Debug)]
 pub struct BlockContext<FEN: FoundryEvmNetwork> {
     grandparent: Vec<Recovered<TxFor<FEN>>>,
