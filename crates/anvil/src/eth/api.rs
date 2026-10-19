@@ -3989,6 +3989,12 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_newFilter`
     pub async fn new_filter(&self, filter: Filter) -> Result<String> {
         node_info!("eth_newFilter");
+        if let Some(from) = filter.block_option.get_from_block().and_then(|b| b.as_number())
+            && let Some(to) = filter.block_option.get_to_block().and_then(|b| b.as_number())
+            && from > to
+        {
+            return Err(RpcError::invalid_params("invalid block range params").into());
+        }
         // Valid future ranges have no historic logs to seed yet.
         let historic = match filter.block_option.get_from_block() {
             Some(BlockNumber::Number(from))
