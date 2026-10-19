@@ -22,7 +22,7 @@ use alloy_primitives::{
     utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
-use alloy_rlp::{Decodable, encode};
+use alloy_rlp::{decode_exact, encode};
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -254,9 +254,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Conversion(ConversionSubcommand::FromRlp { value, as_int }) => {
             let bytes = hex::decode(stdin::unwrap_line(value)?).wrap_err("Could not decode hex")?;
             let value = if as_int {
-                U256::decode(&mut &bytes[..])?.to_string()
+                decode_exact::<U256>(&bytes)?.to_string()
             } else {
-                crate::rlp_converter::Item::decode(&mut &bytes[..])
+                decode_exact::<crate::rlp_converter::Item>(&bytes)
                     .wrap_err("Could not decode rlp")?
                     .to_string()
             };
