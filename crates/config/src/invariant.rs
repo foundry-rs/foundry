@@ -183,6 +183,9 @@ pub struct InvariantConfig {
     /// Whether to track and report the highest gas used by each fuzzed selector, together with
     /// a shrunk call sequence that reproduces it.
     ///
+    /// The highest gas shows as a `Max Gas` column in the selector metrics table, which is
+    /// printed even if `show_metrics` is disabled.
+    ///
     /// With a corpus, calls that raise a selector's maximum gas are kept as coverage-guided
     /// corpus entries.
     pub track_max_gas: bool,

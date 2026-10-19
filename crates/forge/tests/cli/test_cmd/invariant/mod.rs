@@ -3649,7 +3649,6 @@ fn invariant_track_max_gas(prj: _, cmd: _) {
         config.fuzz.seed = Some(U256::from(100u32));
         config.invariant.workers =
             foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
-        config.invariant.show_metrics = false;
         config.invariant.track_max_gas = true;
     });
     prj.add_test(
@@ -3691,12 +3690,23 @@ contract MaxGasTest is Test {
 ...
 Ran 1 test for test/MaxGasTest.t.sol:MaxGasTest
 [PASS] invariant_ok() (runs: 20, calls: 600, reverts: 0)
-Max gas per selector:
-	Queue.pop: [..] gas
+
+╭----------+----------+-------+---------+----------+---------╮
+| Contract | Selector | Calls | Reverts | Discards | Max Gas |
++============================================================+
+| Queue    | pop      | [..]
+|----------+----------+-------+---------+----------+---------|
+| Queue    | push     | [..]
+|----------+----------+-------+---------+----------+---------|
+| Queue    | sum      | [..] | 0       | 0        | 10798   |
+╰----------+----------+-------+---------+----------+---------╯
+
+Max gas sequences:
+	Queue.pop:
 ...
-	Queue.push: [..] gas
+	Queue.push:
 ...
-	Queue.sum: [..] gas
+	Queue.sum:
 		sender=[..] addr=[test/MaxGasTest.t.sol:Queue]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=push(uint256) args=[..]
 		sender=[..] addr=[test/MaxGasTest.t.sol:Queue]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=push(uint256) args=[..]
 		sender=[..] addr=[test/MaxGasTest.t.sol:Queue]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=push(uint256) args=[..]
@@ -3723,7 +3733,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
             "calls": 600,
             "reverts": 0,
             "workers": 1,
-            "metrics": {},
+            "metrics": "{...}",
             "failed_corpus_replays": 0,
             "optimization_best_value": null,
             "max_gas": {

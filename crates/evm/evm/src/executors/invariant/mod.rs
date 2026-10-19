@@ -165,6 +165,13 @@ pub struct InvariantMetrics {
     pub reverts: usize,
     // Count of fuzzed selector discards (through assume cheatcodes).
     pub discards: usize,
+    /// Highest gas used by a successful call, without the transaction stipend. Only recorded
+    /// when `track_max_gas` is enabled.
+    #[serde(skip)]
+    pub max_gas: u64,
+    /// Call sequence whose last call used `max_gas`.
+    #[serde(skip)]
+    pub max_gas_sequence: Vec<BasicTxDetails>,
 }
 
 impl InvariantMetrics {
@@ -176,15 +183,20 @@ impl InvariantMetrics {
             self.reverts += 1;
         }
     }
-}
 
-/// Highest gas one fuzzed selector used in a successful call, and the calls that reproduce it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct MaxGasWitness {
-    /// Gas used by the last call of `sequence`, without the transaction stipend.
-    pub gas: u64,
-    /// Call sequence that ends with the call which used `gas`.
-    pub sequence: Vec<BasicTxDetails>,
+    /// Records `gas` used by the last call of `inputs`.
+    ///
+    /// Returns `true` if `gas` raised `max_gas`, in which case `inputs` becomes
+    /// `max_gas_sequence`.
+    fn record_gas(&mut self, inputs: &[BasicTxDetails], gas: u64) -> bool {
+        if gas <= self.max_gas {
+            return false;
+        }
+        self.max_gas = gas;
+        self.max_gas_sequence.clear();
+        self.max_gas_sequence.extend_from_slice(inputs);
+        true
+    }
 }
 
 /// Campaign-level throughput metrics for invariant progress reporting.
@@ -578,8 +590,6 @@ struct InvariantTestData {
     // Cache from fuzzed (target, selector) to its metric key. Only resolved keys are cached and
     // they are invalidated when targets change (see `invalidate_metric_key_cache`).
     metric_key_cache: HashMap<(Address, Selector), String>,
-    // Highest gas used by each fuzzed selector, keyed like `metrics`.
-    max_gas: HashMap<String, MaxGasWitness>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -620,7 +630,6 @@ impl InvariantTest {
             line_coverage: None,
             metrics: HashMap::default(),
             metric_key_cache: HashMap::default(),
-            max_gas: HashMap::default(),
             branch_runner,
             optimization_best_value: None,
             optimization_best_sequence: vec![],
@@ -648,47 +657,56 @@ impl InvariantTest {
         HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
     }
 
-    /// Update metrics for a fuzzed selector, extracted from tx details.
+    /// Update metrics for the fuzzed selector of the last call in `inputs`.
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
-    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
-        let Some(metric_key) =
-            metric_key(&mut self.test_data.metric_key_cache, &self.targeted_contracts, tx_details)
-        else {
-            return;
-        };
-        if let Some(invariant_metrics) = self.test_data.metrics.get_mut(metric_key) {
-            invariant_metrics.record_call(reverted, discarded);
-        } else {
-            self.test_data
-                .metrics
-                .entry(metric_key.to_owned())
-                .or_default()
-                .record_call(reverted, discarded);
-        }
-    }
-
-    /// Records `gas` for the selector of the last call in `inputs`.
     ///
-    /// Returns `true` if `gas` raised the selector's maximum, in which case `inputs` becomes its
-    /// witness sequence.
-    fn record_max_gas(&mut self, inputs: &[BasicTxDetails], gas: u64) -> bool {
-        let Some(metric_key) = inputs.last().and_then(|tx_details| {
-            metric_key(&mut self.test_data.metric_key_cache, &self.targeted_contracts, tx_details)
-        }) else {
+    /// If `gas` is set, also records it. Returns `true` if `gas` raised the selector's max gas.
+    fn record_metrics(
+        &mut self,
+        inputs: &[BasicTxDetails],
+        reverted: bool,
+        discarded: bool,
+        gas: Option<u64>,
+    ) -> bool {
+        let Some(tx_details) = inputs.last() else {
             return false;
         };
-        if self.test_data.max_gas.get(metric_key).is_some_and(|witness| gas <= witness.gas) {
+        let target = tx_details.call_details.target;
+        let Some(selector) =
+            tx_details.call_details.calldata.get(..4).and_then(|s| Selector::try_from(s).ok())
+        else {
             return false;
+        };
+        // Unresolved keys aren't cached so a tx whose target isn't known yet is re-resolved once
+        // that target is added.
+        let metric_key = match self.test_data.metric_key_cache.entry((target, selector)) {
+            AddressMapEntry::Occupied(entry) => entry.into_mut(),
+            AddressMapEntry::Vacant(entry) => {
+                let Some(metric_key) = self
+                    .targeted_contracts
+                    .targets()
+                    .fuzzed_metric_key_for_selector(target, selector)
+                else {
+                    return false;
+                };
+                entry.insert(metric_key)
+            }
         }
-        debug!(target: "max_gas", selector = metric_key, gas, calls = inputs.len(), "new max gas");
-        let witness = MaxGasWitness { gas, sequence: inputs.to_vec() };
-        if let Some(existing) = self.test_data.max_gas.get_mut(metric_key) {
-            *existing = witness;
+        .as_str();
+        let record = |metrics: &mut InvariantMetrics| {
+            metrics.record_call(reverted, discarded);
+            let raised = gas.is_some_and(|gas| metrics.record_gas(inputs, gas));
+            if raised {
+                debug!(target: "max_gas", selector = metric_key, gas = metrics.max_gas, calls = inputs.len(), "new max gas");
+            }
+            raised
+        };
+        if let Some(metrics) = self.test_data.metrics.get_mut(metric_key) {
+            record(metrics)
         } else {
-            self.test_data.max_gas.insert(metric_key.to_owned(), witness);
+            record(self.test_data.metrics.entry(metric_key.to_owned()).or_default())
         }
-        true
     }
 
     /// Drops cached metric keys for the given addresses, keeping the cache coherent when targets
@@ -1086,7 +1104,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         Self::shrink_max_gas_witnesses(
             &self.config,
             &self.executor,
-            &mut result.max_gas,
+            &mut result.metrics,
             progress,
             early_exit,
         );
@@ -1227,21 +1245,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                             let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
-                            if config.show_metrics {
-                                invariant_test.record_metrics(
-                                    current_tx,
-                                    call_result.reverted,
-                                    discarded,
-                                );
-                            }
                             // A call that raises its selector's max gas counts as new coverage,
                             // so the corpus keeps the sequence that reached it.
-                            let raised_max_gas = config.track_max_gas
-                                && !discarded
-                                && !call_result.reverted
-                                && invariant_test.record_max_gas(
+                            let raised_max_gas = (config.show_metrics || config.track_max_gas)
+                                && invariant_test.record_metrics(
                                     &current_run.inputs,
-                                    call_result.gas_used.saturating_sub(call_result.stipend),
+                                    call_result.reverted,
+                                    discarded,
+                                    (config.track_max_gas && !discarded && !call_result.reverted)
+                                        .then(|| {
+                                            call_result.gas_used.saturating_sub(call_result.stipend)
+                                        }),
                                 );
                             HitMaps::merge_opt(
                                 &mut current_run.line_coverage,
@@ -1683,7 +1697,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             invariant_test;
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
-        let mut worker_result = InvariantFuzzTestResult::new(
+        let worker_result = InvariantFuzzTestResult::new(
             errors,
             handler_errors,
             result.runs,
@@ -1698,7 +1712,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        worker_result.max_gas = result.max_gas.into_iter().collect();
         drop(corpus_manager);
         let reported_plan = if campaign_state.is_timed_campaign() {
             InvariantWorkerPlan { runs, ..plan }
@@ -1761,12 +1774,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     fn shrink_max_gas_witnesses(
         config: &InvariantConfig,
         executor: &Executor<FEN>,
-        max_gas: &mut Map<String, MaxGasWitness>,
+        metrics: &mut Map<String, InvariantMetrics>,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
     ) {
-        let total = max_gas.len();
-        for (idx, (name, witness)) in max_gas.iter_mut().enumerate() {
+        let total = metrics.values().filter(|m| !m.max_gas_sequence.is_empty()).count();
+        for (idx, (name, witness)) in
+            metrics.iter_mut().filter(|(_, m)| !m.max_gas_sequence.is_empty()).enumerate()
+        {
             if early_exit.should_stop() {
                 break;
             }
@@ -1778,10 +1793,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 None,
                 false,
             );
-            (witness.sequence, witness.gas) = shrink::shrink_max_gas_sequence(
+            (witness.max_gas_sequence, witness.max_gas) = shrink::shrink_max_gas_sequence(
                 config,
-                &witness.sequence,
-                witness.gas,
+                &witness.max_gas_sequence,
+                witness.max_gas,
                 executor,
                 &shrink_progress,
                 early_exit,
@@ -2434,25 +2449,6 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
         created_contracts,
     )?;
     Ok(())
-}
-
-/// Resolves the metric key of a fuzzed call from the current target set.
-///
-/// Unresolved keys aren't cached so a tx whose target isn't known yet is re-resolved once that
-/// target is added.
-fn metric_key<'a>(
-    cache: &'a mut HashMap<(Address, Selector), String>,
-    targeted_contracts: &FuzzRunIdentifiedContracts,
-    tx_details: &BasicTxDetails,
-) -> Option<&'a str> {
-    let target = tx_details.call_details.target;
-    let selector = Selector::try_from(tx_details.call_details.calldata.get(..4)?).ok()?;
-    match cache.entry((target, selector)) {
-        AddressMapEntry::Occupied(entry) => Some(entry.into_mut()),
-        AddressMapEntry::Vacant(entry) => Some(entry.insert(
-            targeted_contracts.targets().fuzzed_metric_key_for_selector(target, selector)?,
-        )),
-    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use super::{
     FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
-    InvariantFuzzTestResult, InvariantMetrics, MaxGasWitness,
+    InvariantFuzzTestResult, InvariantMetrics,
 };
 use crate::executors::{EarlyExit, EvmExecutionCancellation};
 use alloy_primitives::{Address, I256, Selector};
@@ -8,7 +8,7 @@ use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -298,7 +298,6 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
     let mut metrics = HashMap::default();
     let mut failed_corpus_replays = 0;
     let mut optimization_best = None;
-    let mut max_gas = HashMap::default();
 
     for InvariantWorkerOutput { plan, result } in outputs {
         if plan.worker_id == 0 {
@@ -317,7 +316,6 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
         gas_report_traces.extend(result.gas_report_traces);
         HitMaps::merge_opt(&mut line_coverage, result.line_coverage);
         merge_metrics(&mut metrics, result.metrics);
-        merge_max_gas(&mut max_gas, result.max_gas);
         merge_optimization(
             &mut optimization_best,
             result.optimization_best_value,
@@ -326,7 +324,7 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
     }
     let (optimization_best_value, optimization_best_sequence) =
         optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
-    let mut result = InvariantFuzzTestResult::new(
+    Ok(InvariantFuzzTestResult::new(
         errors,
         handler_errors,
         runs,
@@ -340,9 +338,7 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
         workers,
         optimization_best_value,
         optimization_best_sequence,
-    );
-    result.max_gas = max_gas;
-    Ok(result)
+    ))
 }
 
 fn ensure_outputs_cover_campaign(
@@ -422,23 +418,9 @@ fn merge_metrics(
         entry.calls += metrics.calls;
         entry.reverts += metrics.reverts;
         entry.discards += metrics.discards;
-    }
-}
-
-/// Keeps the highest gas witness per selector, using logical run order to break ties.
-fn merge_max_gas(
-    merged: &mut HashMap<String, MaxGasWitness>,
-    worker_max_gas: HashMap<String, MaxGasWitness>,
-) {
-    for (selector, witness) in worker_max_gas {
-        match merged.entry(selector) {
-            Entry::Occupied(mut best) if witness.gas > best.get().gas => {
-                best.insert(witness);
-            }
-            Entry::Occupied(_) => {}
-            Entry::Vacant(entry) => {
-                entry.insert(witness);
-            }
+        if metrics.max_gas > entry.max_gas {
+            entry.max_gas = metrics.max_gas;
+            entry.max_gas_sequence = metrics.max_gas_sequence;
         }
     }
 }
@@ -755,7 +737,7 @@ mod tests {
                 3,
                 0x30,
                 "transfer(address)",
-                InvariantMetrics { calls: 3, reverts: 1, discards: 0 },
+                InvariantMetrics { calls: 3, reverts: 1, discards: 0, ..Default::default() },
                 3,
                 0,
             ),
@@ -766,7 +748,7 @@ mod tests {
                 1,
                 0x10,
                 "transfer(address)",
-                InvariantMetrics { calls: 1, reverts: 0, discards: 2 },
+                InvariantMetrics { calls: 1, reverts: 0, discards: 2, ..Default::default() },
                 1,
                 4,
             ),
@@ -777,7 +759,7 @@ mod tests {
                 2,
                 0x20,
                 "approve(address)",
-                InvariantMetrics { calls: 2, reverts: 1, discards: 1 },
+                InvariantMetrics { calls: 2, reverts: 1, discards: 1, ..Default::default() },
                 2,
                 0,
             ),
@@ -792,9 +774,15 @@ mod tests {
         assert_eq!(result.last_run_inputs[0].sender, Address::repeat_byte(0x30));
 
         let transfer_metrics = result.metrics.get("transfer(address)").unwrap();
-        assert_eq!(transfer_metrics, &InvariantMetrics { calls: 4, reverts: 1, discards: 2 });
+        assert_eq!(
+            transfer_metrics,
+            &InvariantMetrics { calls: 4, reverts: 1, discards: 2, ..Default::default() }
+        );
         let approve_metrics = result.metrics.get("approve(address)").unwrap();
-        assert_eq!(approve_metrics, &InvariantMetrics { calls: 2, reverts: 1, discards: 1 });
+        assert_eq!(
+            approve_metrics,
+            &InvariantMetrics { calls: 2, reverts: 1, discards: 1, ..Default::default() }
+        );
 
         let coverage = result.line_coverage.unwrap();
         assert_eq!(coverage.get(&B256::ZERO).unwrap().get(7).unwrap().get(), 6);

@@ -4912,6 +4912,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             })
             .collect::<Vec<_>>();
 
+        let max_gas = invariant_result
+            .metrics
+            .iter()
+            .filter(|(_, metrics)| !metrics.max_gas_sequence.is_empty())
+            .map(|(name, metrics)| {
+                let sequence = metrics
+                    .max_gas_sequence
+                    .iter()
+                    .map(|tx| {
+                        BaseCounterExample::from_invariant_call(
+                            tx,
+                            identified_contracts,
+                            None,
+                            invariant_config.show_solidity,
+                        )
+                    })
+                    .collect();
+                (name.clone(), InvariantMaxGas { gas: metrics.max_gas, sequence })
+            })
+            .collect();
+
         let interrupted = success && invariant_result.interrupted;
         self.result.invariant_result(
             TestKind::Invariant {
@@ -4922,25 +4943,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 metrics: invariant_result.metrics,
                 failed_corpus_replays: invariant_result.failed_corpus_replays,
                 optimization_best_value: invariant_result.optimization_best_value,
-                max_gas: invariant_result
-                    .max_gas
-                    .into_iter()
-                    .map(|(name, witness)| {
-                        let sequence = witness
-                            .sequence
-                            .iter()
-                            .map(|tx| {
-                                BaseCounterExample::from_invariant_call(
-                                    tx,
-                                    identified_contracts,
-                                    None,
-                                    invariant_config.show_solidity,
-                                )
-                            })
-                            .collect();
-                        (name, InvariantMaxGas { gas: witness.gas, sequence })
-                    })
-                    .collect(),
+                max_gas,
             },
             InvariantOutcome {
                 success,

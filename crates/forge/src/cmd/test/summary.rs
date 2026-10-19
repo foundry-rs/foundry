@@ -109,6 +109,8 @@ fn new_table() -> Table {
 
 /// Helper function to create the invariant metrics table.
 ///
+/// Adds a `Max Gas` column if any selector has a recorded max gas.
+///
 /// ╭-----------------------+----------------+-------+---------+----------╮
 /// | Contract              | Selector       | Calls | Reverts | Discards |
 /// +=====================================================================+
@@ -124,13 +126,18 @@ pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,
 ) -> Table {
     let mut table = new_table();
-    table.set_header(vec![
+    let show_max_gas = test_metrics.values().any(|metrics| metrics.max_gas > 0);
+    let mut header = vec![
         Cell::new("Contract"),
         Cell::new("Selector"),
         Cell::new("Calls").fg(Color::Green),
         Cell::new("Reverts").fg(Color::Red),
         Cell::new("Discards").fg(Color::Yellow),
-    ]);
+    ];
+    if show_max_gas {
+        header.push(Cell::new("Max Gas"));
+    }
+    table.set_header(header);
 
     let count_cell =
         |count: usize, color| Cell::new(count).fg(if count > 0 { color } else { Color::White });
@@ -140,24 +147,27 @@ pub(crate) fn format_invariant_metrics_table(
         else {
             continue;
         };
-        table.add_row(vec![
+        let mut row = vec![
             Cell::new(contract),
             Cell::new(selector),
             count_cell(metrics.calls, Color::Green),
             count_cell(metrics.reverts, Color::Red),
             count_cell(metrics.discards, Color::Yellow),
-        ]);
+        ];
+        if show_max_gas {
+            row.push(Cell::new(metrics.max_gas));
+        }
+        table.add_row(row);
     }
     table
 }
 
-/// Formats the highest gas used by each fuzzed selector, followed by the call sequence that
-/// reproduces it.
+/// Formats the call sequence that reproduces the max gas of each fuzzed selector.
 pub(crate) fn format_invariant_max_gas(max_gas: &BTreeMap<String, InvariantMaxGas>) -> String {
-    let mut s = String::from("Max gas per selector:");
+    let mut s = String::from("Max gas sequences:");
     for (name, max_gas) in max_gas {
         let name = name.split_once(':').map_or(name.as_str(), |(_, name)| name);
-        write!(s, "\n\t{name}: {} gas", max_gas.gas).unwrap();
+        write!(s, "\n\t{name}:").unwrap();
         for call in &max_gas.sequence {
             write!(s, "\n{call}").unwrap();
         }
@@ -176,11 +186,11 @@ mod tests {
         let mut test_metrics = HashMap::new();
         test_metrics.insert(
             "SystemConfig.setGasLimit".to_string(),
-            InvariantMetrics { calls: 10, reverts: 1, discards: 1 },
+            InvariantMetrics { calls: 10, reverts: 1, discards: 1, ..Default::default() },
         );
         test_metrics.insert(
             "src/universal/Proxy.sol:Proxy.changeAdmin".to_string(),
-            InvariantMetrics { calls: 20, reverts: 2, discards: 2 },
+            InvariantMetrics { calls: 20, reverts: 2, discards: 2, ..Default::default() },
         );
         let table = format_invariant_metrics_table(&test_metrics);
         assert_eq!(table.row_count(), 2);

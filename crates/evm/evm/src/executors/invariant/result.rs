@@ -1,6 +1,6 @@
 use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
-    MaxGasWitness, call_after_invariant_function, call_invariant_function,
+    call_after_invariant_function, call_invariant_function,
     error::{InvariantRunCtx, record_handler_assertion_bug},
 };
 use crate::executors::{Executor, RawCallResult};
@@ -62,9 +62,6 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_sequence: Vec<BasicTxDetails>,
     /// Whether fail-fast or Ctrl-C stopped the campaign before its timeout or planned runs.
     pub interrupted: bool,
-    /// Highest gas used by each fuzzed selector, keyed like `metrics`. Only collected when
-    /// `track_max_gas` is enabled.
-    pub max_gas: HashMap<String, MaxGasWitness>,
 }
 
 impl InvariantFuzzTestResult {
@@ -109,7 +106,6 @@ impl InvariantFuzzTestResult {
             optimization_best_value,
             optimization_best_sequence,
             interrupted: false,
-            max_gas: HashMap::new(),
         }
     }
 }
