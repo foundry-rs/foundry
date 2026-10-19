@@ -126,6 +126,16 @@ pub(crate) fn constrain_enum_value(
     }
 }
 
+/// Checks whether a decoded value contains only declared enum variants.
+pub(crate) fn is_valid_enum_value(
+    value: &DynSolValue,
+    input: &Param,
+    fuzz_fixtures: &FuzzFixtures,
+) -> bool {
+    EnumClamp::for_param(input, fuzz_fixtures)
+        .is_none_or(|plan| plan.apply(value.clone()) == *value)
+}
+
 /// Wraps `strat` to constrain any enum leaves in `input` to their valid range; a no-op otherwise.
 fn bound_enum(
     strat: BoxedStrategy<DynSolValue>,

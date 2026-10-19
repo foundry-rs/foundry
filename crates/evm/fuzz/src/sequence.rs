@@ -4,7 +4,8 @@ use crate::{
     BasicTxDetails, FuzzFixtures,
     invariant::FuzzRunIdentifiedContracts,
     strategies::{
-        FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
+        FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, is_valid_enum_value,
+        mutate_param_value,
     },
 };
 use alloy_dyn_abi::JsonAbiExt;
@@ -588,12 +589,11 @@ impl SequenceMutator {
             ) && let Ok(inputs) = function.abi_decode_input(&calldata[4..])
                 && inputs
                     .iter()
-                    .cloned()
                     .zip(&function.inputs)
-                    .map(|(value, input)| constrain_enum_value(value, input, fixtures))
-                    .zip(&inputs)
-                    .all(|(constrained, input)| constrained == *input)
-                && function.abi_encode_input(&inputs).is_ok_and(|encoded| encoded == calldata)
+                    .all(|(value, input)| is_valid_enum_value(value, input, fixtures))
+                && function
+                    .abi_encode_input_raw(&inputs)
+                    .is_ok_and(|encoded| encoded == calldata[4..])
             {
                 tx.call_details.calldata = calldata.into();
                 return Ok(true);
