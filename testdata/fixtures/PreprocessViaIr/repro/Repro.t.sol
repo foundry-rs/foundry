@@ -11,7 +11,7 @@ interface Vm {
     function assertGt(uint256 a, uint256 b) external pure;
     function assertEq(uint256 a, uint256 b) external pure;
 }
-import {HedgerPool} from "../src/core/HedgerPool.sol";
+import {Empty, HedgerPool} from "../src/core/HedgerPool.sol";
 
 interface IERC20 {
     function balanceOf(address a) external view returns (uint256);
@@ -78,5 +78,18 @@ contract DeploymentSmokeTest {
     function test_deployment() public {
         HedgerPool target = new HedgerPool(address(42));
         require(target.totalMargin() == 42, "constructor argument");
+
+        bytes32 salt = bytes32(uint256(1));
+        Empty empty = new Empty{value: 1, salt: salt}();
+        address expected = address(
+            uint160(
+                uint256(
+                    keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, keccak256(type(Empty).creationCode)))
+                )
+            )
+        );
+        require(address(empty) == expected, "deployment salt");
+        require(address(empty).balance == 1, "deployment value");
+        require(address(empty).code.length > 0, "no-args deployment");
     }
 }

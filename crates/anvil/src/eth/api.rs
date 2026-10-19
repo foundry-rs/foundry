@@ -340,6 +340,32 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Pauses or resumes automatic block production.
+    ///
+    /// While paused, the block time interval keeps ticking but blocks that come due are skipped,
+    /// so the next block is mined on the first tick after mining resumes. Once this returns with
+    /// `paused` set, no automatic block is mined until mining resumes.
+    ///
+    /// Handler for RPC call: `anvil_setMiningPaused`
+    pub async fn anvil_set_mining_paused(&self, paused: bool) -> Result<()> {
+        node_info!("anvil_setMiningPaused");
+        self.miner.set_paused(paused);
+        if paused {
+            // Wait for a block that is already being mined. Candidates that take the lock after
+            // this are skipped by the mining task.
+            drop(self.backend.lock_mining().await);
+        }
+        Ok(())
+    }
+
+    /// Returns `true` if automatic block production is paused.
+    ///
+    /// Handler for RPC call: `anvil_getMiningPaused`
+    pub fn anvil_get_mining_paused(&self) -> Result<bool> {
+        node_info!("anvil_getMiningPaused");
+        Ok(self.miner.is_paused())
+    }
+
     /// Removes transactions from the pool
     ///
     /// Handler for RPC call: `anvil_dropTransaction`
@@ -1163,8 +1189,7 @@ impl<N: Network> EthApi<N> {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
-        let signature = alloy_primitives::hex::encode(signature.as_bytes());
-        Ok(format!("0x{signature}"))
+        Ok(alloy_primitives::hex::encode_prefixed(signature.as_bytes()))
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -1173,9 +1198,8 @@ impl<N: Network> EthApi<N> {
     pub async fn sign(&self, address: Address, content: impl AsRef<[u8]>) -> Result<String> {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
-        let signature =
-            alloy_primitives::hex::encode(signer.sign(address, content.as_ref()).await?.as_bytes());
-        Ok(format!("0x{signature}"))
+        let signature = signer.sign(address, content.as_ref()).await?;
+        Ok(alloy_primitives::hex::encode_prefixed(signature.as_bytes()))
     }
 
     /// Returns transaction at given block hash and index.
@@ -2431,6 +2455,10 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_interval_mining(interval).to_rpc_result()
             }
             EthRequest::GetIntervalMining(()) => self.anvil_get_interval_mining().to_rpc_result(),
+            EthRequest::SetMiningPaused(paused) => {
+                self.anvil_set_mining_paused(paused).await.to_rpc_result()
+            }
+            EthRequest::GetMiningPaused(()) => self.anvil_get_mining_paused().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
