@@ -4614,16 +4614,17 @@ contract CounterTest {
     );
 }
 
+// Gaps report offsets and snippets do not depend on CRLF line endings or multibyte text.
 #[forgetest]
 fn coverage_gaps_report(prj: _, cmd: _) {
-    prj.insert_ds_test();
-    prj.add_source(
+    let source = prj.add_source(
         "AContract.sol",
         r#"
 contract AContract {
     uint256 public value;
 
     function set(uint256 x) public {
+        // ☃
         if (x > 10) {
             value = x;
         } else {
@@ -4631,169 +4632,135 @@ contract AContract {
         }
     }
 
+    function check(uint256 x) public pure {
+        require(x > 0, "zero");
+    }
+
     function unused() public {
         value = 42;
     }
 }
-    "#,
+"#,
     );
-
-    prj.add_source(
-        "AContractTest.sol",
+    prj.add_test(
+        "AContract.t.sol",
         r#"
-import "./test.sol";
-import {AContract} from "./AContract.sol";
+import {AContract} from "../src/AContract.sol";
 
-contract AContractTest is DSTest {
+contract AContractTest {
     function testSet() public {
         AContract a = new AContract();
         a.set(11);
+        a.check(1);
     }
 }
-    "#,
+"#,
     );
-
-    cmd.arg("coverage").args(["--report=gaps", "--no-match-coverage=[Tt]est"]).assert_success();
 
     let expected = str![[r#"
 {
   "version": 1,
-  "summary": {
-    "lines": {
-      "total": 6,
-      "covered": 3
-    },
-    "statements": {
-      "total": 4,
-      "covered": 2
-    },
-    "branches": {
-      "total": 2,
-      "covered": 1
-    },
-    "functions": {
-      "total": 2,
-      "covered": 1
-    }
-  },
-  "files": [
-    {
-      "file": "src/AContract.sol",
-      "summary": {
-        "lines": {
-          "total": 6,
-          "covered": 3
-        },
-        "statements": {
-          "total": 4,
-          "covered": 2
-        },
-        "branches": {
-          "total": 2,
-          "covered": 1
-        },
-        "functions": {
-          "total": 2,
-          "covered": 1
-        }
+  "files": {
+    "src/AContract.sol": [
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 9,
+        "line_end": 14,
+        "byte_start": 180,
+        "byte_end": 266,
+        "snippet": "if (x > 10) {",
+        "branch_id": 0,
+        "path_id": 1
       },
-      "uncovered": [
-        {
-          "kind": "branch",
-          "file": "src/AContract.sol",
-          "contract": "AContract",
-          "function": "set",
-          "start_line": 8,
-          "end_line": 12,
-          "start_column": 9,
-          "snippet": "if (x > 10) { value = x; } else { value = 0; }",
-          "hits": 0,
-          "branch_id": 0,
-          "path_id": 1,
-          "sibling_paths": [
-            {
-              "path_id": 0,
-              "covered": true
-            }
-          ]
-        },
-        {
-          "kind": "line",
-          "file": "src/AContract.sol",
-          "contract": "AContract",
-          "function": "set",
-          "start_line": 11,
-          "end_line": 11,
-          "start_column": 13,
-          "snippet": "value = 0;",
-          "hits": 0
-        },
-        {
-          "kind": "statement",
-          "file": "src/AContract.sol",
-          "contract": "AContract",
-          "function": "set",
-          "start_line": 11,
-          "end_line": 11,
-          "start_column": 13,
-          "snippet": "value = 0",
-          "hits": 0
-        },
-        {
-          "kind": "line",
-          "file": "src/AContract.sol",
-          "contract": "AContract",
-          "function": "unused",
-          "start_line": 15,
-          "end_line": 15,
-          "start_column": 5,
-          "snippet": "function unused() public {",
-          "hits": 0
-        },
-        {
-          "kind": "function",
-          "file": "src/AContract.sol",
-          "contract": "AContract",
-          "function": "unused",
-          "start_line": 15,
-          "end_line": 17,
-          "start_column": 5,
-          "snippet": "function unused() public { value = 42; }",
-          "hits": 0
-        },
-        {
-          "kind": "line",
-          "file": "src/AContract.sol",
-          "contract": "AContract",
-          "function": "unused",
-          "start_line": 16,
-          "end_line": 16,
-          "start_column": 9,
-          "snippet": "value = 42;",
-          "hits": 0
-        },
-        {
-          "kind": "statement",
-          "file": "src/AContract.sol",
-          "contract": "AContract",
-          "function": "unused",
-          "start_line": 16,
-          "end_line": 16,
-          "start_column": 9,
-          "snippet": "value = 42",
-          "hits": 0
-        }
-      ]
-    }
-  ]
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 12,
+        "line_end": 13,
+        "byte_start": 246,
+        "byte_end": 255,
+        "snippet": "value = 0"
+      },
+      {
+        "kind": "statement",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 12,
+        "line_end": 13,
+        "byte_start": 246,
+        "byte_end": 255,
+        "snippet": "value = 0"
+      },
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "check",
+        "line_start": 17,
+        "line_end": 18,
+        "byte_start": 326,
+        "byte_end": 348,
+        "snippet": "require(x > 0, \"zero\")",
+        "branch_id": 1,
+        "path_id": 0
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 21,
+        "byte_start": 361,
+        "byte_end": 387,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "function",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 23,
+        "byte_start": 361,
+        "byte_end": 413,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 21,
+        "line_end": 22,
+        "byte_start": 396,
+        "byte_end": 406,
+        "snippet": "value = 42"
+      },
+      {
+        "kind": "statement",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 21,
+        "line_end": 22,
+        "byte_start": 396,
+        "byte_end": 406,
+        "snippet": "value = 42"
+      }
+    ]
+  }
 }
 "#]]
     .is_json();
-    assert_data_eq!(Data::read_from(&prj.root().join("coverage-gaps.json"), None), expected);
+    cmd.args(["coverage", "--report=gaps"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("coverage-gaps.json"), None),
+        expected.clone()
+    );
 
+    let crlf = fs::read_to_string(&source).unwrap().replace('\n', "\r\n");
+    fs::write(&source, crlf).unwrap();
     cmd.forge_fuse()
-        .arg("coverage")
-        .args(["--report=gaps", "--report-file", "custom-gaps.json"])
+        .args(["coverage", "--report=gaps", "--report-file", "crlf-gaps.json"])
         .assert_success();
-    assert!(prj.root().join("custom-gaps.json").exists());
+    assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
 }

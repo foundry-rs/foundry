@@ -7,6 +7,7 @@ use comfy_table::{
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use foundry_common::{fs, shell};
+use foundry_compilers::artifacts::Source;
 use foundry_evm::core::bytecode::InstIter;
 use semver::Version;
 use serde::{Serialize, ser::SerializeSeq};
@@ -609,13 +610,7 @@ impl LineNumberCache {
     }
 }
 
-/// The maximum number of characters kept in a gap report source snippet.
-const GAP_SNIPPET_MAX_CHARS: usize = 200;
-
-/// Writes uncovered coverage items as JSON.
-///
-/// The report lists every source file with coverage items, its coverage summary, and the items
-/// that were never hit, together with their source location and surrounding context.
+/// Writes the uncovered coverage items of each source file as JSON.
 pub struct GapsReporter {
     root: PathBuf,
     path: PathBuf,
@@ -634,27 +629,66 @@ impl CoverageReporter for GapsReporter {
     }
 
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
-        let mut total = CoverageSummary::default();
-        let mut files = Vec::new();
+        let mut files = BTreeMap::new();
         for (path, items) in report.items_by_file() {
-            let summary = CoverageSummary::from_items(&items);
-            total.merge(&summary);
+            if items.iter().all(|item| item.hits > 0) {
+                continue;
+            }
 
-            let src = fs::read_to_string(self.root.join(path))?;
-            let file = path.display().to_string();
-            let mut uncovered = items
+            // Item offsets refer to the source the compiler read, with CRLF normalized to LF.
+            let src = Source::read(&self.root.join(path))?.content;
+            let functions = items
+                .iter()
+                .filter_map(|item| match &item.kind {
+                    CoverageItemKind::Function { name } => Some((&item.loc.bytes, name)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let uncovered = items
                 .iter()
                 .filter(|item| item.hits == 0)
-                .map(|item| gap_item(&file, &src, &items, item))
+                .map(|item| {
+                    let (kind, name, branch_id, path_id) = coverage_item_kind_fields(&item.kind);
+                    let function = name.or_else(|| {
+                        functions
+                            .iter()
+                            .find(|(bytes, _)| {
+                                bytes.start <= item.loc.bytes.start
+                                    && item.loc.bytes.end <= bytes.end
+                            })
+                            .map(|(_, name)| name.to_string())
+                    });
+                    let snippet = src
+                        .get(item.loc.bytes())
+                        .and_then(|text| text.lines().next())
+                        .unwrap_or_default()
+                        .trim_end();
+                    // A line item reuses the location of the first item on its line, so keep only
+                    // that line.
+                    let (line_end, byte_end) = if matches!(item.kind, CoverageItemKind::Line) {
+                        (item.loc.lines.start + 1, item.loc.bytes.start + snippet.len() as u32)
+                    } else {
+                        (item.loc.lines.end, item.loc.bytes.end)
+                    };
+                    GapItem {
+                        kind,
+                        contract: item.loc.contract_name.to_string(),
+                        function,
+                        line_start: item.loc.lines.start,
+                        line_end,
+                        byte_start: item.loc.bytes.start,
+                        byte_end,
+                        snippet: snippet.to_string(),
+                        branch_id,
+                        path_id,
+                    }
+                })
                 .collect::<Vec<_>>();
-            uncovered.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
-
-            files.push(GapsFile { file, summary: (&summary).into(), uncovered });
+            files.insert(path, uncovered);
         }
 
-        let payload = GapsReport { version: 1, summary: (&total).into(), files };
         let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
-        serde_json::to_writer_pretty(&mut out, &payload)?;
+        serde_json::to_writer_pretty(&mut out, &GapsReport { version: 1, files })?;
         writeln!(out)?;
         out.flush()?;
 
@@ -666,176 +700,33 @@ impl CoverageReporter for GapsReporter {
 
 /// Top-level JSON payload for the coverage gaps report.
 #[derive(Serialize)]
-struct GapsReport {
+struct GapsReport<'a> {
     version: u8,
-    summary: GapsSummary,
-    files: Vec<GapsFile>,
-}
-
-/// Coverage summary and uncovered items for a single source file.
-#[derive(Serialize)]
-struct GapsFile {
-    file: String,
-    summary: GapsSummary,
-    uncovered: Vec<GapItem>,
-}
-
-/// Total and covered item counts per coverage item kind.
-#[derive(Serialize)]
-struct GapsSummary {
-    lines: GapsCount,
-    statements: GapsCount,
-    branches: GapsCount,
-    functions: GapsCount,
-}
-
-impl From<&CoverageSummary> for GapsSummary {
-    fn from(summary: &CoverageSummary) -> Self {
-        Self {
-            lines: GapsCount { total: summary.line_count, covered: summary.line_hits },
-            statements: GapsCount {
-                total: summary.statement_count,
-                covered: summary.statement_hits,
-            },
-            branches: GapsCount { total: summary.branch_count, covered: summary.branch_hits },
-            functions: GapsCount { total: summary.function_count, covered: summary.function_hits },
-        }
-    }
-}
-
-/// Total and covered item counts.
-#[derive(Serialize)]
-struct GapsCount {
-    total: usize,
-    covered: usize,
+    files: BTreeMap<&'a Path, Vec<GapItem>>,
 }
 
 /// An uncovered coverage item.
 #[derive(Serialize)]
 struct GapItem {
-    #[serde(skip)]
-    kind_order: u8,
     kind: &'static str,
-    file: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    contract: Option<String>,
+    contract: String,
+    /// The function that contains the item.
     #[serde(skip_serializing_if = "Option::is_none")]
     function: Option<String>,
-    /// The first line of the item, 1-based.
-    start_line: u32,
-    /// The last line of the item, 1-based and inclusive.
-    end_line: u32,
-    /// The column of the first character of the item, 1-based.
-    start_column: u32,
+    /// The start of a 1-based, half-open line range.
+    line_start: u32,
+    /// The end of a 1-based, half-open line range.
+    line_end: u32,
+    /// The start of a 0-based, half-open byte range in the LF-normalized source.
+    byte_start: u32,
+    /// The end of a 0-based, half-open byte range in the LF-normalized source.
+    byte_end: u32,
+    /// The first source line of the item.
     snippet: String,
-    hits: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     branch_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     path_id: Option<u32>,
-    /// The other paths of the same branch and whether they were hit.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    sibling_paths: Option<Vec<GapSiblingPath>>,
-}
-
-impl GapItem {
-    fn sort_key(&self) -> impl Ord + '_ {
-        (
-            self.start_line,
-            self.start_column,
-            self.kind_order,
-            self.branch_id,
-            self.path_id,
-            self.end_line,
-            self.function.as_deref(),
-        )
-    }
-}
-
-/// Another path of the branch an uncovered branch path belongs to.
-#[derive(Serialize)]
-struct GapSiblingPath {
-    path_id: u32,
-    covered: bool,
-}
-
-fn gap_item(file: &str, src: &str, items: &[CoverageItem], item: &CoverageItem) -> GapItem {
-    let (kind, name, branch_id, path_id) = coverage_item_kind_fields(&item.kind);
-    let kind_order = match item.kind {
-        CoverageItemKind::Line => 0,
-        CoverageItemKind::Statement => 1,
-        CoverageItemKind::Branch { .. } => 2,
-        CoverageItemKind::Function { .. } => 3,
-    };
-    let start = (item.loc.bytes.start as usize).min(src.len());
-    let end = (item.loc.bytes.end as usize).clamp(start, src.len());
-    let line_start = src[..start].rfind('\n').map_or(0, |i| i + 1);
-    let start_column = src[line_start..start].chars().count() as u32 + 1;
-
-    // Line items reuse the location of the earliest item on the line, which may span multiple
-    // lines, so report only the line itself.
-    let (end_line, snippet) = if matches!(item.kind, CoverageItemKind::Line) {
-        let line_end = src[start..].find('\n').map_or(src.len(), |i| start + i);
-        (item.loc.lines.start, &src[line_start..line_end])
-    } else {
-        // `lines` is half-open, so subtract 1 to get the last included line.
-        (item.loc.lines.end.saturating_sub(1).max(item.loc.lines.start), &src[start..end])
-    };
-
-    let function = name.or_else(|| {
-        items
-            .iter()
-            .filter(|other| {
-                matches!(other.kind, CoverageItemKind::Function { .. })
-                    && other.loc.bytes.start <= item.loc.bytes.start
-                    && item.loc.bytes.end <= other.loc.bytes.end
-            })
-            .min_by_key(|other| other.loc.bytes.len())
-            .and_then(|other| coverage_item_kind_fields(&other.kind).1)
-    });
-
-    let sibling_paths = branch_id.map(|id| {
-        let mut siblings = items
-            .iter()
-            .filter_map(|other| match other.kind {
-                CoverageItemKind::Branch { branch_id, path_id: other_path_id, .. }
-                    if branch_id == id && Some(other_path_id) != path_id =>
-                {
-                    Some(GapSiblingPath { path_id: other_path_id, covered: other.hits > 0 })
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        siblings.sort_by_key(|sibling| sibling.path_id);
-        siblings
-    });
-
-    GapItem {
-        kind_order,
-        kind,
-        file: file.to_string(),
-        contract: (!item.loc.contract_name.is_empty()).then(|| item.loc.contract_name.to_string()),
-        function,
-        start_line: item.loc.lines.start,
-        end_line,
-        start_column,
-        snippet: gap_snippet(snippet),
-        hits: item.hits,
-        branch_id,
-        path_id,
-        sibling_paths,
-    }
-}
-
-/// Collapses whitespace and caps the snippet at [`GAP_SNIPPET_MAX_CHARS`] characters.
-fn gap_snippet(src: &str) -> String {
-    let snippet = src.split_whitespace().collect::<Vec<_>>().join(" ");
-    if snippet.chars().count() <= GAP_SNIPPET_MAX_CHARS {
-        return snippet;
-    }
-    let mut snippet = snippet.chars().take(GAP_SNIPPET_MAX_CHARS - 3).collect::<String>();
-    snippet.push_str("...");
-    snippet
 }
 
 #[cfg(test)]
