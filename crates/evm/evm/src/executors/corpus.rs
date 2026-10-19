@@ -47,7 +47,10 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, I256, U256};
+use alloy_primitives::{
+    Address, Bytes, I256, U256,
+    map::{Entry, HashMap},
+};
 use alloy_sol_types::SolCall;
 use eyre::{Result, eyre};
 use foundry_cheatcodes::Vm::{
@@ -198,23 +201,22 @@ impl CorpusEntry {
         size > GZIP_THRESHOLD
     }
 
-    /// Approximate heap size of the call sequence and comparison hints, in bytes.
+    /// Approximate heap size of the entry without its calldata buffers, in bytes.
     ///
-    /// Shared `Bytes` buffers are counted once per entry, so this can overestimate.
-    fn memory_size(&self) -> usize {
-        let tx_bytes: usize = self
-            .tx_seq
-            .iter()
-            .map(|tx| size_of::<BasicTxDetails>() + tx.call_details.calldata.len())
-            .sum();
-        let cmp_bytes: usize = self
-            .cmp_seq
+    /// The worker corpus counts each unique calldata buffer once, see
+    /// [`WorkerCorpus::calldata_refs`].
+    fn overhead_size(&self) -> usize {
+        self.tx_seq.len() * size_of::<BasicTxDetails>() + self.cmp_size()
+    }
+
+    /// Approximate heap size of the comparison hints, in bytes.
+    fn cmp_size(&self) -> usize {
+        self.cmp_seq
             .iter()
             .map(|hints| {
-                size_of::<Vec<ComparisonHint>>() + hints.len() * size_of::<ComparisonHint>()
+                size_of::<Vec<ComparisonHint>>() + hints.capacity() * size_of::<ComparisonHint>()
             })
-            .sum();
-        tx_bytes + cmp_bytes
+            .sum()
     }
 }
 
@@ -561,6 +563,12 @@ pub(crate) struct GlobalCorpusMetrics {
     corpus_count: AtomicUsize,
     // Number of corpus entries that are favored.
     favored_items: AtomicUsize,
+    // Number of corpus entries evicted from memory.
+    evicted_entries: AtomicUsize,
+    // Number of corpus entries whose comparison hints were dropped to save memory.
+    cmp_stripped_entries: AtomicUsize,
+    // Approximate memory size of the in-memory corpora, in bytes.
+    memory_bytes: AtomicUsize,
 }
 
 pub(crate) struct CorpusSyncCoordinator {
@@ -616,6 +624,9 @@ impl GlobalCorpusMetrics {
             cumulative_features_seen: self.cumulative_features_seen.load(Ordering::Relaxed),
             corpus_count: self.corpus_count.load(Ordering::Relaxed),
             favored_items: self.favored_items.load(Ordering::Relaxed),
+            evicted_entries: self.evicted_entries.load(Ordering::Relaxed),
+            cmp_stripped_entries: self.cmp_stripped_entries.load(Ordering::Relaxed),
+            memory_bytes: self.memory_bytes.load(Ordering::Relaxed),
         }
     }
 }
@@ -630,6 +641,12 @@ pub(crate) struct CorpusMetrics {
     corpus_count: usize,
     // Number of corpus entries that are favored.
     favored_items: usize,
+    // Number of corpus entries evicted from memory.
+    evicted_entries: usize,
+    // Number of corpus entries whose comparison hints were dropped to save memory.
+    cmp_stripped_entries: usize,
+    // Approximate memory size of the in-memory corpus, in bytes.
+    memory_bytes: usize,
 }
 
 impl fmt::Display for CorpusMetrics {
@@ -639,7 +656,10 @@ impl fmt::Display for CorpusMetrics {
         writeln!(f, "        - cumulative edges seen: {}", self.cumulative_edges_seen)?;
         writeln!(f, "        - cumulative features seen: {}", self.cumulative_features_seen)?;
         writeln!(f, "        - corpus count: {}", self.corpus_count)?;
-        write!(f, "        - favored items: {}", self.favored_items)?;
+        writeln!(f, "        - favored items: {}", self.favored_items)?;
+        writeln!(f, "        - evicted entries: {}", self.evicted_entries)?;
+        writeln!(f, "        - cmp stripped entries: {}", self.cmp_stripped_entries)?;
+        write!(f, "        - corpus memory: {:.1} MiB", self.memory_bytes as f64 / MIB as f64)?;
         Ok(())
     }
 }
@@ -671,8 +691,10 @@ pub struct WorkerCorpus {
     /// In-memory corpus entries populated from the persisted files and
     /// runs administered by this worker.
     in_memory_corpus: Vec<CorpusEntry>,
-    /// Approximate memory size of [`WorkerCorpus::in_memory_corpus`], in bytes.
-    in_memory_bytes: usize,
+    /// Number of in-memory entries that hold each unique calldata buffer.
+    ///
+    /// Equal calldata shares one buffer, so the memory size counts it once.
+    calldata_refs: HashMap<Bytes, usize>,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
     /// Stable dense EVM edge IDs for this worker's history map.
@@ -951,11 +973,12 @@ impl WorkerCorpus {
             None
         };
 
-        let in_memory_bytes = seed.in_memory_corpus.iter().map(CorpusEntry::memory_size).sum();
+        let in_memory_corpus = seed.in_memory_corpus;
+        seed.metrics.memory_bytes = 0;
         let mut corpus = Self {
             id,
-            in_memory_corpus: seed.in_memory_corpus,
-            in_memory_bytes,
+            in_memory_corpus: Vec::with_capacity(in_memory_corpus.len()),
+            calldata_refs: HashMap::default(),
             history_map: seed.history_map,
             edge_indices: seed.edge_indices,
             sancov_history_map: seed.sancov_history_map,
@@ -974,6 +997,10 @@ impl WorkerCorpus {
             optimization_best_sequence: seed.optimization_best_sequence,
             last_new_edge_at: seed.last_new_edge_at,
         };
+        for mut entry in in_memory_corpus {
+            corpus.track_entry(&mut entry);
+            corpus.in_memory_corpus.push(entry);
+        }
         corpus.enforce_memory_budget();
         Ok(corpus)
     }
@@ -1138,9 +1165,54 @@ impl WorkerCorpus {
             self.new_entry_indices.push(new_index);
         }
         self.metrics.corpus_count += 1;
-        self.in_memory_bytes += corpus.memory_size();
+        self.store_entry(corpus);
+    }
+
+    /// Stores an entry in memory and evicts entries if the corpus is over its memory budget.
+    fn store_entry(&mut self, mut corpus: CorpusEntry) {
+        self.track_entry(&mut corpus);
         self.in_memory_corpus.push(corpus);
         self.enforce_memory_budget();
+    }
+
+    /// Shares the calldata of `corpus` with equal calldata already in memory and adds the
+    /// entry to the memory size. Each unique calldata buffer is counted once.
+    fn track_entry(&mut self, corpus: &mut CorpusEntry) {
+        for tx in &mut corpus.tx_seq {
+            let calldata = &mut tx.call_details.calldata;
+            match self.calldata_refs.entry(calldata.clone()) {
+                Entry::Occupied(mut shared) => {
+                    *shared.get_mut() += 1;
+                    *calldata = shared.key().clone();
+                }
+                Entry::Vacant(unique) => {
+                    self.metrics.memory_bytes += calldata.len();
+                    unique.insert(1);
+                }
+            }
+        }
+        for hints in &mut corpus.cmp_seq {
+            hints.shrink_to_fit();
+        }
+        self.metrics.memory_bytes += corpus.overhead_size();
+    }
+
+    /// Removes an entry from the memory size. Calldata buffers are subtracted when no other
+    /// in-memory entry holds them.
+    fn untrack_entry(&mut self, corpus: &CorpusEntry) {
+        for tx in &corpus.tx_seq {
+            let calldata = &tx.call_details.calldata;
+            if let Some(refs) = self.calldata_refs.get_mut(calldata) {
+                *refs -= 1;
+                if *refs == 0 {
+                    self.calldata_refs.remove(calldata);
+                    self.metrics.memory_bytes =
+                        self.metrics.memory_bytes.saturating_sub(calldata.len());
+                }
+            }
+        }
+        self.metrics.memory_bytes =
+            self.metrics.memory_bytes.saturating_sub(corpus.overhead_size());
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -1344,16 +1416,18 @@ impl WorkerCorpus {
         self.new_entry_indices.binary_search(&index).is_ok()
     }
 
-    /// Evicts entries from memory until the corpus fits in `corpus_max_memory_mb`.
+    /// Shrinks and evicts entries until the corpus fits in `corpus_max_memory_mb`.
     ///
-    /// Entries allowed by the regular eviction policy go first. If none is left, the oldest
-    /// entry that is not pending synchronization goes next. Evicted entries stay on disk.
+    /// First, the comparison hints of non-favored entries are dropped. If the corpus is still
+    /// too large, entries allowed by the regular eviction policy go first, then the oldest entry
+    /// that is not pending synchronization. Evicted entries stay on disk.
     fn enforce_memory_budget(&mut self) {
         let max_bytes = self.config.corpus_max_memory_mb.saturating_mul(MIB);
-        if max_bytes == 0 {
+        if max_bytes == 0 || self.metrics.memory_bytes <= max_bytes {
             return;
         }
-        while self.in_memory_bytes > max_bytes
+        self.strip_comparison_hints(max_bytes);
+        while self.metrics.memory_bytes > max_bytes
             && self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
         {
             let Some(index) = self.evictable_index().or_else(|| {
@@ -1365,13 +1439,40 @@ impl WorkerCorpus {
         }
     }
 
+    /// Drops the comparison hints of non-favored entries until the corpus fits in `max_bytes`.
+    ///
+    /// Entries allowed by the regular eviction policy go first, then the largest hint sets.
+    /// These entries stay in memory and can still get ABI mutations.
+    fn strip_comparison_hints(&mut self, max_bytes: usize) {
+        let mut candidates = self
+            .in_memory_corpus
+            .iter()
+            .enumerate()
+            .filter(|(_, corpus)| !corpus.is_favored && !corpus.cmp_seq.is_empty())
+            .map(|(index, corpus)| {
+                let evictable = corpus.total_mutations > self.config.corpus_min_mutations;
+                (evictable, corpus.cmp_size(), index)
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_unstable_by(|a, b| b.cmp(a));
+        for (_, size, index) in candidates {
+            if self.metrics.memory_bytes <= max_bytes {
+                break;
+            }
+            self.in_memory_corpus[index].cmp_seq = Vec::new();
+            self.metrics.memory_bytes = self.metrics.memory_bytes.saturating_sub(size);
+            self.metrics.cmp_stripped_entries += 1;
+        }
+    }
+
     /// Removes one entry from memory and keeps the tracked indices and metrics consistent.
     fn remove_corpus_entry(&mut self, index: usize) {
         let corpus = self.in_memory_corpus.remove(index);
 
         trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
 
-        self.in_memory_bytes = self.in_memory_bytes.saturating_sub(corpus.memory_size());
+        self.untrack_entry(&corpus);
+        self.metrics.evicted_entries += 1;
         self.metrics.update_favored(false, corpus.is_favored);
 
         // Adjust the tracked indices.
@@ -1464,9 +1565,7 @@ impl WorkerCorpus {
         if self.worker_sync_enabled && self.id == 0 {
             self.new_entry_indices.push(self.in_memory_corpus.len());
         }
-        self.in_memory_bytes += corpus.memory_size();
-        self.in_memory_corpus.push(corpus);
-        self.enforce_memory_budget();
+        self.store_entry(corpus);
     }
 
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
@@ -1715,14 +1814,6 @@ impl WorkerCorpus {
             .metrics
             .cumulative_features_seen
             .saturating_sub(self.last_sync_metrics.cumulative_features_seen);
-        // For corpus count and favored items, calculate deltas.
-        let corpus_count_delta =
-            self.metrics.corpus_count as isize - self.last_sync_metrics.corpus_count as isize;
-        let favored_delta =
-            self.metrics.favored_items as isize - self.last_sync_metrics.favored_items as isize;
-
-        // Add delta values to global metrics.
-
         if edges_delta > 0 {
             global_corpus_metrics.cumulative_edges_seen.fetch_add(edges_delta, Ordering::Relaxed);
         }
@@ -1732,24 +1823,28 @@ impl WorkerCorpus {
                 .fetch_add(features_delta, Ordering::Relaxed);
         }
 
-        if corpus_count_delta > 0 {
-            global_corpus_metrics
-                .corpus_count
-                .fetch_add(corpus_count_delta as usize, Ordering::Relaxed);
-        } else if corpus_count_delta < 0 {
-            global_corpus_metrics
-                .corpus_count
-                .fetch_sub((-corpus_count_delta) as usize, Ordering::Relaxed);
-        }
-
-        if favored_delta > 0 {
-            global_corpus_metrics
-                .favored_items
-                .fetch_add(favored_delta as usize, Ordering::Relaxed);
-        } else if favored_delta < 0 {
-            global_corpus_metrics
-                .favored_items
-                .fetch_sub((-favored_delta) as usize, Ordering::Relaxed);
+        // Gauges and eviction counters can move in both directions between syncs.
+        let last = &self.last_sync_metrics;
+        for (global, current, last) in [
+            (&global_corpus_metrics.corpus_count, self.metrics.corpus_count, last.corpus_count),
+            (&global_corpus_metrics.favored_items, self.metrics.favored_items, last.favored_items),
+            (
+                &global_corpus_metrics.evicted_entries,
+                self.metrics.evicted_entries,
+                last.evicted_entries,
+            ),
+            (
+                &global_corpus_metrics.cmp_stripped_entries,
+                self.metrics.cmp_stripped_entries,
+                last.cmp_stripped_entries,
+            ),
+            (&global_corpus_metrics.memory_bytes, self.metrics.memory_bytes, last.memory_bytes),
+        ] {
+            if current > last {
+                global.fetch_add(current - last, Ordering::Relaxed);
+            } else if current < last {
+                global.fetch_sub(last - current, Ordering::Relaxed);
+            }
         }
 
         // Store current metrics as last sync metrics for next delta calculation.
@@ -2866,6 +2961,7 @@ mod tests {
                 cumulative_features_seen: 11,
                 corpus_count: 1,
                 favored_items: 0,
+                ..Default::default()
             },
             replay_dirs: None,
             failed_replays: 13,
@@ -2911,6 +3007,7 @@ mod tests {
                 cumulative_features_seen: 11,
                 corpus_count: 10,
                 favored_items: 5,
+                ..Default::default()
             },
             replay_dirs: None,
             failed_replays: 13,
@@ -3480,23 +3577,38 @@ mod tests {
         assert!(manager.new_entry_indices.is_empty());
     }
 
-    #[test]
-    fn memory_budget_evicts_until_corpus_fits() {
-        let config =
-            FuzzCorpusConfig { corpus_max_memory_mb: 1, ..corpus_config(temp_corpus_dir()) };
+    /// Recomputes the memory size of `manager` from scratch, counting equal calldata once.
+    fn expected_memory_bytes(manager: &WorkerCorpus) -> usize {
+        let unique = manager
+            .in_memory_corpus
+            .iter()
+            .flat_map(|entry| &entry.tx_seq)
+            .map(|tx| &tx.call_details.calldata)
+            .collect::<HashSet<_>>();
+        unique.iter().map(|calldata| calldata.len()).sum::<usize>()
+            + manager.in_memory_corpus.iter().map(CorpusEntry::overhead_size).sum::<usize>()
+    }
+
+    fn memory_test_manager(corpus_max_memory_mb: usize) -> WorkerCorpus {
+        let config = FuzzCorpusConfig { corpus_max_memory_mb, ..corpus_config(temp_corpus_dir()) };
         let generator =
             test_sequence(&config, TxGenerator::from_strategy(Just(basic_tx()).boxed()));
-        let mut manager =
-            WorkerCorpus::from_seed(0, config, generator, WorkerCorpusSeed::default()).unwrap();
-        let large_entry = || CorpusEntry::new(vec![basic_tx_with_calldata(vec![0u8; 400 * 1024])]);
+        WorkerCorpus::from_seed(0, config, generator, WorkerCorpusSeed::default()).unwrap()
+    }
+
+    #[test]
+    fn memory_budget_evicts_until_corpus_fits() {
+        let mut manager = memory_test_manager(1);
+        let large_entry =
+            |byte| CorpusEntry::new(vec![basic_tx_with_calldata(vec![byte; 400 * 1024])]);
 
         // Under the budget, nothing is evicted, even without mutations.
-        manager.insert_corpus_entry(large_entry(), CorpusInsertionMode::Live);
-        manager.insert_corpus_entry(large_entry(), CorpusInsertionMode::Live);
+        manager.insert_corpus_entry(large_entry(1), CorpusInsertionMode::Live);
+        manager.insert_corpus_entry(large_entry(2), CorpusInsertionMode::Live);
         assert_eq!(manager.in_memory_corpus.len(), 2);
 
         // Over the budget, the oldest entry is evicted although the regular policy rejects it.
-        let newest = large_entry();
+        let newest = large_entry(3);
         let newest_uuid = newest.uuid;
         manager.in_memory_corpus[0].is_favored = true;
         manager.metrics.favored_items = 1;
@@ -3504,17 +3616,72 @@ mod tests {
 
         assert_eq!(manager.in_memory_corpus.len(), 2);
         assert_eq!(manager.metrics.favored_items, 0);
+        assert_eq!(manager.metrics.evicted_entries, 1);
         assert_eq!(manager.in_memory_corpus[1].uuid, newest_uuid);
-        assert_eq!(
-            manager.in_memory_bytes,
-            manager.in_memory_corpus.iter().map(CorpusEntry::memory_size).sum::<usize>()
-        );
-        assert!(manager.in_memory_bytes <= MIB);
+        assert_eq!(manager.metrics.memory_bytes, expected_memory_bytes(&manager));
+        assert!(manager.metrics.memory_bytes <= MIB);
         // Evicted entries stay on disk.
         assert_eq!(
             read_corpus_dir(&manager.worker_dir.clone().unwrap().join(CORPUS_DIR)).count(),
             3
         );
+    }
+
+    #[test]
+    fn memory_size_counts_shared_calldata_once() {
+        let mut manager = memory_test_manager(0);
+        let calldata = Bytes::from(vec![1u8; 1000]);
+
+        manager.insert_corpus_entry(
+            CorpusEntry::new(vec![basic_tx_with_calldata(calldata.clone())]),
+            CorpusInsertionMode::Live,
+        );
+        // A shared buffer and an equal buffer from another allocation.
+        manager.insert_corpus_entry(
+            CorpusEntry::new(vec![
+                basic_tx_with_calldata(calldata.clone()),
+                basic_tx_with_calldata(vec![1u8; 1000]),
+            ]),
+            CorpusInsertionMode::Live,
+        );
+
+        let overhead = size_of::<BasicTxDetails>();
+        assert_eq!(manager.metrics.memory_bytes, 1000 + 3 * overhead);
+        assert_eq!(manager.metrics.memory_bytes, expected_memory_bytes(&manager));
+        // The equal buffer now shares the stored allocation.
+        assert_eq!(
+            manager.in_memory_corpus[1].tx_seq[1].call_details.calldata.as_ptr(),
+            calldata.as_ptr()
+        );
+
+        // The buffer stays counted while another entry holds it.
+        manager.remove_corpus_entry(0);
+        assert_eq!(manager.metrics.memory_bytes, 1000 + 2 * overhead);
+        manager.remove_corpus_entry(0);
+        assert_eq!(manager.metrics.memory_bytes, 0);
+        assert!(manager.calldata_refs.is_empty());
+    }
+
+    #[test]
+    fn memory_budget_strips_hints_before_evicting() {
+        let mut manager = memory_test_manager(1);
+        let hint = ComparisonHint { lhs: U256::from(1), rhs: U256::from(2) };
+        let with_hints = CorpusEntry::new_with_cmp(
+            vec![basic_tx_with_calldata(vec![1u8; 64])],
+            vec![vec![hint; 10_000]],
+            Uuid::new_v4(),
+        );
+        let large = CorpusEntry::new(vec![basic_tx_with_calldata(vec![2u8; 500 * 1024])]);
+
+        manager.insert_corpus_entry(with_hints, CorpusInsertionMode::Live);
+        manager.insert_corpus_entry(large, CorpusInsertionMode::Live);
+
+        assert_eq!(manager.in_memory_corpus.len(), 2);
+        assert!(manager.in_memory_corpus[0].cmp_seq.is_empty());
+        assert_eq!(manager.metrics.cmp_stripped_entries, 1);
+        assert_eq!(manager.metrics.evicted_entries, 0);
+        assert_eq!(manager.metrics.memory_bytes, expected_memory_bytes(&manager));
+        assert!(manager.metrics.memory_bytes <= MIB);
     }
 
     #[test]
