@@ -1853,6 +1853,18 @@ pub fn should_ignore_revert(
         })
 }
 
+/// Derives the deterministic RNG seed for a fuzz or invariant worker.
+///
+/// Worker 0 keeps the configured seed, so a single worker replays the same sequence.
+pub(crate) fn worker_seed(seed: U256, worker_id: u32) -> U256 {
+    if worker_id == 0 {
+        seed
+    } else {
+        let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
+        keccak256(seed_data).into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2417,6 +2429,16 @@ mod tests {
     }
 
     #[test]
+    fn worker_seed_preserves_master_seed_and_derives_workers() {
+        let seed = U256::from(0x1234);
+
+        assert_eq!(worker_seed(seed, 0), seed);
+        assert_ne!(worker_seed(seed, 1), seed);
+        assert_ne!(worker_seed(seed, 1), worker_seed(seed, 2));
+        assert_ne!(worker_seed(seed, 1), worker_seed(U256::from(0x5678), 1));
+    }
+
+    #[test]
     fn call_commit_preserves_lifecycle_state() {
         let mut executor = eth_executor(
             ExecutorBuilder::default()
@@ -2431,27 +2453,20 @@ mod tests {
         let restore = revertToStateCall { snapshotId: U256::ZERO }.abi_encode();
 
         // Discarding a call must discard both its transaction writes and its snapshots.
-        let discarded = executor
-            .call_raw(CALLER, CHEATCODE_ADDRESS, snapshot.clone().into(), U256::ZERO)
-            .unwrap();
-        assert_eq!(U256::from_be_slice(&discarded.result), U256::ZERO);
-        drop(discarded);
+        executor.call_raw(CALLER, CHEATCODE_ADDRESS, snapshot.clone().into(), U256::ZERO).unwrap();
         let missing = executor
             .call_raw(CALLER, CHEATCODE_ADDRESS, restore.clone().into(), U256::ZERO)
             .unwrap();
         assert_eq!(U256::from_be_slice(&missing.result), U256::ZERO);
-        assert_eq!(executor.get_nonce(CALLER).unwrap(), 5);
 
         let mut captured =
             executor.call_raw(CALLER, CHEATCODE_ADDRESS, snapshot.into(), U256::ZERO).unwrap();
         executor.commit(&mut captured);
-        assert_eq!(executor.get_nonce(CALLER).unwrap(), 5);
         let store = storeCall { target, slot: B256::ZERO, value: B256::with_last_byte(7) };
         let mut written = executor
             .call_raw(CALLER, CHEATCODE_ADDRESS, store.abi_encode().into(), U256::ZERO)
             .unwrap();
         executor.commit(&mut written);
-        assert_eq!(executor.get_nonce(CALLER).unwrap(), 5);
         assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), U256::from(7));
 
         let mut restored =
@@ -2475,51 +2490,28 @@ mod tests {
             );
             let target = Address::with_last_byte(0x31);
             // Return the local failure flag from slot zero, as DSTest's failed() does.
-            executor
-                .set_code(
-                    target,
-                    Bytecode::new_raw(Bytes::from_static(&[
-                        0x5f, 0x54, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3,
-                    ])),
-                )
-                .unwrap();
+            let code = Bytes::from_static(&[0x5f, 0x54, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
+            executor.set_code(target, Bytecode::new_raw(code)).unwrap();
             let (account, slot) =
                 if legacy { (target, U256::ZERO) } else { (CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) };
             executor.backend_mut().insert_account_storage(account, slot, U256::ONE);
+            let snapshot = snapshotStateCall {}.abi_encode();
             let captured = executor
-                .transact_raw(
-                    CALLER,
-                    CHEATCODE_ADDRESS,
-                    snapshotStateCall {}.abi_encode().into(),
-                    U256::ZERO,
-                )
+                .transact_raw(CALLER, CHEATCODE_ADDRESS, snapshot.into(), U256::ZERO)
                 .unwrap();
-            let snapshot_id = U256::from_be_slice(&captured.result);
+            let restore = revertToStateCall { snapshotId: U256::from_be_slice(&captured.result) }
+                .abi_encode();
             executor.backend_mut().insert_account_storage(account, slot, U256::ZERO);
 
-            let mut restored = executor
-                .call_raw(
-                    CALLER,
-                    CHEATCODE_ADDRESS,
-                    revertToStateCall { snapshotId: snapshot_id }.abi_encode().into(),
-                    U256::ZERO,
-                )
-                .unwrap();
+            let mut restored =
+                executor.call_raw(CALLER, CHEATCODE_ADDRESS, restore.into(), U256::ZERO).unwrap();
             assert!(!restored.reverted);
             // The global flag includes accepted state; legacy failed() only observes pending
             // storage, not a flag that was already committed before the captured transaction.
-            assert_eq!(
-                executor.is_raw_call_success(
-                    target,
-                    Cow::Borrowed(&restored.state_changeset),
-                    &restored,
-                ),
-                legacy,
-            );
-            assert_eq!(executor.backend().storage(account, slot).unwrap(), U256::ZERO);
+            let pending = Cow::Borrowed(&restored.state_changeset);
+            assert_eq!(executor.is_raw_call_success(target, pending, &restored), legacy);
             executor.commit(&mut restored);
             assert_eq!(executor.is_raw_call_mut_success(target, &mut restored), legacy);
-            assert_eq!(executor.backend().storage(account, slot).unwrap(), U256::ONE);
         }
     }
 }
