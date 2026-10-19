@@ -3770,7 +3770,7 @@
     {
       "func": {
         "id": "cool",
-        "description": "Marks the slots of an account and the account address as cold.",
+        "description": "Marks an account's loaded storage slots as cold. Does not cool the account address.",
         "declaration": "function cool(address target) external;",
         "visibility": "external",
         "mutability": "",

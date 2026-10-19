@@ -56,3 +56,33 @@ contract CoolTest is Test {
         assertGt(beforeCoolGas, noCoolGas);
     }
 }
+
+contract CoolTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+/// forge-config: default.isolate = false
+contract CoolPersistenceTest is Test {
+    CoolTarget preexisting = new CoolTarget();
+    CoolTarget created;
+
+    function setUp() public {
+        created = new CoolTarget();
+        created.set(1);
+        preexisting.set(2);
+        vm.cool(address(created));
+        vm.cool(address(preexisting));
+    }
+
+    function testCoolKeepsSetUpState() public {
+        assertEq(preexisting.value(), 2);
+        assertEq(created.value(), 1);
+    }
+}
+
+/// forge-config: default.isolate = true
+contract CoolPersistenceIsolatedTest is CoolPersistenceTest {}

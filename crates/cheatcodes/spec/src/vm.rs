@@ -733,7 +733,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function setLogoURI(address token, string calldata newLogoURI) external;
 
-    /// Marks the slots of an account and the account address as cold.
+    /// Marks an account's loaded storage slots as cold. Does not cool the account address.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function cool(address target) external;
 
