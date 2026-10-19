@@ -263,8 +263,8 @@ mod tests {
         let body = run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap();
 
         assert_eq!(
-            serde_json::from_slice::<Response>(&body).unwrap(),
-            Response::error(RpcError::parse_error())
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::to_value(Response::error(RpcError::parse_error())).unwrap()
         );
     }
 }

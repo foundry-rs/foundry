@@ -473,18 +473,7 @@ Chain ID
             );
         }
 
-        if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
-            let _ = write!(
-                s,
-                r#"
-Gas Price
-==================
-
-{}
-"#,
-                self.get_gas_price().green()
-            );
-        } else {
+        if SpecId::from(self.get_hardfork()).is_enabled_in(SpecId::LONDON) {
             let _ = write!(
                 s,
                 r#"
@@ -494,6 +483,17 @@ Base Fee
 {}
 "#,
                 self.get_base_fee().green()
+            );
+        } else {
+            let _ = write!(
+                s,
+                r#"
+Gas Price
+==================
+
+{}
+"#,
+                self.get_gas_price().green()
             );
         }
 

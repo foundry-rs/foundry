@@ -497,8 +497,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 shlex = "2"
 similar-asserts = "2.0"
-soldeer-commands = "=0.12.0"
-soldeer-core = { version = "=0.12.0", features = ["serde"] }
+soldeer-commands = "=0.12.1"
+soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
@@ -584,15 +584,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
-
-## soldeer
-# Temporary: https://github.com/mario-eth/soldeer/pull/411
-soldeer-commands = { git = "https://github.com/mario-eth/soldeer", rev = "f070a2084cde8e54c952e7f7c5cf4638a808b7b0" }
-soldeer-core = { git = "https://github.com/mario-eth/soldeer", rev = "f070a2084cde8e54c952e7f7c5cf4638a808b7b0" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "39c03a49ade2f74a6e97e2af308283a42d78d302" }

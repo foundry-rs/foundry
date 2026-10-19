@@ -3075,31 +3075,6 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.set_fork(idx, fork)
     }
 
-    /// Updates the fork and the local mapping and returns the new index for the `fork_db`
-    pub fn update_fork_mapping(
-        &mut self,
-        id: LocalForkId,
-        fork_id: ForkId,
-        block: BlockNumHash,
-        source_chain_id: ChainId,
-        db: ForkDB<AnyNetwork, BlockEnvFor<FEN>>,
-        journaled_state: JournaledState,
-    ) -> ForkLookupIndex {
-        let idx = self.forks.len();
-        self.issued_local_fork_ids.insert(id, fork_id.clone());
-        self.created_forks.insert(fork_id, idx);
-
-        let fork = Fork {
-            db,
-            journaled_state,
-            source_chain_id,
-            position: ForkPosition::AfterBlock { block },
-            block_env: None,
-        };
-        self.forks.push(Some(fork));
-        idx
-    }
-
     pub fn roll_fork(
         &mut self,
         id: LocalForkId,

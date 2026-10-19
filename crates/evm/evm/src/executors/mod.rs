@@ -1951,6 +1951,18 @@ pub fn should_ignore_revert(
         })
 }
 
+/// Derives the deterministic RNG seed for a fuzz or invariant worker.
+///
+/// Worker 0 keeps the configured seed, so a single worker replays the same sequence.
+pub(crate) fn worker_seed(seed: U256, worker_id: u32) -> U256 {
+    if worker_id == 0 {
+        seed
+    } else {
+        let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
+        keccak256(seed_data).into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2847,5 +2859,15 @@ mod tests {
                 .is_none()
         );
         assert_eq!(executor.get_nonce(CALLER).unwrap(), nonce);
+    }
+
+    #[test]
+    fn worker_seed_preserves_master_seed_and_derives_workers() {
+        let seed = U256::from(0x1234);
+
+        assert_eq!(worker_seed(seed, 0), seed);
+        assert_ne!(worker_seed(seed, 1), seed);
+        assert_ne!(worker_seed(seed, 1), worker_seed(seed, 2));
+        assert_ne!(worker_seed(seed, 1), worker_seed(U256::from(0x5678), 1));
     }
 }
