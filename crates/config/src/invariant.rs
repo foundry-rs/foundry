@@ -180,6 +180,12 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Whether to track and report the highest gas used by each fuzzed selector, together with
+    /// a shrunk call sequence that reproduces it.
+    ///
+    /// With a corpus, calls that raise a selector's maximum gas are kept as coverage-guided
+    /// corpus entries.
+    pub track_max_gas: bool,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +212,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            track_max_gas: false,
         }
     }
 }

@@ -108,7 +108,7 @@ mod evm_profile_server;
 mod filter;
 mod summary;
 use filter::RerunFailures;
-use summary::{TestSummaryReport, format_invariant_metrics_table};
+use summary::{TestSummaryReport, format_invariant_max_gas, format_invariant_metrics_table};
 
 pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 
@@ -2612,10 +2612,13 @@ impl TestArgs {
                         sh_warn!("Counterexample artifact: {}", artifact.path.display())?;
                     }
 
-                    if let TestKind::Invariant { metrics, .. } = &result.kind
-                        && !metrics.is_empty()
-                    {
-                        let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
+                    if let TestKind::Invariant { metrics, max_gas, .. } = &result.kind {
+                        if !metrics.is_empty() {
+                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
+                        }
+                        if !max_gas.is_empty() {
+                            let _ = sh_println!("{}\n", format_invariant_max_gas(max_gas));
+                        }
                     }
 
                     // We only display logs at level 2 and above

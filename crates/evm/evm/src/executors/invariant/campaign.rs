@@ -1,6 +1,6 @@
 use super::{
     FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
-    InvariantFuzzTestResult, InvariantMetrics,
+    InvariantFuzzTestResult, InvariantMetrics, MaxGasWitness,
 };
 use crate::executors::{EarlyExit, EvmExecutionCancellation};
 use alloy_primitives::{Address, I256, Selector};
@@ -8,7 +8,8 @@ use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
 use std::{
-    collections::{HashMap, HashSet},
+    cmp::Reverse,
+    collections::{HashMap, HashSet, hash_map::Entry},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -237,6 +238,8 @@ impl InvariantWorkerOutput {
 /// - handler assertion failures keep the shorter reproducer, with equal lengths preserving the
 ///   earlier logical worker;
 /// - optimization mode keeps the maximum value, with ties preserving the earlier logical worker;
+/// - max gas per selector keeps the highest gas, with ties keeping the shorter sequence and then
+///   the earlier logical worker;
 /// - `failed_corpus_replays` is a master-worker-only value from worker `0`;
 /// - run/call counts, reverts, gas traces, selector metrics, and line coverage accumulate into the
 ///   logical campaign result.
@@ -297,6 +300,7 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
     let mut metrics = HashMap::default();
     let mut failed_corpus_replays = 0;
     let mut optimization_best = None;
+    let mut max_gas = HashMap::default();
 
     for InvariantWorkerOutput { plan, result } in outputs {
         if plan.worker_id == 0 {
@@ -315,6 +319,7 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
         gas_report_traces.extend(result.gas_report_traces);
         HitMaps::merge_opt(&mut line_coverage, result.line_coverage);
         merge_metrics(&mut metrics, result.metrics);
+        merge_max_gas(&mut max_gas, result.max_gas);
         merge_optimization(
             &mut optimization_best,
             result.optimization_best_value,
@@ -323,7 +328,7 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
     }
     let (optimization_best_value, optimization_best_sequence) =
         optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
-    Ok(InvariantFuzzTestResult::new(
+    let mut result = InvariantFuzzTestResult::new(
         errors,
         handler_errors,
         runs,
@@ -337,7 +342,9 @@ fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTest
         workers,
         optimization_best_value,
         optimization_best_sequence,
-    ))
+    );
+    result.max_gas = max_gas;
+    Ok(result)
 }
 
 fn ensure_outputs_cover_campaign(
@@ -417,6 +424,28 @@ fn merge_metrics(
         entry.calls += metrics.calls;
         entry.reverts += metrics.reverts;
         entry.discards += metrics.discards;
+    }
+}
+
+/// Keeps the highest gas witness per selector, preferring shorter sequences on ties.
+fn merge_max_gas(
+    merged: &mut HashMap<String, MaxGasWitness>,
+    worker_max_gas: HashMap<String, MaxGasWitness>,
+) {
+    for (selector, witness) in worker_max_gas {
+        match merged.entry(selector) {
+            Entry::Occupied(mut entry) => {
+                let best = entry.get();
+                if (witness.gas, Reverse(witness.sequence.len()))
+                    > (best.gas, Reverse(best.sequence.len()))
+                {
+                    entry.insert(witness);
+                }
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(witness);
+            }
+        }
     }
 }
 
@@ -1102,5 +1131,32 @@ mod tests {
         let err = aggregator.finish().unwrap_err();
 
         assert!(err.to_string().contains("missing invariant worker output"));
+    }
+
+    #[test]
+    fn aggregator_keeps_highest_max_gas_and_shorter_witness_on_ties() {
+        let spec = InvariantCampaignSpec::new(3);
+        let plans = [
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
+            InvariantWorkerPlan { worker_id: 2, first_global_run: 2, runs: 1 },
+        ];
+        let witness =
+            |gas, len, first_sender| MaxGasWitness { gas, sequence: sequence(len, first_sender) };
+        let mut results = [empty_result(0, 0), empty_result(0, 0), empty_result(0, 0)];
+        results[0].max_gas.insert("push".to_string(), witness(100, 3, 0x10));
+        results[0].max_gas.insert("sum".to_string(), witness(50, 4, 0x10));
+        results[1].max_gas.insert("push".to_string(), witness(200, 5, 0x20));
+        results[1].max_gas.insert("sum".to_string(), witness(50, 2, 0x20));
+        results[2].max_gas.insert("sum".to_string(), witness(50, 2, 0x30));
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        for (plan, result) in plans.into_iter().zip(results).rev() {
+            aggregator.push(InvariantWorkerOutput::new(plan, result));
+        }
+        let result = aggregator.finish().unwrap();
+
+        assert_eq!(result.max_gas["push"], witness(200, 5, 0x20));
+        assert_eq!(result.max_gas["sum"], witness(50, 2, 0x20));
     }
 }

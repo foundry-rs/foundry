@@ -1069,6 +1069,67 @@ fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
     Ok(outcome.anchor_asserted && outcome.anchor_fingerprint == expected_fingerprint)
 }
 
+/// Shrinks a max gas witness to the shortest sequence whose last call still uses at least
+/// `target_gas`.
+///
+/// Returns the shrunk sequence and the gas its last call used.
+pub(crate) fn shrink_max_gas_sequence<FEN: FoundryEvmNetwork>(
+    config: &InvariantConfig,
+    calls: &[BasicTxDetails],
+    target_gas: u64,
+    executor: &Executor<FEN>,
+    progress: &ShrinkProgress<'_>,
+    early_exit: &EarlyExit,
+) -> (Vec<BasicTxDetails>, u64) {
+    let Some(anchor) = calls.len().checked_sub(1) else {
+        return (vec![], target_gas);
+    };
+    let accumulate_warp_roll = config.has_delay();
+    let mut sequence = Vec::with_capacity(calls.len());
+    let mut gas = target_gas;
+    let shrinker = run_shrink_loop(
+        config,
+        calls,
+        progress,
+        accumulate_warp_roll,
+        early_exit,
+        ShrinkErrorPolicy::RestoreRemoved,
+        |shrinker| {
+            sequence.clear();
+            sequence.extend(shrinker.current());
+            // The witness call itself must stay last.
+            if sequence.last() != Some(&anchor) {
+                return Ok(false);
+            }
+            let anchor_gas = replay_sequence(
+                &mut executor.clone(),
+                calls,
+                &sequence,
+                accumulate_warp_roll,
+                |idx, call_result| {
+                    Ok(if idx == anchor {
+                        ReplayDecision::Stop(
+                            (!call_result.reverted)
+                                .then(|| call_result.gas_used.saturating_sub(call_result.stipend)),
+                        )
+                    } else {
+                        ReplayDecision::Continue
+                    })
+                },
+            )?
+            .flatten();
+            match anchor_gas {
+                Some(anchor_gas) if anchor_gas >= target_gas => {
+                    gas = anchor_gas;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        },
+    );
+    (build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll), gas)
+}
+
 /// Executes a call sequence and returns the optimization value (int256) from the invariant
 /// function. Used during shrinking for optimization mode.
 ///

@@ -1581,6 +1581,7 @@ pub(crate) fn invariant_kind(runs: usize, calls: usize, reverts: usize) -> TestK
         metrics: Default::default(),
         failed_corpus_replays: 0,
         optimization_best_value: None,
+        max_gas: BTreeMap::new(),
     }
 }
 
@@ -2013,6 +2014,15 @@ impl TestKindReport {
     }
 }
 
+/// Highest gas used by one fuzzed selector in an invariant campaign.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvariantMaxGas {
+    /// Gas used by the last call of `sequence`, without the transaction stipend.
+    pub gas: u64,
+    /// Shrunk call sequence whose last call used `gas`.
+    pub sequence: Vec<BaseCounterExample>,
+}
+
 /// Various types of tests
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestKind {
@@ -2039,6 +2049,9 @@ pub enum TestKind {
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
+        /// Highest gas used by each fuzzed selector, when `track_max_gas` is enabled.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        max_gas: BTreeMap<String, InvariantMaxGas>,
     },
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },

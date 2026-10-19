@@ -11,7 +11,7 @@ use crate::{
     },
     progress::TestsProgress,
     result::{
-        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SuiteResult,
+        InvariantFailure, InvariantMaxGas, InvariantOutcome, InvariantPredicateResult, SuiteResult,
         SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
         SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
         SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
@@ -4922,6 +4922,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 metrics: invariant_result.metrics,
                 failed_corpus_replays: invariant_result.failed_corpus_replays,
                 optimization_best_value: invariant_result.optimization_best_value,
+                max_gas: invariant_result
+                    .max_gas
+                    .into_iter()
+                    .map(|(name, witness)| {
+                        let sequence = witness
+                            .sequence
+                            .iter()
+                            .map(|tx| {
+                                BaseCounterExample::from_invariant_call(
+                                    tx,
+                                    identified_contracts,
+                                    None,
+                                    invariant_config.show_solidity,
+                                )
+                            })
+                            .collect();
+                        (name, InvariantMaxGas { gas: witness.gas, sequence })
+                    })
+                    .collect(),
             },
             InvariantOutcome {
                 success,

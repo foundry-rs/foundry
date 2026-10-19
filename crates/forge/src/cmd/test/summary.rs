@@ -1,4 +1,4 @@
-use crate::cmd::test::TestOutcome;
+use crate::{cmd::test::TestOutcome, result::InvariantMaxGas};
 use comfy_table::{
     Cell, Color, Row, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
@@ -7,7 +7,10 @@ use foundry_common::shell;
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;
 use serde_json::json;
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::{Display, Write},
+};
 
 /// Represents a test summary report.
 pub struct TestSummaryReport<'a> {
@@ -146,6 +149,20 @@ pub(crate) fn format_invariant_metrics_table(
         ]);
     }
     table
+}
+
+/// Formats the highest gas used by each fuzzed selector, followed by the call sequence that
+/// reproduces it.
+pub(crate) fn format_invariant_max_gas(max_gas: &BTreeMap<String, InvariantMaxGas>) -> String {
+    let mut s = String::from("Max gas per selector:");
+    for (name, max_gas) in max_gas {
+        let name = name.split_once(':').map_or(name.as_str(), |(_, name)| name);
+        write!(s, "\n\t{name}: {} gas", max_gas.gas).unwrap();
+        for call in &max_gas.sequence {
+            write!(s, "\n{call}").unwrap();
+        }
+    }
+    s
 }
 
 #[cfg(test)]
