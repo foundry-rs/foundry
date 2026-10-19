@@ -5728,6 +5728,11 @@ where
             if from_block > best {
                 return Err(BlockchainError::BlockOutOfRange(best, from_block));
             }
+            if from_block > to_block {
+                return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                    "invalid block range params",
+                )));
+            }
 
             self.logs_for_range(&filter, from_block, to_block).await
         }
