@@ -355,7 +355,7 @@ impl HitMap {
     pub fn new(bytecode: Bytes) -> Self {
         Self {
             bytecode,
-            hits: HashMap::with_capacity_and_hasher(1024, Default::default()),
+            hits: Default::default(),
             creations: 0,
             empty_calls: Default::default(),
             short_calls: Default::default(),
