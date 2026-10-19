@@ -68,8 +68,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         matches!(self.backend, Cow::Owned(_))
     }
 
-    /// Retains a detached call's accepted state only when the call already owns its backend.
-    /// The caller remains responsible for committing the detached pending writes.
+    /// Parks accepted state on owned backends; leaves pending writes uncommitted.
     pub fn park_detached(&mut self, evm: FoundryEvmFor<'_, FEN>) {
         if let Cow::Owned(backend) = &mut self.backend {
             backend.lifecycle.park_detached(evm);

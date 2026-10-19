@@ -653,8 +653,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let (execution, evm) = execute(&mut backend, evm_env, tx, ext, &mut stack)?;
-        // A lifecycle operation can accept writes outside the transaction's pending state.
-        // Retain those writes, but leave the pending state unapplied until commit.
+        // Retain lifecycle changes; defer pending writes until commit.
         backend.park_detached(evm);
         let mut result = convert_executed_result(execution, stack, &backend)?;
         if let Cow::Owned(backend) = backend.backend {
@@ -768,13 +767,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.transact_tx(evm_env, target, ext)
     }
 
-    /// Commits the state changes of a call to the backend and persists its inspector state, as if
-    /// it had been executed with `transact*`. Commit a detached result before any unrelated
-    /// backend mutation: its owned backend, when present, replaces the executor's backend.
+    /// Commits a call's state and inspector. Detached backends replace the executor's backend,
+    /// so commit before unrelated backend mutations.
     #[instrument(name = "commit", level = "debug", skip_all)]
     fn commit(&mut self, result: &mut RawCallResult<FEN>) {
         if let Some(mut backend) = result.post_execution_backend.take() {
-            // A failure observed while restoring a snapshot belongs to this call's result.
+            // Snapshot failures are call-local.
             backend.set_state_snapshot_failure(self.backend().has_state_snapshot_failure());
             self.backend = Arc::new(*backend);
         }
@@ -1122,8 +1120,7 @@ struct Execution<FEN: FoundryEvmNetwork> {
     cancelled: bool,
 }
 
-/// Executes `tx` over `backend` with `env`, `stack` and `ext` or extension state prepared for
-/// `tx`. Returns the EVM so the caller can park its accepted state or discard it.
+/// Executes `tx` and returns its result and EVM for the caller to commit, park or discard.
 fn execute<FEN: FoundryEvmNetwork>(
     backend: &mut dyn CheatcodesBackend<FEN>,
     env: EvmEnvFor<FEN>,
@@ -1334,9 +1331,7 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Moved out of the cheatcode state on conversion since `commit` moves that state back into
     /// the executor before results are classified.
     pub skip_payloads: Vec<Bytes>,
-    /// An already-cloned backend changed by this call, including its accepted execution state.
-    /// Does not include `state_changeset`, which is applied only on commit. Dropping the result
-    /// discards both without changing the executor.
+    /// Owned post-call backend, excluding `state_changeset`. Adopted only on commit.
     pub(crate) post_execution_backend: Option<Box<Backend<FEN>>>,
 }
 
@@ -2447,12 +2442,12 @@ mod tests {
         );
         let target = Address::with_last_byte(0x31);
         executor.set_balance(target, U256::ONE).unwrap();
-        // The cheatcode inspector cancels the transaction's root-call nonce increment.
+        // The cheatcode inspector cancels root-call nonce increments.
         executor.set_account_nonce(CALLER, 5).unwrap();
         let snapshot = snapshotStateCall {}.abi_encode();
         let restore = revertToStateCall { snapshotId: U256::ZERO }.abi_encode();
 
-        // Discarding a call must discard both its transaction writes and its snapshots.
+        // Discarded calls must not retain snapshots.
         executor.call_raw(CALLER, CHEATCODE_ADDRESS, snapshot.clone().into(), U256::ZERO).unwrap();
         let missing = executor
             .call_raw(CALLER, CHEATCODE_ADDRESS, restore.clone().into(), U256::ZERO)
@@ -2472,7 +2467,7 @@ mod tests {
         let mut restored =
             executor.call_raw(CALLER, CHEATCODE_ADDRESS, restore.into(), U256::ZERO).unwrap();
         assert_eq!(U256::from_be_slice(&restored.result), U256::ONE);
-        // The uncommitted restored backend must not leak into the executor.
+        // Restored state stays detached until commit.
         assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), U256::from(7));
         executor.commit(&mut restored);
         assert_eq!(executor.backend().storage(target, U256::ZERO).unwrap(), U256::ZERO);
@@ -2489,7 +2484,7 @@ mod tests {
                     .gas_limit(1_000_000),
             );
             let target = Address::with_last_byte(0x31);
-            // Return the local failure flag from slot zero, as DSTest's failed() does.
+            // DSTest-style failed(): return storage slot zero.
             let code = Bytes::from_static(&[0x5f, 0x54, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
             executor.set_code(target, Bytecode::new_raw(code)).unwrap();
             let (account, slot) =
@@ -2506,8 +2501,7 @@ mod tests {
             let mut restored =
                 executor.call_raw(CALLER, CHEATCODE_ADDRESS, restore.into(), U256::ZERO).unwrap();
             assert!(!restored.reverted);
-            // The global flag includes accepted state; legacy failed() only observes pending
-            // storage, not a flag that was already committed before the captured transaction.
+            // Legacy failed() ignores committed flags; the global check includes them.
             let pending = Cow::Borrowed(&restored.state_changeset);
             assert_eq!(executor.is_raw_call_success(target, pending, &restored), legacy);
             executor.commit(&mut restored);

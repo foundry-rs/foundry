@@ -3478,7 +3478,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
-// A recorded snapshot failure or legacy failed() flag must not suppress later predicates.
 #[forgetest_init]
 fn invariant_recorded_failures_do_not_poison_later_checks(prj: _, cmd: _) {
     prj.update_config(|config| {
@@ -3512,7 +3511,7 @@ contract OncePoisonHandler {
                 uint256 snapshot = vm.snapshotState();
                 vm.assertEq(uint256(1), uint256(2));
                 require(vm.revertToState(snapshot), "snapshot missing");
-                // Keep a current-call assertion after restoring the global slot.
+                // Reassert after restoring the global failure slot.
                 vm.assertEq(uint256(1), uint256(2));
             } else {
                 _failed = true;

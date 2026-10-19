@@ -215,9 +215,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         context.ext = StoredExt::new(&ext);
     }
 
-    /// Parks materialized accepted state, environment and extension state after a detached call.
-    /// An unmaterialized call keeps its transaction writes in `PendingState`; discard its local
-    /// cache as for ordinary calls, instead of copying the shared accepted cache to merge it.
+    /// Parks accepted state, environment and extensions without committing pending writes.
+    /// Discards unmaterialized caches to avoid copying shared accepted state.
     pub(crate) fn park_detached(&mut self, mut evm: Evm<'_, F::Types>) {
         if !AcceptedView::is(evm.database()) {
             self.park(evm);
