@@ -102,7 +102,7 @@ mod tests {
         let processed = Arc::new(Mutex::new(Vec::new()));
         let task_release_rx = release_rx;
         let task_processed = processed.clone();
-        let mut listener = Box::pin(BlockListener::new(shutdown, rx, move |block| {
+        let mut listener = std::pin::pin!(BlockListener::new(shutdown, rx, move |block| {
             let release_rx = task_release_rx.clone();
             let processed = task_processed.clone();
             async move {

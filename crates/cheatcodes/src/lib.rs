@@ -196,10 +196,10 @@ impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
         self.ecx.block().slot_num()
     }
 
-    /// Returns the block excess blob gas, if any.
+    /// Returns the block blob gas price (`block.blobbasefee`), if any.
     #[inline]
-    pub(crate) fn blob_excess_gas(&self) -> Option<u64> {
-        self.ecx.block().blob_excess_gas()
+    pub(crate) fn blob_gasprice(&self) -> Option<u128> {
+        self.ecx.block().blob_gasprice()
     }
 
     /// Returns the transaction caller (`tx.origin`).

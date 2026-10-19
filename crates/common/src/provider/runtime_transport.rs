@@ -292,7 +292,12 @@ impl RuntimeTransport {
     /// known MPP service.
     /// Otherwise falls back to alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
+        let auth = self
+            .jwt
+            .as_ref()
+            .map(|jwt| build_auth(jwt.clone()))
+            .transpose()
+            .map_err(|e| RuntimeTransportError::InvalidJwt(e.to_string()))?;
 
         let service = if is_known_mpp_endpoint(&self.url) {
             let mut ws = lazy_mpp_ws_connect(&self.url);
@@ -341,7 +346,9 @@ impl RuntimeTransport {
             let transport = if let Some((id, transport)) = &*inner
                 && *id == runtime
             {
-                transport.clone()
+                let transport = transport.clone();
+                drop(inner);
+                transport
             } else {
                 drop(inner);
                 let mut inner = this.inner.write().await;
@@ -476,8 +483,12 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_rpc::{Id as RpcId, Request};
+    use axum::{Json, Router, routing::post};
     use reqwest::header::HeaderMap;
-    use std::io;
+    use serde_json::{Value, json};
+    use std::{io, time::Duration};
+    use tokio::{runtime::Builder, sync::Notify, time::timeout};
 
     #[derive(Debug, Error)]
     #[error("request to https://example.com/private-api-key failed")]
@@ -592,5 +603,70 @@ mod tests {
         }
 
         server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_invalid_jwt() {
+        for scheme in ["http", "https", "ws", "wss"] {
+            for jwt in ["not-hex", "00"] {
+                let url = Url::parse(&format!("{scheme}://127.0.0.1:0")).unwrap();
+                let transport =
+                    RuntimeTransportBuilder::new(url).with_jwt(Some(jwt.to_string())).build();
+
+                let error = transport.connect().await.unwrap_err();
+
+                assert!(
+                    matches!(error, RuntimeTransportError::InvalidJwt(_)),
+                    "expected InvalidJwt for {scheme} with {jwt:?}, got {error:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_request_does_not_block_another_runtime() {
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let router = Router::new().route(
+            "/",
+            post({
+                let started = started.clone();
+                let release = release.clone();
+                move |Json(request): Json<Value>| {
+                    let started = started.clone();
+                    let release = release.clone();
+                    async move {
+                        if request["method"] == "hold" {
+                            started.notify_one();
+                            release.notified().await;
+                        }
+                        Json(json!({"jsonrpc": "2.0", "id": request["id"], "result": "0x1"}))
+                    }
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let transport = RuntimeTransportBuilder::new(url).build();
+        let ready =
+            RequestPacket::from(Request::new("ready", RpcId::Number(1), ()).serialize().unwrap());
+        transport.request(ready.clone()).await.unwrap();
+        let hold = Request::new("hold", RpcId::Number(2), ()).serialize().unwrap().into();
+        let pending = tokio::spawn(transport.request(hold));
+        started.notified().await;
+
+        let result =
+            tokio::task::spawn_blocking(move || {
+                Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+                    timeout(Duration::from_secs(2), transport.request(ready)).await
+                })
+            })
+            .await
+            .unwrap();
+        release.notify_one();
+        pending.await.unwrap().unwrap();
+        server.abort();
+        result.expect("another runtime waited for an in-flight request").unwrap();
     }
 }

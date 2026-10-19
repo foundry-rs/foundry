@@ -192,6 +192,11 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     auth: SignedAuthorization,
 ) -> Result<()> {
+    ensure!(
+        ccx.spec().into() >= SpecId::PRAGUE,
+        "delegations are not supported before the Prague hard fork; \
+         see EIP-7702: https://eips.ethereum.org/EIPS/eip-7702"
+    );
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let account_nonce = {
         let authority_acc = ccx.ecx.journal_mut().load_account(authority)?;
@@ -277,7 +282,7 @@ impl Cheatcode for stopBroadcastCall {
 
 impl Cheatcode for getWalletsCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
-        let wallets = state.wallets().signers().unwrap_or_default();
+        let wallets = state.wallets().signers()?;
         Ok(wallets.abi_encode())
     }
 }

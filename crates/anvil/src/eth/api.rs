@@ -1189,8 +1189,7 @@ impl<N: Network> EthApi<N> {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
-        let signature = alloy_primitives::hex::encode(signature.as_bytes());
-        Ok(format!("0x{signature}"))
+        Ok(alloy_primitives::hex::encode_prefixed(signature.as_bytes()))
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -1199,9 +1198,8 @@ impl<N: Network> EthApi<N> {
     pub async fn sign(&self, address: Address, content: impl AsRef<[u8]>) -> Result<String> {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
-        let signature =
-            alloy_primitives::hex::encode(signer.sign(address, content.as_ref()).await?.as_bytes());
-        Ok(format!("0x{signature}"))
+        let signature = signer.sign(address, content.as_ref()).await?;
+        Ok(alloy_primitives::hex::encode_prefixed(signature.as_bytes()))
     }
 
     /// Returns transaction at given block hash and index.
@@ -1352,7 +1350,11 @@ impl<N: Network> EthApi<N> {
             // efficiently, instead we fetch it from the fork
             if number <= fork_block {
                 return fork
-                    .fee_history(block_count.to(), BlockNumber::Number(number), &reward_percentiles)
+                    .fee_history(
+                        block_count.saturating_to(),
+                        BlockNumber::Number(number),
+                        &reward_percentiles,
+                    )
                     .await
                     .map_err(BlockchainError::AlloyForkProvider);
             }

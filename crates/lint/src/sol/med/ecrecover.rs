@@ -382,12 +382,12 @@ impl<'gcx> Analyzer<'gcx> {
                 };
                 Some(U256::MAX >> (256 - size.bits()))
             }
-            _ => self.gcx.try_eval_const(expr).ok()?.as_u256(),
+            _ => self.gcx.const_eval().eval_int(expr).ok()?.as_u256(),
         }
     }
 
     fn const_bool(&self, expr: &Expr<'_>) -> Option<bool> {
-        match self.gcx.try_eval_const_value(expr).ok()? {
+        match self.gcx.const_eval().eval_expr(expr).ok()? {
             ConstValue::Bool(value) => Some(*value),
             _ => None,
         }
