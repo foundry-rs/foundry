@@ -5415,6 +5415,42 @@ cat "$0.error"
         })
     };
     let stack = error("YulException", "Yul exception:Variable _8 is 1 too deep in the stack.");
+    let stack_error = || {
+        fs::write(
+            solc.with_extension("error"),
+            serde_json::to_vec(&serde_json::json!({"errors": [stack]})).unwrap(),
+        )
+        .unwrap()
+    };
+
+    stack_error();
+    // Without a deployment to rewrite, DTL leaves the input unchanged and a retry cannot help.
+    cmd.forge_fuse()
+        .args(["build", "--force"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error: Yul exception:Variable _8 is 1 too deep in the stack.
+
+"#]]);
+
+    prj.add_source("Impl.sol", "contract Impl {}");
+    prj.add_test(
+        "Deploy.t.sol",
+        r#"
+import "../src/Impl.sol";
+contract DeployTest {
+    function test_deploy() public {
+        new Impl();
+    }
+}
+"#,
+    );
 
     // Neither unrelated errors nor matching text in a source snippet may cause a retry.
     for errors in [
@@ -5447,11 +5483,7 @@ Error: Compiler run failed:
 "#]]);
     }
 
-    fs::write(
-        solc.with_extension("error"),
-        serde_json::to_vec(&serde_json::json!({"errors": [stack]})).unwrap(),
-    )
-    .unwrap();
+    stack_error();
     // A native failure is returned after exactly one retry, not swallowed or retried again.
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -5479,4 +5511,51 @@ Error: Compiler run failed:
 Error: Yul exception:Variable _8 is 1 too deep in the stack.
 
 "#]]);
+}
+
+// This two-file reproducer fails with a real Yul stack error on Solc 0.8.24.
+// Its fork test is compile-only here; a separate smoke test deploys without a fork.
+#[forgetest]
+fn preprocess_via_ir_codegen(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.dynamic_test_linking = true;
+        config.via_ir = true;
+        config.evm_version = EvmVersion::Shanghai;
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(200);
+        config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
+        config.cbor_metadata = false;
+    });
+    prj.add_raw_source(
+        "core/HedgerPool.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/HedgerPool.sol"),
+    );
+    prj.add_raw_test(
+        "Repro.t.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/Repro.t.sol"),
+    );
+    cmd.args(["test", "--match-contract", "^DeploymentSmokeTest$"])
+        .assert_success()
+        .stderr_eq("")
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Repro.t.sol:DeploymentSmokeTest
+[PASS] test_deployment() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    // Empty stderr rules out fallback, but both owners must also have been preprocessed.
+    for owner in ["HedgerPoolDustDeadlockForkTest", "DeploymentSmokeTest"] {
+        let helper = format!(
+            "Repro.t.sol/VmContractHelper{:x}.json",
+            keccak256(format!("test/Repro.t.sol:{owner}"))
+        );
+        assert!(prj.artifacts().join(helper).exists(), "{owner} was not preprocessed");
+    }
 }

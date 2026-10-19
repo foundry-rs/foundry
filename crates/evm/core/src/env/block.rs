@@ -1,7 +1,10 @@
 //! Mutable block environments.
 
 use alloy_primitives::{Address, B256, U256};
-use revm::context::{Block, BlockEnv};
+use revm::{
+    context::{Block, BlockEnv},
+    context_interface::block::BlobExcessGasAndPrice,
+};
 use tempo_revm::TempoBlockEnv;
 
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
@@ -36,6 +39,9 @@ pub trait FoundryBlock: Block {
         _excess_blob_gas: u64,
         _base_fee_update_fraction: u64,
     );
+
+    /// Sets the blob gas price (`block.blobbasefee`), keeping the excess blob gas.
+    fn set_blob_gasprice(&mut self, blob_gasprice: u128);
 
     // Tempo methods
 
@@ -88,6 +94,12 @@ impl FoundryBlock for BlockEnv {
     ) {
         self.set_blob_excess_gas_and_price(excess_blob_gas, base_fee_update_fraction);
     }
+
+    fn set_blob_gasprice(&mut self, blob_gasprice: u128) {
+        let excess_blob_gas = self.blob_excess_gas_and_price.map_or(0, |blob| blob.excess_blob_gas);
+        self.blob_excess_gas_and_price =
+            Some(BlobExcessGasAndPrice { excess_blob_gas, blob_gasprice });
+    }
 }
 
 impl FoundryBlock for TempoBlockEnv {
@@ -129,6 +141,8 @@ impl FoundryBlock for TempoBlockEnv {
         _base_fee_update_fraction: u64,
     ) {
     }
+
+    fn set_blob_gasprice(&mut self, _blob_gasprice: u128) {}
 
     fn timestamp_millis_part(&self) -> u64 {
         self.timestamp_millis_part

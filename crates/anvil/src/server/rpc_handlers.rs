@@ -56,7 +56,7 @@ impl PubSubEthRpcHandler {
             EthPubSub::EthUnSubscribe(id) => {
                 trace!(target: "rpc::ws", "canceling subscription {:?}", id);
                 let canceled = cx.remove_subscription(&id).is_some();
-                ResponseResult::Success(canceled.into())
+                ResponseResult::success(canceled)
             }
             EthPubSub::EthSubscribe(kind, raw_params) => {
                 let filter = match &*raw_params {
