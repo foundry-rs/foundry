@@ -342,14 +342,9 @@ impl CallHits {
 #[derive(Clone, Debug)]
 pub struct HitMap {
     hits: FxHashMap<u32, u32>,
-    /// Dense hit counters indexed by program counter, written by [`Self::record`] while a
-    /// collector runs and moved into `hits` by [`Self::flush`].
+    /// Hits by program counter, not yet flushed into `hits`.
     pending: Vec<u32>,
-    /// Program counters with a non-zero counter in `pending`, in order of their first hit.
-    ///
-    /// `pending` is as long as the bytecode, but a call usually runs only a small part of it.
-    /// [`Self::flush`] visits only these program counters, so its cost follows the executed
-    /// instructions and not the bytecode size.
+    /// Program counters hit in `pending`.
     pcs: Vec<u32>,
     bytecode: Bytes,
     creations: u32,
@@ -398,9 +393,7 @@ impl HitMap {
         *self.hits.entry(pc).or_default() += hits;
     }
 
-    /// Records a hit for the given program counter without a hash map update.
-    ///
-    /// The hit is not visible through the other methods until [`Self::flush`] is called.
+    /// Records a hit, visible after [`Self::flush`].
     #[inline]
     pub(crate) fn record(&mut self, pc: usize) {
         if let Some(hits) = self.pending.get_mut(pc) {
@@ -413,7 +406,7 @@ impl HitMap {
         }
     }
 
-    /// Allocates the pending counters, or grows them for a hit in the bytecode padding.
+    /// Grows `pending` to include `pc`.
     #[cold]
     #[inline(never)]
     fn grow_pending(&mut self, pc: usize) {
@@ -421,7 +414,7 @@ impl HitMap {
         self.record(pc);
     }
 
-    /// Moves the hits recorded by [`Self::record`] into the hit counters.
+    /// Moves the recorded hits into `hits`.
     pub(crate) fn flush(&mut self) {
         let pending = std::mem::take(&mut self.pending);
         let pcs = std::mem::take(&mut self.pcs);
