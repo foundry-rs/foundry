@@ -917,7 +917,7 @@ impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
         if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(target) {
-            account.unmark_touch();
+            account.mark_cold();
             account.storage.values_mut().for_each(|slot| slot.mark_cold());
         }
         Ok(Default::default())
