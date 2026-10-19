@@ -75,8 +75,8 @@ impl<CTX: ContextTr> Inspector<CTX> for CustomPrintTracer {
         let _ = sh_println!(
             "SM Address: {:?}, caller:{:?},target:{:?} is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.bytecode_address,
-            inputs.caller,
-            inputs.target_address,
+            inputs.transfer_from(),
+            inputs.transfer_to(),
             inputs.is_static,
             inputs.value,
             inputs.input.len(),

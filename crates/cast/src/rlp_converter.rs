@@ -125,6 +125,7 @@ mod test {
     use crate::rlp_converter::Item;
     use alloy_primitives::hex;
     use alloy_rlp::{Bytes, Decodable};
+    use foundry_cli::utils::parse_json;
     use serde_json::Result as JsonResult;
 
     // https://en.wikipedia.org/wiki/Set-theoretic_definition_of_natural_numbers
@@ -197,7 +198,7 @@ mod test {
             (6, "[[],[[]],[[],[[]]]]", array_von_neuman()),
         ];
         for params in parameters {
-            let val = serde_json::from_str(params.1)?;
+            let val = parse_json(params.1)?;
             let item = Item::value_to_item(&val).unwrap();
             assert_eq!(item, params.2);
         }

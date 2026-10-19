@@ -3,11 +3,11 @@
 use crate::utils::http_provider_with_signer;
 use alloy_chains::NamedChain;
 use alloy_genesis::Genesis;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    AccessList, AccessListItem, BlockId, BlockNumberOrTag, TransactionRequest,
+    AccessList, AccessListItem, BlockId, BlockNumberOrTag, FeeHistory, TransactionRequest,
     trace::parity::TraceType,
 };
 use alloy_serde::WithOtherFields;
@@ -324,6 +324,43 @@ async fn test_zero_block_fee_history_is_empty() {
     assert!(history.reward.is_none());
     assert!(history.base_fee_per_blob_gas.is_empty());
     assert!(history.blob_gas_used_ratio.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_fee_history_oversized_count() {
+    let (origin, origin_handle) = spawn(NodeConfig::test()).await;
+    origin.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    let (fork, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    fork.mine_one().await.unwrap();
+
+    for (handle, highest) in [(&origin_handle, 2), (&fork_handle, 3)] {
+        let provider = handle.http_provider();
+        for newest in 1..=highest {
+            for count in [
+                U256::ZERO,
+                U256::ONE,
+                U256::from(u64::MAX),
+                U256::from(u64::MAX) + U256::ONE,
+                U256::MAX,
+            ] {
+                let history: FeeHistory = provider
+                    .client()
+                    .request(
+                        "eth_feeHistory",
+                        (count, BlockNumberOrTag::Number(newest), Vec::<f64>::new()),
+                    )
+                    .await
+                    .unwrap();
+                let bounded = count.min(U256::from(newest + 1)).to::<u64>();
+                let expected = provider
+                    .get_fee_history(bounded, BlockNumberOrTag::Number(newest), &[])
+                    .await
+                    .unwrap();
+                assert_eq!(history, expected, "count={count}, newest={newest}");
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -799,4 +836,91 @@ async fn priced_calls_skip_base_fee_check_before_london() {
     api.call(transfer.clone(), latest, Default::default()).await.unwrap();
     let gas = api.estimate_gas(transfer, latest, Default::default()).await.unwrap();
     assert_eq!(gas, U256::from(21_000));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17428>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_transfers_across_hardforks() {
+    for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
+        let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let provider = handle.http_provider();
+        let mut accounts = handle.dev_accounts();
+        let from = accounts.next().unwrap();
+        let existing = accounts.next().unwrap();
+        let fresh = Address::random();
+        // Bytecode excludes this call from the transfer shortcut, so the binary search runs.
+        let contract = Address::random();
+        api.anvil_set_code(contract, bytes!("00")).await.unwrap();
+        let amsterdam = hardfork == EthereumHardfork::Amsterdam;
+
+        // Under EIP-2780 only a value transfer to another account costs 21000. Under EIP-8037 a
+        // value transfer to an empty account also pays new-account state gas.
+        for (to, value, expected) in [
+            (from, U256::ONE, if amsterdam { 12_000 } else { GAS_TRANSFER }),
+            (existing, U256::ZERO, if amsterdam { 15_000 } else { GAS_TRANSFER }),
+            (existing, U256::ONE, GAS_TRANSFER),
+            (fresh, U256::ZERO, if amsterdam { 15_000 } else { GAS_TRANSFER }),
+            (fresh, U256::ONE, if amsterdam { 204_600 } else { GAS_TRANSFER }),
+            (contract, U256::ZERO, if amsterdam { 15_000 } else { GAS_TRANSFER }),
+        ] {
+            let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(value);
+            for gas_limit in [None, Some(expected)] {
+                let mut tx = tx.clone();
+                tx.gas = gas_limit;
+                assert_eq!(
+                    provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap(),
+                    expected
+                );
+            }
+            let short = tx.clone().with_gas_limit(expected - 1);
+            assert!(provider.estimate_gas(WithOtherFields::new(short)).await.is_err());
+
+            let receipt = provider
+                .send_transaction(WithOtherFields::new(tx.with_gas_limit(expected)))
+                .await
+                .unwrap()
+                .get_receipt()
+                .await
+                .unwrap();
+            assert!(receipt.status());
+            assert_eq!(receipt.gas_used, expected);
+        }
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17540>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_create_without_nonce_amsterdam() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    // An empty creation pays 24000 regular gas plus 183600 EIP-8037 account-creation state gas.
+    let expected = 207_600;
+
+    // After the first creation, the address for nonce 0 is no longer empty, but later creations
+    // still create a new account at the address for the sender's current nonce.
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().with_from(from).with_deploy_code(Bytes::new());
+        assert_eq!(
+            provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap(),
+            expected
+        );
+
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx.with_gas_limit(expected)))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used, expected);
+    }
+
+    // A call without a nonce still runs for a sender whose nonce cannot be incremented.
+    let maxed = handle.dev_accounts().nth(1).unwrap();
+    api.anvil_set_nonce(maxed, U256::from(u64::MAX)).await.unwrap();
+    let call = TransactionRequest::default().with_from(maxed).with_to(from);
+    provider.call(WithOtherFields::new(call)).await.unwrap();
 }

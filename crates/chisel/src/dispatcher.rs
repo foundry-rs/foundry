@@ -683,8 +683,13 @@ fn preprocess<'a>(input: &'a str, last_result: Option<&str>) -> Result<(bool, Co
     for (pos, token) in solar::parse::Cursor::new(input).with_position() {
         use RawTokenKind::{BlockComment, LineComment, Literal, Whitespace};
 
-        if matches!(token.kind, Whitespace | LineComment { .. } | BlockComment { .. }) {
-            continue;
+        match token.kind {
+            Whitespace | LineComment { .. } => continue,
+            BlockComment { terminated, .. } if !terminated => {
+                eyre::bail!("unterminated block comment");
+            }
+            BlockComment { .. } => continue,
+            _ => {}
         }
         only_trivia = false;
 

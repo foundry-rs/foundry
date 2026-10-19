@@ -1,4 +1,4 @@
-use super::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
+use super::{CIP64_TX_TYPE, FoundryTxEnvelope, FoundryTxType, FoundryTypedTx, TxCip64};
 use crate::FoundryNetwork;
 use alloy_consensus::{BlobTransactionSidecarVariant, EthereumTypedTransaction};
 use alloy_network::{
@@ -44,6 +44,7 @@ pub use tempo_alloy::rpc::TempoTransactionRequest;
 /// - **Ethereum**: Default variant when no special fields are present
 /// - **Op**: When `sourceHash`, `mint`, and `isSystemTx` fields are present, or transaction type is
 ///   `DEPOSIT_TX_TYPE_ID`
+/// - **Celo**: When `feeCurrency` is non-null, or transaction type is `0x7b`
 /// - **Tempo**: When a Tempo-specific field is present, or transaction type is `TEMPO_TX_TYPE_ID`
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -54,6 +55,19 @@ pub enum FoundryTransactionRequest {
     #[cfg(any(feature = "base", feature = "optimism"))]
     Op(WithOtherFields<TransactionRequest>),
     Tempo(Box<TempoTransactionRequest>),
+    /// CIP-64 fields alongside the ordinary transaction request.
+    Celo(Cip64TransactionRequest),
+}
+
+/// Celo CIP-64 request fields. Anvil currently charges native fees.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cip64TransactionRequest {
+    /// Ordinary transaction request fields.
+    #[serde(flatten)]
+    pub inner: TransactionRequest,
+    /// Fee currency retained in the signed envelope.
+    pub fee_currency: Option<Address>,
 }
 
 const TEMPO_REQUEST_FIELDS: &[&str] = &[
@@ -113,6 +127,7 @@ impl FoundryTransactionRequest {
     pub fn into_inner(self) -> TransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
+            Self::Celo(tx) => tx.inner,
             #[cfg(feature = "base")]
             Self::Base(tx) => tx.into(),
             #[cfg(any(feature = "base", feature = "optimism"))]
@@ -151,6 +166,7 @@ impl FoundryTransactionRequest {
             #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(_) => FoundryTxType::Deposit,
             Self::Tempo(_) => FoundryTxType::Tempo,
+            Self::Celo(_) => FoundryTxType::Celo,
         }
     }
 
@@ -203,6 +219,7 @@ impl FoundryTransactionRequest {
                 Err(vec!["EIP-8130 requires a signed raw transaction envelope"])
             }
             FoundryTxType::Tempo => self.complete_tempo(),
+            FoundryTxType::Celo => self.as_ref().complete_1559(),
         }
     }
 
@@ -223,6 +240,15 @@ impl FoundryTransactionRequest {
     /// Converts the request into a `FoundryTypedTx`, handling all Ethereum and OP-stack transaction
     /// types.
     pub fn build_typed_tx(self) -> Result<FoundryTypedTx, Self> {
+        if let Self::Celo(request) = self {
+            let fee_currency = request.fee_currency;
+            return request
+                .inner
+                .clone()
+                .build_1559()
+                .map(|inner| FoundryTypedTx::Celo(TxCip64 { inner, fee_currency }))
+                .map_err(|_| Self::Celo(request));
+        }
         #[cfg(feature = "base")]
         if self.is_base() {
             return Err(self);
@@ -288,6 +314,7 @@ impl Serialize for FoundryTransactionRequest {
             #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(tx) => tx.serialize(serializer),
             Self::Tempo(tx) => tx.serialize(serializer),
+            Self::Celo(tx) => tx.serialize(serializer),
         }
     }
 }
@@ -297,8 +324,7 @@ impl<'de> Deserialize<'de> for FoundryTransactionRequest {
     where
         D: serde::Deserializer<'de>,
     {
-        WithOtherFields::<TransactionRequest>::deserialize(deserializer)?
-            .try_into()
+        Self::new(WithOtherFields::<TransactionRequest>::deserialize(deserializer)?)
             .map_err(serde::de::Error::custom)
     }
 }
@@ -312,6 +338,7 @@ impl AsRef<TransactionRequest> for FoundryTransactionRequest {
             #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(tx) => tx,
             Self::Tempo(tx) => tx.as_ref(),
+            Self::Celo(tx) => &tx.inner,
         }
     }
 }
@@ -325,6 +352,7 @@ impl AsMut<TransactionRequest> for FoundryTransactionRequest {
             #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Op(tx) => tx,
             Self::Tempo(tx) => tx.as_mut(),
+            Self::Celo(tx) => &mut tx.inner,
         }
     }
 }
@@ -333,6 +361,36 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
     type Error = serde_json::Error;
 
     fn try_from(tx: WithOtherFields<TransactionRequest>) -> Result<Self, Self::Error> {
+        if tx.transaction_type == Some(CIP64_TX_TYPE)
+            || tx.other.get("feeCurrency").is_some_and(|value| !value.is_null())
+        {
+            if tx.transaction_type.is_some_and(|ty| ty != CIP64_TX_TYPE)
+                || tx.gas_price.is_some()
+                || tx.has_eip4844_fields()
+                || tx.authorization_list.is_some()
+                || TEMPO_REQUEST_FIELDS.iter().any(|field| tx.other.contains_key(*field))
+                || [
+                    "accountChanges",
+                    "metadata",
+                    "sender",
+                    "senderAuth",
+                    "payer",
+                    "payerAuth",
+                    "sourceHash",
+                    "mint",
+                    "isSystemTx",
+                ]
+                .iter()
+                .any(|field| tx.other.get(*field).is_some_and(|value| !value.is_null()))
+            {
+                return Err(serde::de::Error::custom("conflicting CIP-64 transaction fields"));
+            }
+            let fee_currency =
+                tx.other.get_deserialized::<Option<Address>>("feeCurrency").transpose()?.flatten();
+            let mut inner = tx.inner;
+            inner.transaction_type = Some(CIP64_TX_TYPE);
+            return Ok(Self::Celo(Cip64TransactionRequest { inner, fee_currency }));
+        }
         #[derive(Deserialize)]
         struct NonZeroQuantity(#[serde(with = "alloy_serde::quantity::opt")] Option<NonZeroU64>);
 
@@ -467,17 +525,21 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                     .expect("valid deposit transaction request")
             }
             #[cfg(feature = "optimism")]
-            FoundryTypedTx::PostExec(tx) => WithOtherFields {
+            FoundryTypedTx::PostExec(tx) => Self::new(WithOtherFields {
                 inner: Into::<TransactionRequest>::into(tx),
                 other: OtherFields::default(),
-            }
-            .try_into()
+            })
             .expect("valid OP post-exec transaction request"),
             #[cfg(feature = "base")]
             FoundryTypedTx::Eip8130(tx) => {
                 Self::Base(super::base::simulation_request(tx, None, None, None))
             }
             FoundryTypedTx::Tempo(tx) => Self::Tempo(Box::new(tx.into())),
+            FoundryTypedTx::Celo(tx) => {
+                let mut inner: TransactionRequest = tx.inner.into();
+                inner.transaction_type = Some(CIP64_TX_TYPE);
+                Self::Celo(Cip64TransactionRequest { inner, fee_currency: tx.fee_currency })
+            }
         }
     }
 }
@@ -637,6 +699,9 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         if self.is_base() {
             return false;
         }
+        if let Self::Celo(_) = self {
+            return self.check_type(FoundryTxType::Celo).is_ok();
+        }
         if self.as_ref().can_build() || self.complete_tempo().is_ok() {
             return true;
         }
@@ -678,7 +743,7 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
                 false
             }
         };
-        if !is_deposit && !preferred_type.is_tempo() {
+        if !is_deposit && !preferred_type.is_tempo() && !preferred_type.is_celo() {
             inner.trim_conflicting_keys();
             inner.populate_blob_hashes();
         }
@@ -695,6 +760,7 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
             || preferred_type.is_eip4844()
             || preferred_type.is_eip7702()
             || preferred_type.is_tempo()
+            || preferred_type.is_celo()
         {
             inner
                 .max_priority_fee_per_gas
@@ -799,7 +865,7 @@ mod tests {
         other.insert("feeToken".to_string(), serde_json::to_value(Address::random()).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_tempo());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
@@ -871,7 +937,7 @@ mod tests {
         other.insert("isSystemTx".to_string(), serde_json::to_value(false).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_op());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Deposit(_))));
@@ -886,7 +952,7 @@ mod tests {
         other.insert("mint".to_string(), serde_json::to_value(U256::from(1000)).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_ethereum());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
@@ -899,7 +965,7 @@ mod tests {
         other.insert("anotherField".to_string(), serde_json::to_value(123).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_ethereum());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
@@ -926,7 +992,7 @@ mod tests {
         other.insert("isSystemTx".to_string(), serde_json::to_value(false).unwrap());
 
         let original: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
@@ -942,7 +1008,7 @@ mod tests {
         other.insert("nonceKey".to_string(), serde_json::to_value(U256::from(42)).unwrap());
 
         let original: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();

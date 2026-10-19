@@ -4484,7 +4484,7 @@ async fn test_tempo_aa_transaction_with_valid_after() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_aa_expired_valid_before() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -4497,6 +4497,8 @@ async fn test_tempo_aa_expired_valid_before() {
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
+    // Pin the clock: the next block timestamp is otherwise `latest + 1`.
+    api.evm_set_next_block_timestamp(current_time).unwrap();
     let valid_before = current_time.saturating_sub(10); // 10 seconds ago
 
     let transfer_call = token.transfer(recipient, U256::from(50_000));
@@ -4867,7 +4869,7 @@ async fn test_gas_estimation_with_value_fails() {
 /// as a first transaction, which Tempo charges the account-creation cost for.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_without_nonce_uses_sender_nonce() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -4889,6 +4891,27 @@ async fn test_gas_estimation_without_nonce_uses_sender_nonce() {
     let without_nonce = provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap();
     let with_nonce = provider.estimate_gas(WithOtherFields::new(tx.nonce(nonce))).await.unwrap();
     assert_eq!(without_nonce, with_nonce);
+
+    // A maximum sender nonce must still be rejected, not priced as a first transaction.
+    api.anvil_set_nonce(sender, U256::from(u64::MAX)).await.unwrap();
+    let tx = TransactionRequest::default().from(sender).to(accounts[1]).gas_price(0);
+    assert_eq!(
+        provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap_err().to_string(),
+        "server returned an error response: error code -32003: nonce has max value"
+    );
+    assert_eq!(
+        provider
+            .call(WithOtherFields::new(tx.clone().with_gas_limit(100_000)))
+            .await
+            .unwrap_err()
+            .to_string(),
+        "server returned an error response: error code -32003: nonce has max value"
+    );
+
+    // Explicit nonces remain usable when the call's nonce check is disabled.
+    let tx = tx.nonce(1);
+    assert_eq!(provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap(), 21_000);
+    provider.call(WithOtherFields::new(tx.with_gas_limit(100_000))).await.unwrap();
 }
 
 // ============================================================================

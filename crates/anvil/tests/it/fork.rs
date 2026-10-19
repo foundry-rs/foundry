@@ -4732,14 +4732,23 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_anvil_reset_rejects_self_reference_without_mutation() {
+async fn test_fork_reset_rejects_self_reference_with_existing_forge_cache() {
     let marker = Address::random();
     let marker_balance = U256::from(91_337u64);
-    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let cache_path = Config::foundry_block_cache_dir(chain_id, 0).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    // Forge persists the block cache as a file rather than a directory of endpoint caches.
+    std::fs::write(&cache_path, b"existing Forge cache").unwrap();
+
+    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
     origin_api.anvil_set_balance(marker, marker_balance).await.unwrap();
     let origin_url = origin_handle.http_endpoint();
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
     let provider = handle.http_provider();
+    let local_balance = U256::from(42u64);
+    api.anvil_set_balance(marker, local_balance).await.unwrap();
     let metadata_before = api.anvil_metadata().await.unwrap();
     let info_before = api.anvil_node_info().await.unwrap();
 
@@ -4748,14 +4757,31 @@ async fn test_anvil_reset_rejects_self_reference_without_mutation() {
             .anvil_reset(Some(Forking { json_rpc_url: Some(self_url), block_number: None }))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("own RPC endpoint"), "{err}");
+        let anvil::eth::error::BlockchainError::RpcError(err) = err else {
+            panic!("unexpected reset error: {err}");
+        };
+        assert_eq!(
+            err,
+            anvil_rpc::error::RpcError::invalid_params(
+                "cannot reset Anvil to its own RPC endpoint"
+            )
+        );
 
         let fork = api.backend.get_fork().unwrap();
         assert_eq!(fork.config.read().fork_urls, vec![origin_url.clone()]);
         assert_eq!(api.anvil_metadata().await.unwrap(), metadata_before);
         assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
-        assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
+        assert_eq!(provider.get_balance(marker).await.unwrap(), local_balance);
     }
+
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
+    assert_eq!(std::fs::read(&cache_path).unwrap(), b"existing Forge cache");
+
+    // Release the disk-backed fork before cleanup so shutdown cannot recreate its cache.
+    api.anvil_reset(None).await.unwrap();
+    drop((provider, api, handle, origin_api, origin_handle));
+    std::fs::remove_dir_all(cache_dir).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -5083,4 +5109,102 @@ fn test_fork_uncached_reads_do_not_deadlock_saturated_runtime() {
     });
 
     done_rx.recv_timeout(Duration::from_secs(60)).expect("fork node deadlocked");
+}
+
+#[test]
+fn test_fork_historical_reads_with_pending_logs() {
+    let origin_rt = tokio::runtime::Runtime::new().unwrap();
+    let (_origin_api, origin_handle) = origin_rt.block_on(spawn(NodeConfig::test()));
+    let (endpoint, proxy) = origin_rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let client = reqwest::Client::new();
+        let origin_url = origin_handle.http_endpoint();
+        let router = Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let client = client.clone();
+                let origin_url = origin_url.clone();
+                async move {
+                    let delay = if request["method"] == "eth_getLogs" { 200 } else { 10 };
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    Json(
+                        client
+                            .post(origin_url)
+                            .json(&request)
+                            .send()
+                            .await
+                            .unwrap()
+                            .json::<Value>()
+                            .await
+                            .unwrap(),
+                    )
+                }
+            }),
+        );
+        let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (endpoint, proxy)
+    });
+
+    for urls in [vec![endpoint.clone()], vec![endpoint.clone(), endpoint]] {
+        let fork_rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (api, handle) = fork_rt.block_on(async {
+            let (api, handle) = spawn(
+                NodeConfig::test()
+                    .with_fork_urls(urls)
+                    .with_no_fork_node_info(true)
+                    .with_no_storage_caching(true),
+            )
+            .await;
+            // Read twenty uncached slots while a historical state lock is held.
+            api.anvil_set_code(
+                Address::ZERO,
+                bytes!("60003560005b8082015450600101806100141160055700"),
+            )
+            .await
+            .unwrap();
+            api.mine_one().await.unwrap();
+            api.mine_one().await.unwrap();
+            (api, handle)
+        });
+        let result = origin_rt.block_on(async {
+            let provider = handle.http_provider();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                let call = provider.raw_request::<_, Value>(
+                    "eth_call".into(),
+                    json!([{"to": Address::ZERO, "data": B256::ZERO}, "0x1"]),
+                );
+                let logs = || {
+                    provider.raw_request::<_, Value>(
+                        "eth_getLogs".into(),
+                        json!([{"fromBlock": "0x0", "toBlock": "0x0"}]),
+                    )
+                };
+                let storage = async {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    provider
+                        .raw_request::<_, Value>(
+                            "eth_getStorageAt".into(),
+                            json!([Address::ZERO, "0xff", "0x1"]),
+                        )
+                        .await
+                };
+                let (call, first, second, storage) = tokio::join!(call, logs(), logs(), storage);
+                assert_eq!(call.unwrap(), json!("0x"));
+                assert_eq!(first.unwrap(), json!([]));
+                assert_eq!(second.unwrap(), json!([]));
+                assert_eq!(storage.unwrap(), json!(B256::ZERO));
+                assert_eq!(provider.get_block_number().await.unwrap(), 2);
+            })
+            .await
+        });
+        drop((api, handle));
+        fork_rt.shutdown_background();
+        result.expect("historical reads and logs deadlocked the fork node");
+    }
+    proxy.abort();
 }

@@ -178,7 +178,7 @@ impl HistoricalStateCache {
 
             let info = account_info_with_code(&account.info, &db.inner.cache.contracts);
             if let Some(code) = &info.code {
-                state.contracts.insert(info.code_hash, code.clone());
+                state.contracts.insert(info.code_hash(), code.clone());
             }
             state.accounts.insert(
                 address,
@@ -290,7 +290,7 @@ impl PersistentStateDb {
 fn account_info_with_code(info: &AccountInfo, contracts: &B256Map<Bytecode>) -> AccountInfo {
     let mut info = info.clone();
     if info.code.is_none() {
-        info.code = contracts.get(&info.code_hash).cloned();
+        info.code = contracts.get(&info.code_hash()).cloned();
     }
     info
 }
@@ -353,7 +353,7 @@ impl MaybeFullDatabase for PersistentStateDb {
             .into_iter()
             .map(|(address, info)| {
                 if let Some(code) = &info.code {
-                    contracts.insert(info.code_hash, code.clone());
+                    contracts.insert(info.code_hash(), code.clone());
                 }
                 let storage = storage
                     .remove(&address)
@@ -369,7 +369,7 @@ impl MaybeFullDatabase for PersistentStateDb {
 }
 
 impl DatabaseRef for StateRootDb {
-    type Error = <MemDb as DatabaseRef>::Error;
+    type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.inner.basic_ref(address)
@@ -389,7 +389,7 @@ impl DatabaseRef for StateRootDb {
 }
 
 impl Database for StateRootDb {
-    type Error = <MemDb as Database>::Error;
+    type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.state_root.get_mut().record_account(address);
@@ -579,7 +579,7 @@ impl Db for MemDb {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    self.inner.code_by_hash_ref(v.info.code_hash)?
+                    self.inner.code_by_hash_ref(v.info.code_hash())?
                 };
                 Ok((
                     k,
@@ -718,7 +718,7 @@ mod tests {
         let loaded_account = load_db.basic_ref(test_addr).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, U256::from(123456));
-        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(load_db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
     }
@@ -781,7 +781,7 @@ mod tests {
         assert_eq!(loaded_account2.nonce, 1);
 
         assert_eq!(loaded_account.balance, U256::from(100100));
-        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
         assert_eq!(db.storage_ref(test_addr, U256::from(1234568)).unwrap(), U256::from(5));

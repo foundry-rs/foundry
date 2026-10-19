@@ -615,21 +615,31 @@ pub enum AbiSubcommand {
 
     /// Decode event data
     ///
-    /// Parameters marked `indexed` in the supplied signature are emitted as log topics rather than
-    /// data, so they are ignored when decoding. With `--sig`, DATA must contain only the encoded
-    /// non-indexed event data, without topics.
+    /// With `--sig`, DATA contains only the encoded non-indexed event data, without topics.
+    /// Pass `--topics` to also decode indexed parameters and print all parameters in declaration
+    /// order. Without topics, indexed parameters are skipped. Indexed arrays, tuples, strings,
+    /// and bytes are returned as hashes; their original values cannot be recovered.
     ///
     /// Examples:
     /// - cast decode-event --sig "Transfer(address indexed from, address indexed to, uint256
     ///   value)" $DATA
+    /// - cast decode-event --sig "Transfer(address indexed from, address indexed to, uint256
+    ///   value)" --topics $TOPIC0,$TOPIC1,$TOPIC2 $DATA
     /// - cast decode-event $DATA (topic0-prefixed data; looks up the signature)
     #[command(verbatim_doc_comment, visible_aliases = &["event-decode", "--event-decode", "ed"])]
     DecodeEvent {
         /// The event signature. If none provided then tries to decode from local cache or <https://4byte.sourcify.dev>.
         #[arg(long, visible_alias = "event-sig")]
         sig: Option<String>,
-        /// The event data to decode.
+        /// The event data to decode. Use 0x for events with only indexed parameters.
         data: String,
+
+        /// The log topics, including topic0 for non-anonymous events, in log order.
+        ///
+        /// Repeat the flag or separate topics with commas. Requires --sig with indexed parameters
+        /// marked explicitly. Anonymous events do not have a signature topic.
+        #[arg(long, short = 't', value_delimiter = ',', requires = "sig")]
+        topics: Vec<B256>,
     },
 
     /// Decode custom error data.

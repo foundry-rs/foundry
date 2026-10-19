@@ -60,6 +60,8 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_value: Option<I256>,
     /// For optimization mode: the call sequence that produced the best value.
     pub optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Whether fail-fast or Ctrl-C stopped the campaign before its timeout or planned runs.
+    pub interrupted: bool,
 }
 
 impl InvariantFuzzTestResult {
@@ -103,6 +105,7 @@ impl InvariantFuzzTestResult {
             fork_block_number,
             optimization_best_value,
             optimization_best_sequence,
+            interrupted: false,
         }
     }
 }
@@ -477,18 +480,16 @@ mod tests {
     use super::*;
     use crate::executors::{EarlyExit, ExecutorBuilder};
     use alloy_dyn_abi::JsonAbiExt;
+    use alloy_evm::EvmEnv;
     use alloy_primitives::{Bytes, U256};
     use alloy_sol_types::SolCall;
     use foundry_cheatcodes::{CheatsConfig, Vm::expectRevert_0Call};
     use foundry_config::Config;
     use foundry_evm_core::{
-        backend::Backend,
-        constants::CALLER,
-        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
-        opts::EvmOpts,
+        backend::Backend, constants::CALLER, evm::EthEvmNetwork, opts::EvmOpts,
     };
     use foundry_evm_fuzz::invariant::TargetedContracts;
-    use revm::bytecode::Bytecode;
+    use revm::{bytecode::Bytecode, context::TxEnv};
     use std::sync::Arc;
 
     fn panic_payload(code: u8) -> Bytes {
@@ -506,12 +507,7 @@ mod tests {
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config))
             .gas_limit(1 << 24)
-            .build(
-                EvmEnvFor::<EthEvmNetwork>::default(),
-                TxEnvFor::<EthEvmNetwork>::default(),
-                backend,
-                Default::default(),
-            );
+            .build(EvmEnv::default(), TxEnv::default(), backend, Default::default());
         let invariant_address = Address::repeat_byte(0x11);
         executor
             .set_code(

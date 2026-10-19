@@ -6,6 +6,9 @@ use foundry_compilers::artifacts::Remapping;
 use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, str, util::OutputExt};
 use std::{fs, str::FromStr};
 
+#[cfg(unix)]
+use std::path::Path;
+
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
 }
@@ -693,7 +696,13 @@ contract StackTooDeepTest {
 
 #[forgetest_init]
 fn mutation_testing_uses_mutation_profile_for_initial_compile(prj: _, cmd: _) {
-    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = false\n").unwrap();
+    // Only the assertion needs mutating to exercise the compiler profile. Mutating every
+    // arithmetic expression in the stack-depth fixture needlessly repeats the expensive IR build.
+    fs::write(
+        prj.root().join("foundry.toml"),
+        "[profile.default]\nvia_ir = false\n\n[mutation]\nexclude_operators = [\"binary-op\"]\n",
+    )
+    .unwrap();
 
     prj.add_source(
         "StackTooDeep.sol",
@@ -703,6 +712,7 @@ pragma solidity ^0.8.20;
 
 contract StackTooDeep {
     function manyLocals(uint256 x) public pure returns (uint256) {
+        assert(x != 0);
         uint256 a00 = x + 0;
         uint256 a01 = x + 1;
         uint256 a02 = x + 2;
@@ -747,7 +757,11 @@ contract StackTooDeepTest {
 "#,
     );
 
+    // The ordinary profile must still fail, or the mutation profile override is not being tested.
+    cmd.arg("build").assert_failure();
+
     let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--mutate",
@@ -761,7 +775,9 @@ contract StackTooDeepTest {
         .assert_success();
     let summary = mutation_summary(&output.get_output().stdout_lossy());
 
-    assert!(summary["total"].as_u64().unwrap() > 0, "unexpected summary:\n{summary}");
+    assert_eq!(summary["total"], 3, "unexpected summary:\n{summary}");
+    assert_eq!(summary["killed"], 2, "unexpected summary:\n{summary}");
+    assert_eq!(summary["survived"], 1, "unexpected summary:\n{summary}");
 }
 
 #[forgetest_init]
@@ -2114,4 +2130,331 @@ contract NestedTest {
     assert!(serial["summary"]["survived"].as_u64().unwrap() > 0, "{serial}");
     assert_eq!(run("4"), serial);
     assert_eq!(run("8"), serial);
+}
+
+// Mutant paths must be relative to the project root, also if a parent directory of the project
+// has a well-known name such as `src`.
+#[forgetest]
+fn mutation_paths_are_relative_to_project_root(prj: _, cmd: _) {
+    let root = prj.root().join("src/project");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(root.join("foundry.toml"), "[profile.default]\n").unwrap();
+    fs::write(
+        root.join("src/Counter.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("test/Counter.t.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract CounterTest {
+    function test_Increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.current_dir(&root)
+        .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"summary":{"total":4,"killed":3,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":75.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
+
+"#]]);
+}
+
+// `copy_project` links `lib` into each mutant workspace. A mutant of a dependency source must be
+// written into the workspace, not through the link into the real dependency.
+#[forgetest_init]
+fn mutation_keeps_linked_dependency_sources_unchanged(prj: _, cmd: _) {
+    let source = r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#;
+    let dependency = prj.root().join("lib/bucket/Arithmetic.sol");
+    fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+    fs::write(&dependency, source).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        assert(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--mutation-jobs", "4", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&output);
+    assert_eq!(summary["invalid"], 0, "{summary}");
+    assert!(summary["survived"].as_u64().unwrap() > 0, "{summary}");
+    assert_eq!(fs::read_to_string(&dependency).unwrap(), source);
+}
+
+// Direct imports and aliases at any depth must see the same mutant. Unused dangling links must
+// not make mutants invalid.
+#[cfg(unix)]
+#[forgetest_init]
+fn mutation_keeps_links_in_dependency_sources(prj: _, cmd: _) {
+    let dependency = prj.root().join("lib/bucket");
+    fs::create_dir_all(&dependency).unwrap();
+    fs::write(
+        dependency.join("Arithmetic.sol"),
+        r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (bool) {
+        return value < 10;
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("Arithmetic.sol", dependency.join("Alias.sol")).unwrap();
+    fs::create_dir(dependency.join("nested")).unwrap();
+    std::os::unix::fs::symlink("../Arithmetic.sol", dependency.join("nested/Alias.sol")).unwrap();
+    std::os::unix::fs::symlink("nonexistent", dependency.join("unused")).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    for import in ["Arithmetic.sol", "Alias.sol", "nested/Alias.sol"] {
+        prj.add_test(
+            "Arithmetic.t.sol",
+            &r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/IMPORT";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testBoundary() public view {
+        assert(arithmetic.bucket(9));
+        assert(!arithmetic.bucket(10));
+        assert(!arithmetic.bucket(11));
+    }
+}
+"#
+            .replace("IMPORT", import),
+        );
+
+        cmd.forge_fuse()
+            .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"])
+            .assert_json_stdout(str![[r#"
+{
+  "summary": {
+    "total": 5,
+    "killed": 5,
+    "survived": 0,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 100.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {}
+}
+"#]]);
+    }
+}
+
+// Relative links outside the project must still resolve after isolating a dependency.
+#[cfg(unix)]
+#[forgetest_init]
+fn mutation_keeps_external_relative_dependency_links(prj: _, cmd: _) {
+    let shared = tempfile::tempdir_in(prj.root().parent().unwrap()).unwrap();
+    let mutation_tmp = shared.path().join("mutants");
+    fs::create_dir(&mutation_tmp).unwrap();
+    cmd.env("TMPDIR", &mutation_tmp);
+    fs::write(
+        shared.path().join("Helper.sol"),
+        "pragma solidity ^0.8.13; uint256 constant LIMIT = 10;",
+    )
+    .unwrap();
+    let dependency = prj.root().join("lib/bucket");
+    fs::create_dir_all(&dependency).unwrap();
+    let source = r#"pragma solidity ^0.8.13;
+import {LIMIT} from "./Helper.sol";
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (bool) {
+        return value < LIMIT;
+    }
+}
+"#;
+    fs::write(dependency.join("Arithmetic.sol"), source).unwrap();
+    let helper = Path::new("../../../").join(shared.path().file_name().unwrap()).join("Helper.sol");
+    std::os::unix::fs::symlink(&helper, dependency.join("Helper.sol")).unwrap();
+    prj.update_config(|config| {
+        config.allow_paths = vec![shared.path().to_path_buf()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+import {Arithmetic} from "../lib/bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testBoundary() public view {
+        assert(arithmetic.bucket(9));
+        assert(!arithmetic.bucket(10));
+        assert(!arithmetic.bucket(11));
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"]).assert_json_stdout(str![
+        [r#"
+{
+  "summary": {
+    "total": 5,
+    "killed": 5,
+    "survived": 0,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 100.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {}
+}
+"#]
+    ]);
+    assert_eq!(fs::read_link(dependency.join("Helper.sol")).unwrap(), helper);
+    assert_eq!(fs::read_to_string(dependency.join("Arithmetic.sol")).unwrap(), source);
+}
+
+// A per-mutant timeout must not turn a run-limited invariant campaign into a time-based one.
+#[forgetest]
+fn mutation_timeout_keeps_invariant_run_limit(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = number + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract Handler {
+    Counter public counter;
+    uint256 public calls;
+
+    constructor(Counter counter_) {
+        counter = counter_;
+    }
+
+    function increment() public {
+        counter.increment();
+        calls++;
+    }
+}
+
+contract CounterInvariantTest {
+    Counter counter;
+    Handler handler;
+
+    function setUp() public {
+        counter = new Counter();
+        handler = new Handler(counter);
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(handler);
+    }
+
+    /// forge-config: default.invariant.runs = 4
+    /// forge-config: default.invariant.depth = 4
+    /// forge-config: default.invariant.shrink_run_limit = 0
+    function invariant_countsCalls() public view {
+        require(counter.number() == handler.calls(), "count mismatch");
+    }
+}
+"#,
+    );
+
+    let mut run = |args: &[&str]| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "4", "--json"])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut summary = mutation_summary(&output);
+        summary.as_object_mut().unwrap().remove("duration_secs");
+        summary
+    };
+    let unbounded = run(&[]);
+    assert_eq!(
+        unbounded,
+        serde_json::json!({
+            "total": 10,
+            "killed": 9,
+            "survived": 1,
+            "invalid": 0,
+            "skipped": 0,
+            "timed_out": 0,
+            "mutation_score": 90.0,
+        })
+    );
+    assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);
 }

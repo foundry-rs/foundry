@@ -169,7 +169,7 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
         let target = if is_delegatecall(inputs.scheme) {
             inputs.bytecode_address
         } else {
-            inputs.target_address
+            inputs.transfer_to()
         };
 
         if IGNORE.contains(&target) || ctx.journal_ref().precompile_addresses().contains(&target) {
