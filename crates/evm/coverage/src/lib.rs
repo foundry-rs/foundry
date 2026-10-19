@@ -139,16 +139,20 @@ impl CoverageReport {
     pub fn items_by_file(&self) -> impl Iterator<Item = (&Path, Vec<CoverageItem>)> {
         let mut by_file = BTreeMap::<&Path, BTreeMap<CoverageItemKey<'_>, CoverageItem>>::new();
         for (build_id, items) in &self.analyses {
-            for item in items.all_items() {
-                let Some(path) = self.get_source_path(build_id, item.loc.source_id) else {
-                    continue;
-                };
-                by_file
-                    .entry(path)
-                    .or_default()
-                    .entry(CoverageItemKey::new(item))
-                    .and_modify(|merged| merged.hits = merged.hits.saturating_add(item.hits))
-                    .or_insert_with(|| item.clone());
+            for source_items in
+                items.all_items().chunk_by(|a, b| a.loc.source_id == b.loc.source_id)
+            {
+                if let Some(path) = self.get_source_path(build_id, source_items[0].loc.source_id) {
+                    let file_items = by_file.entry(path).or_default();
+                    for item in source_items {
+                        file_items
+                            .entry(CoverageItemKey::new(item))
+                            .and_modify(|merged| {
+                                merged.hits = merged.hits.saturating_add(item.hits)
+                            })
+                            .or_insert_with(|| item.clone());
+                    }
+                }
             }
         }
         by_file.into_iter().map(|(path, items)| (path, items.into_values().collect()))
