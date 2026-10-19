@@ -1,10 +1,8 @@
 //! Anvil's state databases.
 //!
-//! Anvil stores state in its own account model ([`DbAccount`](crate::eth::backend::db::DbAccount)
-//! in a [`Cache`](crate::eth::backend::db::Cache)) over an optional remote fork. Execution reads it
-//! through [`EvmDb`](crate::eth::backend::db::EvmDb), an evm2
-//! [`DynDatabase`](evm2::evm::DynDatabase) adapter, and writes back the accumulated changes with
-//! [`Db::commit`](crate::eth::backend::db::Db::commit).
+//! Anvil stores state in its own account model ([`DbAccount`]
+//! in a [`Cache`]) over an optional remote fork. Execution reads it through [`EvmDb`], an evm2
+//! [`DynDatabase`] adapter, and writes back the accumulated changes with [`Db::commit`].
 
 use crate::mem::storage::MinedTransaction;
 use alloy_consensus::BlockBody;
