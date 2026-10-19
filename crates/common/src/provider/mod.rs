@@ -7,7 +7,10 @@ pub mod runtime_transport;
 
 use crate::{
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
-    provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
+    provider::{
+        curl_transport::CurlTransport,
+        runtime_transport::{HttpConnectTimeout, RuntimeTransportBuilder},
+    },
 };
 use alloy_chains::NamedChain;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
@@ -19,7 +22,9 @@ use alloy_provider::{
 };
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_transport::{
-    TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
+    TransportError, TransportFut,
+    layers::{OrRetryPolicyFn, RateLimitRetryPolicy, RetryBackoffLayer},
+    utils::guess_local_url,
 };
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
@@ -369,8 +374,7 @@ impl<N: Network> ProviderBuilder<N> {
         let url = url?;
         let no_proxy = no_proxy || is_local;
 
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        let retry_layer = retry_layer(max_retry, initial_backoff, compute_units_per_second);
 
         // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
         if curl_mode {
@@ -452,8 +456,7 @@ impl<N: Network> ProviderBuilder<N> {
 
         let round_robin = RoundRobinService::new(transports);
 
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        let retry_layer = retry_layer(max_retry, initial_backoff, compute_units_per_second);
         // Use normalized/parsed URLs for local detection, consistent with build()
         let is_local = parsed_urls.iter().all(|url| guess_local_url(url.as_str()));
         let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
@@ -581,6 +584,23 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
     }
 }
 
+/// Returns the retry layer for RPC clients.
+///
+/// It retries rate limit errors and HTTP connect timeouts. A request that timed out while it
+/// opened a connection was not sent, so it is safe to send again.
+fn retry_layer(
+    max_retry: u32,
+    initial_backoff: u64,
+    compute_units_per_second: u64,
+) -> RetryBackoffLayer<OrRetryPolicyFn> {
+    RetryBackoffLayer::new_with_policy(
+        max_retry,
+        initial_backoff,
+        compute_units_per_second,
+        OrRetryPolicyFn::new(RateLimitRetryPolicy::default(), HttpConnectTimeout::matches),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_json_rpc::ErrorPayload;
@@ -683,5 +703,52 @@ mod tests {
         assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
         assert_eq!(builder.timeout, Duration::from_secs(7));
         assert_eq!(builder.chain, NamedChain::Mainnet);
+    }
+
+    #[tokio::test]
+    async fn retries_http_connect_timeouts() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("https://{}", listener.local_addr().unwrap())).unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        // Accept TCP connections, but never answer the TLS handshake.
+        let server = tokio::spawn({
+            let accepted = accepted.clone();
+            async move {
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    tokio::spawn(async move {
+                        let _stream = stream;
+                        std::future::pending::<()>().await
+                    });
+                }
+            }
+        });
+        let transport = RuntimeTransportBuilder::new(url)
+            .with_connect_timeout(Duration::from_millis(100))
+            .build();
+        let client =
+            ClientBuilder::default().layer(retry_layer(2, 10, u64::MAX)).transport(transport, true);
+
+        let error = client.request_noparams::<String>("eth_chainId").await.unwrap_err();
+        server.abort();
+
+        assert!(error.to_string().starts_with("Max retries exceeded"), "{error}");
+        assert_eq!(accepted.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_refused_http_connections() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        drop(listener);
+        let transport = RuntimeTransportBuilder::new(url).build();
+        let client =
+            ClientBuilder::default().layer(retry_layer(2, 10, u64::MAX)).transport(transport, true);
+
+        let error = client.request_noparams::<String>("eth_chainId").await.unwrap_err();
+
+        assert!(!HttpConnectTimeout::matches(&error), "{error}");
+        assert!(!error.to_string().starts_with("Max retries exceeded"), "{error}");
     }
 }

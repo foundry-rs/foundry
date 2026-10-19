@@ -16,6 +16,12 @@ pub const SELECTOR_LEN: usize = 4;
 /// responses. This timeout should be a reasonable amount of time to wait for a request.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// Default timeout for opening an HTTP connection, including the TLS handshake.
+///
+/// This is shorter than [`REQUEST_TIMEOUT`] so that a lost TCP SYN fails fast. The RPC retry layer
+/// then sends the request again on a new connection.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Alchemy free tier cups: <https://docs.alchemy.com/reference/pricing-plans>
 pub const ALCHEMY_FREE_TIER_CUPS: u64 = 330;
 

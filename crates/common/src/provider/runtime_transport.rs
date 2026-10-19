@@ -3,13 +3,14 @@
 //! `RetryBackoffLayer`) when used.
 
 use crate::{
-    DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
+    CONNECT_TIMEOUT, DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
     provider::{
         mpp::transport::{LazyMppHttpTransport, lazy_mpp_ws_connect},
         redact_url,
     },
 };
-use alloy_json_rpc::{RequestPacket, ResponsePacket};
+use alloy_json_rpc::{RequestPacket, ResponsePacket, RpcError};
+use alloy_primitives::map::HashMap;
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{
@@ -19,18 +20,20 @@ use alloy_transport::{
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
 use regex::{Captures, Regex};
-use reqwest::header::{HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::{
     error::Error as StdError,
     fmt,
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Mutex},
+    time::Duration,
 };
 use thiserror::Error;
 use tokio::{
     runtime::{Handle, Id},
-    sync::RwLock,
+    sync::{RwLock, Semaphore},
+    time::timeout,
 };
 use tower::Service;
 use url::Url;
@@ -43,6 +46,23 @@ const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz", ".mpp.moderato.tempo.xyz"];
 
 static HTTP_URL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)https?://[^\s<>"']+"#).expect("valid URL regex"));
+
+/// HTTP clients that transports with the same [`HttpClientKey`] share.
+///
+/// Each client owns a connection pool. When transports share a client, they also share its
+/// connections, so many forks of one endpoint open one HTTP/2 connection instead of one each.
+/// A client is used only on the runtime that created it, because its pooled connections run on
+/// that runtime. A client from another runtime is replaced.
+static HTTP_CLIENTS: LazyLock<Mutex<HashMap<HttpClientKey, SharedHttpClient>>> =
+    LazyLock::new(Default::default);
+
+/// The maximum time that a request waits for the first request of a new shared HTTP client.
+///
+/// Requests that start at the same time on a new client each open a connection, because the
+/// client does not know yet that the server supports HTTP/2. If they wait for the first response,
+/// they use its connection instead. If the first request is slow, the others stop waiting after
+/// this time and open their own connections.
+const FIRST_CONNECTION_WAIT: Duration = Duration::from_secs(1);
 
 /// An enum representing the different transports that can be used to connect to a runtime.
 /// Only meant to be used internally by [RuntimeTransport].
@@ -88,6 +108,55 @@ pub enum RuntimeTransportError {
     InvalidJwt(String),
 }
 
+/// An HTTP client in [`HTTP_CLIENTS`].
+#[derive(Debug)]
+struct SharedHttpClient {
+    /// The runtime that created the client.
+    runtime: Id,
+    client: reqwest::Client,
+    /// Lets one request at a time through until a request gets a response. See
+    /// [`FIRST_CONNECTION_WAIT`].
+    first_connection: Arc<Semaphore>,
+}
+
+/// A connected [`InnerTransport`] of a [`RuntimeTransport`].
+#[derive(Clone, Debug)]
+struct Connection {
+    /// The runtime that connected the transport.
+    runtime: Id,
+    transport: InnerTransport,
+    /// The [`SharedHttpClient::first_connection`] gate of a shared HTTP client.
+    first_connection: Option<Arc<Semaphore>>,
+}
+
+/// The settings that a shared HTTP client is built from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct HttpClientKey {
+    headers: Vec<(HeaderName, HeaderValue)>,
+    timeout: Duration,
+    connect_timeout: Duration,
+    accept_invalid_certs: bool,
+    no_proxy: bool,
+}
+
+/// An HTTP request that timed out while it opened a connection.
+///
+/// The request was not sent, so a retry layer can send it again safely. Use
+/// [`Self::matches`] in a retry policy.
+#[derive(Debug, Error)]
+#[error("{0}")]
+pub struct HttpConnectTimeout(String);
+
+impl HttpConnectTimeout {
+    /// Returns `true` if `error` is an [`HttpConnectTimeout`].
+    pub fn matches(error: &TransportError) -> bool {
+        matches!(
+            error,
+            RpcError::Transport(TransportErrorKind::Custom(source)) if source.is::<Self>()
+        )
+    }
+}
+
 /// Runtime transport that only connects on first request.
 ///
 /// A runtime transport is a custom [`alloy_transport::Transport`] that only connects when the
@@ -98,7 +167,7 @@ pub enum RuntimeTransportError {
 #[derive(Clone, Debug)]
 pub struct RuntimeTransport {
     /// The inner actual transport used.
-    inner: Arc<RwLock<Option<(Id, InnerTransport)>>>,
+    inner: Arc<RwLock<Option<Connection>>>,
     /// The URL to connect to.
     url: Url,
     /// The headers to use for requests.
@@ -107,6 +176,8 @@ pub struct RuntimeTransport {
     jwt: Option<String>,
     /// The timeout for requests.
     timeout: std::time::Duration,
+    /// The timeout for opening HTTP connections.
+    connect_timeout: Duration,
     /// Whether to accept invalid certificates.
     accept_invalid_certs: bool,
     /// Whether to disable automatic proxy detection.
@@ -120,6 +191,7 @@ pub struct RuntimeTransportBuilder {
     headers: Vec<String>,
     jwt: Option<String>,
     timeout: std::time::Duration,
+    connect_timeout: Duration,
     accept_invalid_certs: bool,
     no_proxy: bool,
 }
@@ -132,6 +204,7 @@ impl RuntimeTransportBuilder {
             headers: vec![],
             jwt: None,
             timeout: REQUEST_TIMEOUT,
+            connect_timeout: CONNECT_TIMEOUT,
             accept_invalid_certs: false,
             no_proxy: false,
         }
@@ -152,6 +225,14 @@ impl RuntimeTransportBuilder {
     /// Set the timeout for the transport.
     pub const fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Set the timeout for opening HTTP connections.
+    ///
+    /// The transport uses the shorter of this and the request timeout.
+    pub const fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
+        self.connect_timeout = connect_timeout;
         self
     }
 
@@ -179,6 +260,7 @@ impl RuntimeTransportBuilder {
             headers: self.headers,
             jwt: self.jwt,
             timeout: self.timeout,
+            connect_timeout: self.connect_timeout,
             accept_invalid_certs: self.accept_invalid_certs,
             no_proxy: self.no_proxy,
         }
@@ -194,16 +276,24 @@ impl fmt::Display for RuntimeTransport {
 impl RuntimeTransport {
     /// Connects the underlying transport, depending on the URL scheme.
     pub async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
+        Ok(self.connect_with_gate().await?.0)
+    }
+
+    /// Connects the underlying transport, and returns the first connection gate of a shared HTTP
+    /// client.
+    async fn connect_with_gate(
+        &self,
+    ) -> Result<(InnerTransport, Option<Arc<Semaphore>>), RuntimeTransportError> {
         match self.url.scheme() {
             "http" | "https" => self.connect_http(),
-            "ws" | "wss" => self.connect_ws().await,
-            "file" => self.connect_ipc().await,
+            "ws" | "wss" => Ok((self.connect_ws().await?, None)),
+            "file" => Ok((self.connect_ipc().await?, None)),
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
         }
     }
 
-    fn reqwest_headers(&self) -> Result<reqwest::header::HeaderMap, RuntimeTransportError> {
-        let mut headers = reqwest::header::HeaderMap::new();
+    fn reqwest_headers(&self) -> Result<HeaderMap, RuntimeTransportError> {
+        let mut headers = HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
         if let Some(jwt) = self.jwt.clone() {
@@ -254,18 +344,25 @@ impl RuntimeTransport {
         Ok(headers)
     }
 
+    /// Returns whether the HTTP client disables automatic proxy detection.
+    ///
+    /// This helps in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox) where
+    /// system proxy detection via SCDynamicStore causes crashes.
+    /// See: https://github.com/foundry-rs/foundry/issues/12733
+    fn uses_no_proxy(&self) -> bool {
+        self.no_proxy || guess_local_url(self.url.as_str())
+    }
+
     fn reqwest_client_with_headers(
         &self,
-        headers: reqwest::header::HeaderMap,
+        headers: HeaderMap,
     ) -> Result<reqwest::Client, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
+            .connect_timeout(self.connect_timeout.min(self.timeout))
             .danger_accept_invalid_certs(self.accept_invalid_certs);
 
-        // Disable automatic proxy detection if requested. This helps in sandboxed environments
-        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
-        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
-        if self.no_proxy || guess_local_url(self.url.as_str()) {
+        if self.uses_no_proxy() {
             client_builder = client_builder.no_proxy();
         }
 
@@ -279,11 +376,52 @@ impl RuntimeTransport {
         self.reqwest_client_with_headers(self.reqwest_headers()?)
     }
 
+    /// Returns the shared HTTP client for this transport's settings on the current runtime, with
+    /// its first connection gate.
+    ///
+    /// Builds and stores a new client if there is none yet. A JWT gets a new `iat` claim on each
+    /// connect, so transports with a JWT do not share clients.
+    fn shared_reqwest_client(
+        &self,
+        headers: HeaderMap,
+    ) -> Result<(reqwest::Client, Option<Arc<Semaphore>>), RuntimeTransportError> {
+        let Some(runtime) =
+            Handle::try_current().ok().filter(|_| self.jwt.is_none()).map(|handle| handle.id())
+        else {
+            return Ok((self.reqwest_client_with_headers(headers)?, None));
+        };
+
+        let key = HttpClientKey {
+            headers: headers.iter().map(|(name, value)| (name.clone(), value.clone())).collect(),
+            timeout: self.timeout,
+            connect_timeout: self.connect_timeout,
+            accept_invalid_certs: self.accept_invalid_certs,
+            no_proxy: self.uses_no_proxy(),
+        };
+        let mut clients = HTTP_CLIENTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(shared) = clients.get(&key)
+            && shared.runtime == runtime
+        {
+            return Ok((shared.client.clone(), Some(shared.first_connection.clone())));
+        }
+        let shared = SharedHttpClient {
+            runtime,
+            client: self.reqwest_client_with_headers(headers)?,
+            first_connection: Arc::new(Semaphore::new(1)),
+        };
+        let client = (shared.client.clone(), Some(shared.first_connection.clone()));
+        clients.insert(key, shared);
+        Ok(client)
+    }
+
     /// Connects to an HTTP transport with lazy MPP 402 handling.
-    fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+    fn connect_http(
+        &self,
+    ) -> Result<(InnerTransport, Option<Arc<Semaphore>>), RuntimeTransportError> {
         let headers = self.reqwest_headers()?;
-        let client = self.reqwest_client_with_headers(headers.clone())?;
-        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone(), headers)))
+        let (client, first_connection) = self.shared_reqwest_client(headers.clone())?;
+        let transport = LazyMppHttpTransport::lazy(client, self.url.clone(), headers);
+        Ok((InnerTransport::Http(transport), first_connection))
     }
 
     /// Connects to a WS transport.
@@ -343,29 +481,46 @@ impl RuntimeTransport {
         Box::pin(async move {
             let runtime = Handle::current().id();
             let inner = this.inner.read().await;
-            let transport = if let Some((id, transport)) = &*inner
-                && *id == runtime
+            let connection = if let Some(connection) = &*inner
+                && connection.runtime == runtime
             {
-                let transport = transport.clone();
+                let connection = connection.clone();
                 drop(inner);
-                transport
+                connection
             } else {
                 drop(inner);
                 let mut inner = this.inner.write().await;
                 // Connections may own tasks and I/O resources on their originating runtime.
                 // Reconnect when a shared client is used from another runtime.
-                if inner.as_ref().is_none_or(|(id, _)| *id != runtime) {
-                    *inner =
-                        Some((runtime, this.connect().await.map_err(TransportErrorKind::custom)?));
+                if inner.as_ref().is_none_or(|connection| connection.runtime != runtime) {
+                    let (transport, first_connection) =
+                        this.connect_with_gate().await.map_err(TransportErrorKind::custom)?;
+                    *inner = Some(Connection { runtime, transport, first_connection });
                 }
-                inner.as_ref().expect("transport is connected").1.clone()
+                inner.clone().expect("transport is connected")
             };
 
+            let Connection { transport, first_connection, .. } = connection;
             match transport {
-                InnerTransport::Http(mut http) => http
-                    .call(req)
-                    .await
-                    .map_err(|error| redact_http_transport_error(error, &this.url)),
+                InnerTransport::Http(mut http) => {
+                    // A closed gate means that the client already got a response.
+                    let _permit = match &first_connection {
+                        Some(gate) if !gate.is_closed() => {
+                            timeout(FIRST_CONNECTION_WAIT, gate.acquire())
+                                .await
+                                .ok()
+                                .and_then(Result::ok)
+                        }
+                        _ => None,
+                    };
+                    let result = http.call(req).await;
+                    if result.is_ok()
+                        && let Some(gate) = &first_connection
+                    {
+                        gate.close();
+                    }
+                    result.map_err(|error| redact_http_transport_error(error, &this.url))
+                }
                 InnerTransport::Ws(mut ws) => ws.call(req).await,
                 InnerTransport::Ipc(mut ipc) => ipc.call(req).await,
             }
@@ -390,12 +545,16 @@ fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> Transpo
     let safe_endpoint = redact_url(endpoint.as_str());
 
     let mut message = String::new();
+    let mut connect_timeout = false;
     let mut error: Option<&(dyn StdError + 'static)> = Some(source.as_ref());
     while let Some(source) = error {
         if !message.is_empty() {
             message.push_str(": ");
         }
         message.push_str(&source.to_string());
+        connect_timeout |= source
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| error.is_connect() && error.is_timeout());
         error = source.source();
     }
     let message = HTTP_URL_RE.replace_all(&message, |captures: &Captures<'_>| {
@@ -409,7 +568,11 @@ fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> Transpo
             candidate.to_owned()
         }
     });
-    TransportErrorKind::custom_str(&message)
+    if connect_timeout {
+        TransportErrorKind::custom(HttpConnectTimeout(message.into_owned()))
+    } else {
+        TransportErrorKind::custom_str(&message)
+    }
 }
 
 impl tower::Service<RequestPacket> for RuntimeTransport {
@@ -484,11 +647,15 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 mod tests {
     use super::*;
     use alloy_json_rpc::{Id as RpcId, Request};
-    use axum::{Json, Router, routing::post};
-    use reqwest::header::HeaderMap;
+    use axum::{Json, Router, extract::ConnectInfo, routing::post};
     use serde_json::{Value, json};
-    use std::{io, time::Duration};
-    use tokio::{runtime::Builder, sync::Notify, time::timeout};
+    use std::{
+        collections::HashSet,
+        io,
+        net::SocketAddr,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::{runtime::Builder, sync::Notify};
 
     #[derive(Debug, Error)]
     #[error("request to https://example.com/private-api-key failed")]
@@ -591,7 +758,7 @@ mod tests {
         let transport = RuntimeTransportBuilder::new(url.clone())
             .with_headers(vec!["User-Agent: test-agent".to_string()])
             .build();
-        let inner = transport.connect_http().unwrap();
+        let (inner, _) = transport.connect_http().unwrap();
 
         match inner {
             InnerTransport::Http(http) => {
@@ -603,6 +770,107 @@ mod tests {
         }
 
         server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn http_transports_share_connections() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let peers = Arc::new(Mutex::new(HashSet::new()));
+        let router =
+            Router::new().route(
+                "/",
+                post({
+                    let peers = peers.clone();
+                    move |ConnectInfo(peer): ConnectInfo<SocketAddr>, Json(request): Json<Value>| {
+                        peers.lock().unwrap().insert(peer);
+                        async move {
+                            Json(json!({"jsonrpc": "2.0", "id": request["id"], "result": "0x1"}))
+                        }
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+                .await
+                .unwrap()
+        });
+        // A header unique to this test keeps other tests from replacing the shared client.
+        let headers = vec!["x-test: http-transports-share-connections".to_string()];
+        let request =
+            RequestPacket::from(Request::new("ready", RpcId::Number(1), ()).serialize().unwrap());
+
+        for transport in [
+            RuntimeTransportBuilder::new(url.clone()).with_headers(headers.clone()).build(),
+            RuntimeTransportBuilder::new(url.clone()).with_headers(headers.clone()).build(),
+        ] {
+            transport.request(request.clone()).await.unwrap();
+        }
+        assert_eq!(peers.lock().unwrap().len(), 1);
+
+        // Transports with other settings use another client.
+        let mut headers = headers;
+        headers.push("x-other: 1".to_string());
+        RuntimeTransportBuilder::new(url)
+            .with_headers(headers)
+            .build()
+            .request(request)
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(peers.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn http_transports_wait_for_first_response() {
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let arrived = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let router = Router::new().route(
+            "/",
+            post({
+                let started = started.clone();
+                let release = release.clone();
+                let arrived = arrived.clone();
+                move |Json(request): Json<Value>| {
+                    let started = started.clone();
+                    let release = release.clone();
+                    let first = arrived.fetch_add(1, Ordering::SeqCst) == 0;
+                    async move {
+                        if first {
+                            started.notify_one();
+                            release.notified().await;
+                        }
+                        Json(json!({"jsonrpc": "2.0", "id": request["id"], "result": "0x1"}))
+                    }
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        // A header unique to this test keeps other tests from replacing the shared client.
+        let headers = vec!["x-test: http-transports-wait-for-first-response".to_string()];
+        let request =
+            RequestPacket::from(Request::new("ready", RpcId::Number(1), ()).serialize().unwrap());
+
+        let requests = (0..3)
+            .map(|_| {
+                let transport =
+                    RuntimeTransportBuilder::new(url.clone()).with_headers(headers.clone()).build();
+                tokio::spawn(transport.request(request.clone()))
+            })
+            .collect::<Vec<_>>();
+        started.notified().await;
+        tokio::time::sleep(FIRST_CONNECTION_WAIT / 4).await;
+        assert_eq!(arrived.load(Ordering::SeqCst), 1);
+
+        release.notify_one();
+        for request in requests {
+            request.await.unwrap().unwrap();
+        }
+        server.abort();
+        assert_eq!(arrived.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
