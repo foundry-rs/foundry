@@ -1,14 +1,16 @@
 //! Engine-free matching for the `expectEmit` cheatcodes.
 
 use crate::Error;
-use alloy_dyn_abi::{DynSolValue, EventExt};
-use alloy_json_abi::Event;
+use alloy_dyn_abi::EventExt;
 use alloy_primitives::{
     Address, Bytes, Log, LogData as RawLog, hex,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
 use alloy_sol_types::SolValue;
-use foundry_common::{abi::get_indexed_event, fmt::format_token};
+use foundry_common::{
+    abi::{get_indexed_event, reconstruct_event_params},
+    fmt::format_token,
+};
 use foundry_evm_traces::{DecodedCallLog, identifier::SignaturesIdentifier};
 use std::collections::VecDeque;
 
@@ -313,7 +315,7 @@ fn decode_event(
 
     // Try to decode the event
     if let Ok(decoded) = indexed_event.decode_log(log) {
-        let params = reconstruct_params(&indexed_event, &decoded);
+        let params = reconstruct_event_params(&indexed_event, &decoded);
 
         let decoded_params = params
             .into_iter()
@@ -328,23 +330,6 @@ fn decode_event(
     }
 
     None
-}
-
-/// Restore the order of the params of a decoded event
-fn reconstruct_params(event: &Event, decoded: &alloy_dyn_abi::DecodedEvent) -> Vec<DynSolValue> {
-    let mut indexed = 0;
-    let mut unindexed = 0;
-    let mut inputs = vec![];
-    for input in &event.inputs {
-        if input.indexed && indexed < decoded.indexed.len() {
-            inputs.push(decoded.indexed[indexed].clone());
-            indexed += 1;
-        } else if unindexed < decoded.body.len() {
-            inputs.push(decoded.body[unindexed].clone());
-            unindexed += 1;
-        }
-    }
-    inputs
 }
 
 /// Gets a detailed mismatch message for emit assertions
