@@ -939,19 +939,13 @@ mod tests {
             )
             .unwrap();
             let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
-            let generated = input
-                .input
-                .sources
-                .values()
-                .map(|source| source.content.as_str())
-                .collect::<String>();
             assert_eq!(
-                generated.matches("external returns (uint160);").count(),
+                source.matches("external returns (uint160);").count(),
                 if workaround { 8 } else { 0 },
                 "{version}, via_ir={via_ir:?}, specific={specific}"
             );
             assert_eq!(
-                generated.matches("external returns (address);").count(),
+                source.matches("external returns (address);").count(),
                 if workaround { 0 } else { 8 }
             );
             assert_eq!(source.matches("payable(address(").count(), usize::from(workaround));
