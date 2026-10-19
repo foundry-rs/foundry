@@ -342,6 +342,11 @@ impl CallHits {
 #[derive(Clone, Debug)]
 pub struct HitMap {
     hits: FxHashMap<u32, u32>,
+    /// Dense hit counters indexed by program counter, written by [`Self::record`] while a
+    /// collector runs and moved into `hits` by [`Self::flush`].
+    pending: Vec<u32>,
+    /// Program counters with a non-zero counter in `pending`, in order of their first hit.
+    pending_pcs: Vec<u32>,
     bytecode: Bytes,
     creations: u32,
     empty_calls: CallHits,
@@ -356,6 +361,8 @@ impl HitMap {
         Self {
             bytecode,
             hits: Default::default(),
+            pending: Vec::new(),
+            pending_pcs: Vec::new(),
             creations: 0,
             empty_calls: Default::default(),
             short_calls: Default::default(),
@@ -385,6 +392,39 @@ impl HitMap {
     #[inline]
     pub fn hits(&mut self, pc: u32, hits: u32) {
         *self.hits.entry(pc).or_default() += hits;
+    }
+
+    /// Records a hit for the given program counter without a hash map update.
+    ///
+    /// The hit is not visible through the other methods until [`Self::flush`] is called.
+    #[inline]
+    pub(crate) fn record(&mut self, pc: usize) {
+        if let Some(hits) = self.pending.get_mut(pc) {
+            if *hits == 0 {
+                self.pending_pcs.push(pc as u32);
+            }
+            *hits += 1;
+        } else {
+            self.grow_pending(pc);
+        }
+    }
+
+    /// Allocates the pending counters, or grows them for a hit in the bytecode padding.
+    #[cold]
+    #[inline(never)]
+    fn grow_pending(&mut self, pc: usize) {
+        self.pending.resize(self.bytecode.len().max(pc + 1), 0);
+        self.record(pc);
+    }
+
+    /// Moves the hits recorded by [`Self::record`] into the hit counters.
+    pub(crate) fn flush(&mut self) {
+        let pending = std::mem::take(&mut self.pending);
+        let pending_pcs = std::mem::take(&mut self.pending_pcs);
+        self.reserve(pending_pcs.len());
+        for pc in pending_pcs {
+            self.hits(pc, pending[pc as usize]);
+        }
     }
 
     fn call(&mut self, call: CallData, with_value: bool) {
