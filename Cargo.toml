@@ -584,10 +584,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "82e775553cd99b8e92d40c939caf6a8be2f0fd4c" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "7560c87fcaa7630426636c075e7df8f15735da19" }
 
 ## soldeer
 # Temporary: https://github.com/mario-eth/soldeer/pull/411
