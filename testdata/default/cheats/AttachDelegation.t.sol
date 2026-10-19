@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity 0.8.35;
 
 import "utils/Test.sol";
 
@@ -204,10 +204,12 @@ contract AttachDelegationTest is Test {
         assertEq(token.balanceOf(address(this)), 50);
         assertEq(token.balanceOf(alice), 50);
 
+        // Alice's nonce 0 authorization was consumed by Bob's transaction.
         vm._expectCheatcodeRevert("vm.signAndAttachDelegation: invalid nonce");
-        vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
         vm.signAndAttachDelegation(address(implementation), alice_pk, 0);
-        vm.signAndAttachDelegation(address(implementation2), bob_pk, 2);
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
+        // Bob's nonce 0 authorization is skipped because his transaction increments his nonce first.
+        vm.signAndAttachDelegation(address(implementation2), bob_pk, 1);
     }
 }
 

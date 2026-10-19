@@ -238,6 +238,152 @@ contract MissingEventsAccessControl {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
     }
 
+    // A matching event emitted only inside one conditionally-taken branch must not satisfy a
+    // write reachable outside that branch: the branch may not run, so the write could still
+    // escape without an event on that path.
+    function setOwnerMatchingEventOnlyInBranch(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) {
+            emit OwnershipTransferred(owner, newOwner);
+        }
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    // Same reasoning for a loop: a `for`/`while` body may run zero times, so a matching event
+    // emitted only inside it must not satisfy a write reachable after the loop.
+    function setOwnerMatchingEventOnlyInLoop(address newOwner, uint256 n) external onlyOwner {
+        for (uint256 i; i < n; i++) {
+            emit OwnershipTransferred(owner, newOwner);
+        }
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    // A `do-while` body always runs its first iteration, but a `break`/`continue`/`revert` can
+    // still skip past an emit on that very iteration, so a matching event inside a `do-while`
+    // must not satisfy a write reachable after it either.
+    function setGuardianMatchingEventOnlyInDoWhileLoop(address newGuardian, bool stop) external onlyOwner {
+        uint256 i;
+        do {
+            if (stop) break;
+            emit GuardianUpdated(newGuardian);
+            i++;
+        } while (i < 1);
+        guardian = newGuardian; //~WARN: `guardian` is changed without an event but is used for access control
+    }
+
+    // Try/catch clauses are mutually exclusive: at most one runs, so a matching event emitted in
+    // the success clause must not satisfy a write reachable after the whole try/catch.
+    function setOwnerMatchingEventOnlyInTryClause(address newOwner) external onlyOwner {
+        try this.noop() {
+            emit OwnershipTransferred(owner, newOwner);
+        } catch {}
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    // The write happens BEFORE the try; a matching event only in the success clause must not
+    // retroactively mark it evented, since the catch path never emits.
+    function setOwnerWriteBeforeTryMatchingEventInSuccessClause(address newOwner) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        try this.noop() {
+            emit OwnershipTransferred(owner, newOwner);
+        } catch {}
+    }
+
+    // The write happens BEFORE the do-while loop; a matching event skipped via `break` must not
+    // retroactively mark it evented.
+    function setGuardianWriteBeforeDoWhileMatchingEventSkippedByBreak(
+        address newGuardian,
+        bool stop
+    ) external onlyOwner {
+        guardian = newGuardian; //~WARN: `guardian` is changed without an event but is used for access control
+        uint256 i;
+        do {
+            if (stop) break;
+            emit GuardianUpdated(newGuardian);
+            i++;
+        } while (i < 1);
+    }
+
+    // A success-clause event must not satisfy a write reachable only via the (mutually
+    // exclusive) catch clause - if the try reverts, the success emit never fired.
+    function setOwnerWriteInCatchMatchingEventInSuccessClause(address newOwner) external onlyOwner {
+        try this.noop() {
+            emit OwnershipTransferred(owner, newOwner);
+        } catch {
+            owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        }
+    }
+
+    // Conditional helper calls must not supply events to an unconditional write.
+    function setOwnerEventInShortCircuitAnd(address newOwner, bool enabled) external onlyOwner {
+        enabled && _logOwner(newOwner);
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerEventInShortCircuitOr(address newOwner, bool enabled) external onlyOwner {
+        enabled || _logOwner(newOwner);
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerEventInTernary(address newOwner, bool enabled) external onlyOwner {
+        enabled ? _logOwner(newOwner) : false;
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerBeforeShortCircuitAnd(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        enabled && _logOwner(newOwner);
+    }
+
+    function setOwnerBeforeShortCircuitOr(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        enabled || _logOwner(newOwner);
+    }
+
+    function setOwnerBeforeTernary(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        enabled ? _logOwner(newOwner) : false;
+    }
+
+    function setOwnerBeforeBothTernaryEvents(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner;
+        enabled ? _logOwner(newOwner) : _logOwner(newOwner);
+    }
+
+    function setOwnerEventBeforeWriteViaHelper(address newOwner) external onlyOwner {
+        _logOwner(newOwner);
+        owner = newOwner;
+    }
+
+    function setOwnerEventInMandatoryOperand(address newOwner, bool enabled) external onlyOwner {
+        _logOwner(newOwner) && enabled;
+        owner = newOwner;
+    }
+
+    function setOwnerEventInTernaryCondition(address newOwner, bool enabled) external onlyOwner {
+        _logOwner(newOwner) ? enabled : false;
+        owner = newOwner;
+    }
+
+    function _logOwner(address newOwner) internal returns (bool) {
+        emit OwnershipTransferred(owner, newOwner);
+        return true;
+    }
+
+    function noop() external pure {}
+
+    // Deliberately conservative: `revert` and `return` both count as "always exits" for the
+    // AND-rule, even though a `revert`ing clause's write never actually persists (a `return`ing
+    // one's does). Distinguishing them isn't worth the added complexity for a Low-severity lint;
+    // this is a known, disclosed false-positive edge case, not a false negative.
+    function setOwnerWriteBeforeTryRevertingCatchStillRequiresCredit(address newOwner) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        try this.noop() {
+            emit OwnershipTransferred(owner, newOwner);
+        } catch {
+            revert("unreachable in practice");
+        }
+    }
+
     function setOwnerViaSenderAlias(address newOwner) external onlyOwnerViaSenderAlias {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
     }
@@ -388,6 +534,22 @@ contract MissingEventsAccessControl {
         address oldOwner = owner;
         owner = newOwner;
         emit OwnershipTransferred(oldOwner, newOwner);
+    }
+
+    // The event is emitted before the write it documents; statement order within the same
+    // straight-line scope must not matter.
+    function transferOwnershipEventBeforeWrite(address newOwner) external onlyOwner {
+        address oldOwner = owner;
+        emit OwnershipTransferred(oldOwner, newOwner);
+        owner = newOwner;
+    }
+
+    // Same emit-before-write ordering, but both statements are nested inside the same branch.
+    function setGuardianEventBeforeWriteInBranch(address newGuardian) external onlyOwner {
+        if (newGuardian != address(0)) {
+            emit GuardianUpdated(newGuardian);
+            guardian = newGuardian;
+        }
     }
 
     function setGuardianWithInternalEvent(address newGuardian) external onlyOwner {

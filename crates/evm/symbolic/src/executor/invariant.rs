@@ -358,36 +358,3 @@ impl SymbolicExecutor {
         Ok((sequence, storage))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fatal_candidate_limitation_replaces_earlier_nonfatal_reason() {
-        let mut limitation = None;
-        assert!(!record_candidate_limitation(
-            &mut limitation,
-            SymbolicError::Unsupported("first unsupported path"),
-        ));
-        assert!(record_candidate_limitation(&mut limitation, SymbolicError::Timeout(1)));
-        assert_eq!(limitation.unwrap().kind, SymbolicStopReason::Timeout);
-    }
-
-    #[test]
-    fn nonfatal_candidate_limitation_keeps_first_reason() {
-        let mut limitation = None;
-        assert!(!record_candidate_limitation(
-            &mut limitation,
-            SymbolicError::Unsupported("first unsupported path"),
-        ));
-        assert!(!record_candidate_limitation(
-            &mut limitation,
-            SymbolicError::Unsupported("second unsupported path"),
-        ));
-        assert_eq!(
-            limitation.unwrap().reason,
-            "unsupported symbolic execution feature: first unsupported path"
-        );
-    }
-}

@@ -26,7 +26,8 @@ fn lockfile_get(root: &Path, dep_path: &Path) -> Option<DepIdentifier> {
 }
 
 // checks missing dependencies are auto installed
-forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
+#[forgetest_init]
+fn can_install_missing_deps_build(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -58,10 +59,11 @@ Missing dependencies found. Installing now...
 No files changed, compilation skipped
 
 "#]]);
-});
+}
 
 // checks missing dependencies are auto installed
-forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
+#[forgetest_init]
+fn can_install_missing_deps_test(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -93,10 +95,11 @@ Missing dependencies found. Installing now...
     // assert lockfile
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
-});
+}
 
 // Checks missing dependencies are auto installed.
-forgetest_init!(can_install_missing_deps_lint, |prj, cmd| {
+#[forgetest_init]
+fn can_install_missing_deps_lint(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -113,10 +116,11 @@ Missing dependencies found. Installing now...
     // Assert lockfile.
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
-});
+}
 
 // test to check that install/remove works properly
-forgetest!(can_install_and_remove, |prj, cmd| {
+#[forgetest]
+fn can_install_and_remove(prj: _, cmd: _) {
     cmd.git_init();
 
     let libs = prj.root().join("lib");
@@ -171,10 +175,11 @@ Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag
     // install again and remove via relative path
     install(&mut cmd);
     remove(&mut cmd, "lib/forge-std");
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/6790
-forgetest!(failed_install_leaves_repository_clean, |prj, cmd| {
+#[forgetest]
+fn failed_install_leaves_repository_clean(prj: _, cmd: _) {
     cmd.git_init();
     let git = Git::new(prj.root());
     assert!(git.is_clean().unwrap());
@@ -194,9 +199,10 @@ Error: Tag: "this-tag-does-not-exist" not found for repo "https://github.com/vec
     assert!(!prj.root().join("lib/solady").exists());
     assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
     assert!(git.submodule_url(Path::new("lib/solady")).unwrap_or(None).is_none());
-});
+}
 
-forgetest!(install_rejects_assume_unchanged_orphan_gitlink, |prj, cmd| {
+#[forgetest]
+fn install_rejects_assume_unchanged_orphan_gitlink(prj: _, cmd: _) {
     cmd.git_init();
     fs::write(prj.root().join("README.md"), "baseline").unwrap();
     cmd.git_add();
@@ -235,9 +241,10 @@ forgetest!(install_rejects_assume_unchanged_orphan_gitlink, |prj, cmd| {
     );
     assert!(!prj.root().join(".gitmodules").exists());
     assert!(!prj.root().join("lib/solady").exists());
-});
+}
 
-forgetest!(failed_install_with_wildcard_alias_preserves_sibling, |prj, cmd| {
+#[forgetest]
+fn failed_install_with_wildcard_alias_preserves_sibling(prj: _, cmd: _) {
     cmd.git_init();
     cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
     let sibling = prj.root().join("lib/forge-std");
@@ -267,9 +274,10 @@ forgetest!(failed_install_with_wildcard_alias_preserves_sibling, |prj, cmd| {
     assert_eq!(index(), index_before);
     assert!(sibling.join(".git").exists());
     assert!(Git::new(prj.root()).is_gitlink(Path::new("lib/forge-std")).unwrap());
-});
+}
 
-forgetest!(install_rejects_non_normal_alias, |prj, cmd| {
+#[forgetest]
+fn install_rejects_non_normal_alias(prj: _, cmd: _) {
     cmd.git_init();
     let git = Git::new(prj.root());
 
@@ -282,9 +290,10 @@ forgetest!(install_rejects_non_normal_alias, |prj, cmd| {
     assert!(!prj.root().join("lib/solady").exists());
     assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
     assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
-});
+}
 
-forgetest!(failed_install_preserves_gitmodules, |prj, cmd| {
+#[forgetest]
+fn failed_install_preserves_gitmodules(prj: _, cmd: _) {
     cmd.git_init();
     let gitmodules = prj.root().join(".gitmodules");
     let original = r#"[submodule "existing"]
@@ -301,9 +310,10 @@ forgetest!(failed_install_preserves_gitmodules, |prj, cmd| {
 
     assert!(Git::new(prj.root()).is_clean().unwrap());
     assert_eq!(read_string(&gitmodules), original);
-});
+}
 
-forgetest!(failed_submodule_add_leaves_repository_clean, |prj, cmd| {
+#[forgetest]
+fn failed_submodule_add_leaves_repository_clean(prj: _, cmd: _) {
     cmd.git_init();
     let git = Git::new(prj.root());
     let git_dir = git.absolute_git_dir().unwrap();
@@ -322,9 +332,10 @@ forgetest!(failed_submodule_add_leaves_repository_clean, |prj, cmd| {
     assert!(!prj.root().join("lib/solady").exists());
     assert!(!git_dir.join("modules/lib/solady").exists());
     assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
-});
+}
 
-forgetest!(install_rejects_dirty_gitmodules, |prj, cmd| {
+#[forgetest]
+fn install_rejects_dirty_gitmodules(prj: _, cmd: _) {
     cmd.git_init();
     let git = Git::new(prj.root());
     let gitmodules = prj.root().join(".gitmodules");
@@ -369,9 +380,10 @@ forgetest!(install_rejects_dirty_gitmodules, |prj, cmd| {
     assert!(!prj.root().join("lib/solady").exists());
     assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
     assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
-});
+}
 
-forgetest!(install_rejects_hidden_gitmodules_changes, |prj, cmd| {
+#[forgetest]
+fn install_rejects_hidden_gitmodules_changes(prj: _, cmd: _) {
     cmd.git_init();
     let gitmodules = prj.root().join(".gitmodules");
     fs::write(
@@ -404,10 +416,11 @@ forgetest!(install_rejects_hidden_gitmodules_changes, |prj, cmd| {
     assert_eq!(read_string(&gitmodules), "preserve\n");
     assert_eq!(fs::read(prj.root().join(".git/index")).unwrap(), index);
     assert!(!prj.root().join("lib/solady").exists());
-});
+}
 
 #[cfg(unix)]
-forgetest!(install_rejects_dangling_gitmodules_symlink, |prj, cmd| {
+#[forgetest]
+fn install_rejects_dangling_gitmodules_symlink(prj: _, cmd: _) {
     cmd.git_init();
     fs::write(prj.root().join(".gitignore"), ".gitmodules\n").unwrap();
     cmd.git_add();
@@ -425,9 +438,10 @@ forgetest!(install_rejects_dangling_gitmodules_symlink, |prj, cmd| {
     assert!(!prj.root().join("gitmodules-target").exists());
     assert_eq!(fs::read(prj.root().join(".git/index")).unwrap(), index);
     assert!(!prj.root().join("lib/solady").exists());
-});
+}
 
-forgetest!(install_rejects_ignored_gitmodules, |prj, cmd| {
+#[forgetest]
+fn install_rejects_ignored_gitmodules(prj: _, cmd: _) {
     cmd.git_init();
     let git = Git::new(prj.root());
     fs::write(prj.root().join(".gitignore"), ".gitmodules\n").unwrap();
@@ -455,9 +469,10 @@ forgetest!(install_rejects_ignored_gitmodules, |prj, cmd| {
     assert!(!prj.root().join("lib/solady").exists());
     assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
     assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
-});
+}
 
-forgetest!(install_rejects_existing_submodule_path, |prj, cmd| {
+#[forgetest]
+fn install_rejects_existing_submodule_path(prj: _, cmd: _) {
     cmd.git_init();
     let git = Git::new(prj.root());
     let gitmodules = prj.root().join(".gitmodules");
@@ -480,10 +495,11 @@ forgetest!(install_rejects_existing_submodule_path, |prj, cmd| {
     assert!(!prj.root().join("lib/solady").exists());
     assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
     assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
-});
+}
 
 // test to check we can run `forge install` in an empty dir <https://github.com/foundry-rs/foundry/issues/6519>
-forgetest!(can_install_empty, |prj, cmd| {
+#[forgetest]
+fn can_install_empty(prj: _, cmd: _) {
     // create
     cmd.git_init();
     cmd.forge_fuse().args(["install"]);
@@ -497,10 +513,11 @@ forgetest!(can_install_empty, |prj, cmd| {
 
     cmd.forge_fuse().args(["install"]);
     cmd.assert_empty_stdout();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/7205>
-forgetest!(install_from_nested_git_repo_uses_project_root, |prj, cmd| {
+#[forgetest]
+fn install_from_nested_git_repo_uses_project_root(prj: _, cmd: _) {
     prj.update_config(|config| config.libs = vec![PathBuf::from("dependencies")]);
     cmd.git_init();
 
@@ -512,9 +529,10 @@ forgetest!(install_from_nested_git_repo_uses_project_root, |prj, cmd| {
 
     assert!(prj.root().join("dependencies").is_dir());
     assert!(!nested.join("lib").exists());
-});
+}
 
-forgetest!(install_from_nested_foundry_project_uses_nested_root, |prj, cmd| {
+#[forgetest]
+fn install_from_nested_foundry_project_uses_nested_root(prj: _, cmd: _) {
     prj.update_config(|config| config.libs = vec![PathBuf::from("outer-dependencies")]);
     cmd.git_init();
 
@@ -531,10 +549,11 @@ forgetest!(install_from_nested_foundry_project_uses_nested_root, |prj, cmd| {
 
     assert!(nested.join("nested-dependencies").is_dir());
     assert!(!prj.root().join("outer-dependencies").exists());
-});
+}
 
 // test to check that package can be reinstalled after manually removing the directory
-forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
+#[forgetest]
+fn can_reinstall_after_manual_remove(prj: _, cmd: _) {
     cmd.git_init();
 
     let libs = prj.root().join("lib");
@@ -571,10 +590,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     install(&mut cmd);
     let forge_std_lock = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std_lock, DepIdentifier::Tag { .. }));
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/4353
-forgetest!(can_reinit_submodules, |prj, cmd| {
+#[forgetest]
+fn can_reinit_submodules(prj: _, cmd: _) {
     cmd.git_init();
 
     let source = tempfile::tempdir().unwrap();
@@ -620,28 +640,31 @@ forgetest!(can_reinit_submodules, |prj, cmd| {
         read_string(dependency.join("source.txt")).replace("\r\n", "\n"),
         "second revision\n"
     );
-});
+}
 
 // test that we can repeatedly install the same dependency without changes
-forgetest!(can_install_repeatedly, |_prj, cmd| {
+#[forgetest]
+fn can_install_repeatedly(cmd: _) {
     cmd.git_init();
 
     cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]);
     for _ in 0..3 {
         cmd.assert_success();
     }
-});
+}
 
-forgetest!(can_install_multiple_submodules, |_prj, cmd| {
+#[forgetest]
+fn can_install_multiple_submodules(cmd: _) {
     cmd.git_init();
     cmd.forge_fuse()
         .args(["install", "foundry-rs/forge-std", "vectorized/solady"])
         .assert_success();
-});
+}
 
 // test that by default we install the latest semver release tag
 // <https://github.com/openzeppelin/openzeppelin-contracts>
-forgetest!(can_install_latest_release_tag, |prj, cmd| {
+#[forgetest]
+fn can_install_latest_release_tag(prj: _, cmd: _) {
     cmd.git_init();
     cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts"]);
     cmd.assert_success();
@@ -659,9 +682,10 @@ forgetest!(can_install_latest_release_tag, |prj, cmd| {
     let current: Version = tag.as_ref().trim_start_matches('v').trim().parse().unwrap();
 
     assert!(current >= version);
-});
+}
 
-forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
+#[forgetest]
+fn can_update_and_retain_tag_revs(prj: _, cmd: _) {
     cmd.git_init();
 
     // Installs oz at release tag
@@ -691,9 +715,10 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
     let solady_update = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
     assert_eq!(oz_init, oz_update);
     assert_eq!(solady_init, solady_update);
-});
+}
 
-forgetest!(update_rejects_lockfile_paths_outside_submodules, |prj, cmd| {
+#[forgetest]
+fn update_rejects_lockfile_paths_outside_submodules(prj: _, cmd: _) {
     cmd.git_init();
     let parent_git = Git::new(prj.root());
     let state = prj.root().join("parent-state.txt");
@@ -756,9 +781,10 @@ Error: foundry.lock entry `..` does not match an installed Git submodule
 
     assert_eq!(parent_git.head().unwrap(), parent_head);
     assert_eq!(fs::read_to_string(state).unwrap(), "new\n");
-});
+}
 
-forgetest!(update_rejects_uninitialized_submodule_worktrees, |prj, cmd| {
+#[forgetest]
+fn update_rejects_uninitialized_submodule_worktrees(prj: _, cmd: _) {
     cmd.git_init();
     let git = Git::new(prj.root());
 
@@ -805,9 +831,10 @@ Error: Dependency at `lib/skipped` is not an initialized Git submodule worktree
 
     assert_eq!(git.head().unwrap(), parent_head);
     assert_eq!(fs::read_to_string(prj.root().join("parent-state.txt")).unwrap(), "new\n");
-});
+}
 
-forgetest!(update_initializes_uninitialized_submodule_worktrees, |prj, cmd| {
+#[forgetest]
+fn update_initializes_uninitialized_submodule_worktrees(prj: _, cmd: _) {
     cmd.git_init();
     let dependency = tempfile::tempdir().unwrap();
     let dependency_git = Git::new(dependency.path());
@@ -848,9 +875,10 @@ forgetest!(update_initializes_uninitialized_submodule_worktrees, |prj, cmd| {
     let dependency_git = Git::new(&dependency_path);
     assert!(dependency_git.is_repo_root().unwrap());
     assert_eq!(dependency_git.head().unwrap(), dependency_rev);
-});
+}
 
-forgetest!(can_update_only_selected_dependencies, |prj, cmd| {
+#[forgetest]
+fn can_update_only_selected_dependencies(prj: _, cmd: _) {
     cmd.git_init();
 
     let source = tempfile::tempdir().unwrap();
@@ -918,9 +946,143 @@ forgetest!(can_update_only_selected_dependencies, |prj, cmd| {
     cmd.env("GIT_ALLOW_PROTOCOL", "file");
     cmd.arg("update").assert_success();
     assert_revisions([&second, &second, &second, &second]);
-});
+}
 
-forgetest!(can_override_tag_in_update, |prj, cmd| {
+#[forgetest]
+fn update_rejects_unresolved_ref_override(prj: _, cmd: _) {
+    cmd.git_init();
+
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let source_git = Git::new(source.path());
+    let first = source_git.head().unwrap();
+
+    let path = PathBuf::from("lib/dependency");
+    let other_path = PathBuf::from("lib/other");
+    let mut lock = Lockfile::new(prj.root());
+    for path in [&path, &other_path] {
+        let output = Command::new("git")
+            .current_dir(prj.root())
+            .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+            .arg(source.path())
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        lock.insert(path.clone(), DepIdentifier::Rev { rev: first.clone(), r#override: false });
+    }
+    let dependency_path = prj.root().join(&path);
+    let dependency_git = Git::new(&dependency_path);
+    lock.write().unwrap();
+    cmd.git_add();
+    cmd.git_commit("pin dependency fixture");
+    let original_lock = fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap();
+    let original_sources = [&path, &other_path]
+        .map(|path| fs::read(prj.root().join(path).join("source.txt")).unwrap());
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/dependency@DOES_NOT_EXIST"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: Failed to resolve ref `DOES_NOT_EXIST` for dependency `lib/dependency`
+
+Context:
+- git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
+
+"#]]);
+    assert_eq!(dependency_git.head().unwrap(), first);
+    assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
+    assert_eq!(fs::read(prj.root().join(&path).join("source.txt")).unwrap(), original_sources[0]);
+
+    // Create refs only after installation so resolution must fetch without checking out.
+    fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("second revision").unwrap();
+    let second = source_git.head().unwrap();
+    for args in [["tag", "v2"], ["branch", "new-branch"]] {
+        let output = Command::new("git").current_dir(source.path()).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // A valid ref must not move either dependency when another override is invalid.
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/other@v2", "example/dependency@DOES_NOT_EXIST"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+...
+Error: Failed to resolve ref `DOES_NOT_EXIST` for dependency `lib/dependency`
+
+Context:
+- git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
+
+"#]]);
+    for (path, original_source) in [&path, &other_path].into_iter().zip(&original_sources) {
+        assert_eq!(Git::new(&prj.root().join(path)).head().unwrap(), first);
+        assert_eq!(&fs::read(prj.root().join(path).join("source.txt")).unwrap(), original_source);
+    }
+    assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
+
+    // A newly published tag still updates the checkout and lockfile.
+    let output =
+        Command::new("git").current_dir(source.path()).args(["tag", "v2-fresh"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/dependency@v2-fresh"]).assert_success();
+    assert_eq!(dependency_git.head().unwrap(), second);
+    let updated = lockfile_get(prj.root(), &path).unwrap();
+    assert_eq!(updated.name(), "v2-fresh");
+    assert_eq!(updated.rev(), second);
+
+    // A remote-only branch must retain branch semantics, not become a revision pin.
+    let output = Command::new("git")
+        .current_dir(prj.root().join(&other_path))
+        .args(["config", "color.branch", "always"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "example/other@new-branch"]).assert_success();
+    assert_eq!(Git::new(&prj.root().join(&other_path)).head().unwrap(), second);
+    let updated = lockfile_get(prj.root(), &other_path).unwrap();
+    assert!(updated.is_branch());
+    assert_eq!(updated.name(), "new-branch");
+    assert_eq!(updated.rev(), second);
+
+    // A commit published after the earlier updates must also be fetched before resolution.
+    fs::write(source.path().join("source.txt"), "third revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("third revision").unwrap();
+    let third = source_git.head().unwrap();
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", &format!("example/dependency@{third}")]).assert_success();
+    assert_eq!(dependency_git.head().unwrap(), third);
+    let updated = lockfile_get(prj.root(), &path).unwrap();
+    assert!(matches!(updated, DepIdentifier::Rev { .. }));
+    assert_eq!(updated.rev(), third);
+
+    // A cached tag remains usable offline when Git is configured to skip remote updates.
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["config", "submodule.lib/dependency.update", "none"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "none");
+    cmd.args(["update", "example/dependency@v2-fresh"]).assert_success();
+    assert_eq!(dependency_git.head().unwrap(), second);
+    assert_eq!(lockfile_get(prj.root(), &path).unwrap().name(), "v2-fresh");
+}
+
+#[forgetest]
+fn can_override_tag_in_update(prj: _, cmd: _) {
     cmd.git_init();
 
     // Installs oz at release tag
@@ -962,10 +1124,11 @@ forgetest!(can_override_tag_in_update, |prj, cmd| {
     assert_eq!(oz_update_lock.name(), "v5.1.0");
     assert_eq!(submodules_update.0[0].rev(), oz_update_lock.rev());
     assert_eq!(solady_init_lock, solady_update_lock);
-});
+}
 
 // Ref: https://github.com/foundry-rs/foundry/pull/9522#pullrequestreview-2494431518
-forgetest!(should_not_update_tagged_deps, |prj, cmd| {
+#[forgetest]
+fn should_not_update_tagged_deps(prj: _, cmd: _) {
     cmd.git_init();
 
     // Installs oz at release tag
@@ -994,9 +1157,10 @@ forgetest!(should_not_update_tagged_deps, |prj, cmd| {
     let halmos_path = prj.paths().libraries[0].join("openzeppelin-contracts/lib/halmos-cheatcodes");
 
     assert!(!halmos_path.exists());
-});
+}
 
-forgetest!(can_remove_dep_from_foundry_lock, |prj, cmd| {
+#[forgetest]
+fn can_remove_dep_from_foundry_lock(prj: _, cmd: _) {
     cmd.git_init();
 
     cmd.forge_fuse()
@@ -1011,112 +1175,105 @@ forgetest!(can_remove_dep_from_foundry_lock, |prj, cmd| {
     lock.read().unwrap();
 
     assert!(lock.get(&PathBuf::from("lib/openzeppelin-contracts")).is_none());
-});
+}
 
-forgetest!(
-    #[cfg_attr(windows, ignore = "weird git fail")]
-    can_sync_foundry_lock,
-    |prj, cmd| {
-        cmd.git_init();
+#[forgetest]
+#[cfg_attr(windows, ignore = "weird git fail")]
+fn can_sync_foundry_lock(prj: _, cmd: _) {
+    cmd.git_init();
 
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std@master"]).assert_success();
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std@master"]).assert_success();
 
-        cmd.forge_fuse().args(["install", "vectorized/solady"]).assert_success();
+    cmd.forge_fuse().args(["install", "vectorized/solady"]).assert_success();
 
-        fs::remove_file(prj.root().join("foundry.lock")).unwrap();
+    fs::remove_file(prj.root().join("foundry.lock")).unwrap();
 
-        // sync submodules and write foundry.lock
-        cmd.forge_fuse().arg("install").assert_success();
+    // sync submodules and write foundry.lock
+    cmd.forge_fuse().arg("install").assert_success();
 
-        let mut lock = forge::Lockfile::new(prj.root());
-        lock.read().unwrap();
+    let mut lock = forge::Lockfile::new(prj.root());
+    lock.read().unwrap();
 
-        assert!(matches!(
-            lock.get(&PathBuf::from("lib/forge-std")).unwrap(),
-            &DepIdentifier::Branch { .. }
-        ));
-        assert!(matches!(
-            lock.get(&PathBuf::from("lib/solady")).unwrap(),
-            &DepIdentifier::Rev { .. }
-        ));
-    }
-);
+    assert!(matches!(
+        lock.get(&PathBuf::from("lib/forge-std")).unwrap(),
+        &DepIdentifier::Branch { .. }
+    ));
+    assert!(matches!(lock.get(&PathBuf::from("lib/solady")).unwrap(), &DepIdentifier::Rev { .. }));
+}
 
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
-forgetest!(
-    #[cfg_attr(windows, ignore = "weird git fail")]
-    can_update_library_with_outdated_nested_dependency,
-    |prj, cmd| {
-        cmd.git_init();
+#[forgetest]
+#[cfg_attr(windows, ignore = "weird git fail")]
+fn can_update_library_with_outdated_nested_dependency(prj: _, cmd: _) {
+    cmd.git_init();
 
-        let libs = prj.root().join("lib");
-        let git_mod = prj.root().join(".git/modules/lib");
-        let git_mod_file = prj.root().join(".gitmodules");
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
 
-        // get paths to check inside install fn
-        let package = libs.join("forge-5980-test");
-        let package_mod = git_mod.join("forge-5980-test");
+    // get paths to check inside install fn
+    let package = libs.join("forge-5980-test");
+    let package_mod = git_mod.join("forge-5980-test");
 
-        // install main dependency
-        cmd.forge_fuse()
-            .args(["install", "evalir/forge-5980-test"])
-            .assert_success()
-            .stdout_eq(str![""])
-            .stderr_eq(str![[r#"
+    // install main dependency
+    cmd.forge_fuse()
+        .args(["install", "evalir/forge-5980-test"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Installing forge-5980-test in [..] (url: https://github.com/evalir/forge-5980-test, tag: None)
 ...
     Installed forge-5980-test
 
 "#]]);
 
-        // assert paths exist
-        assert!(package.exists());
-        assert!(package_mod.exists());
+    // assert paths exist
+    assert!(package.exists());
+    assert!(package_mod.exists());
 
-        let submods = read_string(git_mod_file);
-        assert!(submods.contains("https://github.com/evalir/forge-5980-test"));
+    let submods = read_string(git_mod_file);
+    assert!(submods.contains("https://github.com/evalir/forge-5980-test"));
 
-        // try to update the top-level dependency; there should be no update for this dependency,
-        // but its sub-dependency has upstream (breaking) changes; forge should not attempt to
-        // update the sub-dependency
-        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]).assert_empty_stdout();
+    // try to update the top-level dependency; there should be no update for this dependency,
+    // but its sub-dependency has upstream (breaking) changes; forge should not attempt to
+    // update the sub-dependency
+    cmd.forge_fuse().args(["update", "lib/forge-5980-test"]).assert_empty_stdout();
 
-        // add explicit remappings for test file
-        let config = Config {
-            remappings: vec![
-                Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
-                // explicit remapping for sub-dependency seems necessary for some reason
-                Remapping::from_str(
-                    "forge-5980-test-dep/=lib/forge-5980-test/lib/forge-5980-test-dep/src/",
-                )
-                .unwrap()
-                .into(),
-            ],
-            ..Default::default()
-        };
-        prj.write_config(config);
+    // add explicit remappings for test file
+    let config = Config {
+        remappings: vec![
+            Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
+            // explicit remapping for sub-dependency seems necessary for some reason
+            Remapping::from_str(
+                "forge-5980-test-dep/=lib/forge-5980-test/lib/forge-5980-test-dep/src/",
+            )
+            .unwrap()
+            .into(),
+        ],
+        ..Default::default()
+    };
+    prj.write_config(config);
 
-        // create test file that uses the top-level dependency; if the sub-dependency is updated,
-        // compilation will fail
-        prj.add_source(
-            "CounterCopy",
-            r#"
+    // create test file that uses the top-level dependency; if the sub-dependency is updated,
+    // compilation will fail
+    prj.add_source(
+        "CounterCopy",
+        r#"
 import "forge-5980-test/Counter.sol";
 contract CounterCopy is Counter {
 }
    "#,
-        );
+    );
 
-        // build and check output
-        cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+    // build and check output
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]]);
-    }
-);
+}
 
 #[tokio::test]
 async fn uni_v4_core_sync_foundry_lock() {
@@ -1196,7 +1353,7 @@ async fn oz_contracts_sync_foundry_lock() {
     cmd.arg("install").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Branch { .. }));
+    assert!(forge_std.is_branch());
     assert_eq!(forge_std.rev(), submod_forge_std.rev());
     assert_eq!(forge_std.name(), "v1");
     let erc4626_tests = lockfile_get(prj.root(), &PathBuf::from("lib/erc4626-tests")).unwrap();
@@ -1214,7 +1371,7 @@ async fn oz_contracts_sync_foundry_lock() {
     cmd.forge_fuse().arg("update").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Branch { .. }));
+    assert!(forge_std.is_branch());
     // assert_eq!(forge_std.rev(), submod_forge_std.rev());  // This can fail, as forge-std will get
     // updated to the latest commit on master.
     assert_eq!(forge_std.name(), "v1"); // But it stays locked on the same master
@@ -1265,7 +1422,8 @@ async fn correctly_sync_dep_with_multiple_version() {
 // Regression test: `forge install --no-git` should clean up nested submodule contents
 // when installing a tag that does not use submodules for its dependencies.
 // https://github.com/foundry-rs/foundry/issues/13688
-forgetest!(flaky_install_no_git_cleans_nested_submodules, |prj, cmd| {
+#[forgetest]
+fn flaky_install_no_git_cleans_nested_submodules(prj: _, cmd: _) {
     cmd.git_init();
 
     // Install openzeppelin-contracts-upgradeable at v4.7.3 with --no-git.
@@ -1305,9 +1463,10 @@ forgetest!(flaky_install_no_git_cleans_nested_submodules, |prj, cmd| {
         }
     }
     assert_no_git(&dep_dir);
-});
+}
 
-forgetest_init!(sync_on_forge_update, |prj, cmd| {
+#[forgetest_init]
+fn sync_on_forge_update(prj: _, cmd: _) {
     let git = Git::new(prj.root());
 
     let submodules = git.submodules().unwrap();
@@ -1373,14 +1532,16 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
         origin_master_head,
         "Lockfile rev should match resolved origin/master after update"
     );
-});
+}
 
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
-forgetest_init!(can_install_with_no_commit, |_prj, cmd| {
+#[forgetest_init]
+fn can_install_with_no_commit(cmd: _) {
     cmd.args(["install", "--no-commit"]).assert_success();
-});
+}
 
-forgetest!(install_no_git_cleans_failed_recursive_clone_and_retries, |prj, cmd| {
+#[forgetest]
+fn install_no_git_cleans_failed_recursive_clone_and_retries(prj: _, cmd: _) {
     let repositories = tempfile::tempdir().unwrap();
     let parent = repositories.path().join("parent");
     let child = repositories.path().join("child");
@@ -1431,9 +1592,10 @@ Error: git clone exited with code 1
         assert!(!path.join(".git").exists(), "successful installation must remove Git artifacts");
     }
     assert_eq!(fs::read_to_string(sibling).unwrap(), "existing dependency\n");
-});
+}
 
-forgetest!(install_no_git_preserves_existing_targets, |prj, cmd| {
+#[forgetest]
+fn install_no_git_preserves_existing_targets(prj: _, cmd: _) {
     let source = tempfile::tempdir().unwrap();
     init_local_install_source(source.path());
     let lib = prj.root().join("lib");
@@ -1462,10 +1624,11 @@ Error: failed to create dir "[..]": [..]
         "existing dependency\n"
     );
     assert_eq!(fs::read_to_string(lib.join("file")).unwrap(), "existing file\n");
-});
+}
 
 #[cfg(unix)]
-forgetest!(install_no_git_preserves_existing_symlinks, |prj, cmd| {
+#[forgetest]
+fn install_no_git_preserves_existing_symlinks(prj: _, cmd: _) {
     let source = tempfile::tempdir().unwrap();
     init_local_install_source(source.path());
     let targets = tempfile::tempdir().unwrap();
@@ -1498,9 +1661,10 @@ Error: failed to create dir "[..]": [..]
         "existing dependency\n"
     );
     assert!(!targets.path().join("dangling").exists());
-});
+}
 
-forgetest!(install_no_git_cleans_failed_checkout_with_nested_alias, |prj, cmd| {
+#[forgetest]
+fn install_no_git_cleans_failed_checkout_with_nested_alias(prj: _, cmd: _) {
     let source = tempfile::tempdir().unwrap();
     init_local_install_source(source.path());
     configure_local_install(&mut cmd, source.path());
@@ -1524,9 +1688,10 @@ Error: Tag: "missing-tag" not found for repo "https://github.com/fixture/parent"
         "dependency source\n"
     );
     assert!(!installed.join(".git").exists());
-});
+}
 
-forgetest!(install_no_git_cleans_failed_initial_clone, |prj, cmd| {
+#[forgetest]
+fn install_no_git_cleans_failed_initial_clone(prj: _, cmd: _) {
     let source = tempfile::tempdir().unwrap();
     configure_local_install(&mut cmd, &source.path().join("missing"));
     cmd.args(["install", "--no-git", "fixture/parent"])
@@ -1541,7 +1706,93 @@ Error: git clone exited with code 128
 "#]]);
 
     assert!(!prj.root().join("lib/parent").exists());
-});
+}
+
+#[forgetest]
+fn install_fails_on_nested_soldeer_failure(prj: _, cmd: _) {
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    fs::write(
+        source.path().join("foundry.toml"),
+        r#"[dependencies]
+bad = { version = "1.0.0", url = "http://127.0.0.1:1/bad.zip" }
+"#,
+    )
+    .unwrap();
+    fs::write(source.path().join("soldeer.lock"), "version = 2\n\ndependencies = []\n").unwrap();
+    let git = Git::new(source.path());
+    git.add(["foundry.toml", "soldeer.lock"]).unwrap();
+    git.commit("add soldeer").unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "--no-git", "fixture/parent"]).assert_failure().stderr_eq(str![[r#"
+...
+Error: Failed to install soldeer dependencies for parent: Failed to run soldeer install: [..]
+Run `forge soldeer install` in [..]/lib/parent to retry.
+
+"#]]);
+
+    // The git dependency itself stays installed.
+    assert!(prj.root().join("lib/parent/source.txt").exists());
+}
+
+#[forgetest]
+fn install_reports_unavailable_locked_revision(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let source_git = Git::new(source.path());
+    let head = source_git.head().unwrap();
+    fs::write(source.path().join("source.txt"), "updated source\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("update").unwrap();
+    add_local_submodule(prj.root(), source.path());
+
+    // Keep the worktree away from its gitlink, which `update = none` leaves untouched.
+    let dep = prj.root().join("lib/dep");
+    Git::new(&dep).checkout(false, &head).unwrap();
+    set_gitmodules_option(prj.root(), "update", "none");
+
+    let stale_rev = "0123456789abcdef0123456789abcdef01234567";
+    let stale_lock = format!(r#"{{"lib/dep":{{"rev":"{stale_rev}"}}}}"#);
+    fs::write(prj.root().join(FOUNDRY_LOCK), &stale_lock).unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_failure().stdout_eq(str![""]).stderr_eq(format!(
+        "\
+[UPDATING_DEPENDENCIES]
+Skipping submodule 'lib/dep'
+Error: Failed to check out `{stale_rev}` for dependency `lib/dep`
+`lib/dep` is locked to rev={stale_rev} in foundry.lock. If that ref is no longer available from the dependency's remote, update the `lib/dep` entry in foundry.lock.
+
+Context:
+- git checkout exited with code 128: fatal: [..]
+"
+    ));
+    assert_eq!(fs::read_to_string(prj.root().join(FOUNDRY_LOCK)).unwrap(), stale_lock);
+    assert_eq!(Git::new(&dep).head().unwrap(), head);
+}
+
+#[forgetest]
+fn install_reports_missing_gitmodules_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    add_local_submodule(prj.root(), source.path());
+    set_gitmodules_option(prj.root(), "branch", "missing");
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
+[UPDATING_DEPENDENCIES]
+Error: Failed to check out `missing` for dependency `lib/dep`
+Branch `missing` comes from the `branch` setting for `lib/dep` in .gitmodules. If it no longer exists on the dependency's remote, update .gitmodules; if it does, the local clone may be missing it, for example after a `--shallow` install.
+
+Context:
+- git checkout exited with code 128: fatal: [..]
+
+"#]]);
+    assert!(!prj.root().join(FOUNDRY_LOCK).exists());
+}
 
 fn init_local_install_source(path: &Path) {
     fs::create_dir_all(path).unwrap();
@@ -1560,4 +1811,81 @@ fn configure_local_install(cmd: &mut TestCommand, source: &Path) {
     let source_url = Url::from_directory_path(source).unwrap();
     cmd.env("GIT_CONFIG_KEY_0", format!("url.{source_url}.insteadOf"));
     cmd.env("GIT_CONFIG_VALUE_0", "https://github.com/fixture/parent");
+}
+
+#[forgetest]
+fn install_with_quoted_submodule_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let output =
+        Command::new("git").current_dir(source.path()).args(["branch", "v1"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let rev = Git::new(source.path()).head().unwrap();
+
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source.path())
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let gitmodules = prj.root().join(".gitmodules");
+    let contents = fs::read_to_string(&gitmodules).unwrap();
+
+    for branch in ["v1", "\"v1\""] {
+        fs::write(&gitmodules, format!("{contents}\tbranch = {branch}\n")).unwrap();
+        cmd.forge_fuse().arg("install").assert_success();
+        assert_eq!(
+            lockfile_get(prj.root(), Path::new("lib/dep")),
+            Some(DepIdentifier::Branch {
+                name: "v1".to_string(),
+                rev: rev.clone(),
+                r#override: false,
+            })
+        );
+        assert_eq!(Git::new(&prj.root().join("lib/dep")).head().unwrap(), rev);
+        fs::remove_file(prj.root().join(FOUNDRY_LOCK)).unwrap();
+    }
+
+    cmd.forge_fuse().arg("install").assert_success();
+
+    // Advance the configured branch and ensure update records its new revision.
+    let git = Git::new(source.path());
+    git.checkout(false, "v1").unwrap();
+    fs::write(source.path().join("source.txt"), "updated dependency source\n").unwrap();
+    git.add(["source.txt"]).unwrap();
+    git.commit("advance v1").unwrap();
+    let updated_rev = git.head().unwrap();
+    assert_ne!(updated_rev, rev);
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep"]).assert_success();
+    assert_eq!(Git::new(&prj.root().join("lib/dep")).head().unwrap(), updated_rev);
+    assert_eq!(
+        lockfile_get(prj.root(), Path::new("lib/dep")),
+        Some(DepIdentifier::Branch { name: "v1".to_string(), rev: updated_rev, r#override: false })
+    );
+}
+
+fn add_local_submodule(root: &Path, source: &Path) {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source)
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+fn set_gitmodules_option(root: &Path, key: &str, value: &str) {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["config", "-f", ".gitmodules", &format!("submodule.lib/dep.{key}"), value])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }

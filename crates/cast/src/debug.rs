@@ -1,6 +1,6 @@
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
-use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
+use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler, shell};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
@@ -9,10 +9,12 @@ use foundry_evm::{
     traces::{
         CallTraceDecoderBuilder, DebugTraceIdentifier, TraceContext,
         debug::ContractSources,
+        erc8021::Attribution,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
     },
 };
 use foundry_evm_networks::NetworkVariant;
+use itertools::Itertools;
 
 pub(crate) fn select_remote_trace_hardfork(
     configured: Option<FoundryHardfork>,
@@ -128,6 +130,17 @@ pub(crate) async fn handle_traces(
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
+    // Collected before printing, which may prune the calls that carry them, e.g. ERC-4337 user
+    // operations.
+    let attributions = result
+        .traces
+        .iter()
+        .flatten()
+        .flat_map(|(_, arena)| arena.nodes())
+        .filter_map(|node| Attribution::decode(&node.trace.data))
+        .unique()
+        .collect::<Vec<_>>();
+
     print_traces(
         &mut result,
         &decoder,
@@ -136,6 +149,12 @@ pub(crate) async fn handle_traces(
         tracing.trace_depth,
     )
     .await?;
+
+    if !shell::is_json() {
+        for attribution in attributions {
+            sh_println!("ERC-8021 attribution: {attribution}")?;
+        }
+    }
 
     Ok(())
 }

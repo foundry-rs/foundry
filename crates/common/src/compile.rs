@@ -3,6 +3,7 @@
 use crate::{
     TestFunctionExt,
     external_compiler::{ExternalCompilation, is_builtin_compiler_source},
+    fs::canonicalize_path,
     preprocessor::DynamicTestLinkingPreprocessor,
     shell,
     term::SpinnerReporter,
@@ -17,15 +18,15 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Severity, Source, output_selection::OutputSelection,
-        remappings::Remapping,
+        BytecodeObject, Contract, Error as SolcError, Severity, Source,
+        output_selection::OutputSelection, remappings::Remapping,
     },
     compilers::{
-        Compiler,
+        CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
-    multi::{MultiCompiler, MultiCompilerSettings},
+    multi::{MultiCompiler, MultiCompilerError, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
@@ -39,6 +40,7 @@ use solar::{
     parse::Parser,
 };
 use std::{
+    any::Any,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
@@ -84,6 +86,9 @@ pub struct ProjectCompiler {
     /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
+    /// Complete source roots to retry if filtering changed Solidity's inheritance ordering.
+    source_order_fallback: Vec<PathBuf>,
+
     /// Paths used by external adapters to select compiler-native build units.
     selected_paths: Vec<PathBuf>,
 
@@ -122,6 +127,7 @@ impl ProjectCompiler {
             ignore_eip_3860: false,
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
+            source_order_fallback: Vec::new(),
             selected_paths: Vec::new(),
             dynamic_test_linking: false,
             abi_cache: false,
@@ -232,6 +238,13 @@ impl ProjectCompiler {
         self
     }
 
+    /// Retries once with these roots if compilation fails because a base contract is defined
+    /// after its derived contract. Removing roots can change traversal order in import cycles.
+    pub fn source_order_fallback(mut self, files: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.source_order_fallback.extend(files);
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -263,6 +276,7 @@ impl ProjectCompiler {
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
+        let fallback_files = std::mem::take(&mut self.source_order_fallback);
         let explicit_selection = !files.is_empty() || !self.selected_paths.is_empty();
         let selected_paths = std::mem::take(&mut self.selected_paths);
         let preprocess = self.dynamic_test_linking;
@@ -282,13 +296,40 @@ impl ProjectCompiler {
                 project.paths.read_input_files()?
             };
 
-            let mut compiler =
-                foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
-            if preprocess {
-                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+            let preprocessor = DynamicTestLinkingPreprocessor::default();
+            let compile = |preprocess| -> Result<ProjectCompileOutput<C>> {
+                let compile_sources = |sources| {
+                    let mut compiler = foundry_compilers::project::ProjectCompiler::with_sources(
+                        project, sources,
+                    )?;
+                    if preprocess {
+                        compiler = compiler.with_preprocessor(preprocessor.clone());
+                    }
+                    if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
+                };
+                let mut output = compile_sources(sources.clone())?;
+                // Solc error 2449 can be introduced by filtering compilation roots in an import
+                // cycle. Retry before reporting diagnostics or bailing on the filtered output.
+                if !fallback_files.is_empty()
+                    && output.output().errors.iter().any(|error| error.error_code() == Some(2449))
+                {
+                    output = compile_sources(Source::read_all(&fallback_files)?)?;
+                }
+                Ok(output)
+            };
+            let mut output = compile(preprocess)?;
+            // A retry can only help if DTL changed the compiler input.
+            if preprocessor.rewrote_sources()
+                && let Some(reason) = dynamic_test_linking_failure(&output.output().errors)
+            {
+                sh_warn!(
+                    "dynamic test linking failed ({reason}); retrying with native test linking. \
+                     Use --no-dynamic-test-linking to skip the failed attempt."
+                )?;
+                // The preprocessor is part of the cache identity: native compilation cannot
+                // reuse DTL artifacts. Return only this attempt, including any compiler errors.
+                output = compile(false)?;
             }
-            let mut output =
-                if abi_cache { compiler.compile_abi_cached()? } else { compiler.compile()? };
             if !output.has_compiler_errors()
                 && let Some(external) = external
             {
@@ -329,30 +370,30 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
-        if !quiet {
-            if !shell::is_json() {
-                if output.is_unchanged() {
-                    sh_println!("No files changed, compilation skipped")?;
-                } else {
-                    // print the compiler output / warnings
-                    sh_println!("{output}")?;
-                }
+        if !quiet && !shell::is_json() {
+            if output.is_unchanged() {
+                sh_println!("No files changed, compilation skipped")?;
+            } else {
+                // print the compiler output / warnings
+                sh_println!("{output}")?;
             }
+        }
 
-            if !(shell::is_json() && output.has_compiler_errors()) {
-                self.handle_output(&output)?;
-            }
+        // Quiet mode suppresses reports, but size limits still apply.
+        if !(shell::is_json() && output.has_compiler_errors()) {
+            self.handle_output(&output)?;
         }
 
         Ok(output)
     }
 
-    /// If configured, this will print sizes or names
+    /// Prints requested reports and checks contract size limits.
     fn handle_output<C: Compiler<CompilerContract = Contract>>(
         &self,
         output: &ProjectCompileOutput<C>,
     ) -> Result<()> {
-        let print_names = self.print_names.unwrap_or(false);
+        let quiet = self.quiet.unwrap_or(false);
+        let print_names = self.print_names.unwrap_or(false) && !quiet;
         let print_sizes = self.print_sizes.unwrap_or(false);
 
         // print any sizes or names
@@ -433,16 +474,12 @@ impl ProjectCompiler {
                     let runtime_size = contract_size(*artifact, false).unwrap_or_default();
                     let init_size = contract_size(*artifact, true).unwrap_or_default();
 
-                    let is_dev_contract = artifact
-                        .abi
-                        .as_ref()
-                        .map(|abi| {
-                            abi.functions().any(|f| {
-                                f.test_function_kind().is_known()
-                                    || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
-                            })
+                    let is_dev_contract = artifact.abi.as_ref().is_some_and(|abi| {
+                        abi.functions().any(|f| {
+                            f.test_function_kind().is_known()
+                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                         })
-                        .unwrap_or(false);
+                    });
 
                     let unique_name = if kept.len() > 1 {
                         format!(
@@ -461,7 +498,9 @@ impl ProjectCompiler {
                 }
             }
 
-            sh_println!("{size_report}")?;
+            if !quiet {
+                sh_println!("{size_report}")?;
+            }
 
             let runtime_eip = match size_report.limits.runtime {
                 CONTRACT_RUNTIME_SIZE_LIMIT => "EIP-170: ",
@@ -828,7 +867,7 @@ pub fn compile_target_abi(
     target_path: &Path,
     target_name: &str,
 ) -> Result<JsonAbi> {
-    let target_path = dunce::canonicalize(target_path)?;
+    let target_path = canonicalize_path(target_path)?;
     let output = compile_abi_project(
         project,
         ProjectCompiler::new().quiet(true).files([target_path.clone()]),
@@ -842,7 +881,7 @@ pub fn compile_target_abi(
 
 /// Creates a [Project] from an Etherscan source.
 pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
-    let target_path = dunce::canonicalize(target_path)?;
+    let target_path = canonicalize_path(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
@@ -1021,6 +1060,37 @@ impl std::fmt::Debug for PathOrContractInfo {
             }
         }
     }
+}
+
+/// Recognizes only solc code-generation failures that DTL's source rewrites can introduce.
+/// Unrelated errors (including other languages) must not trigger a retry.
+fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'static str> {
+    let mut reason = None;
+    for error in errors.iter().filter(|error| error.is_error()) {
+        // CompilationError has no structured message/type accessors. Inspect the concrete solc
+        // diagnostic rather than its Display output, which can include source snippets.
+        let error = error as &dyn Any;
+        let error = if let Some(error) = error.downcast_ref::<SolcError>() {
+            error
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_ref::<MultiCompilerError>()
+        {
+            error
+        } else {
+            return None;
+        };
+        reason = Some(match error.r#type.as_str() {
+            "YulException" if error.message.contains("too deep in the stack") => "stack too deep",
+            "CompilerError" if error.message.contains("Stack too deep") => "stack too deep",
+            "InternalCompilerError"
+                if error.message.contains("Tag too large for reserved space") =>
+            {
+                "Tag too large for reserved space"
+            }
+            _ => return None,
+        });
+    }
+    reason
 }
 
 #[cfg(test)]

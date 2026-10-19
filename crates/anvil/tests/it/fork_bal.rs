@@ -49,7 +49,7 @@ impl BalOrigin {
         let sender = handle.dev_wallets().next().unwrap().address();
         // Read slot one without changing it, then increment slot zero.
         api.anvil_set_code(CONTRACT, bytes!("6001545060005460010160005500")).await.unwrap();
-        api.anvil_set_storage_at(CONTRACT, U256::ONE, B256::from(U256::from(9))).await.unwrap();
+        api.anvil_set_storage_at(CONTRACT, U256::ONE, B256::with_last_byte(9)).await.unwrap();
         Self::increment(&api, sender).await;
         let block = handle
             .http_provider()
@@ -150,7 +150,7 @@ async fn fork_bal_real_anvil_prefill_respects_flags_on_startup_and_reset() {
             );
             assert_eq!(
                 api.storage_at(CONTRACT, U256::ONE, None).await.unwrap(),
-                B256::from(U256::from(9))
+                B256::with_last_byte(9)
             );
             assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(value));
             assert_eq!(cached_storage(&api, CONTRACT, U256::ONE).await, Some(U256::from(9)));
@@ -164,18 +164,14 @@ async fn fork_bal_unavailable_keeps_storage_lazy() {
     assert_eq!(origin.api.block_access_list_by_hash(origin.block_hash).await.unwrap(), None);
     let (api, _handle) = spawn(origin.config()).await;
     assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, None);
-    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::from(U256::ONE));
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::with_last_byte(1));
     assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn fork_bal_skips_mutable_and_uncertain_sources_and_reads_lazily() {
     let origin = BalOrigin::new().await;
-    origin
-        .api
-        .anvil_set_storage_at(CONTRACT, U256::ZERO, B256::from(U256::from(99)))
-        .await
-        .unwrap();
+    origin.api.anvil_set_storage_at(CONTRACT, U256::ZERO, B256::with_last_byte(99)).await.unwrap();
     let uncertain =
         spawn_rpc_proxy_internal_error_after(origin.handle.http_endpoint(), "anvil_nodeInfo", 0)
             .await;
@@ -193,7 +189,7 @@ async fn fork_bal_skips_mutable_and_uncertain_sources_and_reads_lazily() {
             assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, None);
             assert_eq!(
                 api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-                B256::from(U256::from(99)),
+                B256::with_last_byte(99),
             );
             assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::from(99)));
         }
@@ -207,13 +203,10 @@ async fn fork_bal_seed_survives_local_commit_and_snapshot_revert() {
     assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
     let snapshot = api.evm_snapshot().await.unwrap();
     BalOrigin::increment(&api, origin.sender).await;
-    assert_eq!(
-        api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-        B256::from(U256::from(2)),
-    );
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::with_last_byte(2),);
     assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
     assert!(api.evm_revert(snapshot).await.unwrap());
-    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::from(U256::ONE));
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::with_last_byte(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -224,7 +217,7 @@ async fn fork_bal_preserves_genesis_funding_and_loaded_state_overrides() {
             CONTRACT,
             GenesisAccount {
                 balance: U256::from(10),
-                storage: Some([(B256::ZERO, B256::from(U256::from(20)))].into()),
+                storage: Some([(B256::ZERO, B256::with_last_byte(20))].into()),
                 ..Default::default()
             },
         )]
@@ -237,10 +230,7 @@ async fn fork_bal_preserves_genesis_funding_and_loaded_state_overrides() {
         .with_funded_accounts([(CONTRACT, U256::from(30))].into_iter().collect());
     let (api, handle) = spawn(config.clone()).await;
     assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
-    assert_eq!(
-        api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-        B256::from(U256::from(20))
-    );
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::with_last_byte(20));
     assert_eq!(api.balance(CONTRACT, None).await.unwrap(), U256::from(30));
     drop(handle);
     drop(api);
@@ -252,17 +242,14 @@ async fn fork_bal_preserves_genesis_funding_and_loaded_state_overrides() {
                 nonce: 3,
                 balance: U256::from(40),
                 code: bytes!("00"),
-                storage: [(B256::ZERO, B256::from(U256::from(50)))].into(),
+                storage: [(B256::ZERO, B256::with_last_byte(50))].into(),
             },
         )]
         .into(),
         ..Default::default()
     };
     let (api, _handle) = spawn(config.with_init_state(Some(state))).await;
-    assert_eq!(
-        api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-        B256::from(U256::from(50))
-    );
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::with_last_byte(50));
     assert_eq!(api.balance(CONTRACT, None).await.unwrap(), U256::from(40));
 }
 
@@ -289,16 +276,13 @@ async fn fork_bal_transaction_hash_uses_parent_seed_and_replays_target_prefix() 
     origin.api.mine_one().await.unwrap();
     assert_eq!(
         origin.api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-        B256::from(U256::from(3)),
+        B256::with_last_byte(3),
     );
 
     let (api, _handle) =
         spawn(origin.config().with_fork_transaction_hash(Some(transactions[0]))).await;
     assert_eq!(cached_storage(&api, CONTRACT, U256::ZERO).await, Some(U256::ONE));
-    assert_eq!(
-        api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(),
-        B256::from(U256::from(2))
-    );
+    assert_eq!(api.storage_at(CONTRACT, U256::ZERO, None).await.unwrap(), B256::with_last_byte(2));
     assert!(api.backend.mined_transaction_by_hash(transactions[0]).is_some());
     assert!(api.backend.mined_transaction_by_hash(transactions[1]).is_none());
 }

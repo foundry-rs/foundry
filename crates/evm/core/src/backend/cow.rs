@@ -31,6 +31,14 @@ use std::{borrow::Cow, collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "monad")]
 use crate::evm::MonadEvmNetwork;
+#[cfg(feature = "monad")]
+use alloy_evm::EvmEnv;
+#[cfg(feature = "monad")]
+use alloy_monad_evm::MonadEvmFactory;
+#[cfg(feature = "monad")]
+use monad_revm::{MonadChainContext, MonadHardfork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -147,9 +155,9 @@ impl CowBackend<'_, MonadEvmNetwork> {
         I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, MonadEvmNetwork>>,
     >(
         &mut self,
-        evm_env: &mut EvmEnvFor<MonadEvmNetwork>,
-        tx_env: &mut TxEnvFor<MonadEvmNetwork>,
-        chain_context: ChainFor<MonadEvmNetwork>,
+        evm_env: &mut EvmEnv<MonadHardfork>,
+        tx_env: &mut TxEnv,
+        chain_context: MonadChainContext,
         inspector: &mut I,
     ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
         if crate::evm::protocol_system_call(tx_env)?.is_none() {
@@ -158,7 +166,7 @@ impl CowBackend<'_, MonadEvmNetwork> {
 
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
-        let factory = <MonadEvmNetwork as FoundryEvmNetwork>::EvmFactory::default();
+        let factory = MonadEvmFactory::default();
         let mut evm = factory.create_nested_evm_with_inspector(self, evm_env.clone(), inspector);
         *evm.chain_mut() = chain_context;
         let result = evm.transact_raw(tx_env.clone())?;

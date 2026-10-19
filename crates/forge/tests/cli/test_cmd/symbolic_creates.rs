@@ -1,10 +1,12 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::{
+    assert_symbolic, assert_symbolic_engine_witness, assert_symbolic_witness, z3_available,
+};
+use crate::skip_unless_z3;
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
 
-use super::symbolic_helpers::z3_available;
-
-forgetest_init!(symbolic_create_contains_invalid_initcode_halt, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_contains_invalid_initcode_halt(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_contains_invalid_initcode_halt because z3 is not available"
@@ -36,9 +38,10 @@ contract SymbolicInvalidInitcode {
     );
 
     cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
-});
+}
 
-forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_respects_configured_runtime_code_limit(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_respects_configured_runtime_code_limit because z3 is not available"
@@ -102,9 +105,10 @@ contract OversizedRuntime {
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkConfiguredRuntimeCodeLimit"])
         .assert_success();
-});
+}
 
-forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_deploys_and_calls_helper(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_deploys_and_calls_helper because z3 is not available"
@@ -130,28 +134,24 @@ contract SymbolicCreate {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreate"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkCreate"]))
+            .failure()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCreate.t.sol:SymbolicCreate
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreate(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkCreate(uint256)
-"#]],
-    );
     assert!(!stdout.contains("unsupported opcode: 0xf0"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create_respects_eip3541_runtime_prefix, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_respects_eip3541_runtime_prefix(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_respects_eip3541_runtime_prefix because z3 is not available"
@@ -315,15 +315,12 @@ contract ConsumeMockThenReject {
         "checkAllowedPrefixBeforeLondon",
     ])
     .assert_success();
-});
+}
 
-forgetest_init!(symbolic_create_preserves_symbolic_constructor_args, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_preserves_symbolic_constructor_args because z3 is not available"
-        );
-        return;
-    }
+// CREATE and CREATE2 with symbolic constructor args, initcode offset or size, and salt are modeled.
+#[forgetest_init]
+fn symbolic_create_accepts_symbolic_operands(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_create_accepts_symbolic_operands");
 
     prj.add_test(
         "SymbolicCreateConstructorArgs.t.sol",
@@ -344,32 +341,6 @@ contract SymbolicCreateConstructorArgs {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateConstructorArg"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateConstructorArg(uint256)
-"#]],
-    );
-    assert!(
-        !stdout.contains("unsupported symbolic execution feature: symbolic CREATE initcode"),
-        "{stdout}"
-    );
-});
-
-forgetest_init!(symbolic_create_accepts_constrained_symbolic_initcode_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_accepts_constrained_symbolic_initcode_offset because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicCreateInitcodeOffset.t.sol",
@@ -395,127 +366,27 @@ contract SymbolicCreateInitcodeOffset is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateInitcodeOffset"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateInitcodeOffset(uint16)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CREATE initcode offset"), "{stdout}");
-    assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
-});
-
-forgetest_init!(symbolic_create_size_respects_path_width, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_size_respects_path_width because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
-        "SymbolicCreateSize.t.sol",
+        "SymbolicCreateInitcodeSize.t.sol",
         r#"
 import "forge-std/Test.sol";
 
-contract SymbolicCreateSize is Test {
-    function checkCreateSizeRespectsPathWidth(uint256 size) public {
-        vm.assume(size <= 2);
-        bytes memory code = hex"5b5b";
+contract SymbolicCreateInitcodeSize is Test {
+    function checkCreateInitcodeSize(uint256 size) public {
+        vm.assume(size == 0 || size == 13);
+        bytes memory code = hex"6001600c60003960016000f300";
+
         address created;
         assembly {
             created := create(0, add(code, 0x20), size)
         }
+
         assert(created != address(0));
+        assertEq(created.code.length, size == 13 ? 1 : 0);
     }
 }
 "#,
     );
-
-    let stdout = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--symbolic-width",
-            "2",
-            "--match-test",
-            "checkCreateSizeRespectsPathWidth",
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-(paths: 2,
-incomplete symbolic execution (Stuck)
-symbolic path limit exceeded
-checkCreateSizeRespectsPathWidth(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_create2_deploys_and_calls_helper, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create2_deploys_and_calls_helper because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicCreate2.t.sol",
-        r#"
-contract CreatedHelper {
-    function inc(uint256 x) external pure returns (uint256) {
-        return x + 1;
-    }
-}
-
-contract SymbolicCreate2 {
-    function checkCreate2(uint256 x) public {
-        CreatedHelper helper = new CreatedHelper{salt: bytes32(uint256(123))}();
-        assert(helper.inc(x) != 11);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreate2"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkCreate2(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("unsupported opcode: 0xf5"), "{stdout}");
-});
-
-forgetest_init!(symbolic_create2_preserves_symbolic_constructor_args, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create2_preserves_symbolic_constructor_args because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicCreate2Args.t.sol",
@@ -542,22 +413,171 @@ contract SymbolicCreate2Args {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreate2ConstructorArg"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    prj.add_test(
+        "SymbolicCreate2SelfAddress.t.sol",
+        r#"
+contract CreatedSelfAddress {
+    address public constructorSelf;
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreate2ConstructorArg(uint256)
-"#]],
+    constructor() {
+        constructorSelf = address(this);
+    }
+
+    function runtimeSelf() external view returns (address) {
+        return address(this);
+    }
+}
+
+contract SymbolicCreate2SelfAddress {
+    function checkCreate2SelfAddress(uint256 salt) public {
+        CreatedSelfAddress created = new CreatedSelfAddress{salt: bytes32(salt)}();
+        assert(created.constructorSelf() == address(created));
+        assert(created.runtimeSelf() == address(created));
+    }
+}
+"#,
     );
-    assert!(!stdout.contains("symbolic CREATE2 initcode"), "{stdout}");
-});
 
-forgetest_init!(symbolic_vm_expect_create_matches_and_reports_missing, |prj, cmd| {
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkCreateConstructorArg|checkCreateInitcodeOffset|checkCreateInitcodeSize|checkCreate2ConstructorArg|checkCreate2SelfAddress)\\(",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCreateConstructorArgs.t.sol:SymbolicCreateConstructorArgs
+[PASS] checkCreateConstructorArg(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreate2SelfAddress.t.sol:SymbolicCreate2SelfAddress
+[PASS] checkCreate2SelfAddress(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreateInitcodeSize.t.sol:SymbolicCreateInitcodeSize
+[PASS] checkCreateInitcodeSize(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreateInitcodeOffset.t.sol:SymbolicCreateInitcodeOffset
+[PASS] checkCreateInitcodeOffset(uint16) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreate2Args.t.sol:SymbolicCreate2Args
+[PASS] checkCreate2ConstructorArg(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in [
+        "symbolic CALL target",
+        "symbolic CREATE initcode offset",
+        "symbolic CREATE initcode size",
+        "symbolic CREATE2 initcode",
+        "symbolic CREATE2 salt",
+        "symbolic bytecode opcode",
+        "unsupported symbolic execution feature: symbolic CREATE initcode",
+    ] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_create_size_respects_path_width(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_size_respects_path_width because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateSize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCreateSize is Test {
+    function checkCreateSizeRespectsPathWidth(uint256 size) public {
+        vm.assume(size <= 2);
+        bytes memory code = hex"5b5b";
+        address created;
+        assembly {
+            created := create(0, add(code, 0x20), size)
+        }
+        assert(created != address(0));
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_engine_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--symbolic-width",
+        "2",
+        "--match-test",
+        "checkCreateSizeRespectsPathWidth",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCreateSize.t.sol:SymbolicCreateSize
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic path limit exceeded] checkCreateSizeRespectsPathWidth(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+    // `[METRICS]` hides the path count that `--symbolic-width 2` must cap.
+    assert!(stdout.contains("(paths: 2,"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_create2_deploys_and_calls_helper(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create2_deploys_and_calls_helper because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreate2.t.sol",
+        r#"
+contract CreatedHelper {
+    function inc(uint256 x) external pure returns (uint256) {
+        return x + 1;
+    }
+}
+
+contract SymbolicCreate2 {
+    function checkCreate2(uint256 x) public {
+        CreatedHelper helper = new CreatedHelper{salt: bytes32(uint256(123))}();
+        assert(helper.inc(x) != 11);
+    }
+}
+"#,
+    );
+
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkCreate2"]))
+            .failure()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCreate2.t.sol:SymbolicCreate2
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCreate2(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
+
+    assert!(!stdout.contains("unsupported opcode: 0xf5"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_create_matches_and_reports_missing(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_create_matches_and_reports_missing because z3 is not available"
@@ -609,144 +629,86 @@ contract SymbolicExpectCreate is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateExpectation"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkCreateExpectation",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
+[PASS] checkCreateExpectation(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateExpectation(uint256)
-"#]],
-    );
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkCreate2Expectation",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
+[PASS] checkCreate2Expectation(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkCreate2Expectation"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicCreateExpectation",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
+[PASS] checkSymbolicCreateExpectation(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreate2Expectation(uint256)
-"#]],
-    );
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedSymbolicCreateExpectation",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
+[FAIL: expected CREATE call by address 0xffffffffffffffffffffffffffffffffffffffff for bytecode 0x[..] but not found; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedSymbolicCreateExpectation(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicCreateExpectation"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicCreateExpectation(address)
-"#]],
-    );
-
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMismatchedSymbolicCreateExpectation"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMismatchedSymbolicCreateExpectation(address)
-"#]],
-    );
-
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMissingCreateExpectation"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMissingCreateExpectation(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_create2_supports_symbolic_salt_and_self_address, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create2_supports_symbolic_salt_and_self_address because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicCreate2SelfAddress.t.sol",
-        r#"
-contract CreatedSelfAddress {
-    address public constructorSelf;
-
-    constructor() {
-        constructorSelf = address(this);
-    }
-
-    function runtimeSelf() external view returns (address) {
-        return address(this);
-    }
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMissingCreateExpectation",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
+[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode 0x[..] but not found; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMissingCreateExpectation(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
-contract SymbolicCreate2SelfAddress {
-    function checkCreate2SelfAddress(uint256 salt) public {
-        CreatedSelfAddress created = new CreatedSelfAddress{salt: bytes32(salt)}();
-        assert(created.constructorSelf() == address(created));
-        assert(created.runtimeSelf() == address(created));
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreate2SelfAddress"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreate2SelfAddress(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CREATE2 salt"), "{stdout}");
-    assert!(!stdout.contains("symbolic CALL target"), "{stdout}");
-});
-
-forgetest_init!(symbolic_create2_collision_returns_zero, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create2_collision_returns_zero because z3 is not available"
-        );
-        return;
-    }
+// Failed creations: CREATE2 collisions, nonce bumps and revert data.
+#[forgetest_init]
+fn symbolic_create_failure_semantics(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_create_failure_semantics");
 
     prj.add_test(
         "SymbolicCreate2Collision.t.sol",
@@ -773,28 +735,6 @@ contract SymbolicCreate2Collision is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreate2Collision"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreate2Collision()
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_create_failure_bumps_creator_nonce, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_failure_bumps_creator_nonce because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicCreateFailureNonce.t.sol",
         r#"
@@ -818,21 +758,58 @@ contract SymbolicCreateFailureNonce is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateFailureNonce"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateFailureNonce(uint256)
-"#]],
+    prj.add_test(
+        "SymbolicCreateRevertData.t.sol",
+        r#"
+contract SymbolicCreateRevertData {
+    function checkCreateRevertData() public {
+        bytes memory initcode = hex"61123460005260206000fd";
+        address created;
+        uint256 size;
+        uint256 payload;
+        assembly {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+            size := returndatasize()
+            returndatacopy(0x80, 0, size)
+            payload := mload(0x80)
+        }
+        assert(created == address(0));
+        assert(size == 32);
+        assert(payload == 0x1234);
+    }
+}
+"#,
     );
-});
 
-forgetest_init!(symbolic_compute_create_address_cheatcodes, |prj, cmd| {
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkCreate2Collision|checkCreateFailureNonce|checkCreateRevertData)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicCreateRevertData.t.sol:SymbolicCreateRevertData
+[PASS] checkCreateRevertData() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreate2Collision.t.sol:SymbolicCreate2Collision
+[PASS] checkCreate2Collision() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCreateFailureNonce.t.sol:SymbolicCreateFailureNonce
+[PASS] checkCreateFailureNonce(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    );
+}
+
+#[forgetest_init]
+fn symbolic_compute_create_address_cheatcodes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_compute_create_address_cheatcodes because z3 is not available"
@@ -918,60 +895,42 @@ contract SymbolicComputeCreateAddresses is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicComputeCreateAddresses"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicComputeCreateAddresses",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicComputeCreateAddresses.t.sol:SymbolicComputeCreateAddresses
+[PASS] checkComputeCreate2Address(uint256) ([METRICS])
+[PASS] checkComputeCreate2DefaultDeployer() ([METRICS])
+[PASS] checkComputeCreateAddress(uint256) ([METRICS])
+[PASS] checkSymbolicComputeCreate2Address(bytes32,bytes32) ([METRICS])
+[PASS] checkSymbolicComputeCreate2AddressDeployer(address,bytes32,bytes32) ([METRICS])
+[PASS] checkSymbolicComputeCreateAddress(uint64) ([METRICS])
+[PASS] checkSymbolicComputeCreateAddressDeployer(address,uint64) ([METRICS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkComputeCreateAddress(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicComputeCreateAddress(uint64)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicComputeCreateAddressDeployer(address,uint64)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkComputeCreate2Address(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicComputeCreate2Address(bytes32,bytes32)
-"#]],
-    );
     assert!(
         stdout
             .contains("[PASS] checkSymbolicComputeCreate2AddressDeployer(address,bytes32,bytes32)"),
         "{stdout}"
     );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkComputeCreate2DefaultDeployer()
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.computeCreateAddress nonce"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.computeCreate2Address init code hash"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.computeCreateAddress deployer"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.computeCreate2Address deployer"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_nonce_cheatcodes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_nonce_cheatcodes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_vm_nonce_cheatcodes because z3 is not available");
         return;
@@ -1012,32 +971,25 @@ contract SymbolicNonceCheatcodes is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--match-test",
-            "checkSetNonceCheatcodes|checkResetNonceCheatcode",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSetNonceCheatcodes|checkResetNonceCheatcode",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicNonceCheatcodes.t.sol:SymbolicNonceCheatcodes
+[PASS] checkResetNonceCheatcode(uint256) ([METRICS])
+[PASS] checkSetNonceCheatcodes(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSetNonceCheatcodes(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkResetNonceCheatcode(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_vm_set_nonce_rejects_decrement, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_set_nonce_rejects_decrement(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_set_nonce_rejects_decrement because z3 is not available"
@@ -1060,34 +1012,26 @@ contract SymbolicSetNonceRejectsDecrement is Test {
 "#,
     );
 
-    let output = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSetNonceRejectsDecrement"])
-        .assert_failure()
-        .get_output()
-        .clone();
-    let output = format!("{}{}", output.stdout_lossy(), output.stderr_lossy());
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSetNonceRejectsDecrement",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSetNonceRejectsDecrement.t.sol:SymbolicSetNonceRejectsDecrement
+[FAIL: vm.setNonce: new nonce (3) must be strictly equal to or higher than the account's current nonce (4); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSetNonceRejectsDecrement(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &output,
-        foundry_test_utils::str![[r#"
-[FAIL
-"#]],
-    );
-    assert_relevant_lines(
-        &output,
-        foundry_test_utils::str![[r#"
-checkSetNonceRejectsDecrement(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_create_transfers_value_and_checks_balance, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_transfers_value_and_checks_balance because z3 is not available"
-        );
-        return;
-    }
+// CREATE and CREATE2 with concrete, symbolic and insufficient value.
+#[forgetest_init]
+fn symbolic_create_value_transfers(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_create_value_transfers");
 
     prj.add_test(
         "SymbolicCreateValue.t.sol",
@@ -1116,73 +1060,6 @@ contract SymbolicCreateValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateValue"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateValue()
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_create_preserves_revert_data, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_preserves_revert_data because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicCreateRevertData.t.sol",
-        r#"
-contract SymbolicCreateRevertData {
-    function checkCreateRevertData() public {
-        bytes memory initcode = hex"61123460005260206000fd";
-        address created;
-        uint256 size;
-        uint256 payload;
-        assembly {
-            created := create(0, add(initcode, 0x20), mload(initcode))
-            size := returndatasize()
-            returndatacopy(0x80, 0, size)
-            payload := mload(0x80)
-        }
-        assert(created == address(0));
-        assert(size == 32);
-        assert(payload == 0x1234);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateRevertData"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateRevertData()
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_create_accepts_symbolic_value, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_accepts_symbolic_value because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicCreateSymbolicValue.t.sol",
         r#"
@@ -1210,29 +1087,6 @@ contract SymbolicCreateSymbolicValue is Test {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateSymbolicValue"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateSymbolicValue(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
-});
-
-forgetest_init!(symbolic_create_splits_symbolic_insufficient_value, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_splits_symbolic_insufficient_value because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicCreateInsufficientValue.t.sol",
@@ -1265,30 +1119,6 @@ contract SymbolicCreateInsufficientValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateInsufficientValue"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateInsufficientValue(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
-    assert!(!stdout.contains("symbolic CREATE balance"), "{stdout}");
-});
-
-forgetest_init!(symbolic_create2_accepts_symbolic_value, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create2_accepts_symbolic_value because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicCreate2SymbolicValue.t.sol",
         r#"
@@ -1318,68 +1148,41 @@ contract SymbolicCreate2SymbolicValue is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreate2SymbolicValue"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkCreateValue|checkCreateSymbolicValue|checkCreateInsufficientValue|checkCreate2SymbolicValue)\\(",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCreateValue.t.sol:SymbolicCreateValue
+[PASS] checkCreateValue() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreate2SymbolicValue(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
-});
+Ran 1 test for test/SymbolicCreate2SymbolicValue.t.sol:SymbolicCreate2SymbolicValue
+[PASS] checkCreate2SymbolicValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-forgetest_init!(symbolic_create_accepts_bounded_symbolic_initcode_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_create_accepts_bounded_symbolic_initcode_size because z3 is not available"
-        );
-        return;
-    }
+Ran 1 test for test/SymbolicCreateSymbolicValue.t.sol:SymbolicCreateSymbolicValue
+[PASS] checkCreateSymbolicValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    prj.add_test(
-        "SymbolicCreateInitcodeSize.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicCreateInitcodeSize is Test {
-    function checkCreateInitcodeSize(uint256 size) public {
-        vm.assume(size == 0 || size == 13);
-        bytes memory code = hex"6001600c60003960016000f300";
-
-        address created;
-        assembly {
-            created := create(0, add(code, 0x20), size)
-        }
-
-        assert(created != address(0));
-        assertEq(created.code.length, size == 13 ? 1 : 0);
+Ran 1 test for test/SymbolicCreateInsufficientValue.t.sol:SymbolicCreateInsufficientValue
+[PASS] checkCreateInsufficientValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic CREATE balance", "symbolic CREATE value"] {
+        assert!(!stdout.contains(reason), "{stdout}");
     }
 }
-"#,
-    );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateInitcodeSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkCreateInitcodeSize(uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic CREATE initcode size"), "{stdout}");
-    assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
-});
-
-forgetest_init!(symbolic_staticcall_rejects_create, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_staticcall_rejects_create(prj: _, cmd: _) {
     if !z3_available() {
         let _ =
             sh_eprintln!("skipping symbolic_staticcall_rejects_create because z3 is not available");
@@ -1415,26 +1218,24 @@ contract SymbolicStaticCreate {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkStaticCreate"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkStaticCreate()
-"#]],
-    );
-});
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkStaticCreate"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicStaticCreate.t.sol:SymbolicStaticCreate
+[PASS] checkStaticCreate() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 // CREATE whose constructor returns a symbolic-length runtime image must fail
 // closed as Unsupported instead of silently installing a max-length padded
 // bytecode (which would corrupt EXTCODESIZE, selector dispatch, and later
 // execution). The constructor below returns `len` bytes; with symbolic `len`
 // the engine must report the unsupported feature.
-forgetest_init!(symbolic_create_with_symbolic_runtime_size_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_with_symbolic_runtime_size_reports_unsupported(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_with_symbolic_runtime_size_reports_unsupported because z3 is not available"
@@ -1464,19 +1265,22 @@ contract SymbolicCreateRuntimeLen {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCreateSymbolicRuntimeLen"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkCreateSymbolicRuntimeLen",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCreateRuntimeLen.t.sol:SymbolicCreateRuntimeLen
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic RETURN size] checkCreateSymbolicRuntimeLen(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     // The engine fails closed at the constructor's RETURN with symbolic size
     // (upstream of the CREATE installation step). Either failure mode proves
     // the runtime image is never silently installed as max-length bytecode.
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-unsupported symbolic execution feature: symbolic RETURN size
-"#]],
-    );
-});
+}

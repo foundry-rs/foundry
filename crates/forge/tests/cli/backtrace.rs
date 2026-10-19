@@ -2,7 +2,8 @@
 
 use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
 
-forgetest!(test_backtraces, |prj, cmd| {
+#[forgetest]
+fn test_backtraces(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.add_source("SimpleRevert.sol", include_str!("../fixtures/backtraces/SimpleRevert.sol"));
@@ -96,9 +97,10 @@ Backtrace:
 Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(test_backtrace_with_mixed_compilation, |prj, cmd| {
+#[forgetest]
+fn test_backtrace_with_mixed_compilation(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -261,9 +263,10 @@ Backtrace:
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(test_library_backtrace, |prj, cmd| {
+#[forgetest]
+fn test_library_backtrace(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -369,9 +372,10 @@ Backtrace:
 Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
+#[forgetest]
+fn test_multiple_libraries_same_file(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -429,9 +433,10 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 
 ...
 "#]]);
-});
+}
 
-forgetest!(test_fork_backtrace, |prj, cmd| {
+#[forgetest]
+fn test_fork_backtrace(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -520,9 +525,10 @@ Backtrace:
   at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:9)
 ...
 "#]]);
-});
+}
 
-forgetest!(test_backtrace_via_ir_disables_source_lines, |prj, cmd| {
+#[forgetest]
+fn test_backtrace_via_ir_disables_source_lines(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.add_source("SimpleRevert.sol", include_str!("../fixtures/backtraces/SimpleRevert.sol"));
@@ -547,11 +553,12 @@ Backtrace:
   at BacktraceTest.testStaticCallRequire
 ...
 "#]]);
-});
+}
 
 // Test that backtraces only appear at verbosity 5 (-vvvvv).
 // Runs the same failing test at every verbosity level to assert correct output.
-forgetest!(test_backtrace_verbosity_levels, |prj, cmd| {
+#[forgetest]
+fn test_backtrace_verbosity_levels(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -684,4 +691,4 @@ Backtrace:
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}

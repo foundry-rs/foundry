@@ -33,9 +33,12 @@ pub struct BatchMakeTxArgs {
     /// Call specifications in format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xdata>]`
     ///
     /// Examples:
-    ///   --call "0x123:0.1ether" (ETH transfer)
-    ///   --call "0x456::transfer(address,uint256):0x789,1000" (ERC20 transfer)
-    ///   --call "0xabc::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:0.1ether" (ETH transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::transfer(address,uint256):
+    /// 0x0987654321098765432109876543210987654321,1000" (ERC20 transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:1ether:deposit()" (value + function
+    /// call)
     #[arg(long = "call", value_name = "SPEC", required = true)]
     pub calls: Vec<String>,
 
@@ -108,8 +111,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(from))
-                .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(from)).await?;
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
             return Ok(());
@@ -121,13 +123,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(
-                fee_provider,
-                Some(chain),
-                &mut tx,
-                Some(config.sender),
-            )
-            .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(config.sender)).await?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -139,13 +135,8 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(
-                fee_provider,
-                Some(chain),
-                &mut tx,
-                Some(prepared.account()),
-            )
-            .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(prepared.account()))
+                .await?;
             tx.sign_with_tempo_wallet(&prepared).await?
         } else {
             let (signer, from) = tx::resolve_send_signer(signer, &eth).await?;
@@ -153,8 +144,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(from))
-                .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(from)).await?;
             tx.build(&EthereumWallet::new(signer)).await?.encoded_2718()
         };
 

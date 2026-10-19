@@ -7,6 +7,7 @@ use std::{
 
 use crate::mutation::{
     mutant::{Mutant, MutationResult},
+    orchestrator::project_relative_path,
     visitor::MutantVisitor,
 };
 pub use crate::mutation::{
@@ -285,16 +286,6 @@ impl SurvivedSpans {
         })
     }
 
-    /// Check if any survived span contains this span, including exact matches.
-    ///
-    /// Live workers know exact same-span mutants are siblings in the current
-    /// run, so once one survives the remaining siblings can be skipped.
-    pub fn should_skip_in_live_run(&self, span: Span) -> bool {
-        let (lo, hi) = (span.lo().0, span.hi().0);
-
-        self.spans.iter().any(|&(parent_lo, parent_hi)| parent_lo <= lo && hi <= parent_hi)
-    }
-
     /// Serialize to a list of (lo, hi) pairs for caching
     fn to_vec(&self) -> Vec<(u32, u32)> {
         self.spans.iter().copied().collect()
@@ -405,7 +396,7 @@ impl MutationHandler {
         let mut mutant_cfg_hasher = DefaultHasher::new();
         // Version salt for this mutant-set cache schema. Bump this if the
         // inputs that define generated mutants change.
-        "mutant-set-v7".hash(&mut mutant_cfg_hasher);
+        "mutant-set-v8".hash(&mut mutant_cfg_hasher);
         for op in self.config.mutation.enabled_operators() {
             op.to_string().hash(&mut mutant_cfg_hasher);
         }
@@ -500,8 +491,12 @@ impl MutationHandler {
             })?;
             drop(parser);
 
+            // Store the root-relative path in mutants so reports do not depend on where the
+            // project is.
+            let mutant_path =
+                project_relative_path(&self.config.root, path).unwrap_or_else(|| path.clone());
             let operators = self.config.mutation.enabled_operators();
-            let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
+            let mut mutant_visitor = MutantVisitor::with_operators(mutant_path, &operators)
                 .with_source(&target_content)
                 .with_mutation_exclusions(self.mutation_exclusions.clone());
 

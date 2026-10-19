@@ -43,9 +43,8 @@ use foundry_evm::{
     core::{
         FoundryChain, FromAnyRpcTransaction,
         evm::{
-            EvmEnvFor, MonadBlockParticipants, MonadEvmNetwork, monad_block_participants,
-            monad_context_from_participants, protocol_system_call,
-            try_transact_monad_system_replay,
+            MonadBlockParticipants, monad_block_participants, monad_context_from_participants,
+            protocol_system_call, try_transact_monad_system_replay,
         },
     },
     hardfork::FoundryHardfork,
@@ -308,7 +307,7 @@ impl<N: Network> Backend<N> {
 
     /// Applies the Monad execution rules selected for a completed fork replay.
     pub(super) fn finalize_monad_fork_replay(&self, replay: &ForkReplay, evm_env: &mut EvmEnv) {
-        let spec_id = SpecId::from(replay.hardfork);
+        let spec_id = SpecId::from(replay.hardfork());
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
         self.fees.set_execution_rules(
             spec_id,
@@ -318,9 +317,9 @@ impl<N: Network> Backend<N> {
         self.fees.set_blob_params(get_blob_params(replay.source_chain_id, replay.timestamp));
 
         if replay.inferred_hardfork {
-            *self.hardfork.write() = replay.hardfork;
+            *self.hardfork.write() = replay.hardfork();
             if let Some(fork) = self.fork.read().clone() {
-                fork.config.write().hardfork = Some(replay.hardfork);
+                fork.config.write().hardfork = Some(replay.hardfork());
             }
         }
     }
@@ -881,7 +880,7 @@ impl<N: Network> Backend<N> {
     pub(super) fn build_monad_evm_env(
         evm_env: &EvmEnv,
         hardfork: MonadHardfork,
-    ) -> EvmEnvFor<MonadEvmNetwork> {
+    ) -> EvmEnv<MonadHardfork> {
         EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
             evm_env.block_env.clone(),

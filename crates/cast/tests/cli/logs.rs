@@ -2,7 +2,8 @@
 
 use super::*;
 
-casttest!(logs_topics, |_prj, cmd| {
+#[casttest]
+fn logs_topics(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
@@ -17,9 +18,10 @@ casttest!(logs_topics, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
-});
+}
 
-casttest!(logs_topic_2, |_prj, cmd| {
+#[casttest]
+fn logs_topic_2(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
@@ -36,9 +38,10 @@ casttest!(logs_topic_2, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
-});
+}
 
-casttest!(logs_sig, |_prj, cmd| {
+#[casttest]
+fn logs_sig(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
@@ -53,9 +56,10 @@ casttest!(logs_sig, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(file!["../fixtures/cast_logs_decoded.stdout"]);
-});
+}
 
-casttest!(logs_sig_2, |_prj, cmd| {
+#[casttest]
+fn logs_sig_2(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
@@ -71,9 +75,10 @@ casttest!(logs_sig_2, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(file!["../fixtures/cast_logs_decoded.stdout"]);
-});
+}
 
-casttest!(logs_json_remains_raw, |_prj, cmd| {
+#[casttest]
+fn logs_json_remains_raw(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     let expected = json!([{
         "address": "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce",
@@ -113,9 +118,10 @@ casttest!(logs_json_remains_raw, |_prj, cmd| {
             .assert_json_stdout_with_status(true, expected.clone())
             .stderr_eq(str![""]);
     }
-});
+}
 
-casttest!(logs_sig_mismatched_indexed, |_prj, cmd| {
+#[casttest]
+fn logs_sig_mismatched_indexed(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs", "--rpc-url", rpc.as_str(), "--from-block", "12421181", "--to-block",
@@ -128,9 +134,10 @@ casttest!(logs_sig_mismatched_indexed, |_prj, cmd| {
 Warning: failed to decode 1 of 1 logs with the provided event signature; make sure its indexed parameters match the log topics
 
 "#]]);
-});
+}
 
-casttest!(logs_decode_warning_shown_once, |_prj, cmd| {
+#[casttest]
+fn logs_decode_warning_shown_once(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs", "--rpc-url", rpc.as_str(), "--address",
@@ -142,13 +149,14 @@ casttest!(logs_decode_warning_shown_once, |_prj, cmd| {
 Warning: failed to decode 31 of 31 logs with the provided event signature; make sure its indexed parameters match the log topics
 
 "#]]);
-});
+}
 
 // Queries a 60k-block range (which `--query-size` splits into multiple chunks) and asserts the
 // chunked result is byte-for-byte identical to a single unchunked request. This proves chunking
 // collects logs from every chunk without gaps, duplicates, or reordering, and that the inclusive
 // `to` block is covered.
-casttest!(logs_chunked, |_prj, cmd| {
+#[casttest]
+fn logs_chunked(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     let args = [
         "logs",
@@ -174,9 +182,10 @@ casttest!(logs_chunked, |_prj, cmd| {
     // Sanity check: results actually span the first and last chunk of the range.
     assert!(chunked.contains("12400314"), "missing log from the first chunk");
     assert!(chunked.contains("12454418"), "missing log from the last chunk");
-});
+}
 
-forgetest_async!(events_quiet_preserves_output, |prj, cmd| {
+#[forgetest]
+async fn events_quiet_preserves_output(prj: _, cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -309,4 +318,4 @@ contract AmbiguousEventEmitter is EventEmitter {
   data: 0x000000000000000000000000000000000000000000000000000000000000002a
 
 "#]]);
-});
+}

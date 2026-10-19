@@ -204,20 +204,15 @@ impl SmtCsePlan {
         let Some(visit) = self.bool_visits.get_mut(expr) else {
             return;
         };
-        if visit.count <= 1 || visit.binding.is_some() || !Self::bool_can_bind(expr) {
+        if visit.count <= 1
+            || visit.binding.is_some()
+            || matches!(expr.kind(), SymBoolExprKind::Const(_))
+        {
             return;
         }
         let idx = self.bindings.len();
         visit.binding = Some(idx);
         self.bindings.push(SmtBinding::Bool(expr.clone()));
-    }
-
-    fn expr_binding(&self, expr: &SymExpr) -> Option<usize> {
-        self.expr_visits.get(expr).and_then(|visit| visit.binding)
-    }
-
-    fn bool_binding(&self, expr: &SymBoolExpr) -> Option<usize> {
-        self.bool_visits.get(expr).and_then(|visit| visit.binding)
     }
 
     fn expr_can_bind(expr: &SymExpr) -> bool {
@@ -230,10 +225,6 @@ impl SmtCsePlan {
                 | SymExprKind::Hash { .. }
         )
     }
-
-    fn bool_can_bind(expr: &SymBoolExpr) -> bool {
-        !matches!(expr.kind(), SymBoolExprKind::Const(_))
-    }
 }
 
 enum SmtBinding {
@@ -245,22 +236,14 @@ impl SmtBinding {
     fn write_definition_header(&self, out: &mut String, idx: usize) {
         match self {
             Self::Expr(_) => {
-                Self::write_expr_name(out, idx);
+                let _ = write!(out, "__sym_expr_{idx}");
                 out.push_str(" () (_ BitVec 256) ");
             }
             Self::Bool(_) => {
-                Self::write_bool_name(out, idx);
+                let _ = write!(out, "__sym_bool_{idx}");
                 out.push_str(" () Bool ");
             }
         }
-    }
-
-    fn write_expr_name(out: &mut String, idx: usize) {
-        let _ = write!(out, "__sym_expr_{idx}");
-    }
-
-    fn write_bool_name(out: &mut String, idx: usize) {
-        let _ = write!(out, "__sym_bool_{idx}");
     }
 }
 
@@ -277,10 +260,10 @@ impl SmtCseWriter<'_> {
         skip_expr: Option<usize>,
         skip_bool: Option<usize>,
     ) {
-        if let Some(idx) = self.plan.expr_binding(expr)
+        if let Some(idx) = self.plan.expr_visits.get(expr).and_then(|visit| visit.binding)
             && Some(idx) != skip_expr
         {
-            SmtBinding::write_expr_name(out, idx);
+            let _ = write!(out, "__sym_expr_{idx}");
             return;
         }
 
@@ -351,10 +334,10 @@ impl SmtCseWriter<'_> {
         skip_expr: Option<usize>,
         skip_bool: Option<usize>,
     ) {
-        if let Some(idx) = self.plan.bool_binding(expr)
+        if let Some(idx) = self.plan.bool_visits.get(expr).and_then(|visit| visit.binding)
             && Some(idx) != skip_bool
         {
-            SmtBinding::write_bool_name(out, idx);
+            let _ = write!(out, "__sym_bool_{idx}");
             return;
         }
 

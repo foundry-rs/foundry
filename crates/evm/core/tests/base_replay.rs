@@ -375,7 +375,7 @@ fn eip8130_transaction(signer: &PrivateKeySigner) -> (BaseTxEnvelope, BaseTransa
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    let signed = Eip8130Signed::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
+    let signed = Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new());
     let envelope = BaseTxEnvelope::Eip8130(signed);
     let base_tx = BaseTransaction::from_recovered_tx(&envelope, signer.address());
     (envelope, base_tx)

@@ -58,8 +58,11 @@ pub struct ProjectPathOpts {
     pub hardhat: bool,
 
     /// Path to the config file.
+    ///
+    /// The project root is the config file's parent directory.
     #[arg(
         long,
+        conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "FILE"
     )]

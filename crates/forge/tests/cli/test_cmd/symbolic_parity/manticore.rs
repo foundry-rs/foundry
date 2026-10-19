@@ -4,7 +4,8 @@ use foundry_test_utils::{forgetest_init, str};
 
 // Manticore-style multi-transaction state exploration: the bug requires a
 // setup transaction before the final assertion can fail.
-forgetest_init!(manticore_multitx_state_machine, |prj, cmd| {
+#[forgetest_init]
+fn manticore_multitx_state_machine(prj: _, cmd: _) {
     skip_unless_z3!("manticore_multitx_state_machine");
 
     prj.add_test(
@@ -59,4 +60,4 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}

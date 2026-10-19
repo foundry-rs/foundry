@@ -526,7 +526,7 @@ impl<'a> InvariantContract<'a> {
         abi: &'a JsonAbi,
     ) -> Self {
         let invariant_calldata =
-            invariant_fns.iter().map(|(func, _)| func.selector().to_vec().into()).collect();
+            invariant_fns.iter().map(|(func, _)| func.selector().into()).collect();
         Self {
             address,
             name,
@@ -768,7 +768,7 @@ mod tests {
 
     #[test]
     fn targeted_contracts_short_calldata_is_not_replayable_or_decodable() {
-        let target = Address::from([0x42; 20]);
+        let target = Address::repeat_byte(0x42);
         let targets = targeted_contracts_with_function(target, Function::parse("foo()").unwrap());
         let tx = tx(target, vec![0xde, 0xad, 0xbe]);
 
@@ -792,7 +792,7 @@ mod tests {
 
     #[test]
     fn targeted_contracts_refresh_selector_lookup_after_filters() {
-        let target = Address::from([0x42; 20]);
+        let target = Address::repeat_byte(0x42);
         let foo = Function::parse("foo()").unwrap();
         let bar = Function::parse("bar()").unwrap();
 
@@ -817,8 +817,8 @@ mod tests {
 
     #[test]
     fn fuzz_run_identified_contracts_cache_fuzzed_functions_in_target_order() {
-        let first = Address::from([0x01; 20]);
-        let second = Address::from([0x02; 20]);
+        let first = Address::repeat_byte(0x01);
+        let second = Address::repeat_byte(0x02);
         let mut targets = targeted_contracts_with_functions(second, &["bar()", "baz(uint256)"]);
         targets.inner.insert(
             first,
@@ -844,10 +844,10 @@ mod tests {
 
     #[test]
     fn collect_created_contracts_caches_deployed_code_matches() {
-        let existing = Address::from([0x42; 20]);
-        let created = Address::from([0x43; 20]);
-        let setup = Address::from([0x44; 20]);
-        let untouched = Address::from([0x45; 20]);
+        let existing = Address::repeat_byte(0x42);
+        let created = Address::repeat_byte(0x43);
+        let setup = Address::repeat_byte(0x44);
+        let untouched = Address::repeat_byte(0x45);
         let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
         let project_contracts = project_contracts_with_runtime_code_and_abi(
             "DynamicTarget",
@@ -907,8 +907,8 @@ mod tests {
 
     #[test]
     fn collect_and_clear_created_contracts_refresh_fuzzed_function_cache() {
-        let existing = Address::from([0x42; 20]);
-        let created = Address::from([0x43; 20]);
+        let existing = Address::repeat_byte(0x42);
+        let created = Address::repeat_byte(0x43);
         let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
         let project_contracts = project_contracts_with_runtime_code_and_abi(
             "DynamicTarget",

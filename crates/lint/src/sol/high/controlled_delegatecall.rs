@@ -393,11 +393,20 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 }
 
 /// The variable a bare identifier refers to, looking through parens, `payable(...)` and
-/// address-like or numeric casts.
+/// address-like casts or integer casts preserving all 160 address bits.
 fn underlying_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(_) => gcx.resolved_variable(expr),
-        ExprKind::Call(callee, args) if is_cast(gcx, callee) => {
+        ExprKind::Call(callee, args)
+            if is_address_like_cast(gcx, callee)
+                || matches!(
+                    &callee.peel_parens().kind,
+                    ExprKind::Type(hir::Type {
+                        kind: TypeKind::Elementary(ElementaryType::Int(size) | ElementaryType::UInt(size)),
+                        ..
+                    }) if size.bytes() >= 20
+                ) =>
+        {
             args.exprs().next().and_then(|expr| underlying_var(gcx, expr))
         }
         ExprKind::Payable(inner) => underlying_var(gcx, inner),

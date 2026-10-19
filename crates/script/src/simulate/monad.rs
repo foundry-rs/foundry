@@ -1,28 +1,32 @@
 //! Sequential Monad simulation owns its block cursor independently of local script execution.
 
-use super::{PreSimulationState, RpcContexts, RpcSimulationContext, context_for_rpc};
+use super::{PreSimulationState, RpcSimulationContext};
 use crate::{
     ScriptResult,
-    runner::{GasSearch, ScriptRunner},
+    runner::{GasSearch, ScriptRunner, needs_more_gas},
     simulate::FilledTransactionsState,
     transaction::ScriptTransactionBuilder,
 };
 use alloy_eips::eip7702::SignedAuthorization;
+use alloy_evm::EvmEnv;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, TxKind, U256, map::HashMap};
 use eyre::{Result, WrapErr};
+use foundry_common::TransactionMaybeSigned;
 use foundry_evm::{
     backend::DatabaseExt,
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{BlockContext, ChainFor, EvmEnvFor, MonadEvmNetwork, TxEnvFor},
+        evm::{BlockContext, MonadEvmNetwork},
     },
     executors::{DeployResult, EvmError},
-    revm::{context::Transaction, context_interface::result::Output, interpreter::return_ok},
+    revm::{
+        context::{Transaction, TxEnv},
+        context_interface::result::Output,
+        interpreter::return_ok,
+    },
 };
-use futures::future::join_all;
-use parking_lot::RwLock;
-use std::sync::Arc;
+use monad_revm::{MonadChainContext, MonadHardfork};
 
 struct MonadSimulation {
     runner: ScriptRunner<MonadEvmNetwork>,
@@ -35,14 +39,14 @@ impl MonadSimulation {
         Ok(Self { runner, cursor })
     }
 
-    fn context(&self, tx: &TxEnvFor<MonadEvmNetwork>) -> Result<ChainFor<MonadEvmNetwork>> {
+    fn context(&self, tx: &TxEnv) -> Result<MonadChainContext> {
         self.cursor.as_ref().map_or_else(
             || self.runner.executor.backend().chain_context_for_synthetic_transaction(tx),
             |cursor| Ok(cursor.next_transaction(tx)),
         )
     }
 
-    fn record(&mut self, tx: TxEnvFor<MonadEvmNetwork>) {
+    fn record(&mut self, tx: TxEnv) {
         if let Some(cursor) = &mut self.cursor {
             cursor.record_transaction(tx);
         }
@@ -55,7 +59,7 @@ impl MonadSimulation {
         calldata: Bytes,
         value: U256,
         authorization_list: Option<Vec<SignedAuthorization>>,
-    ) -> (EvmEnvFor<MonadEvmNetwork>, TxEnvFor<MonadEvmNetwork>) {
+    ) -> (EvmEnv<MonadHardfork>, TxEnv) {
         let (env, mut tx) = self.runner.executor.prepare_call_env(from, to.into(), calldata, value);
         if let Some(authorization_list) = authorization_list {
             tx.set_signed_authorization(authorization_list);
@@ -66,20 +70,24 @@ impl MonadSimulation {
 
     fn simulate(
         &mut self,
-        from: Address,
-        to: Option<Address>,
-        calldata: Option<Bytes>,
-        value: Option<U256>,
-        authorization_list: Option<Vec<SignedAuthorization>>,
+        transaction: &TransactionMaybeSigned<Ethereum>,
+        is_fixed_gas_limit: bool,
     ) -> Result<ScriptResult<Ethereum>> {
-        let value = value.unwrap_or_default();
-        let Some(to) = to else {
-            let (env, tx) = self.runner.executor.prepare_call_env(
-                from,
-                TxKind::Create,
-                calldata.expect("No data for create transaction"),
-                value,
-            );
+        let from = transaction.from().expect("transaction sender missing");
+        let calldata = transaction.input().cloned();
+        let value = transaction.value().unwrap_or_default();
+        let authorization_list = transaction.authorization_list();
+        let Some(to) = transaction.to() else {
+            let (env, tx) = if is_fixed_gas_limit {
+                self.runner.prepare_fixed_gas_env(transaction)
+            } else {
+                self.runner.executor.prepare_call_env(
+                    from,
+                    TxKind::Create,
+                    calldata.expect("No data for create transaction"),
+                    value,
+                )
+            };
             let context = self.context(&tx)?;
             let result = self
                 .runner
@@ -99,6 +107,15 @@ impl MonadSimulation {
             return self.runner.deployment_result(result);
         };
 
+        if is_fixed_gas_limit {
+            let (env, tx) = self.runner.prepare_fixed_gas_env(transaction);
+            let context = self.context(&tx)?;
+            let result = self.runner.executor.transact_with_env_and_context(env, tx, context)?;
+            self.record(result.tx_env.clone());
+            let gas_used = result.gas_used;
+            return Ok(self.runner.call_result(result, gas_used));
+        }
+
         let calldata = calldata.unwrap_or_default();
         let (env, tx) =
             self.prepare_call(from, to, calldata.clone(), value, authorization_list.clone());
@@ -114,7 +131,7 @@ impl MonadSimulation {
                 let (env, tx) = self.prepare_call(from, to, calldata.clone(), value, None);
                 let context = self.context(&tx)?;
                 let result = self.runner.executor.call_with_env_and_context(env, tx, context)?;
-                search.record(limit, result.exit_reason);
+                search.record(limit, needs_more_gas(result.exit_reason));
             }
             gas_used = search.gas_used();
             self.runner.executor.tx_env_mut().set_gas_limit(initial_limit);
@@ -132,7 +149,7 @@ impl MonadSimulation {
             cursor.advance_block();
         }
         let block = &mut self.runner.executor.evm_env_mut().block_env;
-        block.set_number(block.number + U256::from(1));
+        block.set_number(block.number + U256::ONE);
     }
 }
 
@@ -149,31 +166,24 @@ impl PreSimulationState<MonadEvmNetwork> {
             contexts.insert(
                 rpc,
                 RpcSimulationContext {
-                    runner: RwLock::new(MonadSimulation::new(context.runner.into_inner())?),
+                    runner: MonadSimulation::new(context.runner)?,
                     decoder: context.decoder,
                 },
             );
         }
-        let contexts = Arc::new(contexts);
         let transactions =
-            self.transaction_metadata(&RpcContexts::Simulation(Arc::clone(&contexts)))?;
-        let futs = transactions
+            self.transaction_metadata(|rpc| &contexts.get(rpc).expect("invalid rpc url").decoder)?;
+        self.show_simulation_header()?;
+        let results = transactions
             .into_iter()
-            .map(|mut transaction| async {
+            .map(|transaction| {
                 let rpc = transaction.rpc.clone();
-                let context = context_for_rpc(&contexts, &rpc);
-                let mut simulation = context.runner.write();
-                let tx = transaction.tx_mut();
+                let simulation = &mut contexts.get_mut(&rpc).expect("invalid rpc url").runner;
+
+                let tx = transaction.tx();
                 let to = tx.to();
                 let result = simulation
-                    .simulate(
-                        tx.from()
-                            .expect("transaction doesn't have a `from` address at execution time"),
-                        to,
-                        tx.input().cloned(),
-                        tx.value(),
-                        tx.authorization_list(),
-                    )
+                    .simulate(tx, transaction.is_fixed_gas_limit)
                     .wrap_err("Internal EVM error during simulation")?;
                 if !result.success {
                     return Ok((rpc, None, false, result.traces));
@@ -197,8 +207,7 @@ impl PreSimulationState<MonadEvmNetwork> {
                 eyre::Ok((rpc, Some(transaction), is_noop, result.traces))
             })
             .collect::<Vec<_>>();
-        self.show_simulation_header()?;
-        let transactions = self.collect_simulation_results(join_all(futs).await, &contexts).await?;
+        let transactions = self.collect_simulation_results(results, &contexts).await?;
         Ok(self.into_filled(transactions))
     }
 }
@@ -206,17 +215,25 @@ impl PreSimulationState<MonadEvmNetwork> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
-    use foundry_evm::{backend::Backend, executors::ExecutorBuilder, opts::EvmOpts};
+    use alloy_eips::eip2930::{AccessList, AccessListItem};
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::{B256, bytes};
+    use alloy_rpc_types::TransactionRequest;
+    use foundry_evm::{
+        backend::Backend,
+        executors::ExecutorBuilder,
+        opts::EvmOpts,
+        revm::{DatabaseRef, bytecode::Bytecode, interpreter::InstructionResult},
+    };
     use foundry_evm_networks::NetworkConfigs;
 
     fn simulation() -> MonadSimulation {
-        let mut env = EvmEnvFor::<MonadEvmNetwork>::default();
+        let mut env = EvmEnv::<MonadHardfork>::default();
         // Match the simulation environment produced by EvmOpts.
         env.cfg_env.disable_nonce_check = true;
         let executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20).build(
             env,
-            TxEnvFor::<MonadEvmNetwork>::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::with_monad(),
         );
@@ -240,14 +257,15 @@ mod tests {
         let sender = Address::with_last_byte(0x42);
         let recipient = Address::with_last_byte(0x43);
         simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
-        let result = simulation.simulate(sender, Some(recipient), None, None, None).unwrap();
+        let result =
+            simulation.simulate(&transaction(sender, Some(recipient), None), false).unwrap();
         assert!(result.success);
         assert_transaction_count(&simulation, 1);
         assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 1);
 
         simulation.advance_block();
         assert_transaction_count(&simulation, 0);
-        assert_eq!(simulation.runner.executor.evm_env().block_env.number, U256::from(1));
+        assert_eq!(simulation.runner.executor.evm_env().block_env.number, U256::ONE);
         assert_transaction_count(&other, 0);
     }
 
@@ -257,13 +275,14 @@ mod tests {
         let sender = Address::with_last_byte(0x42);
         simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
         // Deploy runtime code that always reverts.
-        let initcode = Bytes::from_static(&hex!("6005600c60003960056000f360006000fd"));
-        let deployment = simulation.simulate(sender, None, Some(initcode), None, None).unwrap();
+        let initcode = bytes!("6005600c60003960056000f360006000fd");
+        let deployment =
+            simulation.simulate(&transaction(sender, None, Some(initcode)), false).unwrap();
         assert!(deployment.success);
         assert_transaction_count(&simulation, 1);
         let address = deployment.address.unwrap();
         assert!(!simulation.runner.executor.is_empty_code(address).unwrap());
-        let result = simulation.simulate(sender, Some(address), None, None, None).unwrap();
+        let result = simulation.simulate(&transaction(sender, Some(address), None), false).unwrap();
         assert!(!result.success);
         assert_transaction_count(&simulation, 2);
         assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 2);
@@ -274,8 +293,8 @@ mod tests {
         let mut simulation = simulation();
         simulation.runner.executor.set_gas_limit(1);
         let sender = Address::with_last_byte(0x42);
-        let result =
-            simulation.simulate(sender, Some(Address::with_last_byte(0x43)), None, None, None);
+        let result = simulation
+            .simulate(&transaction(sender, Some(Address::with_last_byte(0x43)), None), false);
         assert!(result.is_err());
         assert_transaction_count(&simulation, 0);
         assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 0);
@@ -293,5 +312,157 @@ mod tests {
         );
         assert_eq!(tx.tx_type(), 4);
         assert_transaction_count(&simulation, 0);
+    }
+
+    fn transaction(
+        from: Address,
+        to: Option<Address>,
+        input: Option<Bytes>,
+    ) -> TransactionMaybeSigned<Ethereum> {
+        TransactionMaybeSigned::new(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_kind(to.map_or(TxKind::Create, TxKind::Call))
+                .with_input(input.unwrap_or_default()),
+        )
+    }
+
+    #[test]
+    fn fixed_gas_calls_and_deployments_preserve_block_gas_limit() {
+        let mut simulation = simulation();
+        let sender = Address::with_last_byte(0x42);
+        let block_gas_limit = 30_000_000;
+        simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
+        simulation.runner.executor.evm_env_mut().block_env.set_gas_limit(block_gas_limit);
+        let executor_gas_limit = simulation.runner.executor.gas_limit();
+
+        // The constructor stores GASLIMIT in slot zero; the runtime returns GASLIMIT.
+        let initcode = bytes!("456000556009601060003960096000f34560005260206000f3");
+        let deployment = simulation
+            .simulate(&fixed_transaction(sender, None, Some(initcode), 100_000), true)
+            .unwrap();
+        assert!(deployment.success);
+        let address = deployment.address.unwrap();
+        assert_eq!(
+            simulation.runner.executor.backend().storage_ref(address, U256::ZERO).unwrap(),
+            U256::from(block_gas_limit),
+        );
+        assert_transaction_count(&simulation, 1);
+        assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 1);
+
+        let result = simulation
+            .simulate(&fixed_transaction(sender, Some(address), None, 50_000), true)
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(U256::from_be_slice(&result.returned), U256::from(block_gas_limit));
+        assert_transaction_count(&simulation, 2);
+        assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 2);
+        assert_eq!(simulation.runner.executor.gas_limit(), executor_gas_limit);
+        assert_eq!(simulation.runner.executor.evm_env().block_env.gas_limit, block_gas_limit);
+    }
+
+    #[test]
+    fn fixed_gas_access_lists_do_not_leak_to_following_transactions() {
+        let mut simulation = simulation();
+        simulation.runner.executor.set_spec_id(MonadHardfork::MonadTen);
+        let sender = Address::with_last_byte(0x42);
+        let recipient = Address::with_last_byte(0x43);
+        simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
+        let executor_gas_limit = simulation.runner.executor.gas_limit();
+
+        // Read 32 distinct storage pages: warm reads fit the cap, while cold reads do not.
+        // MonadTen warms all 128 slots in a page together.
+        let mut code = Vec::new();
+        for page in 0..32u16 {
+            code.push(0x61);
+            code.extend_from_slice(&(page * 128).to_be_bytes());
+            code.extend_from_slice(&[0x54, 0x50]);
+        }
+        code.push(0x00);
+        simulation.runner.executor.set_code(recipient, Bytecode::new_raw(code.into())).unwrap();
+        let access_list = AccessList(vec![AccessListItem {
+            address: recipient,
+            storage_keys: (0..32).map(|page| B256::from(U256::from(page * 128))).collect(),
+        }]);
+        let mut transaction = TransactionMaybeSigned::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(recipient)
+                .with_gas_price(0)
+                .with_gas_limit(100_000)
+                .with_access_list(access_list),
+        );
+        let result = simulation.simulate(&transaction, true).unwrap();
+        assert!(result.success);
+        assert_transaction_count(&simulation, 1);
+        assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 1);
+
+        transaction.as_unsigned_mut().unwrap().access_list = None;
+        let result = simulation.simulate(&transaction, true).unwrap();
+        assert!(!result.success);
+        assert_eq!(result.exit_reason, Some(InstructionResult::OutOfGas));
+        assert_transaction_count(&simulation, 2);
+        assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 2);
+
+        let result = simulation.simulate(&transaction, false).unwrap();
+        assert!(result.success);
+        assert_transaction_count(&simulation, 3);
+        assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 3);
+        assert_eq!(simulation.runner.executor.gas_limit(), executor_gas_limit);
+    }
+
+    #[test]
+    fn fixed_gas_validation_failure_does_not_advance_the_cursor() {
+        let mut simulation = simulation();
+        let sender = Address::with_last_byte(0x42);
+        let recipient = Address::with_last_byte(0x43);
+        simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
+        let result =
+            simulation.simulate(&fixed_transaction(sender, Some(recipient), None, 1), true);
+        assert!(result.is_err());
+        assert_transaction_count(&simulation, 0);
+        assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 0);
+
+        let result = simulation
+            .simulate(&fixed_transaction(sender, Some(recipient), None, 21_000), true)
+            .unwrap();
+        assert!(result.success);
+        assert_transaction_count(&simulation, 1);
+        assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), 1);
+    }
+
+    fn fixed_transaction(
+        from: Address,
+        to: Option<Address>,
+        input: Option<Bytes>,
+        gas_limit: u64,
+    ) -> TransactionMaybeSigned<Ethereum> {
+        let mut transaction = transaction(from, to, input);
+        transaction.as_unsigned_mut().unwrap().set_gas_limit(gas_limit);
+        transaction
+    }
+
+    #[test]
+    fn fixed_gas_failed_deployments_advance_the_cursor() {
+        let mut simulation = simulation();
+        let sender = Address::with_last_byte(0x42);
+        simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
+
+        for (index, (initcode, exit_reason)) in [
+            (bytes!("60006000fd"), InstructionResult::Revert),
+            (bytes!("5b600056"), InstructionResult::OutOfGas),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let result = simulation
+                .simulate(&fixed_transaction(sender, None, Some(initcode), 60_000), true)
+                .unwrap();
+            assert!(!result.success);
+            assert_eq!(result.exit_reason, Some(exit_reason));
+            assert_eq!(result.address, Some(Address::ZERO));
+            assert_transaction_count(&simulation, index + 1);
+            assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), index as u64 + 1);
+        }
     }
 }

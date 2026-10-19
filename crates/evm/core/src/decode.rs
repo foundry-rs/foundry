@@ -258,7 +258,7 @@ mod tests {
         error ValidationFailed(bytes);
         error InvalidNonce();
         */
-        let mut decoder = RevertDecoder::default();
+        let mut decoder = RevertDecoder::new();
         decoder.push_error("ValidationFailed(bytes)".parse().unwrap());
 
         /*

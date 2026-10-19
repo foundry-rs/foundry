@@ -1,4 +1,5 @@
 use super::*;
+use foundry_evm::revm::precompile::u64_to_address;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -41,7 +42,9 @@ impl SymbolicExecutor {
         ensure_expr_not_gasleft(&target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
-            (CallKind::Call, Some(to)) if is_known_cheatcode(to) => {
+            (CallKind::Call, Some(to))
+                if to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS =>
+            {
                 let value = state.stack.pop()?;
                 let value =
                     state.expect_constrained_word(&mut self.cx, value, "symbolic CALL value")?;
@@ -63,18 +66,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &in_size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &in_size,
-                            max_limit,
-                            "symbolic CALL input size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &in_size,
+                    max_limit,
+                    "symbolic CALL input size",
+                )?;
                 BoundedCopySize::Symbolic { size: in_size, max_size }
             }
         };
@@ -89,18 +86,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &out_size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &out_size,
-                            max_limit,
-                            "symbolic CALL output size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &out_size,
+                    max_limit,
+                    "symbolic CALL output size",
+                )?;
                 BoundedCopySize::Symbolic { size: out_size, max_size }
             }
         };
@@ -113,7 +104,7 @@ impl SymbolicExecutor {
                 Some(value) if value.is_zero() => {}
                 Some(_) => {
                     state.return_data = SymReturnData::empty(&mut self.cx);
-                    return Ok(StepOutcome::Revert);
+                    return Ok(StepOutcome::ExceptionalHalt);
                 }
                 None => {
                     let zero = SymBoolExpr::eq_word_const(&mut self.cx, &value, U256::ZERO);
@@ -133,13 +124,13 @@ impl SymbolicExecutor {
                             worklist.push_back(zero_state);
                             state.constraints = nonzero_constraints;
                             state.return_data = SymReturnData::empty(&mut self.cx);
-                            return Ok(StepOutcome::Revert);
+                            return Ok(StepOutcome::ExceptionalHalt);
                         }
                         (true, false) => state.constraints = zero_constraints,
                         (false, true) => {
                             state.constraints = nonzero_constraints;
                             state.return_data = SymReturnData::empty(&mut self.cx);
-                            return Ok(StepOutcome::Revert);
+                            return Ok(StepOutcome::ExceptionalHalt);
                         }
                         (false, false) => return Ok(StepOutcome::AssumeRejected),
                     }
@@ -700,7 +691,7 @@ impl SymbolicExecutor {
         out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        if is_known_cheatcode(to) {
+        if to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS {
             if !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
@@ -834,7 +825,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        if is_console(to) {
+        if to == HARDHAT_CONSOLE_ADDRESS {
             state.return_data = SymReturnData::empty(&mut self.cx);
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
             state.stack.push(SymExpr::one(&mut self.cx))?;
@@ -898,7 +889,7 @@ impl SymbolicExecutor {
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
         let spec_id: SpecId = executor.spec_id().into();
-        if is_supported_precompile(code_address, spec_id) {
+        if precompile_number_for_spec(code_address, spec_id).is_some() {
             let input_len = in_size.size_word(&mut self.cx);
             let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {
@@ -1249,12 +1240,12 @@ impl SymbolicExecutor {
             return Ok(true);
         }
 
-        let balance = state.world.balance_word_for_address(&mut self.cx, executor, from);
+        let balance = state.balance(&mut self.cx, executor, from);
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value.clone());
         let can_transfer = if from == to {
             can_pay
         } else {
-            let balance = state.world.balance_word_for_address(&mut self.cx, executor, to);
+            let balance = state.balance(&mut self.cx, executor, to);
             let sum = SymExpr::binop(&mut self.cx, SymBinOp::Add, balance.clone(), value);
             let no_overflow = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, sum, balance);
             SymBoolExpr::and(&mut self.cx, vec![can_pay, no_overflow])
@@ -1316,7 +1307,7 @@ impl SymbolicExecutor {
             return Ok(true);
         }
 
-        let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
+        let balance = state.balance(&mut self.cx, executor, state.address);
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
@@ -1378,7 +1369,7 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend((1..=10).map(precompile_address));
+        candidates.extend((1..=10).map(u64_to_address));
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {
@@ -1734,7 +1725,8 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(input) = constrained_bytes_at(cx, state, input, 0, input_len) {
-        return execute_precompile(cx, precompile_address(10), &input, SpecId::CANCUN).map(Some);
+        return execute_precompile(cx, kzg_point_evaluation::ADDRESS, &input, SpecId::CANCUN)
+            .map(Some);
     }
 
     if constrained_byte(cx, state, &input[0])

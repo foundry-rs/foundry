@@ -1,6 +1,7 @@
 // tests enhanced `vm.parseJson` and `vm.serializeJson` cheatcodes, which are not constrained to
 // alphabetical ordering of struct keys, but rather respect the Solidity struct definition.
-forgetest_init!(test_parse_json, |prj, cmd| {
+#[forgetest_init]
+fn test_parse_json(prj: _, cmd: _) {
     prj.add_test(
         "JsonCheats",
         r#"
@@ -63,4 +64,4 @@ contract SimpleJsonCheatsTest is Test {
     cmd.forge_fuse().args(["test"]).assert_success();
     // Should still work when the project is not compiled.
     cmd.forge_fuse().args(["test"]).assert_success();
-});
+}

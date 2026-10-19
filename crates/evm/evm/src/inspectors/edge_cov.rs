@@ -516,7 +516,7 @@ mod tests {
         let mut inspector = EdgeCovInspector::with_cmp_log_only();
         let addr = Address::ZERO;
 
-        inspector.store_hit(addr, 0, 0, U256::from(1));
+        inspector.store_hit(addr, 0, 0, U256::ONE);
         inspector.store_cmp(CmpOperands {
             op1: U256::from(123),
             op2: U256::from(456),
@@ -575,7 +575,7 @@ mod tests {
         let addr = Address::ZERO;
 
         for _ in 0..256 {
-            inspector.store_hit(addr, 0, 0, U256::from(1));
+            inspector.store_hit(addr, 0, 0, U256::ONE);
         }
 
         assert_eq!(inspector.edge_count(), 1);
@@ -587,7 +587,7 @@ mod tests {
         let mut inspector = EdgeCovInspector::new();
         let addr = Address::ZERO;
 
-        inspector.store_hit(addr, 0, 0, U256::from(1));
+        inspector.store_hit(addr, 0, 0, U256::ONE);
         inspector.store_hit(addr, 0, 0, U256::from(2));
         assert_eq!(inspector.edge_count(), 2);
         assert_eq!(dense_counts(&inspector), [1, 1]);
@@ -596,7 +596,7 @@ mod tests {
         assert_eq!(inspector.edge_count(), 0);
         assert!(inspector.dense_hits().is_empty());
 
-        inspector.store_hit(addr, 0, 0, U256::from(1));
+        inspector.store_hit(addr, 0, 0, U256::ONE);
         assert_eq!(inspector.edge_count(), 1);
         assert_eq!(dense_counts(&inspector), [1]);
     }
@@ -619,15 +619,15 @@ mod tests {
         let addr = Address::ZERO;
 
         let mut without_depth = EdgeCovInspector::new();
-        without_depth.store_hit(addr, 0, 0, U256::from(1));
-        without_depth.store_hit(addr, 1, 0, U256::from(1));
+        without_depth.store_hit(addr, 0, 0, U256::ONE);
+        without_depth.store_hit(addr, 1, 0, U256::ONE);
         assert_eq!(without_depth.edge_count(), 1);
         assert_eq!(dense_counts(&without_depth), [2]);
 
         let mut with_depth =
             EdgeCovInspector::with_config(EdgeCovConfig::new(EdgeCovKind::CollisionFree, true));
-        with_depth.store_hit(addr, 0, 0, U256::from(1));
-        with_depth.store_hit(addr, 1, 0, U256::from(1));
+        with_depth.store_hit(addr, 0, 0, U256::ONE);
+        with_depth.store_hit(addr, 1, 0, U256::ONE);
         assert_eq!(with_depth.edge_count(), 2);
         assert_eq!(dense_counts(&with_depth), [1, 1]);
     }
@@ -636,7 +636,7 @@ mod tests {
     fn reset_clears_hitcount_and_cmp_log() {
         let mut inspector = EdgeCovInspector::with_cmp_log();
 
-        inspector.store_hit(Address::ZERO, 0, 0, U256::from(1));
+        inspector.store_hit(Address::ZERO, 0, 0, U256::ONE);
         inspector.store_cmp(CmpOperands {
             op1: U256::from(123),
             op2: U256::from(456),

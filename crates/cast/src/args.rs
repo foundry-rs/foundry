@@ -22,7 +22,7 @@ use alloy_primitives::{
     utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
-use alloy_rlp::Decodable;
+use alloy_rlp::{decode_exact, encode};
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -109,19 +109,22 @@ macro_rules! with_network_provider {
 pub fn run() -> Result<()> {
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
-    setup()?;
+    let warnings = setup()?;
 
     let args = CastArgs::parse();
     args.global.init()?;
+    for warning in warnings {
+        let _ = foundry_common::sh_warn!("{warning}");
+    }
     args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
-pub fn setup() -> Result<()> {
-    utils::common_setup();
+pub fn setup() -> Result<Vec<String>> {
+    let warnings = utils::common_setup();
     utils::subscriber();
 
-    Ok(())
+    Ok(warnings)
 }
 
 /// Run the subcommand.
@@ -251,9 +254,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Conversion(ConversionSubcommand::FromRlp { value, as_int }) => {
             let bytes = hex::decode(stdin::unwrap_line(value)?).wrap_err("Could not decode hex")?;
             let value = if as_int {
-                U256::decode(&mut &bytes[..])?.to_string()
+                decode_exact::<U256>(&bytes)?.to_string()
             } else {
-                crate::rlp_converter::Item::decode(&mut &bytes[..])
+                decode_exact::<crate::rlp_converter::Item>(&bytes)
                     .wrap_err("Could not decode rlp")?
                     .to_string()
             };
@@ -264,7 +267,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let val =
                 serde_json::from_str(&value).unwrap_or_else(|_| serde_json::Value::String(value));
             let item = crate::rlp_converter::Item::value_to_item(&val)?;
-            print_scalar(format!("0x{}", hex::encode(alloy_rlp::encode(item))))?;
+            print_scalar(hex::encode_prefixed(encode(item)))?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToHex(ToBaseArgs { value, base_in })) => {
             let value = stdin::unwrap_line(value)?;
@@ -454,10 +457,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::DecodeString { data }) => {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
         }
-        CastSubcommand::Abi(AbiSubcommand::DecodeEvent { sig, data }) => {
+        CastSubcommand::Abi(AbiSubcommand::DecodeEvent { sig, data, topics }) => {
             let decoded_values = if let Some(event_sig) = sig {
                 let event = get_event(&event_sig)?;
-                abi_decode_event_data(&event, &hex::decode(data)?)?
+                let data = hex::decode(data)?;
+                if topics.is_empty() {
+                    abi_decode_event_data(&event, &data)?
+                } else {
+                    let decoded = event.decode_log_parts(topics, &data)?;
+                    let mut indexed = decoded.indexed.into_iter();
+                    let mut body = decoded.body.into_iter();
+                    event
+                        .inputs
+                        .iter()
+                        .map(|input| {
+                            if input.indexed { indexed.next() } else { body.next() }
+                                .expect("decoded event has a value for each input")
+                        })
+                        .collect()
+                }
             } else {
                 let data = strip_0x(&data);
                 let selector: B256 = data.get(..64).unwrap_or_default().parse()?;
@@ -1475,7 +1493,7 @@ fn int_bound(s: &str, max: bool) -> Result<String> {
     let ty = DynSolType::parse(s).wrap_err("Invalid type, expected `(u)int<bit size>`")?;
     match ty {
         DynSolType::Int(n) => {
-            let max_value = (U256::MAX & U256::from(1).wrapping_shl(n - 1)) - U256::from(1);
+            let max_value = (U256::MAX & U256::ONE.wrapping_shl(n - 1)) - U256::ONE;
             if max {
                 Ok(max_value.to_string())
             } else {
@@ -1485,7 +1503,7 @@ fn int_bound(s: &str, max: bool) -> Result<String> {
         DynSolType::Uint(n) if max => {
             let mut max_value = U256::MAX;
             if n < 256 {
-                max_value &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
+                max_value &= U256::ONE.wrapping_shl(n).wrapping_sub(U256::ONE);
             }
             Ok(max_value.to_string())
         }
@@ -1585,13 +1603,13 @@ fn explorer_client(
 
 fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
     tx: &str,
-) -> Result<String> {
+) -> Result<serde_json::Value> {
     let tx_hex = hex::decode(tx)?;
     let tx: N::TxEnvelope = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
     if let Ok(signer) = tx.recover_signer() {
-        Ok(serde_json::to_string_pretty(&Recovered::new_unchecked(tx, signer))?)
+        Ok(serde_json::to_value(Recovered::new_unchecked(tx, signer))?)
     } else {
-        Ok(serde_json::to_string_pretty(&tx)?)
+        Ok(serde_json::to_value(tx)?)
     }
 }
 
@@ -1707,7 +1725,7 @@ mod tests {
         assert_eq!(
             topic(&DynSolValue::Array(vec![uint(1), uint(2)])),
             <sol_data::Array<sol_data::Uint<256>> as EventTopic>::encode_topic(&vec![
-                U256::from(1),
+                U256::ONE,
                 U256::from(2)
             ])
             .0,
@@ -1746,7 +1764,7 @@ mod tests {
                 DynSolValue::Array(vec![uint(2), uint(3)]),
             ])),
             <sol_data::Array<sol_data::Array<sol_data::Uint<256>>> as EventTopic>::encode_topic(
-                &vec![vec![U256::from(1)], vec![U256::from(2), U256::from(3)]]
+                &vec![vec![U256::ONE], vec![U256::from(2), U256::from(3)]]
             )
             .0,
         );

@@ -114,7 +114,7 @@ pub(super) async fn wait_for_withdrawal(
                     &Filter::new()
                         .address(portal)
                         .event_signature(IZonePortal::WithdrawalProcessed::SIGNATURE_HASH)
-                        .topic1(requested.to.into_word())
+                        .topic1(requested.to)
                         .topic2(tag)
                         .from_block(from_block)
                         .to_block(end),

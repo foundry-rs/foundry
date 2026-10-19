@@ -3,7 +3,8 @@ use foundry_config::DenyLevel;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str, util::OutputExt};
 use std::fs;
 
-forgetest!(collision_cache_preserves_artifacts_and_invalidates_imports, |prj, cmd| {
+#[forgetest]
+fn collision_cache_preserves_artifacts_and_invalidates_imports(prj: _, cmd: _) {
     prj.add_source(
         "Base.sol",
         "contract Base { function shared() public pure returns (uint256) { return 1; } }",
@@ -68,9 +69,10 @@ No colliding method selectors between the two contracts.
     assert!(!cache.exists());
     assert!(!prj.paths().artifacts.exists());
     assert!(!prj.cache().exists());
-});
+}
 
-forgetest!(collision_cache_respects_warning_denial, |prj, cmd| {
+#[forgetest]
+fn collision_cache_respects_warning_denial(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         "contract Counter { function value() external returns (uint256) { return 1; } }",
@@ -91,9 +93,10 @@ forgetest!(collision_cache_respects_warning_denial, |prj, cmd| {
         .args(["--deny", "warnings"])
         .assert_failure()
         .stderr_eq(expected.into_data().raw());
-});
+}
 
-forgetest!(collision_cache_preserves_ambiguous_name_selection, |prj, cmd| {
+#[forgetest]
+fn collision_cache_preserves_ambiguous_name_selection(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract First { function a() external {} }");
     prj.add_source("Z.sol", "contract First { function b() external {} }");
     prj.add_source("Second.sol", "contract Second { function a() external {} }");
@@ -104,9 +107,10 @@ forgetest!(collision_cache_preserves_ambiguous_name_selection, |prj, cmd| {
     }
     prj.add_source("Z.sol", "contract First { function c() external {} }");
     cmd.forge_fuse().args(args).assert_success().stdout_eq(&expected);
-});
+}
 
-forgetest!(collision_cache_preserves_explicit_outputs, |prj, cmd| {
+#[forgetest]
+fn collision_cache_preserves_explicit_outputs(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         "contract Counter { function value() external pure returns (uint256) { return 1; } }",
@@ -126,9 +130,10 @@ forgetest!(collision_cache_preserves_explicit_outputs, |prj, cmd| {
         assert!(prj.cache().is_file());
         assert!(!cache.exists());
     }
-});
+}
 
-forgetest!(find_cache_preserves_artifacts_and_invalidates_imports, |prj, cmd| {
+#[forgetest]
+fn find_cache_preserves_artifacts_and_invalidates_imports(prj: _, cmd: _) {
     prj.add_source("Base.sol", "contract Base { function shared() external pure {} }");
     prj.add_source("First.sol", "import './Base.sol'; contract First is Base {}");
     let args = ["selectors", "find", "7126be5f", "--md"];
@@ -182,9 +187,10 @@ forgetest!(find_cache_preserves_artifacts_and_invalidates_imports, |prj, cmd| {
     cmd.forge_fuse().args(args).assert_success().stdout_eq(expected);
     assert!(!prj.cache().exists());
     assert!(!prj.paths().artifacts.exists());
-});
+}
 
-forgetest!(find_cache_respects_warning_denial, |prj, cmd| {
+#[forgetest]
+fn find_cache_respects_warning_denial(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         "contract Counter { function shared() external returns (uint256) { return 1; } }",
@@ -200,9 +206,10 @@ forgetest!(find_cache_respects_warning_denial, |prj, cmd| {
     let expected = cmd.forge_fuse().args(args).assert_failure().get_output().stderr_lossy();
     prj.update_config(|config| config.cache = true);
     cmd.forge_fuse().args(args).assert_failure().stderr_eq(expected.into_data().raw());
-});
+}
 
-forgetest!(find_cache_preserves_explicit_outputs, |prj, cmd| {
+#[forgetest]
+fn find_cache_preserves_explicit_outputs(prj: _, cmd: _) {
     prj.add_source("Counter.sol", "contract Counter { function shared() external pure {} }");
     let args = ["selectors", "find", "7126be5f"];
     let cache = prj.cache().with_extension("json.abi");
@@ -223,4 +230,4 @@ forgetest!(find_cache_preserves_explicit_outputs, |prj, cmd| {
     assert!(prj.cache().is_file());
     assert!(prj.paths().artifacts.join("Counter.sol/Counter.json").is_file());
     assert!(fs::read_dir(prj.paths().artifacts.join("build-info")).unwrap().next().is_some());
-});
+}

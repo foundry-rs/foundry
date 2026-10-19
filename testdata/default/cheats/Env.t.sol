@@ -1005,4 +1005,32 @@ contract EnvTest is Test {
             );
         }
     }
+
+    function testEnvOrUnparsableValueReverts() public {
+        string memory key = "_foundryCheatcodeEnvOrUnparsableTest";
+        vm.setEnv(key, "not_a_number");
+        vm._expectCheatcodeRevert("failed parsing $_foundryCheatcodeEnvOrUnparsableTest as type `uint256`");
+        vm.envOr(key, uint256(7));
+    }
+
+    function testEnvOrEmptyValueReturnsDefault() public {
+        string memory key = "_foundryCheatcodeEnvOrEmptyTest";
+        vm.setEnv(key, "");
+        assertEq(vm.envOr(key, uint256(7)), 7);
+        assertEq(vm.envOr(key, int256(-7)), -7);
+        assertEq(vm.envOr(key, true), true);
+        assertEq(vm.envOr(key, address(0x1234)), address(0x1234));
+        assertEq(vm.envOr(key, bytes32("default")), bytes32("default"));
+        assertEq(vm.envOr(key, bytes("default")), bytes("default"));
+        // An empty string is a valid `string` value.
+        assertEq(vm.envOr(key, string("default")), "");
+    }
+
+    function testEnvOrUnparsableArrayValueReverts() public {
+        string memory key = "_foundryCheatcodeEnvOrUnparsableArrTest";
+        vm.setEnv(key, "1,two");
+        uint256[] memory defaultValues = new uint256[](0);
+        vm._expectCheatcodeRevert();
+        vm.envOr(key, ",", defaultValues);
+    }
 }

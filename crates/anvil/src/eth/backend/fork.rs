@@ -117,11 +117,6 @@ impl<N: Network> ClientFork<N> {
         Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
     }
 
-    /// Removes all data cached from previous responses
-    pub fn clear_cached_storage(&self) {
-        self.storage.write().clear()
-    }
-
     /// Returns true whether the block predates the fork
     pub fn predates_fork(&self, block: u64) -> bool {
         block < self.block_number()
@@ -512,7 +507,7 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResults, TransportError> {
+    ) -> Result<Option<TraceResults>, TransportError> {
         self.provider().raw_request("trace_replayTransaction".into(), (hash, trace_types)).await
     }
 

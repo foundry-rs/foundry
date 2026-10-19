@@ -1,9 +1,8 @@
 //! Implementations of [`Environment`](spec::Group::Environment) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Error, Result, Vm::*, string};
+use crate::{Cheatcode, Error, Result, Vm::*, string};
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
-use foundry_evm_core::evm::FoundryEvmNetwork;
 use std::{env, sync::OnceLock};
 
 /// Stores the forge execution context for the duration of the program.
@@ -15,7 +14,7 @@ pub fn current_execution_context() -> Option<ForgeContext> {
 }
 
 impl Cheatcode for setEnvCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name: key, value } = self;
         if key.is_empty() {
             Err(fmt_err!("environment variable key can't be empty"))
@@ -35,7 +34,7 @@ impl Cheatcode for setEnvCall {
 }
 
 impl Cheatcode for resolveEnvCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { input } = self;
         let resolved = foundry_config::resolve::interpolate(input)
             .map_err(|e| fmt_err!("failed to resolve env var: {e}"))?;
@@ -44,105 +43,105 @@ impl Cheatcode for resolveEnvCall {
 }
 
 impl Cheatcode for envExistsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         Ok(env::var(name).is_ok().abi_encode())
     }
 }
 
 impl Cheatcode for envBool_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for envUint_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for envInt_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for envAddress_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for envBytes32_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for envString_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::String)
     }
 }
 
 impl Cheatcode for envBytes_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for envBool_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for envUint_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for envInt_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for envAddress_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for envBytes32_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for envString_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::String)
     }
 }
 
 impl Cheatcode for envBytes_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bytes)
     }
@@ -150,7 +149,7 @@ impl Cheatcode for envBytes_1Call {
 
 // bool
 impl Cheatcode for envOr_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bool)
     }
@@ -158,7 +157,7 @@ impl Cheatcode for envOr_0Call {
 
 // uint256
 impl Cheatcode for envOr_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Uint(256))
     }
@@ -166,7 +165,7 @@ impl Cheatcode for envOr_1Call {
 
 // int256
 impl Cheatcode for envOr_2Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Int(256))
     }
@@ -174,7 +173,7 @@ impl Cheatcode for envOr_2Call {
 
 // address
 impl Cheatcode for envOr_3Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Address)
     }
@@ -182,7 +181,7 @@ impl Cheatcode for envOr_3Call {
 
 // bytes32
 impl Cheatcode for envOr_4Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::FixedBytes(32))
     }
@@ -190,7 +189,7 @@ impl Cheatcode for envOr_4Call {
 
 // string
 impl Cheatcode for envOr_5Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::String)
     }
@@ -198,7 +197,7 @@ impl Cheatcode for envOr_5Call {
 
 // bytes
 impl Cheatcode for envOr_6Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bytes)
     }
@@ -206,7 +205,7 @@ impl Cheatcode for envOr_6Call {
 
 // bool[]
 impl Cheatcode for envOr_7Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Bool)
     }
@@ -214,7 +213,7 @@ impl Cheatcode for envOr_7Call {
 
 // uint256[]
 impl Cheatcode for envOr_8Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Uint(256))
     }
@@ -222,7 +221,7 @@ impl Cheatcode for envOr_8Call {
 
 // int256[]
 impl Cheatcode for envOr_9Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Int(256))
     }
@@ -230,7 +229,7 @@ impl Cheatcode for envOr_9Call {
 
 // address[]
 impl Cheatcode for envOr_10Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Address)
     }
@@ -238,7 +237,7 @@ impl Cheatcode for envOr_10Call {
 
 // bytes32[]
 impl Cheatcode for envOr_11Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::FixedBytes(32))
     }
@@ -246,7 +245,7 @@ impl Cheatcode for envOr_11Call {
 
 // string[]
 impl Cheatcode for envOr_12Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::String)
     }
@@ -254,7 +253,7 @@ impl Cheatcode for envOr_12Call {
 
 // bytes[]
 impl Cheatcode for envOr_13Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { name, delim, defaultValue } = self;
         let default = defaultValue.clone();
         env_array_default(name, delim, &default, &DynSolType::Bytes)
@@ -262,7 +261,7 @@ impl Cheatcode for envOr_13Call {
 }
 
 impl Cheatcode for isContextCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { context } = self;
         Ok((FORGE_CONTEXT.get() == Some(context)).abi_encode())
     }
@@ -279,7 +278,16 @@ fn env(key: &str, ty: &DynSolType) -> Result {
 }
 
 fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
-    Ok(env(key, ty).unwrap_or_else(|_| default.abi_encode()))
+    if env_is_missing(key) {
+        return Ok(default.abi_encode());
+    }
+    let val = get_env(key)?;
+    // An empty string is a valid `string` value, but it can never parse as any other type, so a
+    // variable that is set but empty is treated as not found for the other typed overloads.
+    if val.is_empty() && !matches!(ty, DynSolType::String) {
+        return Ok(default.abi_encode());
+    }
+    string::parse(&val, ty).map_err(map_env_err(key, &val))
 }
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
@@ -289,7 +297,17 @@ fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
 }
 
 fn env_array_default<T: SolValue>(key: &str, delim: &str, default: &T, ty: &DynSolType) -> Result {
-    Ok(env_array(key, delim, ty).unwrap_or_else(|_| default.abi_encode()))
+    if env_is_missing(key) {
+        return Ok(default.abi_encode());
+    }
+    env_array(key, delim, ty)
+}
+
+/// Returns `true` if the variable is not set at all. The `envOr` cheatcodes fall back to their
+/// default only then (or when the variable is set but empty, for the scalar typed overloads); a
+/// variable that is set to a value that cannot be parsed is an error.
+fn env_is_missing(key: &str) -> bool {
+    matches!(env::var(key), Err(env::VarError::NotPresent))
 }
 
 fn get_env(key: &str) -> Result<String> {
@@ -320,6 +338,60 @@ fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_or_returns_default_when_missing() {
+        let key = "env_or_missing";
+        unsafe {
+            env::remove_var(key);
+        }
+        let default = 7u64;
+        let encoded = default.abi_encode();
+        assert_eq!(env_default(key, &default, &DynSolType::Uint(256)).unwrap(), encoded);
+        assert_eq!(env_array_default(key, ",", &default, &DynSolType::Uint(256)).unwrap(), encoded);
+    }
+
+    #[test]
+    fn env_or_returns_default_when_empty() {
+        let key = "env_or_empty";
+        unsafe {
+            env::set_var(key, "");
+        }
+        let default = 7u64;
+        assert_eq!(
+            env_default(key, &default, &DynSolType::Uint(256)).unwrap(),
+            default.abi_encode()
+        );
+        assert_eq!(
+            env_array_default(key, ",", &default, &DynSolType::Uint(256)).unwrap(),
+            Vec::<u64>::new().abi_encode()
+        );
+        // An empty string is a valid `string` value and must not be replaced by the default.
+        assert_eq!(
+            env_default(key, &"default", &DynSolType::String).unwrap(),
+            String::new().abi_encode()
+        );
+        unsafe {
+            env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn env_or_rejects_unparsable_value() {
+        let key = "env_or_unparsable";
+        unsafe {
+            env::set_var(key, "not_a_number");
+        }
+
+        let err = env_default(key, &7u64, &DynSolType::Uint(256)).unwrap_err().to_string();
+        assert!(err.contains("$env_or_unparsable"), "{err:?}");
+        let err =
+            env_array_default(key, ",", &7u64, &DynSolType::Uint(256)).unwrap_err().to_string();
+        assert!(err.contains("$env_or_unparsable"), "{err:?}");
+        unsafe {
+            env::remove_var(key);
+        }
+    }
 
     #[test]
     fn parse_env_uint() {

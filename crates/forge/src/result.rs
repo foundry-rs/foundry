@@ -25,9 +25,7 @@ use foundry_evm::{
     },
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use foundry_evm_symbolic::{
-    PortfolioDiagnostics, SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
-};
+use foundry_evm_symbolic::{SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap as Map},
@@ -1237,13 +1235,11 @@ impl SymbolicCounterexampleCall {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
     /// The test status, indicating whether the test case succeeded, failed, or was marked as
-    /// skipped. This means that the transaction executed properly, the test was marked as
-    /// skipped with vm.skip(), or that there was a revert and that the test was expected to
-    /// fail (prefixed with `testFail`)
+    /// skipped. This means that the transaction executed properly, or the test was marked as
+    /// skipped with vm.skip().
     pub status: TestStatus,
 
-    /// If there was a revert, this field will be populated. Note that the test can
-    /// still be successful (i.e self.success == true) when it's expected to fail.
+    /// If there was a revert, this field will be populated.
     pub reason: Option<String>,
 
     /// The active fork's block number after execution, if any.
@@ -1347,14 +1343,6 @@ pub struct TestResult {
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
-
-    /// Staged solver portfolio diagnostics collected during symbolic execution.
-    #[serde(skip)]
-    pub symbolic_portfolio_diagnostics: Option<PortfolioDiagnostics>,
-
-    /// Verbose symbolic solver diagnostics deferred until test output rendering.
-    #[serde(skip)]
-    pub symbolic_diagnostics: Option<String>,
 }
 
 impl fmt::Display for TestResult {
@@ -1851,6 +1839,23 @@ impl TestResult {
         self.duration = Duration::default();
     }
 
+    /// Marks a campaign stopped early by fail-fast or Ctrl-C as skipped, so a partial run is not
+    /// reported as passing.
+    pub fn interrupt(&mut self) {
+        let reason = Some("interrupted".to_string());
+        self.status = TestStatus::Skipped;
+        for predicate in &mut self.invariant_predicate_results {
+            if predicate.status.is_success() {
+                predicate.status = TestStatus::Skipped;
+                predicate.reason.clone_from(&reason);
+            }
+        }
+        // Multi-predicate campaigns carry reasons per predicate.
+        if self.invariant_count.is_none() {
+            self.reason = reason;
+        }
+    }
+
     /// Formats the test result into a string (for printing), naming invariant campaigns after
     /// the suite's contract.
     pub(crate) fn short_result_with_suite(&self, name: &str, suite_name: &str) -> String {
@@ -2178,6 +2183,7 @@ const fn symbolic_result_schema_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_cli::utils::parse_json;
 
     const SYMBOLIC_RESULT_SCHEMA: &str =
         include_str!("../../evm/symbolic/assets/symbolic-result.schema.json");
@@ -2208,10 +2214,9 @@ mod tests {
 
     #[test]
     fn symbolic_schemas_match_result_types() {
-        let result_schema: serde_json::Value =
-            serde_json::from_str(SYMBOLIC_RESULT_SCHEMA).unwrap();
+        let result_schema: serde_json::Value = parse_json(SYMBOLIC_RESULT_SCHEMA).unwrap();
         let counterexample_schema: serde_json::Value =
-            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA).unwrap();
+            parse_json(SYMBOLIC_COUNTEREXAMPLE_SCHEMA).unwrap();
         let result_defs = schema_defs(&result_schema);
         let counterexample_defs = schema_defs(&counterexample_schema);
 

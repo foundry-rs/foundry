@@ -17,16 +17,14 @@ use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
-    BlockResponse, NetworkTransactionBuilder, TransactionBuilder, primitives::HeaderResponse,
+    BlockResponse, Ethereum, NetworkTransactionBuilder, TransactionBuilder,
+    primitives::HeaderResponse,
 };
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag,
-    trace::geth::{
-        GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-        GethDebugTracingOptions,
-    },
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
+    trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
 };
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -59,8 +57,9 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
+use revm::context::Block;
 use std::str::FromStr;
 
 #[cfg(feature = "base")]
@@ -229,11 +228,8 @@ pub enum CallSubcommands {
 
 /// The `callTracer` options shared by `--debug-trace-call` and its `--curl` rendering.
 fn call_tracer_options() -> GethDebugTracingCallOptions {
-    GethDebugTracingCallOptions::default().with_tracing_options(
-        GethDebugTracingOptions::default()
-            .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-            .with_call_config(call_tracer_config()),
-    )
+    GethDebugTracingCallOptions::default()
+        .with_tracing_options(GethDebugTracingOptions::call_tracer(call_tracer_config()))
 }
 
 impl CallArgs {
@@ -262,6 +258,9 @@ impl CallArgs {
                 // The code override that makes the call a `delegatecall` is read from the node,
                 // which `--curl` deliberately never contacts.
                 eyre::bail!("--delegate cannot be combined with --curl");
+            }
+            if !self.tx.auth.is_empty() {
+                eyre::bail!("--auth cannot be combined with --curl");
             }
             return self.run_curl().await;
         }
@@ -295,61 +294,57 @@ impl CallArgs {
             config.chain = Some(chain);
         }
 
-        if evm_opts.networks.is_tempo() {
-            return self
-                .run_with_network_and_opts::<TempoEvmNetwork>(
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                self.run_with_network_and_opts::<TempoEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            super::validate_base_transaction_options(&self.tx)?;
-            return self
-                .run_with_network_and_opts::<BaseEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                super::validate_base_transaction_options(&self.tx)?;
+                self.run_with_network_and_opts::<BaseEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self
-                .run_with_network_and_opts::<MonadEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                self.run_with_network_and_opts::<MonadEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self
-                .run_with_network_and_opts::<OpEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                self.run_with_network_and_opts::<OpEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
-                .await;
+                .await
+            }
+            NetworkVariant::Ethereum => {
+                self.run_with_network_and_opts::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
+                .await
+            }
         }
-
-        self.run_with_network_and_opts::<EthEvmNetwork>(
-            config,
-            evm_opts,
-            auth_preflight,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        )
-        .await
     }
 
     /// Returns whether resolving this call can disclose an authorization before the transaction
@@ -372,7 +367,7 @@ impl CallArgs {
         let sender = if self.browser.browser {
             None
         } else {
-            Some(SenderKind::from_wallet_opts(self.wallet.clone()).await?)
+            Some(SenderKind::from_wallet_opts(self.wallet.clone(), &self.tx.auth).await?)
         };
         let browser_sender = SenderKind::from(self.wallet.from.unwrap_or_default());
         let validation_sender = sender.as_ref().unwrap_or(&browser_sender);
@@ -444,7 +439,7 @@ impl CallArgs {
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let endpoint_identity =
-            if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
+            if debug_trace_call { Some(evm_opts.fork_endpoint_identity().await?) } else { None };
         let sender = match auth_sender {
             Some(sender) => sender,
             None => {
@@ -452,7 +447,7 @@ impl CallArgs {
                     Some(chain) => chain.id(),
                     None => provider.get_chain_id().await?,
                 };
-                read_only_sender::<FEN::Network>(&browser, wallet, &tx.tempo, chain_id).await?.0
+                read_only_sender::<FEN::Network>(&browser, wallet, &tx, chain_id).await?.0
             }
         };
         let from = sender.address();
@@ -596,7 +591,7 @@ impl CallArgs {
             } else {
                 Default::default()
             };
-            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
             ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
             // The remote node executed this trace, so its reported family is authoritative for
@@ -685,13 +680,22 @@ impl CallArgs {
                 executor.set_gas_limit(gas_limit);
             }
 
-            // Set transaction options with --trace
-            let env_tx = executor.tx_env_mut();
-            if let Some(gas_price) = tx.max_fee_per_gas().or(tx.gas_price()) {
+            // `prepare_call_env` zeroes fees for tests, so apply the transaction options to the
+            // prepared env. Like `eth_call`, honour the requested fees without requiring the caller
+            // to afford them. Monad ignores `disable_fee_charge`, so reject priced traces there.
+            // Zero fees keep the zeroed base fee, skipping base fee validation like `eth_call`.
+            let (mut evm_env, mut env_tx) = executor.prepare_call_env(from, tx_kind, input, value);
+            let priority_fee = tx.max_priority_fee_per_gas().unwrap_or_default();
+            let gas_price = tx.max_fee_per_gas().or(tx.gas_price()).unwrap_or_default();
+            if gas_price != 0 || priority_fee != 0 {
+                eyre::ensure!(
+                    !config.networks.execution_network().is_monad(),
+                    "Nonzero fees are not supported for local Monad traces; use --debug-trace-call instead"
+                );
+                evm_env.cfg_env.disable_fee_charge = true;
+                evm_env.block_env.set_basefee(executor.evm_env().block_env.basefee());
                 env_tx.set_gas_price(gas_price);
-            }
-            if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
-                env_tx.set_gas_priority_fee(Some(max_priority_fee_per_gas));
+                env_tx.set_gas_priority_fee(Some(priority_fee));
             }
             if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
                 env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
@@ -709,11 +713,11 @@ impl CallArgs {
 
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result = executor.deploy(from, input, value, None);
+                    let deploy_result = executor.deploy_with_env(evm_env, env_tx, None);
                     TraceResult::try_from(deploy_result)?
                 }
-                TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw(from, to, input, value)?,
+                TxKind::Call(_) => TraceResult::from_raw(
+                    executor.transact_with_env(evm_env, env_tx)?,
                     TraceKind::Execution,
                 ),
             };
@@ -839,27 +843,20 @@ impl CallArgs {
             }
         }).transpose()?;
 
-        // Build eth_call params. `--curl` builds the request offline, so the fields the
-        // RPC-backed builder would resolve against the node (fee style, blob sidecars,
-        // authorization lists) are left to the node's defaults; the scalar fields given on the
-        // command line are forwarded as-is so the printed request runs the same call as the
-        // non-curl command.
-        let mut call_object = serde_json::json!({
-            "to": to,
-            "data": format!("0x{}", hex::encode(&data)),
-        });
-        if let Some(from) = self.wallet.from {
-            call_object["from"] = serde_json::json!(from);
-        }
-        if let Some(value) = self.tx.value {
-            call_object["value"] = serde_json::json!(value);
-        }
-        if let Some(gas_limit) = self.tx.gas_limit {
-            call_object["gas"] = serde_json::json!(gas_limit);
-        }
-        if let Some(nonce) = self.tx.nonce {
-            call_object["nonce"] = serde_json::json!(nonce);
-        }
+        // Apply explicit transaction options offline, using the configured chain's fee style
+        // when available. Blob sidecars and authorization lists still require the RPC builder.
+        let legacy = self.tx.legacy
+            || (config.chain.is_some_and(|chain| chain.is_legacy()) && self.tx.auth.is_empty());
+        let mut call_request = TransactionRequest {
+            to: Some(to.map_or(TxKind::Create, TxKind::Call)),
+            from: self.wallet.from,
+            input: TransactionInput::new(data.into()).normalized_data(),
+            ..Default::default()
+        };
+        // Curl currently emits Ethereum-compatible fields only. Keep Tempo options from changing
+        // the nonce without their accompanying network-specific fields.
+        let tx_opts = TransactionOpts { tempo: Default::default(), ..self.tx };
+        tx_opts.apply::<Ethereum>(&mut call_request, legacy);
 
         let block_param = self
             .block
@@ -878,9 +875,9 @@ impl CallArgs {
             if let Some(block_overrides) = self.overrides.get_block_overrides()? {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
-            ("debug_traceCall", serde_json::json!([call_object, block_param, call_options]))
+            ("debug_traceCall", serde_json::json!([call_request, block_param, call_options]))
         } else {
-            ("eth_call", serde_json::json!([call_object, block_param]))
+            ("eth_call", serde_json::json!([call_request, block_param]))
         };
 
         let curl_cmd = generate_curl_command(

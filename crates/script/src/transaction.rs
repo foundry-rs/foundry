@@ -6,9 +6,8 @@ use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
-use foundry_evm::traces::CallTraceDecoder;
+use foundry_evm::traces::{CallKind, CallTraceDecoder};
 use itertools::Itertools;
-use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
 
 #[derive(Debug)]

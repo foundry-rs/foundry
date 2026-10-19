@@ -15,12 +15,15 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256, U256};
 use foundry_evm_core::{
-    backend::DatabaseExt,
-    evm::{FoundryContextFor, FoundryEvmNetwork},
+    FoundryTransaction,
+    backend::{DatabaseExt, LocalForkId},
+    env::FoundryContextExt,
+    evm::{FoundryContextFor, FoundryEvmNetwork, SpecFor},
+    fork::CreateFork,
 };
-use revm::context::{ContextTr, JournalTr};
+use revm::context::{Block, Cfg, ContextTr, JournalTr, Transaction};
 
 pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
@@ -47,6 +50,8 @@ pub use env::{current_execution_context, set_execution_context};
 
 mod evm;
 
+mod expected_emit;
+
 mod external_storage;
 
 mod fs;
@@ -61,6 +66,9 @@ mod monad;
 
 mod script;
 pub use script::{Wallets, WalletsInner};
+
+mod state;
+pub use state::CheatcodesCore;
 
 mod string;
 
@@ -77,10 +85,9 @@ mod utils;
 pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode to the given state.
     ///
-    /// Implement this function if you don't need access to the EVM data.
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        let _ = state;
-        unimplemented!("{}", Self::CHEATCODE.func.id)
+    /// Implement this function if you need cheatcode state but no access to the EVM context.
+    fn apply_context(&self, _state: &mut CheatcodesCore) -> Result {
+        self.apply_context_free()
     }
 
     /// Applies this cheatcode to the given context.
@@ -88,7 +95,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        self.apply(ccx.state)
+        self.apply_context(&mut ccx.state.core)
     }
 
     /// Applies this cheatcode to the given context and executor.
@@ -103,10 +110,17 @@ pub(crate) trait Cheatcode: CheatcodeDef {
         let _ = executor;
         self.apply_stateful(ccx)
     }
+
+    /// Applies this cheatcode without accessing cheatcode state or the EVM context.
+    ///
+    /// This may still read or modify external host state, such as environment variables.
+    fn apply_context_free(&self) -> Result {
+        unimplemented!("{}", Self::CHEATCODE.func.id)
+    }
 }
 
 /// The cheatcode context.
-pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
+pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes<FEN>,
     /// The EVM context.
@@ -119,22 +133,6 @@ pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
     pub(crate) is_static: bool,
 }
 
-impl<'a, 'db, FEN: FoundryEvmNetwork> std::ops::Deref for CheatsCtxt<'a, 'db, FEN> {
-    type Target = FoundryContextFor<'db, FEN>;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        self.ecx
-    }
-}
-
-impl<'db, FEN: FoundryEvmNetwork> std::ops::DerefMut for CheatsCtxt<'_, 'db, FEN> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.ecx
-    }
-}
-
 impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
     pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
         if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
@@ -142,6 +140,132 @@ impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
 
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
         self.ecx.journal().precompile_addresses().contains(address)
+    }
+
+    /// Returns the current call depth.
+    #[inline]
+    pub(crate) fn depth(&self) -> usize {
+        self.ecx.journal().depth()
+    }
+
+    /// Returns the active hardfork.
+    #[inline]
+    pub(crate) fn spec(&self) -> SpecFor<FEN> {
+        self.ecx.cfg().spec()
+    }
+
+    /// Returns the chain ID.
+    #[inline]
+    pub(crate) fn chain_id(&self) -> u64 {
+        self.ecx.cfg().chain_id()
+    }
+
+    /// Returns the maximum initcode size.
+    #[inline]
+    pub(crate) fn max_initcode_size(&self) -> usize {
+        self.ecx.cfg().max_initcode_size()
+    }
+
+    /// Returns the configured contract code size limit, if any.
+    #[inline]
+    pub(crate) fn limit_contract_code_size(&self) -> Option<usize> {
+        self.ecx.cfg_env().limit_contract_code_size
+    }
+
+    /// Returns the block number.
+    #[inline]
+    pub(crate) fn block_number(&self) -> U256 {
+        self.ecx.block().number()
+    }
+
+    /// Returns the block timestamp.
+    #[inline]
+    pub(crate) fn timestamp(&self) -> U256 {
+        self.ecx.block().timestamp()
+    }
+
+    /// Returns the block base fee.
+    #[inline]
+    pub(crate) fn basefee(&self) -> u64 {
+        self.ecx.block().basefee()
+    }
+
+    /// Returns the block slot number.
+    #[inline]
+    pub(crate) fn slot_num(&self) -> u64 {
+        self.ecx.block().slot_num()
+    }
+
+    /// Returns the block blob gas price (`block.blobbasefee`), if any.
+    #[inline]
+    pub(crate) fn blob_gasprice(&self) -> Option<u128> {
+        self.ecx.block().blob_gasprice()
+    }
+
+    /// Returns the transaction caller (`tx.origin`).
+    #[inline]
+    pub(crate) fn tx_caller(&self) -> Address {
+        self.ecx.tx().caller()
+    }
+
+    /// Returns the transaction gas price.
+    #[inline]
+    pub(crate) fn tx_gas_price(&self) -> u128 {
+        self.ecx.tx().gas_price()
+    }
+
+    /// Returns the transaction type.
+    #[inline]
+    pub(crate) fn tx_type(&self) -> u8 {
+        self.ecx.tx().tx_type()
+    }
+
+    /// Returns the transaction blob versioned hashes.
+    #[inline]
+    pub(crate) fn tx_blob_hashes(&self) -> &[B256] {
+        self.ecx.tx().blob_versioned_hashes()
+    }
+
+    /// Returns the transaction fee token, if any.
+    #[inline]
+    pub(crate) fn tx_fee_token(&self) -> Option<Address> {
+        self.ecx.tx().fee_token()
+    }
+
+    /// Returns the active fork ID, if any.
+    #[inline]
+    pub(crate) fn active_fork_id(&self) -> Option<LocalForkId> {
+        self.ecx.db().active_fork_id()
+    }
+
+    /// Returns the active fork URL, if any.
+    #[inline]
+    pub(crate) fn active_fork_url(&self) -> Option<String> {
+        self.ecx.db().active_fork_url()
+    }
+
+    /// Returns the active fork block number, if any.
+    #[inline]
+    pub(crate) fn active_fork_block_number(&self) -> Option<u64> {
+        self.ecx.db().active_fork_block_number()
+    }
+
+    /// Returns the active fork options, if any.
+    #[inline]
+    pub(crate) fn active_fork_options(&self) -> Option<CreateFork> {
+        self.ecx.db().active_fork_options()
+    }
+
+    /// Returns whether a fork is active.
+    #[inline]
+    pub(crate) fn is_forked_mode(&self) -> bool {
+        self.ecx.db().is_forked_mode()
+    }
+
+    /// Returns whether `account` persists across forks.
+    #[inline]
+    pub(crate) fn is_persistent(&self, account: &Address) -> bool {
+        self.ecx.db().is_persistent(account)
     }
 }
 

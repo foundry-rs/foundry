@@ -24,6 +24,7 @@ use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSui
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, LazyLock},
 };
 use thiserror::Error;
@@ -316,6 +317,8 @@ impl<'a> Linter for SolidityLinter<'a> {
             sess.reconfigure();
         }
 
+        // Solar's supported version does not constrain projects linted by Foundry.
+        compiler.dcx().set_allowed_diagnostic_codes(["5333".into()]);
         compiler.enter_mut(|compiler| -> eyre::Result<()> {
             if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
@@ -507,10 +510,10 @@ impl Lint for SolLint {
     }
 }
 
-impl<'a> TryFrom<&'a str> for SolLint {
-    type Error = SolLintError;
+impl FromStr for SolLint {
+    type Err = SolLintError;
 
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         all_lints()
             .find(|lint| lint.id == value)
             .copied()

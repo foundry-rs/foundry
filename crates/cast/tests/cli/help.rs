@@ -2,14 +2,16 @@
 
 use super::*;
 
-casttest!(print_short_version, |_prj, cmd| {
+#[casttest]
+fn print_short_version(cmd: _) {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
 cast [..]-[..] ([..] [..])
 
 "#]]);
-});
+}
 
-casttest!(print_long_version, |_prj, cmd| {
+#[casttest]
+fn print_long_version(cmd: _) {
     cmd.arg("--version").assert_success().stdout_eq(str![[r#"
 cast Version: [..]
 Commit SHA: [..]
@@ -17,13 +19,14 @@ Build Timestamp: [..]
 Build Profile: [..]
 
 "#]]);
-});
+}
 
 // tests that a non-UTF-8 command-line argument produces a clean error instead of an unrecovered
 // panic in `GlobalArgs::check_markdown_help` (which used to call `std::env::args()`, documented to
 // panic on invalid Unicode, as the very first statement of every binary's entry point)
 #[cfg(unix)]
-casttest!(non_utf8_argument_does_not_panic, |prj, _cmd| {
+#[casttest]
+fn non_utf8_argument_does_not_panic(prj: _) {
     use std::os::unix::ffi::OsStrExt;
 
     let bad_arg = std::ffi::OsStr::from_bytes(&[0xff]);
@@ -41,10 +44,11 @@ casttest!(non_utf8_argument_does_not_panic, |prj, _cmd| {
         !stderr.contains("panicked at"),
         "a non-UTF-8 argument must not panic; stderr: {stderr}"
     );
-});
+}
 
 // tests `--help` is printed to std out
-casttest!(print_help, |_prj, cmd| {
+#[casttest]
+fn print_help(cmd: _) {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"
 A Swiss Army knife for interacting with Ethereum applications from the command line
 
@@ -104,4 +108,4 @@ Display options:
 Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
-});
+}

@@ -10,6 +10,9 @@ For each function whose name and parameter types match a canonical ERC721/ERC165
 `getApproved`, `isApprovedForAll`, `supportsInterface`), the lint checks that the return type
 matches the spec. A mismatch is reported.
 
+Only contracts and interfaces named `ERC721` or `IERC721`, or inheriting from one of them, are
+checked.
+
 ## Why is this bad?
 
 Non-conforming NFT contracts break marketplaces, indexers, and any protocol that relies on the
@@ -19,7 +22,7 @@ failures at runtime.
 ## Example
 
 ```solidity
-interface IBadERC721 {
+interface IERC721 {
     function balanceOf(address) external view returns (bool);   // should be uint256
     function ownerOf(uint256) external view returns (bool);     // should be address
     function supportsInterface(bytes4) external view returns (uint256); // should be bool

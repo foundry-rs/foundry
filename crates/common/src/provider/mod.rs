@@ -17,7 +17,7 @@ use alloy_provider::{
     fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
 };
-use alloy_rpc_client::ClientBuilder;
+use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_transport::{
     TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
 };
@@ -228,7 +228,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// The timeout is applied from when the request starts connecting until the
     /// response body has finished.
     ///
-    /// Default is no timeout.
+    /// Defaults to 45 seconds ([`REQUEST_TIMEOUT`]).
     pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -346,6 +346,11 @@ impl<N: Network> ProviderBuilder<N> {
 
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
+        Ok(RootProvider::new(self.build_client()?))
+    }
+
+    /// Constructs a shared RPC client with the configured transport, authentication, and retries.
+    pub fn build_client(self) -> Result<RpcClient> {
         let Self {
             url,
             chain,
@@ -372,10 +377,7 @@ impl<N: Network> ProviderBuilder<N> {
             let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
             let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .connect_provider(RootProvider::new(client));
-
-            return Ok(provider);
+            return Ok(client);
         }
 
         let transport = RuntimeTransportBuilder::new(url)
@@ -399,10 +401,7 @@ impl<N: Network> ProviderBuilder<N> {
             );
         }
 
-        let provider =
-            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
-
-        Ok(provider)
+        Ok(client)
     }
 }
 
@@ -483,68 +482,11 @@ impl<N: Network> ProviderBuilder<N> {
     where
         N: RecommendedFillers,
     {
-        let Self {
-            url,
-            chain,
-            max_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
-            jwt,
-            headers,
-            is_local,
-            accept_invalid_certs,
-            no_proxy,
-            curl_mode,
-            ..
-        } = self;
-        let url = url?;
-        let no_proxy = no_proxy || is_local;
-
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
-
-        // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
-        if curl_mode {
-            let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
-            let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
-
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .with_recommended_fillers()
-                .wallet(wallet)
-                .connect_provider(RootProvider::new(client));
-
-            return Ok(provider);
-        }
-
-        let transport = RuntimeTransportBuilder::new(url)
-            .with_timeout(timeout)
-            .with_headers(headers)
-            .with_jwt(jwt)
-            .accept_invalid_certs(accept_invalid_certs)
-            .no_proxy(no_proxy)
-            .build();
-
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
-
-        if !is_local {
-            client.set_poll_interval(
-                chain
-                    .average_blocktime_hint()
-                    // we cap the poll interval because if not provided, chain would default to
-                    // mainnet
-                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
-                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
-                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
-            );
-        }
-
-        let provider = AlloyProviderBuilder::<_, _, N>::default()
+        let provider = self.build()?;
+        Ok(AlloyProviderBuilder::<_, _, N>::default()
             .with_recommended_fillers()
             .wallet(wallet)
-            .connect_provider(RootProvider::new(client));
-
-        Ok(provider)
+            .connect_provider(provider))
     }
 }
 
@@ -587,10 +529,7 @@ fn rpc_error_code_from_body(body: &str) -> Option<i64> {
     error.get("code")?.as_i64()
 }
 
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
-///
-/// See [`try_get_http_provider`] for more details.
+/// Constructs a provider using [`try_get_http_provider`].
 ///
 /// # Panics
 ///
@@ -609,8 +548,11 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
     try_get_http_provider(builder).unwrap()
 }
 
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
+/// Constructs a provider, retaining Alloy's default polling interval for local URLs.
+///
+/// For non-local URLs, the polling interval is 60% of the chain's average block time hint, capped
+/// at 3 seconds before scaling (at most 1.8 seconds). If no hint is available, 3 seconds is used
+/// before scaling.
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()

@@ -1,7 +1,7 @@
 //! ABI related helper functions.
 
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
+use alloy_dyn_abi::{DecodedEvent, DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
 use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
@@ -152,6 +152,28 @@ pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
         })
     }
     event
+}
+
+/// Restore the order of the params of a decoded event,
+/// as Alloy returns the indexed and unindexed params separately.
+pub fn reconstruct_event_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue> {
+    let mut indexed = 0;
+    let mut unindexed = 0;
+    let mut inputs = vec![];
+    for input in &event.inputs {
+        // Prevent panic of event `Transfer(from, to)` decoded with a signature
+        // `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` by making
+        // sure the event inputs is not higher than decoded indexed / un-indexed values.
+        if input.indexed && indexed < decoded.indexed.len() {
+            inputs.push(decoded.indexed[indexed].clone());
+            indexed += 1;
+        } else if unindexed < decoded.body.len() {
+            inputs.push(decoded.body[unindexed].clone());
+            unindexed += 1;
+        }
+    }
+
+    inputs
 }
 
 /// Given a function name, address, and args, tries to parse it as a `Function` by fetching the
@@ -390,17 +412,12 @@ mod tests {
     fn test_abi_decode_event_data_without_indexed() {
         let event = get_event("event Ev(uint256 a, address b)").unwrap();
         let addr = Address::random();
-        let data = DynSolValue::Tuple(vec![
-            DynSolValue::Uint(U256::from(1), 256),
-            DynSolValue::Address(addr),
-        ])
-        .abi_encode_params();
+        let data =
+            DynSolValue::Tuple(vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)])
+                .abi_encode_params();
 
         let decoded = abi_decode_event_data(&event, &data).unwrap();
-        assert_eq!(
-            decoded,
-            vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Address(addr)]
-        );
+        assert_eq!(decoded, vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)]);
     }
 
     #[test]
