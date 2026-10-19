@@ -899,6 +899,8 @@ fn create_backend<N: Network, BLOCK: FoundryBlock + ForkBlockEnv>(
         None
     };
 
+    // Prefetching reads older cache files, so it follows the disk caching settings.
+    let prefetch = fork.evm_opts.fork_prefetch && cache_path.is_some();
     let provider = resolved.provider::<N>();
     let db = BlockchainDb::new(meta, cache_path);
     let anchor = ForkBlock::with_rpc_number(
@@ -906,11 +908,15 @@ fn create_backend<N: Network, BLOCK: FoundryBlock + ForkBlockEnv>(
         resolved.number(),
         resolved.hash(),
     );
-    if resolved.state_by_number {
+    let (backend, handler) = if resolved.state_by_number {
         SharedBackend::new_with_anchor_by_number(provider, db, anchor)
     } else {
         SharedBackend::new_with_anchor(provider, db, anchor)
+    }?;
+    if prefetch {
+        super::prefetch::spawn::<BLOCK>(resolved, backend.data(), account_fetch_policy);
     }
+    Ok((backend, handler))
 }
 
 #[cfg(test)]

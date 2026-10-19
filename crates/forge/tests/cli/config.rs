@@ -107,6 +107,7 @@ experimental = false
 ast = false
 no_storage_caching = false
 no_fork_bal = false
+fork_prefetch = false
 no_rpc_rate_limit = false
 use_literal_content = false
 bytecode_hash = "ipfs"
@@ -475,6 +476,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         },
         no_storage_caching: true,
         no_fork_bal: true,
+        fork_prefetch: true,
         no_rpc_rate_limit: true,
         use_literal_content: false,
         bytecode_hash: Default::default(),
@@ -2437,6 +2439,7 @@ fn test_default_config(prj: _, cmd: _) {
   },
   "no_storage_caching": false,
   "no_fork_bal": false,
+  "fork_prefetch": false,
   "no_rpc_rate_limit": false,
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
