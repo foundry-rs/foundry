@@ -1419,6 +1419,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 &mut invariant_test.test_data.branch_runner,
                                 discarded,
                                 depth as usize,
+                                &current_run.inputs,
                             )?);
                         }
                         CampaignEvent::PostCheck => {
@@ -1828,7 +1829,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_fixtures.clone(),
             targeted_contracts.clone(),
             &config.corpus,
-        )?;
+        )?
+        .with_arg_reuse_weight(config.arg_reuse_weight);
         let mut worker = WorkerCorpus::from_seed(
             plan.worker_id as usize,
             config.corpus.clone(),

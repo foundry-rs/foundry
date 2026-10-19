@@ -2,14 +2,14 @@
 
 use crate::{
     BasicTxDetails, FuzzFixtures,
-    invariant::FuzzRunIdentifiedContracts,
+    invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
     strategies::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::JsonAbiExt;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{U256, map::HashSet};
+use alloy_primitives::{I256, U256, map::HashSet};
 use eyre::{Result, eyre};
 use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
 use proptest::test_runner::TestRunner;
@@ -59,6 +59,7 @@ pub struct SequenceGenerator {
     fresh_weight: u32,
     payable_weight: u32,
     has_corpus_dir: bool,
+    arg_reuse_weight: u32,
 }
 
 /// An initial sequence and the generator used to lazily continue it.
@@ -69,6 +70,14 @@ pub struct SequencePlan {
     has_corpus_dir: bool,
     stateless: bool,
     source: Option<usize>,
+    arg_reuse: Option<ArgReuse>,
+}
+
+/// Context to reuse numeric arguments of earlier calls in freshly generated invariant calls.
+struct ArgReuse {
+    weight: u32,
+    targets: FuzzRunIdentifiedContracts,
+    fixtures: FuzzFixtures,
 }
 
 enum InitialSequence {
@@ -102,24 +111,44 @@ impl SequencePlan {
     pub const fn source(&self) -> Option<usize> {
         self.source
     }
+    /// Returns the transaction at `depth`, given the transactions already in the run.
+    ///
+    /// Corpus transactions are replayed verbatim. Fresh transactions can reuse a numeric
+    /// argument of a `previous` transaction.
     pub fn next(
         &self,
         runner: &mut TestRunner,
         discarded: bool,
         depth: usize,
+        previous: &[BasicTxDetails],
     ) -> Result<BasicTxDetails> {
         if self.stateless {
             return Err(eyre!("stateless sequence is limited to one transaction"));
         }
-        if !self.has_corpus_dir || discarded {
-            return self.tx.next_tx(runner);
+        if self.has_corpus_dir && !discarded {
+            let fresh = self.fresh_weight > 0 && runner.rng().random_ratio(self.fresh_weight, 100);
+            if depth < self.initial.as_slice().len() && !fresh {
+                return Ok(self.initial.as_slice()[depth].clone());
+            }
         }
-        let fresh = self.fresh_weight > 0 && runner.rng().random_ratio(self.fresh_weight, 100);
-        if depth >= self.initial.as_slice().len() || fresh {
-            self.tx.next_tx(runner)
-        } else {
-            Ok(self.initial.as_slice()[depth].clone())
+        let mut tx = self.tx.next_tx(runner)?;
+        if let Some(reuse) = &self.arg_reuse
+            && !previous.is_empty()
+            && runner.rng().random_ratio(reuse.weight, 100)
+        {
+            let targets = reuse.targets.targets();
+            if let (_, Some(function)) = targets.fuzzed_artifacts(&tx) {
+                SequenceMutator::reuse_arg(
+                    &mut tx,
+                    function,
+                    previous,
+                    &targets,
+                    runner,
+                    &reuse.fixtures,
+                );
+            }
         }
+        Ok(tx)
     }
 }
 
@@ -215,7 +244,17 @@ impl SequenceGenerator {
             fresh_weight: config.corpus_random_sequence_weight.min(100),
             payable_weight: config.payable_value_weight,
             has_corpus_dir: config.corpus_dir.is_some(),
+            arg_reuse_weight: 0,
         })
+    }
+
+    /// Sets the percentage chance that an invariant call reuses an earlier numeric argument.
+    ///
+    /// The weight applies to fresh calls and to ABI mutations of corpus calls. `0` disables reuse
+    /// and keeps the random draws of the generator unchanged.
+    pub fn with_arg_reuse_weight(mut self, weight: u32) -> Self {
+        self.arg_reuse_weight = weight.min(100);
+        self
     }
 
     pub fn start<'a, F>(
@@ -236,6 +275,14 @@ impl SequenceGenerator {
                 self.start_invariant(runner, corpus_len, &mut entry_at, coverage, targets)?
             }
         };
+        let arg_reuse = match &self.mode {
+            SequenceMode::Invariant(targets) if self.arg_reuse_weight > 0 => Some(ArgReuse {
+                weight: self.arg_reuse_weight,
+                targets: targets.clone(),
+                fixtures: self.fixtures.clone(),
+            }),
+            _ => None,
+        };
         Ok(SequencePlan {
             initial,
             tx: self.tx.clone(),
@@ -243,6 +290,7 @@ impl SequenceGenerator {
             has_corpus_dir: self.has_corpus_dir,
             stateless: matches!(self.mode, SequenceMode::Stateless(_)),
             source,
+            arg_reuse,
         })
     }
 
@@ -369,9 +417,22 @@ impl SequenceGenerator {
                 let mut seq = entry.transactions.to_vec();
                 let fallback = runner.rng().random_range(0..seq.len());
                 if matches!(kind, MutationType::Abi) {
-                    let tx = &mut seq[fallback];
-                    if let (_, Some(f)) = targets.targets().fuzzed_artifacts(tx)
+                    let (previous, rest) = seq.split_at_mut(fallback);
+                    let tx = &mut rest[0];
+                    let targets = targets.targets();
+                    if let (_, Some(f)) = targets.fuzzed_artifacts(tx)
                         && !f.inputs.is_empty()
+                        && !(self.arg_reuse_weight > 0
+                            && !previous.is_empty()
+                            && runner.rng().random_ratio(self.arg_reuse_weight, 100)
+                            && SequenceMutator::reuse_arg(
+                                tx,
+                                f,
+                                previous,
+                                &targets,
+                                runner,
+                                &self.fixtures,
+                            ))
                     {
                         SequenceMutator::abi_mutate(
                             tx,
@@ -569,6 +630,87 @@ impl SequenceMutator {
         Ok(())
     }
 
+    /// Replaces one numeric argument of `tx` with a numeric argument of an earlier call, as-is
+    /// or off by up to 3. Returns whether `tx` changed.
+    fn reuse_arg(
+        tx: &mut BasicTxDetails,
+        function: &Function,
+        previous: &[BasicTxDetails],
+        targets: &TargetedContracts,
+        runner: &mut TestRunner,
+        fixtures: &FuzzFixtures,
+    ) -> bool {
+        let Some(Ok(mut inputs)) =
+            tx.call_details.calldata.get(4..).map(|data| function.abi_decode_input(data))
+        else {
+            return false;
+        };
+        let slots = inputs
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| matches!(value, DynSolValue::Uint(..) | DynSolValue::Int(..)))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if slots.is_empty() || previous.is_empty() {
+            return false;
+        }
+
+        // Start at a random earlier call and walk back until one has numeric arguments.
+        let start = runner.rng().random_range(0..previous.len());
+        let mut words = Vec::new();
+        for offset in 0..previous.len() {
+            let earlier = &previous[(start + previous.len() - offset) % previous.len()];
+            if let (_, Some(earlier_fn)) = targets.fuzzed_artifacts(earlier)
+                && let Some(Ok(values)) =
+                    earlier.call_details.calldata.get(4..).map(|d| earlier_fn.abi_decode_input(d))
+            {
+                words.extend(values.iter().filter_map(|value| match value {
+                    DynSolValue::Uint(word, _) => Some(*word),
+                    DynSolValue::Int(word, _) => Some(word.into_raw()),
+                    _ => None,
+                }));
+                if !words.is_empty() {
+                    break;
+                }
+            }
+        }
+        if words.is_empty() {
+            return false;
+        }
+
+        let word = words[runner.rng().random_range(0..words.len())];
+        let delta = runner.rng().random_range(0..=ARG_REUSE_MAX_DELTA);
+        let subtract = runner.rng().random::<bool>();
+        let slot = slots[runner.rng().random_range(0..slots.len())];
+        let value = match &inputs[slot] {
+            DynSolValue::Uint(_, bits) => {
+                let delta = U256::from(delta);
+                let value =
+                    if subtract { word.wrapping_sub(delta) } else { word.wrapping_add(delta) };
+                if value.bit_len() > *bits {
+                    return false;
+                }
+                DynSolValue::Uint(value, *bits)
+            }
+            DynSolValue::Int(_, bits) => {
+                let (word, delta) = (I256::from_raw(word), I256::from_raw(U256::from(delta)));
+                let value =
+                    if subtract { word.wrapping_sub(delta) } else { word.wrapping_add(delta) };
+                // A value fits `bits` when the bits above its sign bit are all sign copies.
+                let high = value.asr(bits - 1);
+                if *bits < 256 && high != I256::ZERO && high != I256::MINUS_ONE {
+                    return false;
+                }
+                DynSolValue::Int(value, *bits)
+            }
+            _ => return false,
+        };
+        inputs[slot] = constrain_enum_value(value, &function.inputs[slot], fixtures);
+        let Ok(calldata) = function.abi_encode_input(&inputs) else { return false };
+        tx.call_details.calldata = calldata.into();
+        true
+    }
+
     fn cmp_mutate(
         tx: &mut BasicTxDetails,
         function: &Function,
@@ -601,6 +743,9 @@ impl SequenceMutator {
         Ok(false)
     }
 }
+
+/// Largest distance between a reused argument and its earlier value.
+const ARG_REUSE_MAX_DELTA: u8 = 3;
 
 /// Operand widths, in bytes, that cmp mutations try to replace.
 const CMP_WIDTHS: [usize; 6] = [32, 16, 8, 4, 2, 1];
@@ -672,12 +817,7 @@ fn replace_operand(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        CallDetails,
-        invariant::{TargetedContract, TargetedContracts},
-        strategies::EvmFuzzState,
-    };
-    use alloy_dyn_abi::DynSolValue;
+    use crate::{CallDetails, invariant::TargetedContract, strategies::EvmFuzzState};
     use alloy_json_abi::JsonAbi;
     use alloy_primitives::{Address, Bytes};
     use foundry_config::FuzzDictionaryConfig;
@@ -866,11 +1006,12 @@ mod tests {
             has_corpus_dir: generator.has_corpus_dir,
             stateless: false,
             source: Some(0),
+            arg_reuse: None,
         };
 
-        assert_eq!(plan.next(&mut runner, false, 1).unwrap().sender, tx(2).sender);
-        assert_eq!(plan.next(&mut runner, true, 1).unwrap().sender, tx(9).sender);
-        assert_eq!(plan.next(&mut runner, false, 2).unwrap().sender, tx(9).sender);
+        assert_eq!(plan.next(&mut runner, false, 1, &[]).unwrap().sender, tx(2).sender);
+        assert_eq!(plan.next(&mut runner, true, 1, &[]).unwrap().sender, tx(9).sender);
+        assert_eq!(plan.next(&mut runner, false, 2, &[]).unwrap().sender, tx(9).sender);
     }
 
     #[test]
@@ -888,6 +1029,7 @@ mod tests {
                 has_corpus_dir: true,
                 stateless: false,
                 source: Some(0),
+                arg_reuse: None,
             };
             let mut actual = TestRunner::deterministic();
             let mut reference = TestRunner::deterministic();
@@ -895,7 +1037,7 @@ mod tests {
                 let _ = reference.rng().random_ratio(fresh_weight, 100);
             }
             assert_eq!(
-                plan.next(&mut actual, discarded, depth).unwrap().sender,
+                plan.next(&mut actual, discarded, depth, &[]).unwrap().sender,
                 tx(expected_sender).sender
             );
             assert_eq!(sentinel(&mut actual), sentinel(&mut reference));
@@ -976,7 +1118,7 @@ mod tests {
         let plan = generator
             .start(&mut TestRunner::deterministic(), 0, |_| unreachable!(), false)
             .unwrap();
-        assert!(plan.next(&mut TestRunner::deterministic(), false, 0).is_err());
+        assert!(plan.next(&mut TestRunner::deterministic(), false, 0, &[]).is_err());
     }
 
     #[test]
@@ -1110,6 +1252,119 @@ mod tests {
             )
             .unwrap();
             assert_eq!(mutated, applicable.contains(&hint));
+        }
+    }
+
+    fn reuse_targets(functions: &[&Function]) -> FuzzRunIdentifiedContracts {
+        let mut abi = JsonAbi::new();
+        for function in functions {
+            abi.functions.entry(function.name.clone()).or_default().push((*function).clone());
+        }
+        let mut targets = TargetedContracts::new();
+        targets.insert(Address::with_last_byte(10), TargetedContract::new("Target".into(), abi));
+        FuzzRunIdentifiedContracts::new(targets, false)
+    }
+
+    fn reuse_call(function: &Function, args: &[DynSolValue]) -> BasicTxDetails {
+        let mut call = tx(1);
+        call.call_details.calldata = function.abi_encode_input(args).unwrap().into();
+        call
+    }
+
+    #[test]
+    fn arg_reuse_copies_earlier_argument_within_delta() {
+        let deposit = Function::parse("deposit(uint256)").unwrap();
+        let withdraw = Function::parse("withdraw(address,uint256)").unwrap();
+        let targets = reuse_targets(&[&deposit, &withdraw]);
+        let previous = [reuse_call(&deposit, &[DynSolValue::Uint(U256::from(1000), 256)])];
+        let owner = DynSolValue::Address(Address::with_last_byte(3));
+        let mut runner = TestRunner::deterministic();
+        let mut seen_exact = false;
+        for _ in 0..64 {
+            let mut call =
+                reuse_call(&withdraw, &[owner.clone(), DynSolValue::Uint(U256::from(7), 256)]);
+            assert!(SequenceMutator::reuse_arg(
+                &mut call,
+                &withdraw,
+                &previous,
+                &targets.targets(),
+                &mut runner,
+                &FuzzFixtures::default(),
+            ));
+            let args = withdraw.abi_decode_input(&call.call_details.calldata[4..]).unwrap();
+            assert_eq!(args[0], owner);
+            let amount = args[1].as_uint().unwrap().0;
+            assert!((U256::from(997)..=U256::from(1003)).contains(&amount), "{amount}");
+            seen_exact |= amount == U256::from(1000);
+        }
+        assert!(seen_exact);
+    }
+
+    #[test]
+    fn arg_reuse_skips_values_that_do_not_fit() {
+        let source = Function::parse("source(uint256,int256)").unwrap();
+        let sink = Function::parse("sink(uint8,int8)").unwrap();
+        let targets = reuse_targets(&[&source, &sink]);
+        let previous = [reuse_call(
+            &source,
+            &[
+                DynSolValue::Uint(U256::from(1000), 256),
+                DynSolValue::Int(I256::try_from(-5).unwrap(), 256),
+            ],
+        )];
+        let original = reuse_call(
+            &sink,
+            &[DynSolValue::Uint(U256::from(7), 8), DynSolValue::Int(I256::ZERO, 8)],
+        );
+        let mut runner = TestRunner::deterministic();
+        let mut reused = 0;
+        for _ in 0..64 {
+            let mut call = original.clone();
+            if SequenceMutator::reuse_arg(
+                &mut call,
+                &sink,
+                &previous,
+                &targets.targets(),
+                &mut runner,
+                &FuzzFixtures::default(),
+            ) {
+                // Only -5 +/- 3 fits, and only in the int8 slot.
+                let args = sink.abi_decode_input(&call.call_details.calldata[4..]).unwrap();
+                assert_eq!(args[0], DynSolValue::Uint(U256::from(7), 8));
+                let value = args[1].as_int().unwrap().0;
+                assert!(
+                    (I256::try_from(-8).unwrap()..=I256::try_from(-2).unwrap()).contains(&value)
+                );
+                reused += 1;
+            } else {
+                assert_eq!(call.call_details.calldata, original.call_details.calldata);
+            }
+        }
+        assert!(reused > 0);
+    }
+
+    #[test]
+    fn arg_reuse_weight_controls_fresh_invariant_calls() {
+        let deposit = Function::parse("deposit(uint256)").unwrap();
+        let withdraw = Function::parse("withdraw(uint256)").unwrap();
+        let previous = [reuse_call(&deposit, &[DynSolValue::Uint(U256::from(1000), 256)])];
+        let fresh = reuse_call(&withdraw, &[DynSolValue::Uint(U256::from(7), 256)]);
+        for (weight, reused) in [(0, false), (100, true)] {
+            let generator = SequenceGenerator::invariant(
+                TxGenerator::from_strategy(Just(fresh.clone()).boxed()),
+                state(),
+                reuse_targets(&[&deposit, &withdraw]),
+                &FuzzCorpusConfig::default(),
+            )
+            .unwrap()
+            .with_arg_reuse_weight(weight);
+            let mut runner = TestRunner::deterministic();
+            let plan = generator.start(&mut runner, 0, |_| Err(eyre!("no corpus")), false).unwrap();
+            let next = plan.next(&mut runner, false, 1, &previous).unwrap();
+            assert_eq!(next.call_details.calldata != fresh.call_details.calldata, reused);
+            // Without earlier calls there is nothing to reuse.
+            let first = plan.next(&mut runner, false, 0, &[]).unwrap();
+            assert_eq!(first.call_details.calldata, fresh.call_details.calldata);
         }
     }
 }

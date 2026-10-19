@@ -3466,3 +3466,75 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 }
+
+// Breaking the invariant needs two calls with the same amount. With the dictionary off, only
+// argument reuse can pair them.
+#[forgetest_init]
+fn invariant_arg_reuse_pairs_amounts(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 10;
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.arg_reuse_weight = 0;
+    });
+    prj.add_test(
+        "InvariantArgReuse.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Handler {
+    uint256 public deposited;
+    bool public matched;
+
+    function deposit(uint256 amount) external {
+        deposited = amount;
+    }
+
+    function withdraw(uint256 amount) external {
+        // Ignore edge values, which the fuzzer can pick for both calls without reuse.
+        if (amount > 1000 && amount < type(uint256).max - 1000 && amount == deposited) {
+            matched = true;
+        }
+    }
+}
+
+contract InvariantArgReuseTest is Test {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function invariant_amounts_never_match() public view {
+        require(!handler.matched(), "amounts matched");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantArgReuse.t.sol:InvariantArgReuseTest
+[PASS] invariant_amounts_never_match() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Run the failing case last: a persisted failure replays even without reuse.
+    prj.update_config(|config| config.invariant.arg_reuse_weight = 100);
+    assert_invariant(cmd.forge_fuse().args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantArgReuse.t.sol:InvariantArgReuseTest
+[FAIL: amounts matched]
+	[SEQUENCE]
+ invariant_amounts_never_match() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

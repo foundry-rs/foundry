@@ -7,6 +7,12 @@ use serde::{
 };
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
+/// Default percentage chance that a generated invariant call reuses an earlier numeric argument.
+///
+/// It matches the 10% share of edge values in uint generation: frequent enough to pair amounts
+/// across calls, rare enough to keep most arguments independent.
+const DEFAULT_ARG_REUSE_WEIGHT: u32 = 10;
+
 /// Worker selection mode for invariant campaign sharding.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InvariantWorkers {
@@ -180,6 +186,11 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Percentage chance (0-100) that a generated call reuses a numeric argument from an earlier
+    /// call in the same sequence, as-is or off by up to 3.
+    ///
+    /// This finds bugs that need two calls with equal or adjacent amounts. Set to `0` to disable.
+    pub arg_reuse_weight: u32,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +217,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            arg_reuse_weight: DEFAULT_ARG_REUSE_WEIGHT,
         }
     }
 }

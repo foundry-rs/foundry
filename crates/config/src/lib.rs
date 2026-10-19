@@ -5827,6 +5827,7 @@ mod tests {
                 corpus_random_sequence_weight = 30
                 payable_value_weight = 12
                 mutation_weight_cmp = 7
+                arg_reuse_weight = 25
             "#,
             )?;
 
@@ -5851,6 +5852,7 @@ mod tests {
                     corpus_random_sequence_weight_configured: true,
                     workers_configured: true,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    arg_reuse_weight: 25,
                     ..Default::default()
                 }
             );
