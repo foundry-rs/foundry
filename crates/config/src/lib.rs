@@ -1388,7 +1388,8 @@ impl Config {
     ///
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = self.create_project_inner(cached, no_artifacts, || self.compiler())?;
+        let project =
+            self.create_project_with_compiler(|| self.compiler(), cached, no_artifacts)?;
 
         if self.force {
             // Warnings are intentionally dropped here because `sh_warn!` is a circular
@@ -1399,31 +1400,15 @@ impl Config {
         Ok(project)
     }
 
-    /// Creates a project with the supplied compiler without discovering or installing compilers.
+    /// Creates a project using the supplied compiler constructor after validating its settings.
     ///
     /// Unlike [`Self::create_project`], this does not clean cached artifacts when `force` is set.
     /// Use this to inspect the source graph with compiler metadata supplied by the caller.
     pub fn create_project_with_compiler<C>(
         &self,
-        compiler: C,
-        cached: bool,
-        no_artifacts: bool,
-    ) -> Result<Project<C>, SolcError>
-    where
-        C: Compiler<
-                Settings = MultiCompilerSettings,
-                Language = MultiCompilerLanguage,
-                CompilerContract = Contract,
-            >,
-    {
-        self.create_project_inner(cached, no_artifacts, || Ok(compiler))
-    }
-
-    fn create_project_inner<C>(
-        &self,
-        cached: bool,
-        no_artifacts: bool,
         compiler: impl FnOnce() -> Result<C, SolcError>,
+        cached: bool,
+        no_artifacts: bool,
     ) -> Result<Project<C>, SolcError>
     where
         C: Compiler<
@@ -9707,7 +9692,7 @@ mod tests {
         fs::write(&cache, "existing cache").unwrap();
 
         let compiler = MultiCompiler { solc: None, vyper: None };
-        let project = config.create_project_with_compiler(compiler, true, true).unwrap();
+        let project = config.create_project_with_compiler(|| Ok(compiler), true, true).unwrap();
 
         assert!(project.compiler.solc.is_none());
         assert!(project.compiler.vyper.is_none());

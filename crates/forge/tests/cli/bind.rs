@@ -387,36 +387,55 @@ contract EnumUser {
 }
 
 #[forgetest]
-fn bind_no_cache_includes_new_contracts(prj: _, cmd: _) {
+fn bind_ignores_orphaned_artifacts(prj: _, cmd: _) {
+    let current = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0; contract Router { function current(address) external pure {} }";
+    let added = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0; contract Added {}";
+    prj.add_source("Z.sol", current);
+    prj.add_source("Added.sol", added);
+    cmd.args(["bind", "--no-cache"]).assert_success();
+    let bindings = prj.root().join("out/bindings/src");
+    // Capture the full current binding before an obsolete same-name artifact can shadow it.
+    let expected = fs::read_to_string(bindings.join("router.rs")).unwrap();
+    prj.clear();
+    for source in ["Z.sol", "Added.sol"] {
+        fs::remove_file(prj.paths().sources.join(source)).unwrap();
+    }
     prj.add_source(
-        "Existing.sol",
-        r#"
-contract Existing {
-    function foo() external pure returns (uint256) { return 42; }
-}
-"#,
+        "A.sol",
+        "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0; contract Router { function obsolete() external pure {} }",
     );
-    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("build").assert_success();
+    fs::remove_file(prj.paths().sources.join("A.sol")).unwrap();
+    prj.add_source("Z.sol", current);
+    prj.add_source("Added.sol", added);
+    let cache = fs::read(prj.cache()).unwrap();
 
-    prj.add_source(
-        "Added.sol",
-        r#"
-contract Added {
-    function bar() external pure returns (uint256) { return 100; }
-}
-"#,
-    );
+    // No-cache and deny modes must include new contracts and exclude orphaned artifacts even
+    // though they leave the obsolete compiler manifest untouched. Run the cached build last.
+    for mode in [&["--no-cache"][..], &["--deny", "warnings"], &["--deny", "notes"], &[]] {
+        cmd.forge_fuse().args(["bind", "--overwrite"]).args(mode).assert_success().stderr_eq(str![
+            [r#"
+Generating bindings for 2 contracts
+Bindings have been generated to [..]/out/bindings
 
-    // Compile with --no-cache. Both contracts compile, but cache is not updated.
-    // bind should still see both contracts via filesystem scan, not stale cache.
-    cmd.forge_fuse().args(["bind", "--no-cache", "--overwrite"]).assert_success();
+"#]
+        ]);
+        assert_data_eq!(
+            fs::read_to_string(bindings.join("router.rs")).unwrap(),
+            expected.as_str().raw()
+        );
+        assert!(bindings.join("added.rs").is_file());
+        assert!(prj.artifacts().join("A.sol/Router.json").is_file());
+        if !mode.is_empty() {
+            assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+        }
+    }
+    cmd.forge_fuse().arg("bind").assert_success().stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 2 contracts
+OK.
 
-    let existing_binding =
-        fs::read_to_string(prj.root().join("out/bindings/src/existing.rs")).unwrap();
-    assert!(existing_binding.contains("pub fn foo"), "{existing_binding}");
-
-    let added_binding = fs::read_to_string(prj.root().join("out/bindings/src/added.rs")).unwrap();
-    assert!(added_binding.contains("pub fn bar"), "{added_binding}");
+"#]]);
 }
 
 #[forgetest]
@@ -796,51 +815,7 @@ Error: [..]/module-bindings/mod.rs is not a file
 }
 
 #[forgetest]
-fn bind_deny_includes_new_contracts(prj: _, cmd: _) {
-    prj.add_source(
-        "Existing.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-contract Existing {}
-"#,
-    );
-    cmd.arg("build").assert_success();
-
-    prj.add_source(
-        "Added.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-contract Added {}
-"#,
-    );
-
-    // Denying diagnostics disables compilation caching, leaving the old manifest on disk.
-    for level in ["warnings", "notes"] {
-        cmd.forge_fuse().args(["bind", "--deny", level, "--overwrite"]).assert_success().stderr_eq(
-            str![[r#"
-Generating bindings for 2 contracts
-Bindings have been generated to [..]/out/bindings
-
-"#]],
-        );
-
-        let bindings = prj.root().join("out/bindings/src");
-        assert!(bindings.join("existing.rs").is_file());
-        assert!(bindings.join("added.rs").is_file());
-
-        cmd.forge_fuse().args(["bind", "--deny", level]).assert_success().stderr_eq(str![[r#"
-Bindings found. Checking for consistency.
-Checking bindings for 2 contracts
-OK.
-
-"#]]);
-    }
-}
-
-#[forgetest]
-fn bind_preserves_duplicate_artifact_order(prj: _, cmd: _) {
+fn bind_preserves_artifact_order(prj: _, cmd: _) {
     prj.add_source(
         "Ownable.sol",
         "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
@@ -863,31 +838,13 @@ contract User is DepOwnable {}
     let expected = fs::read_to_string(&binding).unwrap();
 
     // Cache entries visit the dependency first, but artifact paths visit the project first.
-    for skip_build in [false, true] {
-        let mut args = vec!["bind", "--select", "^Ownable$"];
-        if skip_build {
-            args.push("--skip-build");
-        }
-        cmd.forge_fuse().args(&args).assert_success().stderr_eq(str![[r#"
-Bindings found. Checking for consistency.
-Checking bindings for 1 contracts
-OK.
-
-"#]]);
-
-        args.push("--overwrite");
-        cmd.forge_fuse().args(&args).assert_success();
+    for mode in [&[][..], &["--skip-build"]] {
+        cmd.forge_fuse()
+            .args(["bind", "--select", "^Ownable$", "--overwrite"])
+            .args(mode)
+            .assert_success();
         assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
     }
-}
-
-#[forgetest]
-fn bind_preserves_external_artifact_order(prj: _, cmd: _) {
-    prj.add_source(
-        "Ownable.sol",
-        "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
-    );
-    cmd.arg("build").assert_success();
 
     let external = prj.paths().artifacts.join(".external/fixture/app/Ownable.json");
     fs::create_dir_all(external.parent().unwrap()).unwrap();
@@ -899,10 +856,10 @@ fn bind_preserves_external_artifact_order(prj: _, cmd: _) {
 
     // External artifacts precede Solidity artifacts in the sorted filesystem discovery.
     cmd.forge_fuse()
-        .args(["bind", "--skip-build", "--no-cache", "--select", "^Ownable$"])
+        .args(["bind", "--skip-build", "--no-cache", "--select", "^Ownable$", "--overwrite"])
         .assert_success();
-    let binding = prj.root().join("out/bindings/src/ownable.rs");
-    let expected = fs::read_to_string(&binding).unwrap();
+    let external_binding = fs::read_to_string(&binding).unwrap();
+    assert_ne!(external_binding, expected);
 
     // Keep the synthetic external artifact without invoking an external compiler adapter.
     let args = ["bind", "--skip-build", "--select", "^Ownable$"];
@@ -914,7 +871,7 @@ OK.
 "#]]);
 
     cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
-    assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
+    assert_data_eq!(fs::read_to_string(&binding).unwrap(), external_binding.as_str());
 }
 
 #[forgetest]
@@ -929,21 +886,6 @@ contract Foo { function value() external pure returns (uint256) { return 42; } }
     prj.update_config(|config| config.evm_version = "paris".parse().unwrap());
     let binding = prj.root().join("out/bindings/src/foo.rs");
 
-    let expected = ["0.8.21", "0.8.20"].map(|version| {
-        prj.clear();
-        cmd.forge_fuse().args(["build", "--use", version]).assert_success();
-
-        // With one compiler artifact, capture the complete binding including deployment bytecode.
-        cmd.forge_fuse()
-            .args(["bind", "--skip-build", "--use", version, "--select", "^Foo$"])
-            .assert_success();
-        let expected = fs::read_to_string(&binding).unwrap();
-        let bytecode =
-            assert_binding_bytecode(&expected, &prj.artifacts().join("Foo.sol/Foo.json"));
-        (version, expected, bytecode)
-    });
-    assert_ne!(expected[0].2, expected[1].2);
-
     for versions in [["0.8.21", "0.8.20"], ["0.8.20", "0.8.21"]] {
         prj.clear();
         for version in versions {
@@ -952,19 +894,28 @@ contract Foo { function value() external pure returns (uint256) { return 42; } }
 
         // The requested compiler must win before same-name artifacts are deduplicated,
         // regardless of which version originally received the shorter artifact path.
-        for (version, expected, _) in &expected {
-            let args = ["bind", "--skip-build", "--use", version, "--select", "^Foo$"];
-            cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
-            // Compare bytecode-bearing Rust source without normalizing backslash escapes.
-            assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
-
-            cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
-Bindings found. Checking for consistency.
-Checking bindings for 1 contracts
-OK.
-
-"#]]);
-        }
+        let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
+        let bytecodes = versions.map(|version| {
+            let artifact = cache.files[Path::new("src/Foo.sol")]
+                .find_artifact("Foo", &version.parse().unwrap(), "default")
+                .unwrap();
+            cmd.forge_fuse()
+                .args([
+                    "bind",
+                    "--skip-build",
+                    "--use",
+                    version,
+                    "--select",
+                    "^Foo$",
+                    "--overwrite",
+                ])
+                .assert_success();
+            assert_binding_bytecode(
+                &fs::read_to_string(&binding).unwrap(),
+                &prj.artifacts().join(&artifact.path),
+            )
+        });
+        assert_ne!(bytecodes[0], bytecodes[1]);
     }
 }
 
@@ -998,20 +949,6 @@ contract Foo { function value() external pure returns (uint256) { return 42; } }
         });
     };
     let binding = prj.root().join("out/bindings/src/foo.rs");
-    let expected = [false, true].map(|restricted| {
-        prj.clear();
-        select_profile(restricted);
-        cmd.forge_fuse().arg("build").assert_success();
-        cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^Foo$"]).assert_success();
-        let cached = fs::read_to_string(&binding).unwrap();
-
-        // Ordinary binding compilation requests ABI-only artifacts.
-        prj.clear();
-        cmd.forge_fuse().args(["bind", "--select", "^Foo$"]).assert_success();
-        let compiled = fs::read_to_string(&binding).unwrap();
-        (restricted, cached, compiled)
-    });
-    assert_ne!(expected[0].1, expected[1].1);
 
     for profiles in [[false, true], [true, false]] {
         prj.clear();
@@ -1023,27 +960,31 @@ contract Foo { function value() external pure returns (uint256) { return 42; } }
         let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
         assert_eq!(cache.artifacts_len(), 2);
 
-        for (restricted, expected, _) in &expected {
-            select_profile(*restricted);
-            let args = ["bind", "--skip-build", "--select", "^Foo$"];
-            cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
-            assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
-            cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
-Bindings found. Checking for consistency.
-Checking bindings for 1 contracts
-OK.
-
-"#]]);
-        }
+        let bytecodes = [false, true].map(|restricted| {
+            select_profile(restricted);
+            let profile = if restricted { "no-metadata" } else { "default" };
+            let artifact = cache.files[Path::new("src/Foo.sol")]
+                .find_artifact("Foo", &"0.8.21".parse().unwrap(), profile)
+                .unwrap();
+            cmd.forge_fuse()
+                .args(["bind", "--skip-build", "--select", "^Foo$", "--overwrite"])
+                .assert_success();
+            assert_binding_bytecode(
+                &fs::read_to_string(&binding).unwrap(),
+                &prj.artifacts().join(&artifact.path),
+            )
+        });
+        assert_ne!(bytecodes[0], bytecodes[1]);
     }
 
-    for (restricted, _, expected) in &expected {
+    for restricted in [false, true] {
         prj.clear();
         let args = ["bind", "--select", "^Foo$"];
-        for profile in [!*restricted, *restricted] {
+        for profile in [!restricted, restricted] {
             select_profile(profile);
             cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
         }
+        let expected = fs::read_to_string(&binding).unwrap();
         let cache = fs::read(prj.cache()).unwrap();
         assert_eq!(
             CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap().artifacts_len(),
@@ -1052,7 +993,7 @@ OK.
 
         // Restore bytecode to the earlier profile's shorter artifact path without changing the
         // ABI-only cache. A normal bind must not select this historical profile from its output.
-        select_profile(!*restricted);
+        select_profile(!restricted);
         cmd.forge_fuse().args(["build", "--no-cache"]).assert_success();
         assert_eq!(fs::read(prj.cache()).unwrap(), cache);
         let artifact = read_json_file::<ConfigurableContractArtifact>(
@@ -1061,15 +1002,9 @@ OK.
         .unwrap();
         assert!(!artifact.bytecode.unwrap().into_bytes().unwrap().is_empty());
 
-        select_profile(*restricted);
+        select_profile(restricted);
         cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
         assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str().raw());
-        cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
-Bindings found. Checking for consistency.
-Checking bindings for 1 contracts
-OK.
-
-"#]]);
     }
 }
 

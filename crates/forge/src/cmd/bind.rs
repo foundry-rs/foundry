@@ -225,88 +225,7 @@ impl BindArgs {
             BTreeMap::default()
         };
         let files = if let Some(cache) = cache.as_ref().filter(|_| config.cache) {
-            let filter = self.get_filter()?;
-            let selected = cache
-                .files
-                .iter()
-                .filter(|(_, entry)| {
-                    entry.artifacts.keys().any(|name| filter.is_match(&binding_name(name)))
-                })
-                .map(|(source, _)| source.clone())
-                .collect::<HashSet<_>>();
-            let mut files = Vec::new();
-            if !selected.is_empty() {
-                let compiler = CachedCompiler::new(config, cache);
-                let mut project = config.create_project_with_compiler(compiler, false, true)?;
-                project.update_output_selection(|selection| {
-                    *selection = OutputSelection::common_output_selection(["abi".to_string()]);
-                });
-                // Enum metadata always uses the full graph; artifact selection may be narrower.
-                let graph = if project.sparse_output.is_none() {
-                    graph.map_err(Into::into)
-                } else {
-                    artifact_graph(&project, None)
-                };
-                // Preserve shared compiler versions, falling back to selected inputs if needed.
-                let contexts = graph
-                    .and_then(|graph| resolved_artifact_contexts(&project, graph))
-                    .or_else(|_| {
-                        let graph = artifact_graph(&project, Some(&selected))?;
-                        resolved_artifact_contexts(&project, graph)
-                    })?;
-                for (source, contexts) in contexts {
-                    if let Some(entry) = cache.entry(&source) {
-                        for name in entry
-                            .artifacts
-                            .keys()
-                            .filter(|name| filter.is_match(&binding_name(name)))
-                        {
-                            let vyper = matches!(
-                                source.extension().and_then(|s| s.to_str()),
-                                Some("vy" | "vyi")
-                            );
-                            let unavailable = if vyper {
-                                project.compiler.vyper_unknown
-                            } else {
-                                project.compiler.solc_unknown
-                            };
-                            eyre::ensure!(
-                                !unavailable || entry.artifacts[name].len() <= 1,
-                                "Cannot determine compiler version for {}:{name}: {} is unavailable and multiple versions are cached; {}",
-                                source.display(),
-                                if vyper { "Vyper" } else { "configured solc" },
-                                if vyper {
-                                    "configure `vyper.path`"
-                                } else {
-                                    "specify `--use <version>`"
-                                },
-                            );
-                            for (version, profile) in &contexts {
-                                let artifact = entry.find_artifact(name, version, profile);
-                                eyre::ensure!(
-                                    artifact.is_some_and(|artifact| artifact.path.is_file()),
-                                    "No cached artifact for {}:{name} with compiler {version} and profile `{profile}`; run `forge build` first",
-                                    source.display(),
-                                );
-                                let settings = project
-                                    .settings_profiles()
-                                    .find(|(name, _)| name == profile)
-                                    .map(|(_, settings)| settings)
-                                    .expect("resolved profile is configured");
-                                eyre::ensure!(
-                                    cache
-                                        .profiles
-                                        .get(profile)
-                                        .is_some_and(|cached| settings.can_use_cached(cached)),
-                                    "Cached compiler settings for {}:{name} and profile `{profile}` do not match; run `forge build` first",
-                                    source.display(),
-                                );
-                                files.push(artifact.unwrap().path.clone());
-                            }
-                        }
-                    }
-                }
-            }
+            let mut files = self.cached_artifact_paths(config, cache, graph)?;
             // External adapter artifacts are not part of the built-in compiler cache.
             files.extend(json_files(&config.out.join(".external")));
             files
@@ -332,6 +251,90 @@ impl BindArgs {
             }
         }
         Ok((files, definitions))
+    }
+
+    /// Resolves built-in cached artifacts without compiling or changing compiler installations.
+    fn cached_artifact_paths(
+        &self,
+        config: &Config,
+        cache: &CompilerCache<MultiCompilerSettings>,
+        graph: Result<Graph<MultiCompilerParser>, SolcError>,
+    ) -> Result<Vec<PathBuf>> {
+        let filter = self.get_filter()?;
+        let selected = cache
+            .files
+            .iter()
+            .filter(|(_, entry)| {
+                entry.artifacts.keys().any(|name| filter.is_match(&binding_name(name)))
+            })
+            .map(|(source, _)| source.clone())
+            .collect::<HashSet<_>>();
+        if selected.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut files = Vec::new();
+        let compiler = CachedCompiler::new(config, cache);
+        let mut project = config.create_project_with_compiler(|| Ok(compiler), false, true)?;
+        project.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+        });
+        // Enum metadata always uses the full graph; artifact selection may be narrower.
+        let graph = if project.sparse_output.is_none() {
+            graph.map_err(Into::into)
+        } else {
+            artifact_graph(&project, None)
+        };
+        // Preserve shared compiler versions, falling back to selected inputs if needed.
+        let contexts =
+            graph.and_then(|graph| resolved_artifact_contexts(&project, graph)).or_else(|_| {
+                let graph = artifact_graph(&project, Some(&selected))?;
+                resolved_artifact_contexts(&project, graph)
+            })?;
+        let compatible_profiles = project
+            .settings_profiles()
+            .filter_map(|(profile, settings)| {
+                cache
+                    .profiles
+                    .get(profile)
+                    .is_some_and(|cached| settings.can_use_cached(cached))
+                    .then_some(profile)
+            })
+            .collect::<HashSet<_>>();
+        for (source, contexts) in contexts {
+            if let Some(entry) = cache.entry(&source) {
+                let vyper =
+                    matches!(source.extension().and_then(|s| s.to_str()), Some("vy" | "vyi"));
+                let (unavailable, compiler, hint) = if vyper {
+                    (project.compiler.vyper_unknown, "Vyper", "configure `vyper.path`")
+                } else {
+                    (project.compiler.solc_unknown, "configured solc", "specify `--use <version>`")
+                };
+                for (name, versions) in
+                    entry.artifacts.iter().filter(|(name, _)| filter.is_match(&binding_name(name)))
+                {
+                    eyre::ensure!(
+                        !unavailable || versions.len() <= 1,
+                        "Cannot determine compiler version for {}:{name}: {compiler} is unavailable and multiple versions are cached; {hint}",
+                        source.display(),
+                    );
+                    for (version, profile) in &contexts {
+                        let artifact = entry.find_artifact(name, version, profile)
+                            .filter(|artifact| artifact.path.is_file())
+                            .ok_or_else(|| eyre::eyre!(
+                                "No cached artifact for {}:{name} with compiler {version} and profile `{profile}`; run `forge build` first",
+                                source.display(),
+                            ))?;
+                        eyre::ensure!(
+                            compatible_profiles.contains(profile.as_str()),
+                            "Cached compiler settings for {}:{name} and profile `{profile}` do not match; run `forge build` first",
+                            source.display(),
+                        );
+                        files.push(artifact.path.clone());
+                    }
+                }
+            }
+        }
+        Ok(files)
     }
 
     /// Applies binding filters and preserves artifact-path precedence for duplicate names.
