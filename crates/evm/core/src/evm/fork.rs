@@ -3,7 +3,10 @@
 
 use super::{BackingDb, EvmEnv, SendableExt, StoredExt};
 use crate::fork::{Fork, ForkId};
-use alloy_primitives::{Address, U256, map::AddressSet};
+use alloy_primitives::{
+    Address, U256,
+    map::{AddressMap, AddressSet, HashSet},
+};
 use evm2::{EvmTypesHost, evm::Cache};
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
@@ -47,12 +50,20 @@ pub struct Parked<T: EvmTypesHost> {
     /// The cache is shared with snapshots and with EVMs created over the context, so taking a
     /// snapshot or starting an execution does not copy it.
     pub cache: Option<Arc<Cache>>,
+    /// Slots loaded before suspending this context, cleared at the transaction boundary.
+    pub(super) loaded_storage: AddressMap<HashSet<U256>>,
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
     /// Creates a context that has never run.
     pub fn new(db: Box<dyn BackingDb>, env: EvmEnv<T>, ext: T::EvmExt) -> Self {
-        Self { db, env, ext: StoredExt::new(&ext), cache: None }
+        Self {
+            db,
+            env,
+            ext: StoredExt::new(&ext),
+            cache: None,
+            loaded_storage: AddressMap::default(),
+        }
     }
 }
 
@@ -63,6 +74,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
             env: self.env,
             ext: self.ext.clone(),
             cache: self.cache.clone(),
+            loaded_storage: self.loaded_storage.clone(),
         }
     }
 }
@@ -243,6 +255,24 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
                 }
                 None => {
                     target.storage.remove(address);
+                }
+            }
+        }
+    }
+
+    /// Copies persistent accounts' transaction-loaded slots alongside their accepted state.
+    pub(super) fn merge_persistent_loaded_storage(
+        &self,
+        source: &AddressMap<HashSet<U256>>,
+        target: &mut AddressMap<HashSet<U256>>,
+    ) {
+        for address in &self.persistent {
+            match source.get(address) {
+                Some(slots) => {
+                    target.insert(*address, slots.clone());
+                }
+                None => {
+                    target.remove(address);
                 }
             }
         }

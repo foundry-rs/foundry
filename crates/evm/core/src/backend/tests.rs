@@ -226,3 +226,53 @@ fn select_fork_carries_running_spec_and_fee_policy() {
     assert_eq!(evm.config_spec_id(), evm2::SpecId::PRAGUE);
     assert!(!evm.version().features.contains(EvmFeatures::FEE_CHARGE));
 }
+
+#[test]
+fn fork_loaded_storage_lifetime() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::PRAGUE;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
+    let first = memory_fork(&mut backend, db_with(&[], 17), env);
+    let second = memory_fork(&mut backend, db_with(&[], 97), env);
+    let phase = ExecutionPhase::InFlight;
+    let mut evm = backend.create_evm();
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap();
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ONE).unwrap().set(U256::from(23));
+    backend.add_persistent_account(STORE_ADDRESS);
+
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert_eq!(
+        backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS),
+        [U256::ZERO, U256::ONE]
+    );
+    assert_eq!(slot(&mut evm), U256::from(17));
+
+    backend.remove_persistent_account(&STORE_ADDRESS);
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(97));
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    assert_eq!(
+        backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS),
+        [U256::ZERO, U256::ONE]
+    );
+    assert_eq!(slot(&mut evm), U256::from(17));
+
+    let snapshot = backend.snapshot_state(&mut evm);
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::from(2)).unwrap();
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    let _ = backend
+        .revert_state(snapshot, &mut evm, RevertStateSnapshotAction::RevertRemove, phase)
+        .unwrap();
+    assert_eq!(
+        backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS),
+        [U256::ZERO, U256::ONE]
+    );
+
+    backend.park(evm);
+    let mut evm = backend.create_evm();
+    assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
+    assert_eq!(slot(&mut evm), U256::from(97));
+}

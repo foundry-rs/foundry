@@ -129,10 +129,7 @@ impl<D> ForkDb<D> {
     }
 }
 
-impl<D> DynDatabase for ForkDb<D>
-where
-    D: Database<Error: std::error::Error + Send + Sync + 'static> + 'static,
-{
+impl<N: Network, B: ForkBlockEnv> DynDatabase for ForkDb<SharedBackend<N, B>> {
     fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
         let info = self.db.get_account(address).map_err(fatal)?;
         // The fork cache reports accounts the remote does not hold as existing empty accounts.
@@ -145,6 +142,14 @@ where
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
+        // RPC cannot fetch code by hash; the fork cache stores it inline.
+        if let Some(code) =
+            self.db.data().accounts.read().values().find_map(|info| {
+                (info.code_hash == *code_hash).then(|| info.code.clone()).flatten()
+            })
+        {
+            return Ok(code);
+        }
         self.db.get_code_by_hash(code_hash).map_err(fatal)
     }
 
