@@ -914,7 +914,7 @@ fn create_backend<N: Network, BLOCK: FoundryBlock + ForkBlockEnv>(
         SharedBackend::new_with_anchor(provider, db, anchor)
     }?;
     if prefetch {
-        super::prefetch::spawn::<BLOCK>(resolved, backend.data(), account_fetch_policy);
+        super::prefetch::spawn(resolved, &backend);
     }
     Ok((backend, handler))
 }

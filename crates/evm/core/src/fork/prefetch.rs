@@ -2,29 +2,24 @@
 //!
 //! A fork of `latest` gets an empty cache on each new head, and every cold account or storage read
 //! then blocks the EVM for one RPC round trip. Earlier runs on the same chain read mostly the same
-//! accounts and slots, so the keys of the newest older cache file predict the reads. The values are
-//! fetched again at the new block and inserted only where the cache has no value, so the cache
-//! stays exact for that block. A wrong prediction only costs an RPC request.
+//! accounts and slots, so the keys of the newest older cache file predict the reads. The keys are
+//! read again at the new block through the fork backend, which caches each value like an EVM read,
+//! so the cache stays exact for that block. A wrong prediction only costs an RPC request.
 
 use super::Fork;
-use alloy_eips::BlockId;
-use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, Bytes, U64, U256, keccak256};
-use alloy_provider::{Provider, RootProvider};
+use alloy_network::Network;
+use alloy_primitives::{Address, U256};
 use foundry_config::Config;
 use foundry_fork_db::{
-    AccountFetchPolicy, ForkBlockEnv,
+    ForkBlockEnv, SharedBackend,
+    backend::BlockingMode,
     cache::{JsonBlockCacheDB, MemDb},
 };
-use futures::{StreamExt, stream};
-use revm::{
-    primitives::KECCAK_EMPTY,
-    state::{AccountInfo, Bytecode},
-};
+use parking_lot::Mutex;
+use revm::DatabaseRef;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
 };
 
 /// Prefetch requests in flight at once. The fork backend sends its own cold reads without a limit;
@@ -40,14 +35,16 @@ enum Key {
     Slot(Address, U256),
 }
 
-/// Starts a background prefetch into `db` if the cache of `fork` is empty.
-pub(crate) fn spawn<B: ForkBlockEnv>(fork: &Fork, db: Arc<MemDb>, policy: AccountFetchPolicy) {
-    if !db.accounts.read().is_empty() {
+/// Starts a background prefetch through `backend` if its cache is empty.
+///
+/// Each key is read through the backend like an EVM read, so the backend fetches and caches it with
+/// its own request path, and a key it already has costs no request.
+pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(fork: &Fork, backend: &SharedBackend<N, B>) {
+    if !backend.data().accounts.read().is_empty() {
         return;
     }
     let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
-    let context = fork.context();
-    let Some(path) = Config::foundry_chain_cache_dir(context.source_chain_id)
+    let Some(path) = Config::foundry_chain_cache_dir(fork.context().source_chain_id)
         .and_then(|dir| previous_cache_file(&dir, fork.number()))
     else {
         return;
@@ -56,21 +53,22 @@ pub(crate) fn spawn<B: ForkBlockEnv>(fork: &Fork, db: Arc<MemDb>, policy: Accoun
     let keys = keys(previous.db());
     debug!(target: "fork::prefetch", ?path, keys = keys.len(), "prefetching fork cache");
 
-    let provider = fork.provider::<AnyNetwork>();
-    let block = fork.state_block_id();
-    runtime.spawn(async move {
-        let started = Instant::now();
-        let fetched = stream::iter(keys)
-            .map(|key| fetch(&provider, block, policy, key))
-            .buffer_unordered(MAX_CONCURRENT_REQUESTS)
-            .filter_map(|value| async move { value })
-            .fold(0usize, |count, value| {
-                insert(&db, value);
-                async move { count + 1 }
-            })
-            .await;
-        debug!(target: "fork::prefetch", fetched, elapsed = ?started.elapsed(), "prefetched fork cache");
-    });
+    // Workers read on blocking tasks, so they take the next key without a lock held during a read.
+    let keys = Arc::new(Mutex::new(keys.into_iter()));
+    for _ in 0..MAX_CONCURRENT_REQUESTS {
+        let keys = Arc::clone(&keys);
+        let backend = backend.with_blocking_mode(BlockingMode::Block);
+        runtime.spawn_blocking(move || {
+            loop {
+                let Some(key) = keys.lock().next() else { break };
+                // A failed read is dropped, so the EVM fetches the key itself if it needs it.
+                let _ = match key {
+                    Key::Account(address) => backend.basic_ref(address).map(drop),
+                    Key::Slot(address, slot) => backend.storage_ref(address, slot).map(drop),
+                };
+            }
+        });
+    }
 }
 
 /// Returns the cache file of the newest block below `number` in a chain cache directory.
@@ -102,73 +100,9 @@ fn keys(db: &MemDb) -> Vec<Key> {
         .collect()
 }
 
-enum Value {
-    Account(Address, AccountInfo),
-    Slot(Address, U256, U256),
-}
-
-/// Fetches one key like the fork backend does. Failures are dropped, so the EVM fetches the key
-/// itself if it needs it.
-async fn fetch(
-    provider: &RootProvider<AnyNetwork>,
-    block: BlockId,
-    policy: AccountFetchPolicy,
-    key: Key,
-) -> Option<Value> {
-    match key {
-        Key::Slot(address, slot) => {
-            let value = provider.get_storage_at(address, slot).block_id(block).await.ok()?;
-            Some(Value::Slot(address, slot, value))
-        }
-        Key::Account(address) => {
-            let params = (address, block);
-            let (balance, nonce, code) = match provider
-                .raw_request::<_, alloy_rpc_types::AccountInfo>("eth_getAccountInfo".into(), params)
-                .await
-            {
-                Ok(info) => (info.balance, info.nonce, info.code),
-                Err(_) if policy == AccountFetchPolicy::Auto => {
-                    let (balance, nonce, code): (U256, U64, Bytes) = futures::future::try_join3(
-                        provider.raw_request("eth_getBalance".into(), params),
-                        provider.raw_request("eth_getTransactionCount".into(), params),
-                        provider.raw_request("eth_getCode".into(), params),
-                    )
-                    .await
-                    .ok()?;
-                    (balance, nonce.to(), code)
-                }
-                Err(_) => return None,
-            };
-            // Same conversion as the fork backend, so a prefetched account equals a fetched one.
-            let code_hash = if code.is_empty() { KECCAK_EMPTY } else { keccak256(&code) };
-            let info = AccountInfo {
-                balance,
-                nonce,
-                code_hash,
-                code: Some(Bytecode::new_raw(code)),
-                account_id: None,
-            };
-            Some(Value::Account(address, info))
-        }
-    }
-}
-
-/// Inserts a prefetched value, retaining a value the backend already cached.
-fn insert(db: &MemDb, value: Value) {
-    match value {
-        Value::Account(address, info) => {
-            db.accounts.write().entry(address).or_insert(info);
-        }
-        Value::Slot(address, slot, value) => {
-            db.storage.write().entry(address).or_default().entry(slot).or_insert(value);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
 
     #[test]
     fn picks_newest_cache_file_below_block() {
@@ -182,21 +116,5 @@ mod tests {
         assert_eq!(previous_cache_file(&dir, 125), Some(dir.join("110")));
         assert_eq!(previous_cache_file(&dir, 90), None);
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn insert_retains_cached_values() {
-        let db = MemDb::default();
-        let address = address!("0x00000000000000000000000000000000000000aa");
-        insert(&db, Value::Slot(address, U256::from(1), U256::from(7)));
-        insert(&db, Value::Slot(address, U256::from(1), U256::from(8)));
-        insert(&db, Value::Slot(address, U256::from(2), U256::from(9)));
-        assert_eq!(db.storage.read()[&address][&U256::from(1)], U256::from(7));
-        assert_eq!(db.storage.read()[&address][&U256::from(2)], U256::from(9));
-
-        let cached = AccountInfo { nonce: 1, ..Default::default() };
-        insert(&db, Value::Account(address, cached.clone()));
-        insert(&db, Value::Account(address, AccountInfo { nonce: 2, ..Default::default() }));
-        assert_eq!(db.accounts.read()[&address], cached);
     }
 }
