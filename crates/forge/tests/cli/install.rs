@@ -977,6 +977,8 @@ fn update_rejects_unresolved_ref_override(prj: _, cmd: _) {
     cmd.git_add();
     cmd.git_commit("pin dependency fixture");
     let original_lock = fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap();
+    let original_sources = [&path, &other_path]
+        .map(|path| fs::read(prj.root().join(path).join("source.txt")).unwrap());
 
     cmd.forge_fuse();
     cmd.env("GIT_ALLOW_PROTOCOL", "file");
@@ -992,10 +994,7 @@ Context:
 "#]]);
     assert_eq!(dependency_git.head().unwrap(), first);
     assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
-    assert_eq!(
-        fs::read_to_string(prj.root().join(&path).join("source.txt")).unwrap(),
-        "dependency source\n"
-    );
+    assert_eq!(fs::read(prj.root().join(&path).join("source.txt")).unwrap(), original_sources[0]);
 
     // Create refs only after installation so resolution must fetch without checking out.
     fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
@@ -1021,12 +1020,9 @@ Context:
 - git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
 
 "#]]);
-    for path in [&path, &other_path] {
+    for (path, original_source) in [&path, &other_path].into_iter().zip(&original_sources) {
         assert_eq!(Git::new(&prj.root().join(path)).head().unwrap(), first);
-        assert_eq!(
-            fs::read_to_string(prj.root().join(path).join("source.txt")).unwrap(),
-            "dependency source\n"
-        );
+        assert_eq!(&fs::read(prj.root().join(path).join("source.txt")).unwrap(), original_source);
     }
     assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
 

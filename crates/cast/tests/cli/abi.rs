@@ -371,7 +371,7 @@ fn decode_event_topics_requires_signature(cmd: _) {
 error: the following required arguments were not provided:
   --sig <SIG>
 
-Usage: cast decode-event --sig <SIG> --topics <TOPICS> <DATA>
+Usage: cast[..] decode-event --sig <SIG> --topics <TOPICS> <DATA>
 
 For more information, try '--help'.
 
