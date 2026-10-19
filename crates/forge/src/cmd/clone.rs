@@ -358,17 +358,12 @@ impl CloneArgs {
         })?;
 
         // Update configuration, surfacing any error instead of silently discarding it.
-        let mut config_update_error = Ok(());
+        let mut result = Ok(());
         Config::update_at(root, |config, doc| {
-            match update_config_by_metadata(config, doc, meta, chain) {
-                Ok(()) => true,
-                Err(err) => {
-                    config_update_error = Err(err);
-                    false
-                }
-            }
+            result = update_config_by_metadata(config, doc, meta, chain);
+            result.is_ok()
         })?;
-        config_update_error?;
+        result?;
 
         // write remappings to remappings.txt if necessary
         if !no_remappings_txt {
@@ -383,20 +378,17 @@ impl CloneArgs {
             Config::update_at(root, |config, doc| {
                 let remappings_txt_content =
                     config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
-                match fs::write(&remappings_txt, remappings_txt_content) {
-                    Ok(()) => {
-                        let profile = config.profile.as_str().as_str();
-                        if let Some(elem) = doc[Config::PROFILE_SECTION][profile].as_table_mut() {
-                            elem.remove_entry("remappings");
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    Err(err) => {
-                        remappings_write_error = Err(err);
-                        false
-                    }
+                if let Err(err) = fs::write(&remappings_txt, remappings_txt_content) {
+                    remappings_write_error = Err(err);
+                    return false;
+                }
+
+                let profile = config.profile.as_str().as_str();
+                if let Some(elem) = doc[Config::PROFILE_SECTION][profile].as_table_mut() {
+                    elem.remove_entry("remappings");
+                    true
+                } else {
+                    false
                 }
             })?;
             remappings_write_error?;
