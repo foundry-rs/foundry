@@ -593,12 +593,9 @@ impl SequenceMutator {
                     .map(|(value, input)| constrain_enum_value(value, input, fixtures))
                     .zip(&inputs)
                     .all(|(constrained, input)| constrained == *input)
-                // Decoding accepts non-canonical bool words, which Solidity rejects before the
-                // handler runs. Re-encoding constrains every bool to 0 or 1, including nested ones.
-                && let Ok(encoded) = function.abi_encode_input(&inputs)
-                && encoded.as_slice() != tx.call_details.calldata.as_ref()
+                && function.abi_encode_input(&inputs).is_ok_and(|encoded| encoded == calldata)
             {
-                tx.call_details.calldata = encoded.into();
+                tx.call_details.calldata = calldata.into();
                 return Ok(true);
             }
         }
@@ -824,84 +821,54 @@ mod tests {
     }
 
     #[test]
-    fn cmp_mutation_constrains_bool() {
-        let function = Function::parse("test(bool)").unwrap();
-        let canonical = function.abi_encode_input(&[DynSolValue::Bool(true)]).unwrap();
-        let mut input = tx(7);
-        input.call_details.calldata = canonical.clone().into();
-        let hint = ComparisonHint { lhs: U256::from(1), rhs: U256::from(4) };
+    fn cmp_mutation_rejects_noncanonical_bools() {
         let mut runner = TestRunner::deterministic();
-
-        for _ in 0..100 {
-            assert!(
-                !SequenceMutator::cmp_mutate(
-                    &mut input,
-                    &function,
-                    &[hint],
-                    &mut runner,
-                    &FuzzFixtures::default(),
-                )
-                .unwrap()
-            );
-            assert_eq!(input.call_details.calldata.as_ref(), canonical);
+        for (signature, value, lhs) in [
+            ("test(bool)", DynSolValue::Bool(true), U256::from(1)),
+            ("test(bool)", DynSolValue::Bool(false), U256::ZERO),
+            (
+                "test(bool[2])",
+                DynSolValue::FixedArray(vec![DynSolValue::Bool(false); 2]),
+                U256::ZERO,
+            ),
+        ] {
+            let function = Function::parse(signature).unwrap();
+            let original = function.abi_encode_input(&[value]).unwrap();
+            let mut input = tx(7);
+            input.call_details.calldata = original.clone().into();
+            for _ in 0..100 {
+                assert!(
+                    !SequenceMutator::cmp_mutate(
+                        &mut input,
+                        &function,
+                        &[ComparisonHint { lhs, rhs: U256::from(4) }],
+                        &mut runner,
+                        &FuzzFixtures::default(),
+                    )
+                    .unwrap()
+                );
+                assert_eq!(input.call_details.calldata.as_ref(), original);
+            }
         }
 
+        let function = Function::parse("test(bool)").unwrap();
+        let mut input = tx(7);
         input.call_details.calldata =
             function.abi_encode_input(&[DynSolValue::Bool(false)]).unwrap().into();
-        let hint = ComparisonHint { lhs: U256::ZERO, rhs: U256::from(4) };
-        let mut flipped = false;
-        for _ in 0..100 {
-            if SequenceMutator::cmp_mutate(
+        assert!(
+            SequenceMutator::cmp_mutate(
                 &mut input,
                 &function,
-                &[hint],
+                &[ComparisonHint { lhs: U256::ZERO, rhs: U256::from(1) }],
                 &mut runner,
                 &FuzzFixtures::default(),
             )
             .unwrap()
-            {
-                flipped = true;
-                break;
-            }
-        }
-        assert!(flipped, "comparison mutation never flipped the bool");
-        assert_eq!(input.call_details.calldata.as_ref(), canonical);
-    }
-
-    #[test]
-    fn cmp_mutation_constrains_nested_bools() {
-        let function = Function::parse("test(bool[2])").unwrap();
-        let original = function
-            .abi_encode_input(&[DynSolValue::FixedArray(vec![
-                DynSolValue::Bool(false),
-                DynSolValue::Bool(false),
-            ])])
-            .unwrap();
-        let mut input = tx(7);
-        input.call_details.calldata = original.clone().into();
-        let hint = ComparisonHint { lhs: U256::ZERO, rhs: U256::from(4) };
-        let mut runner = TestRunner::deterministic();
-
-        for _ in 0..100 {
-            if SequenceMutator::cmp_mutate(
-                &mut input,
-                &function,
-                &[hint],
-                &mut runner,
-                &FuzzFixtures::default(),
-            )
-            .unwrap()
-            {
-                assert_ne!(input.call_details.calldata.as_ref(), original);
-                let decoded = function.abi_decode_input(&input.call_details.calldata[4..]).unwrap();
-                assert_eq!(
-                    function.abi_encode_input(&decoded).unwrap().as_slice(),
-                    input.call_details.calldata.as_ref()
-                );
-                return;
-            }
-        }
-        panic!("comparison mutation never flipped a nested bool");
+        );
+        assert_eq!(
+            input.call_details.calldata.as_ref(),
+            function.abi_encode_input(&[DynSolValue::Bool(true)]).unwrap()
+        );
     }
 
     #[test]
