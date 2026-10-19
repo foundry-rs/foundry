@@ -19,6 +19,10 @@ use std::{
     collections::{BTreeSet, HashSet},
     ops::{ControlFlow, Range},
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 mod data;
@@ -35,8 +39,18 @@ use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_depende
 /// This allows for more efficient caching when iterating on tests.
 ///
 /// See <https://github.com/foundry-rs/foundry/pull/10010>.
-#[derive(Debug)]
-pub struct DynamicTestLinkingPreprocessor;
+#[derive(Clone, Debug, Default)]
+pub struct DynamicTestLinkingPreprocessor {
+    /// Set when preprocessing changes any compiler input. Shared by clones.
+    rewrote_sources: Arc<AtomicBool>,
+}
+
+impl DynamicTestLinkingPreprocessor {
+    /// Returns whether preprocessing changed any compiler input.
+    pub fn rewrote_sources(&self) -> bool {
+        self.rewrote_sources.load(Ordering::Relaxed)
+    }
+}
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
@@ -178,6 +192,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     .unwrap_or_else(|| "Solar analysis failed".to_string());
                 let _ = sh_warn!("dynamic test linking disabled for {affected} files: {reason}");
             }
+        } else if input.input.sources != original_sources {
+            self.rewrote_sources.store(true, Ordering::Relaxed);
         }
 
         Ok(())
@@ -378,7 +394,7 @@ mod tests {
         )));
         for input in [&mut input, &mut wider] {
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 input,
                 &paths,
@@ -396,7 +412,7 @@ mod tests {
         let (_root, paths, mut input) = input();
         let mut mocks = HashSet::new();
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -412,7 +428,7 @@ mod tests {
         let mut input = MultiCompilerInput::Solc(Box::new(input));
         let mut mocks = HashSet::new();
         <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &MultiCompiler { solc: Some(SolcCompiler::default()), vyper: None },
             &mut input,
             paths.with_language_ref(),
@@ -441,7 +457,7 @@ mod tests {
                 ("test/Other.sol", "pragma abicoder v2; import '../src/Dep.sol'; contract Other { function deploy() public { new Dep(7); } }".to_string()),
             ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -470,7 +486,7 @@ mod tests {
                 Source::new("pragma abicoder v1; import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep{salt: bytes32(0)}(); } function plain() public { new Dep(); } }"),
             );
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -498,7 +514,7 @@ mod tests {
             Source::new("import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep{value: 1, salt: bytes32(7)}(); } }"),
         );
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -564,7 +580,7 @@ mod tests {
             input.input.sources.insert(PathBuf::from("test/Observer.sol"), Source::new(&observer));
             input.input.sources.insert(PathBuf::from("test/Safe.sol"), Source::new(safe));
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -601,7 +617,7 @@ mod tests {
         input.input.sources.insert(PathBuf::from("test/Observer.sol"), Source::new(&observer));
         input.input.sources.insert(PathBuf::from("test/Safe.sol"), Source::new(safe));
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -648,7 +664,7 @@ mod tests {
             );
             input.input.sources.insert(PathBuf::from("test/Case.sol"), Source::new(&source));
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -683,7 +699,7 @@ mod tests {
         let original = input.input.sources.clone();
         let mut mocks = HashSet::from([paths.root.join("test/Fallback.sol")]);
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
+            &DynamicTestLinkingPreprocessor::default(),
             &SolcCompiler::default(),
             &mut input,
             &paths,
@@ -824,7 +840,7 @@ mod tests {
                 ("test/Deploy.sol", "pragma experimental ABIEncoderV2; import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep(7); } }".to_string()),
             ].into_iter().map(|(path, source)| (PathBuf::from(path), Source::new(source))).collect();
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-                &DynamicTestLinkingPreprocessor,
+                &DynamicTestLinkingPreprocessor::default(),
                 &SolcCompiler::default(),
                 &mut input,
                 &paths,
@@ -853,10 +869,10 @@ mod tests {
     fn preprocessor_cache_versions_match() {
         assert_eq!(
             <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::cache_version(
-                &DynamicTestLinkingPreprocessor
+                &DynamicTestLinkingPreprocessor::default()
             ),
             <DynamicTestLinkingPreprocessor as Preprocessor<MultiCompiler>>::cache_version(
-                &DynamicTestLinkingPreprocessor
+                &DynamicTestLinkingPreprocessor::default()
             )
         );
     }
