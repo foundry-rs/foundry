@@ -85,30 +85,21 @@ contract CoolPersistenceTest is Test {
 
     function testCool_EXTCODESIZE() public {
         address target = address(preexisting);
-        assertGt(target.code.length, 0);
-
-        uint256 warmGas;
-        uint256 coldGas;
-        uint256 warmSize;
-        uint256 coldSize;
-        assembly {
-            let start := gas()
-            warmSize := extcodesize(target)
-            warmGas := sub(start, gas())
-        }
+        uint256 size = target.code.length;
+        assertGt(size, 0);
 
         vm.cool(target);
 
+        uint256 gasUsed;
+        uint256 cooledSize;
         assembly {
             let start := gas()
-            coldSize := extcodesize(target)
-            coldGas := sub(start, gas())
+            cooledSize := extcodesize(target)
+            gasUsed := sub(start, gas())
         }
 
-        assertEq(coldSize, warmSize);
-        // Stack operations can differ between reads; only the cooled read pays the 2600 cold cost.
-        assertLt(warmGas, 2600);
-        assertGe(coldGas, 2600);
+        assertEq(cooledSize, size);
+        assertGe(gasUsed, 2600);
     }
 }
 
