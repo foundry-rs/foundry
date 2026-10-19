@@ -33,7 +33,6 @@ use foundry_evm_core::{
     },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor, merge_child_state, prepare_child_state},
-    utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
@@ -788,11 +787,8 @@ impl Cheatcode for blobBaseFeeCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        let spec: SpecId = ccx.spec().into();
-        ccx.ecx.block_mut().set_blob_excess_gas_and_price(
-            (*newBlobBaseFee).to(),
-            get_blob_base_fee_update_fraction_by_spec_id(spec),
-        );
+        ensure!(*newBlobBaseFee <= U256::from(u128::MAX), "blob base fee must be less than 2^128");
+        ccx.ecx.block_mut().set_blob_gasprice(newBlobBaseFee.saturating_to());
         Ok(Default::default())
     }
 }
@@ -800,7 +796,7 @@ impl Cheatcode for blobBaseFeeCall {
 impl Cheatcode for getBlobBaseFeeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        Ok(ccx.blob_excess_gas().unwrap_or(0).abi_encode())
+        Ok(U256::from(ccx.blob_gasprice().unwrap_or_default()).abi_encode())
     }
 }
 
