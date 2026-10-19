@@ -2159,7 +2159,7 @@ mod tests {
         let self_transfer = tx.clone().to(caller);
         assert_eq!(calculate_stipend::<EthEvmNetwork>(&env, &self_transfer), 12_000);
 
-        env.set_feature(evm2::EvmFeatures::EIP2780, false);
+        env = EvmFactoryFor::<EthEvmNetwork>::default().env_with_spec(env, SpecId::OSAKA);
         assert_eq!(calculate_stipend::<EthEvmNetwork>(&env, &tx), 21_000);
     }
 
