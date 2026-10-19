@@ -4613,3 +4613,134 @@ contract CounterTest {
 "#]]
     );
 }
+
+// Gaps report offsets and snippets do not depend on CRLF line endings or multibyte text.
+#[forgetest]
+fn coverage_gaps_report(prj: _, cmd: _) {
+    let source = prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public value;
+
+    function set(uint256 x) public {
+        // ☃
+        if (x > 10) {
+            value = x;
+        } else {
+            value = 0;
+        }
+    }
+
+    function check(uint256 x) public pure {
+        require(x > 0, "zero");
+    }
+
+    function unused() public {
+        value = 42;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "AContract.t.sol",
+        r#"
+import {AContract} from "../src/AContract.sol";
+
+contract AContractTest {
+    function testSet() public {
+        AContract a = new AContract();
+        a.set(11);
+        a.check(1);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+{
+  "version": 1,
+  "files": {
+    "src/AContract.sol": [
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 9,
+        "line_end": 13,
+        "byte_start": 180,
+        "byte_end": 266,
+        "snippet": "if (x > 10) {",
+        "branch_id": 0,
+        "path_id": 1
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 12,
+        "line_end": 12,
+        "byte_start": 246,
+        "byte_end": 255,
+        "snippet": "value = 0"
+      },
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "check",
+        "line_start": 17,
+        "line_end": 17,
+        "byte_start": 326,
+        "byte_end": 348,
+        "snippet": "require(x > 0, \"zero\")",
+        "branch_id": 1,
+        "path_id": 0
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 20,
+        "byte_start": 361,
+        "byte_end": 387,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "function",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 22,
+        "byte_start": 361,
+        "byte_end": 413,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 21,
+        "line_end": 21,
+        "byte_start": 396,
+        "byte_end": 406,
+        "snippet": "value = 42"
+      }
+    ]
+  }
+}
+"#]]
+    .is_json();
+    cmd.args(["coverage", "--report=gaps"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("coverage-gaps.json"), None),
+        expected.clone()
+    );
+
+    let crlf = fs::read_to_string(&source).unwrap().replace('\n', "\r\n");
+    fs::write(&source, crlf).unwrap();
+    cmd.forge_fuse()
+        .args(["coverage", "--report=gaps", "--report-file", "crlf-gaps.json"])
+        .assert_success();
+    assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
+}
