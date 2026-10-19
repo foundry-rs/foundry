@@ -394,13 +394,15 @@ impl HitMap {
     }
 
     /// Records a hit, visible after [`Self::flush`].
+    ///
+    /// Saturates, so a counter never returns to zero and adds its PC to `pcs` again.
     #[inline]
     pub(crate) fn record(&mut self, pc: usize) {
         if let Some(hits) = self.pending.get_mut(pc) {
             if *hits == 0 {
                 self.pcs.push(pc as u32);
             }
-            *hits += 1;
+            *hits = hits.saturating_add(1);
         } else {
             self.grow_pending(pc);
         }
@@ -959,5 +961,16 @@ mod tests {
         assert_eq!(anchors.hits(&hit_map).count(), 0);
         hit_map.hits(20, 3);
         assert_eq!(anchors.hits(&hit_map).next().unwrap().1.get(), 3);
+    }
+
+    #[test]
+    fn saturated_pending_hits_flush_once() {
+        let mut hit_map = HitMap::new(Bytes::from_static(&[0]));
+        hit_map.record(0);
+        hit_map.pending[0] = u32::MAX;
+        hit_map.record(0);
+        hit_map.record(0);
+        hit_map.flush();
+        assert_eq!(hit_map.iter().collect::<Vec<_>>(), [(0, u32::MAX)]);
     }
 }
