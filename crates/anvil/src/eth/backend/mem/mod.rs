@@ -121,7 +121,6 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use evm2::{
     AccountInfo,
-    bytecode::Bytecode,
     evm::{BalContext, BlockAccessIndex, BlockStateAccumulator, PendingState, StateChangeSource},
     interpreter::InstrStop,
 };
@@ -182,6 +181,9 @@ use tempo_primitives::{
 #[cfg(test)]
 use tokio::sync::Notify;
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
+
+#[cfg(feature = "base")]
+use evm2::bytecode::Bytecode;
 
 #[cfg(feature = "js-tracer")]
 use crate::eth::backend::evm::{TxFor, TypesFor, block_env, prepared_evm_tx};
@@ -1308,27 +1310,27 @@ impl<N: Network> Backend<N> {
 
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::LONDON as u8)
+        self.spec_id().enables(SpecId::LONDON)
     }
 
     /// Returns true for post Merge
     pub fn is_eip3675(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::MERGE as u8)
+        self.spec_id().enables(SpecId::MERGE)
     }
 
     /// Returns true for post Berlin
     pub fn is_eip2930(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
+        self.spec_id().enables(SpecId::BERLIN)
     }
 
     /// Returns true for post Cancun
     pub fn is_eip4844(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::CANCUN as u8)
+        self.spec_id().enables(SpecId::CANCUN)
     }
 
     /// Returns true for post Prague
     pub fn is_eip7702(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
+        self.spec_id().enables(SpecId::PRAGUE)
     }
 
     /// Returns true if op-stack deposits are active.
@@ -3270,10 +3272,18 @@ impl<N: Network> Backend<N> {
                         "OP post-execution transactions cannot be executed on evm2".to_string(),
                     ));
                 }
-                let deposit = self
-                    .ensure_deposits_active()
-                    .ok()
-                    .and_then(|()| get_deposit_tx_parts(&request.other).ok());
+                let deposit = (request.transaction_type == Some(DEPOSIT_TX_TYPE_ID))
+                    .then(|| {
+                        self.ensure_deposits_active().and_then(|()| {
+                            get_deposit_tx_parts(&request.other).map_err(|missing| {
+                                BlockchainError::InvalidTransactionRequest(format!(
+                                    "missing deposit fields: {}",
+                                    missing.join(", ")
+                                ))
+                            })
+                        })
+                    })
+                    .transpose()?;
                 let request = request.inner;
                 let (evm_env, fees) =
                     self.build_call_env_with_base(&request, &fee_details, block_env, base_evm_env);
