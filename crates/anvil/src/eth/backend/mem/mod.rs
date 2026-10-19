@@ -426,8 +426,12 @@ impl StagedForkCacheLeaseInner {
     fn invalidate(&self) -> Result<(), BlockchainError> {
         self.db.db().clear();
         self.db.cache().flush();
+        // Forge can store the block cache as a file, so a child endpoint cache cannot exist.
         if let Err(err) = std::fs::remove_file(&self.cache_path)
-            && err.kind() != std::io::ErrorKind::NotFound
+            && !matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            )
         {
             return Err(BlockchainError::Internal(format!(
                 "failed to invalidate fork cache at {}: {err}",
