@@ -1,7 +1,7 @@
 //! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
-    Cheatcode, Cheatcodes, Result,
+    Cheatcode, CheatcodesCore, Result,
     Vm::*,
     json::{
         check_json_key_exists, parse_json, parse_json_coerce, parse_json_coerce_default,
@@ -12,7 +12,6 @@ use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
 use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::evm::FoundryEvmNetwork;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 use toml_edit::{DocumentMut, Item, Table, TableLike};
@@ -25,7 +24,7 @@ impl Cheatcode for keyExistsTomlCall {
 }
 
 impl Cheatcode for parseToml_0Call {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml } = self;
         parse_toml(
             toml,
@@ -36,7 +35,7 @@ impl Cheatcode for parseToml_0Call {
 }
 
 impl Cheatcode for parseToml_1Call {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key } = self;
         parse_toml(
             toml,
@@ -108,7 +107,7 @@ impl_parse_toml!(
 );
 
 impl Cheatcode for parseTomlType_0Call {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, typeDescription } = self;
         parse_toml_coerce(
             toml,
@@ -123,7 +122,7 @@ impl Cheatcode for parseTomlType_0Call {
 }
 
 impl Cheatcode for parseTomlType_1Call {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key, typeDescription } = self;
         parse_toml_coerce(
             toml,
@@ -138,7 +137,7 @@ impl Cheatcode for parseTomlType_1Call {
 }
 
 impl Cheatcode for parseTomlTypeArrayCall {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { toml, key, typeDescription } = self;
         let ty = resolve_type(
             typeDescription,
@@ -156,7 +155,7 @@ impl Cheatcode for parseTomlKeysCall {
 }
 
 impl Cheatcode for writeToml_0Call {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json, path } = self;
         let value =
             serde_json::from_str(json).unwrap_or_else(|_| JsonValue::String(json.to_owned()));
@@ -167,7 +166,7 @@ impl Cheatcode for writeToml_0Call {
 }
 
 impl Cheatcode for writeToml_1Call {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { json: value, path, valueKey } = self;
 
         // Read and parse the TOML file, keeping its formatting and comments.

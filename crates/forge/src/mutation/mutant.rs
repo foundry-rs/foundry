@@ -6,7 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use solar::{
     interface::BytePos,
-    parse::ast::{BinOpKind, LitKind, Span, StrKind, UnOpKind},
+    parse::ast::{BinOpKind, Lit, LitKind, Span, StrKind, UnOpKind},
 };
 
 use super::visitor::AssignVarTypes;
@@ -117,6 +117,7 @@ pub enum OwnedLiteral {
     },
     Number(alloy_primitives::U256),
     Rational(String),
+    BigNumber(String),
     Address(String),
     Bool(bool),
     Err(String),
@@ -127,12 +128,13 @@ pub enum OwnedLiteral {
     NegatedNumber(alloy_primitives::U256),
 }
 
-impl From<&LitKind<'_>> for OwnedLiteral {
-    fn from(lit_kind: &LitKind<'_>) -> Self {
-        match lit_kind {
+impl From<&Lit<'_>> for OwnedLiteral {
+    fn from(lit: &Lit<'_>) -> Self {
+        match &lit.kind {
             LitKind::Bool(b) => Self::Bool(*b),
             LitKind::Number(n) => Self::Number(*n),
-            LitKind::Rational(r) => Self::Rational(r.to_string()),
+            LitKind::Rational(..) => Self::Rational(lit.symbol.to_string()),
+            LitKind::BigNumber(..) => Self::BigNumber(lit.symbol.to_string()),
             LitKind::Address(addr) => Self::Address(addr.to_string()),
             LitKind::Str(sk, bytesym, _extras) => {
                 let text = String::from_utf8_lossy(bytesym.as_byte_str()).into_owned();
@@ -154,7 +156,7 @@ impl Display for OwnedLiteral {
             Self::Bool(val) => write!(f, "{val}"),
             Self::Number(val) => write!(f, "{val}"),
             Self::NegatedNumber(val) => write!(f, "-{val}"),
-            Self::Rational(s) => write!(f, "{s}"),
+            Self::Rational(s) | Self::BigNumber(s) => write!(f, "{s}"),
             Self::Address(s) => write!(f, "{s}"),
             Self::Str { kind, text } => match kind {
                 OwnedStrKind::Str => write!(f, "\"{text}\""),
@@ -393,5 +395,31 @@ impl Display for Mutant {
         } else {
             write!(f, "{}: {}", self.relative_path(), self.short_description())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solar::{
+        ast::LitUint,
+        interface::{Session, Symbol},
+    };
+
+    #[test]
+    fn preserve_numeric_literal_spelling() {
+        Session::builder().with_stderr_emitter().build().enter(|| {
+            let cases = [
+                (
+                    "1.25e-2",
+                    LitKind::Rational(LitUint::from_be_bytes(&[1]), LitUint::from_be_bytes(&[80])),
+                ),
+                ("1e100", LitKind::BigNumber(LitUint::from_be_bytes(&[1; 42]))),
+            ];
+            for (source, kind) in cases {
+                let lit = Lit { span: Span::DUMMY, symbol: Symbol::intern(source), kind };
+                assert_eq!(OwnedLiteral::from(&lit).to_string(), source);
+            }
+        });
     }
 }

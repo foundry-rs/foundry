@@ -1,10 +1,9 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, Bytes, U256};
+use crate::{Cheatcode, CheatcodesCore, CheatsCtxt, Result, Vm::*};
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use revm::{
     bytecode::Bytecode,
     context::{ContextTr, JournalTr},
-    interpreter::InstructionResult,
 };
 use std::{
     cmp::Ordering,
@@ -23,8 +22,8 @@ pub struct MockCallDataContext {
 /// Mocked return data.
 #[derive(Clone, Debug)]
 pub struct MockCallReturnData {
-    /// The return type for the mocked call
-    pub ret_type: InstructionResult,
+    /// Whether the mocked call reverts.
+    pub reverts: bool,
     /// Return data or error
     pub data: Bytes,
 }
@@ -47,7 +46,7 @@ impl Ord for MockCallDataContext {
 }
 
 impl Cheatcode for clearMockedCallsCall {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         state.mocked_calls = Default::default();
         Ok(Default::default())
@@ -59,7 +58,7 @@ impl Cheatcode for mockCall_0Call {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
-        mock_call(ccx.state, callee, data, None, returnData, InstructionResult::Return);
+        mock_call(&mut ccx.state.core.mocked_calls, callee, data, None, returnData, false);
         Ok(Default::default())
     }
 }
@@ -69,7 +68,14 @@ impl Cheatcode for mockCall_1Call {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
-        mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
+        mock_call(
+            &mut ccx.state.core.mocked_calls,
+            callee,
+            data,
+            Some(msgValue),
+            returnData,
+            false,
+        );
         Ok(Default::default())
     }
 }
@@ -80,12 +86,12 @@ impl Cheatcode for mockCall_2Call {
         let _ = make_acc_non_empty(callee, ccx)?;
 
         mock_call(
-            ccx.state,
+            &mut ccx.state.core.mocked_calls,
             callee,
             &Bytes::from(*data),
             None,
             returnData,
-            InstructionResult::Return,
+            false,
         );
         Ok(Default::default())
     }
@@ -97,12 +103,12 @@ impl Cheatcode for mockCall_3Call {
         let _ = make_acc_non_empty(callee, ccx)?;
 
         mock_call(
-            ccx.state,
+            &mut ccx.state.core.mocked_calls,
             callee,
             &Bytes::from(*data),
             Some(msgValue),
             returnData,
-            InstructionResult::Return,
+            false,
         );
         Ok(Default::default())
     }
@@ -115,7 +121,7 @@ impl Cheatcode for mockCall_4Call {
             let _ = make_acc_non_empty(callee, ccx)?;
         }
 
-        mock_call(ccx.state, callee, data, None, returnData, InstructionResult::Return);
+        mock_call(&mut ccx.state.core.mocked_calls, callee, data, None, returnData, false);
         Ok(Default::default())
     }
 }
@@ -125,7 +131,7 @@ impl Cheatcode for mockCalls_0Call {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
-        mock_calls(ccx.state, callee, data, None, returnData, InstructionResult::Return);
+        mock_calls(&mut ccx.state.core.mocked_calls, callee, data, None, returnData, false);
         Ok(Default::default())
     }
 }
@@ -135,7 +141,14 @@ impl Cheatcode for mockCalls_1Call {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
-        mock_calls(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
+        mock_calls(
+            &mut ccx.state.core.mocked_calls,
+            callee,
+            data,
+            Some(msgValue),
+            returnData,
+            false,
+        );
         Ok(Default::default())
     }
 }
@@ -145,7 +158,7 @@ impl Cheatcode for mockCallRevert_0Call {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
-        mock_call(ccx.state, callee, data, None, revertData, InstructionResult::Revert);
+        mock_call(&mut ccx.state.core.mocked_calls, callee, data, None, revertData, true);
         Ok(Default::default())
     }
 }
@@ -155,7 +168,7 @@ impl Cheatcode for mockCallRevert_1Call {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
-        mock_call(ccx.state, callee, data, Some(msgValue), revertData, InstructionResult::Revert);
+        mock_call(&mut ccx.state.core.mocked_calls, callee, data, Some(msgValue), revertData, true);
         Ok(Default::default())
     }
 }
@@ -166,12 +179,12 @@ impl Cheatcode for mockCallRevert_2Call {
         let _ = make_acc_non_empty(callee, ccx)?;
 
         mock_call(
-            ccx.state,
+            &mut ccx.state.core.mocked_calls,
             callee,
             &Bytes::from(*data),
             None,
             revertData,
-            InstructionResult::Revert,
+            true,
         );
         Ok(Default::default())
     }
@@ -183,19 +196,19 @@ impl Cheatcode for mockCallRevert_3Call {
         let _ = make_acc_non_empty(callee, ccx)?;
 
         mock_call(
-            ccx.state,
+            &mut ccx.state.core.mocked_calls,
             callee,
             &Bytes::from(*data),
             Some(msgValue),
             revertData,
-            InstructionResult::Revert,
+            true,
         );
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for mockFunctionCall {
-    fn apply_context<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { callee, target, data } = self;
         state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);
 
@@ -203,31 +216,28 @@ impl Cheatcode for mockFunctionCall {
     }
 }
 
-fn mock_call<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn mock_call(
+    mocks: &mut HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
     callee: &Address,
     cdata: &Bytes,
     value: Option<&U256>,
     rdata: &Bytes,
-    ret_type: InstructionResult,
+    reverts: bool,
 ) {
-    mock_calls(state, callee, cdata, value, std::slice::from_ref(rdata), ret_type)
+    mock_calls(mocks, callee, cdata, value, std::slice::from_ref(rdata), reverts)
 }
 
-fn mock_calls<FEN: FoundryEvmNetwork>(
-    state: &mut Cheatcodes<FEN>,
+fn mock_calls(
+    mocks: &mut HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
     callee: &Address,
     cdata: &Bytes,
     value: Option<&U256>,
     rdata_vec: &[Bytes],
-    ret_type: InstructionResult,
+    reverts: bool,
 ) {
-    state.mocked_calls.entry(*callee).or_default().insert(
+    mocks.entry(*callee).or_default().insert(
         MockCallDataContext { calldata: cdata.clone(), value: value.copied() },
-        rdata_vec
-            .iter()
-            .map(|rdata| MockCallReturnData { ret_type, data: rdata.clone() })
-            .collect::<VecDeque<_>>(),
+        rdata_vec.iter().map(|rdata| MockCallReturnData { reverts, data: rdata.clone() }).collect(),
     );
 }
 

@@ -5,12 +5,12 @@ use crate::executors::{
         CorpusSyncCoordinator, GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget,
         WorkerCorpus,
     },
-    should_ignore_revert,
+    should_ignore_revert, worker_seed,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, Bytes, Log, U256, keccak256,
+    Address, Bytes, Log, U256,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Result;
@@ -330,7 +330,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         {
             let run = failure.fuzz.run.unwrap_or(1);
             let worker = failure.fuzz.worker.unwrap_or(0) as usize;
-            cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
+            cheats.core.set_seed(Self::fuzz_run_seed(seed, worker, run));
         }
 
         let mut tx = BasicTxDetails {
@@ -754,7 +754,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         runner_config.cases = worker_runs;
 
         let mut runner = if let Some(seed) = self.config.seed {
-            let worker_seed = Self::fuzz_worker_seed(seed, worker_id);
+            let worker_seed = worker_seed(seed, worker_id as u32);
             trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
             let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
             TestRunner::new_with_rng(runner_config, rng)
@@ -800,7 +800,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 {
                     let run = failure.fuzz.run.unwrap_or(1);
                     let worker = failure.fuzz.worker.unwrap_or(worker_id as u32) as usize;
-                    cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
+                    cheats.core.set_seed(Self::fuzz_run_seed(seed, worker, run));
                 }
 
                 (
@@ -842,7 +842,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
                     && let Some(seed) = self.config.seed
                 {
-                    cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
+                    cheats.core.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
                 let input = match corpus.new_sequence(&mut runner) {
@@ -1042,19 +1042,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         }
     }
 
-    /// Derives the deterministic RNG seed for a fuzz worker.
-    fn fuzz_worker_seed(seed: U256, worker_id: usize) -> U256 {
-        if worker_id == 0 {
-            seed
-        } else {
-            let worker_id = worker_id as u32;
-            let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-            keccak256(seed_data).into()
-        }
-    }
-
     /// Derives the deterministic RNG seed for cheatcode randomness in a worker-local run.
     fn fuzz_run_seed(seed: U256, worker_id: usize, run: u32) -> U256 {
-        Self::fuzz_worker_seed(seed, worker_id).wrapping_add(U256::from(run.saturating_sub(1)))
+        worker_seed(seed, worker_id as u32).wrapping_add(U256::from(run.saturating_sub(1)))
     }
 }

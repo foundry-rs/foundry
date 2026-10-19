@@ -2822,7 +2822,7 @@ mod tests {
 
     // Regression test for https://github.com/foundry-rs/foundry/issues/13576
     // On Arbitrum, `block_env.number` is remapped to the L1 block number by
-    // `apply_chain_and_block_specific_env_changes`. The fork block number returned
+    // `apply_chain_and_block_specific_env_changes_for_chain`. The fork block number returned
     // by `env_with_fork_context()` must be the actual L2 block number, not the remapped L1 value.
     #[tokio::test(flavor = "multi_thread")]
     async fn flaky_get_fork_uses_l2_block_number_on_arbitrum() {

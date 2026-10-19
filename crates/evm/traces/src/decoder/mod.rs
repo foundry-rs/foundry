@@ -4,9 +4,7 @@ use crate::{
     erc8021,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
-use alloy_dyn_abi::{
-    DecodedEvent as AlloyDecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt,
-};
+use alloy_dyn_abi::{DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Constructor, Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
@@ -14,8 +12,12 @@ use alloy_primitives::{
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
-    ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
-    get_contract_name, selectors::SelectorKind, tempo::OUSD_ADDRESS,
+    ContractsByArtifact, SELECTOR_LEN,
+    abi::{get_indexed_event, reconstruct_event_params},
+    fmt::format_token,
+    get_contract_name,
+    selectors::SelectorKind,
+    tempo::OUSD_ADDRESS,
 };
 use foundry_config::TracingConfig;
 use foundry_evm_core::{
@@ -1635,7 +1637,7 @@ impl CallTraceDecoder {
     ) -> Option<DecodedEvent> {
         for event in events {
             if let Ok(decoded) = event.decode_log(log) {
-                let params = reconstruct_params(event, &decoded);
+                let params = reconstruct_event_params(event, &decoded);
                 let params = params
                     .into_iter()
                     .zip(event.inputs.iter())
@@ -1862,28 +1864,6 @@ fn is_abi_encoded_input(func: &Function, args: &[u8]) -> bool {
     func.abi_decode_input(args)
         .and_then(|values| func.abi_encode_input_raw(&values))
         .is_ok_and(|encoded| encoded == args)
-}
-
-/// Restore the order of the params of a decoded event,
-/// as Alloy returns the indexed and unindexed params separately.
-fn reconstruct_params(event: &Event, decoded: &AlloyDecodedEvent) -> Vec<DynSolValue> {
-    let mut indexed = 0;
-    let mut unindexed = 0;
-    let mut inputs = vec![];
-    for input in &event.inputs {
-        // Prevent panic of event `Transfer(from, to)` decoded with a signature
-        // `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` by making
-        // sure the event inputs is not higher than decoded indexed / un-indexed values.
-        if input.indexed && indexed < decoded.indexed.len() {
-            inputs.push(decoded.indexed[indexed].clone());
-            indexed += 1;
-        } else if unindexed < decoded.body.len() {
-            inputs.push(decoded.body[unindexed].clone());
-            unindexed += 1;
-        }
-    }
-
-    inputs
 }
 
 fn indexed_inputs(event: &Event) -> usize {
