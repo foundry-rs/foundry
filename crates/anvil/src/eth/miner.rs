@@ -3,9 +3,7 @@
 use crate::eth::pool::{Pool, transactions::PoolTransaction};
 use alloy_primitives::TxHash;
 use futures::{
-    FutureExt,
     channel::mpsc::Receiver,
-    future::poll_fn,
     stream::{Fuse, StreamExt},
     task::AtomicWaker,
 };
@@ -21,18 +19,19 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::{
-    task::coop::unconstrained,
-    time::{Interval, MissedTickBehavior, Sleep},
-};
+use tokio::time::{Instant, Sleep};
 
 /// Default delay before instant mining. Zero avoids delaying receipt availability.
 pub(crate) const INSTANT_COALESCE_WINDOW: Duration = Duration::ZERO;
 
+/// How far ahead to schedule a block whose deadline overflows an instant, as tokio's timers do.
+const FAR_FUTURE: Duration = Duration::from_secs(86400 * 365 * 30);
+
 pub struct Miner<T> {
     /// The mode this miner currently operates in
     mode: Arc<RwLock<MiningMode>>,
-    /// Identifies the current mode so stale candidate failures cannot modify its replacement.
+    /// Identifies the current mode and pause state so stale candidate failures cannot modify the
+    /// schedule that replaced them.
     generation: Arc<AtomicU64>,
     /// Incremented whenever automatic block production is paused or resumed, so it is paused
     /// while odd, see [`Miner::set_paused`]. Candidates selected before a pause compare their
@@ -90,7 +89,7 @@ impl<T> Miner<T> {
     pub fn get_interval(&self) -> Option<u64> {
         let mode = self.mode.read();
         if let MiningMode::FixedBlockTime(ref mm) = *mode {
-            return Some(mm.interval.period().as_secs());
+            return Some(mm.period.as_secs());
         }
         None
     }
@@ -99,9 +98,7 @@ impl<T> Miner<T> {
     pub(crate) fn block_interval(&self) -> Option<Duration> {
         let mode = self.mode.read();
         match &*mode {
-            MiningMode::FixedBlockTime(miner) | MiningMode::Mixed(_, miner) => {
-                Some(miner.interval.period())
-            }
+            MiningMode::FixedBlockTime(miner) | MiningMode::Mixed(_, miner) => Some(miner.period),
             MiningMode::None | MiningMode::Auto(_) => None,
         }
     }
@@ -134,8 +131,7 @@ impl<T> Miner<T> {
         }
         match &mut *mode {
             MiningMode::FixedBlockTime(miner) | MiningMode::Mixed(_, miner) => {
-                let period = miner.interval.period();
-                *miner = FixedBlockTimeMiner::new(period);
+                *miner = FixedBlockTimeMiner::new(miner.period);
             }
             MiningMode::None | MiningMode::Auto(_) => {}
         }
@@ -181,15 +177,9 @@ impl<T> Miner<T> {
         let mut mode = self.mode.write();
         if paused != self.is_paused() {
             if !paused {
-                // The service may not have polled while paused, e.g. with a candidate in flight.
-                // Discard elapsed ticks before allowing it to select another block. The caller may
-                // have exhausted its task budget, which would make the interval appear pending.
-                unconstrained(poll_fn(|cx| {
-                    mode.poll_paused(cx);
-                    Poll::Ready(())
-                }))
-                .now_or_never();
+                mode.resume();
             }
+            self.generation.fetch_add(1, Ordering::Relaxed);
             self.pause_epoch.fetch_add(1, Ordering::SeqCst);
         }
         drop(mode);
@@ -331,14 +321,22 @@ impl MiningMode {
         }
     }
 
-    /// Keeps the mode's timers and notifications moving while mining is paused, without selecting
-    /// any transactions.
+    /// Keeps the mode's notifications moving while mining is paused, without selecting any
+    /// transactions.
     fn poll_paused(&mut self, cx: &mut Context<'_>) {
         if let Self::Auto(miner) | Self::Mixed(miner, _) = self {
             miner.poll_notifications(cx);
         }
+    }
+
+    /// Skips the block time ticks that came due while mining was paused, and makes auto mining
+    /// select ready transactions again, including any left behind by a failed block.
+    fn resume(&mut self) {
+        if let Self::Auto(miner) | Self::Mixed(miner, _) = self {
+            miner.has_pending_txs = Some(true);
+        }
         if let Self::FixedBlockTime(miner) | Self::Mixed(_, miner) = self {
-            miner.poll_paused(cx);
+            miner.skip_missed_ticks();
         }
     }
 }
@@ -349,19 +347,21 @@ impl MiningMode {
 /// The default blocktime is set to 6 seconds
 #[derive(Debug)]
 pub struct FixedBlockTimeMiner {
-    /// The interval this fixed block time miner operates with
-    interval: Interval,
+    /// The time between blocks.
+    period: Duration,
+    /// Completes when the next block is due.
+    ///
+    /// This owns the schedule instead of an [`Interval`](tokio::time::Interval) so that resuming
+    /// can skip ticks by their deadline, which the interval does not expose.
+    next_tick: Pin<Box<Sleep>>,
 }
 
 impl FixedBlockTimeMiner {
     /// Creates a new instance with an interval of `duration`
     pub fn new(duration: Duration) -> Self {
-        let start = tokio::time::Instant::now() + duration;
-        let mut interval = tokio::time::interval_at(start, duration);
-        // we use delay here, to ensure ticks are not shortened and to tick at multiples of interval
-        // from when tick was called rather than from start
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        Self { interval }
+        assert!(!duration.is_zero(), "`period` must be non-zero.");
+        let next_tick = Box::pin(tokio::time::sleep(duration));
+        Self { period: duration, next_tick }
     }
 
     fn poll<T>(
@@ -369,20 +369,37 @@ impl FixedBlockTimeMiner {
         pool: &Arc<Pool<T>>,
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
-        if self.interval.poll_tick(cx).is_ready() {
-            // drain the pool
-            return Poll::Ready(pool.ready_transactions().collect());
+        if self.next_tick.as_mut().poll(cx).is_pending() {
+            return Poll::Pending;
         }
-        Poll::Pending
+        // Schedule like an interval with `MissedTickBehavior::Delay`, so that ticks are not
+        // shortened and late ticks shift the schedule rather than producing a burst of blocks.
+        let deadline = self.next_tick.deadline();
+        let now = Instant::now();
+        let next = if now > deadline + Duration::from_millis(5) {
+            now.checked_add(self.period)
+        } else {
+            deadline.checked_add(self.period)
+        };
+        self.next_tick.as_mut().reset(next.unwrap_or_else(|| now + FAR_FUTURE));
+        // Drain the pool.
+        Poll::Ready(pool.ready_transactions().collect())
     }
 
-    /// Keeps the interval ticking while paused, skipping any block that comes due.
-    fn poll_paused(&mut self, cx: &mut Context<'_>) {
-        // Skip missed slots without shifting the schedule. Keep normal mining's delay policy.
-        let behavior = self.interval.missed_tick_behavior();
-        self.interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        while self.interval.poll_tick(cx).is_ready() {}
-        self.interval.set_missed_tick_behavior(behavior);
+    /// Moves the next tick past any ticks that came due while mining was paused, keeping the
+    /// schedule.
+    ///
+    /// This compares deadlines to the current time instead of polling the timer, which may not
+    /// have fired yet for a deadline that already passed.
+    fn skip_missed_ticks(&mut self) {
+        let deadline = self.next_tick.deadline();
+        let now = Instant::now();
+        if deadline > now {
+            return;
+        }
+        let late = (now - deadline).as_nanos() % self.period.as_nanos();
+        let next = now.checked_add(self.period - Duration::from_nanos_u128(late));
+        self.next_tick.as_mut().reset(next.unwrap_or_else(|| now + FAR_FUTURE));
     }
 }
 
@@ -468,7 +485,7 @@ impl fmt::Debug for ReadyTransactionMiner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::channel::mpsc;
+    use futures::{FutureExt, channel::mpsc, future::poll_fn};
 
     #[test]
     fn stale_failure_resumes_replacement_autominer() {
@@ -559,7 +576,7 @@ mod tests {
                 let mut miner = Miner::<()>::new(mode);
                 let pool = Arc::new(Pool::default());
                 let mut cx = Context::from_waker(futures::task::noop_waker_ref());
-                let start = tokio::time::Instant::now();
+                let start = Instant::now();
                 miner.set_paused(true);
                 tokio::time::advance(Duration::from_millis(3500)).await;
                 if poll_while_paused {
@@ -601,27 +618,86 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn resume_skips_due_tick_without_coop_budget() {
+    async fn resume_skips_due_tick_before_timer_fires() {
         let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_secs(1)));
         let pool = Arc::new(Pool::default());
-        let start = tokio::time::Instant::now();
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        let start = Instant::now();
+        // Register the timer, so that only the timer driver can mark it as fired.
+        assert!(miner.poll(&pool, &mut cx).is_pending());
         miner.set_paused(true);
-        tokio::time::advance(Duration::from_millis(3500)).await;
 
-        // Resume from a task that exhausted its budget, so polling the interval returns pending.
-        let mut elapsed = Box::pin(tokio::time::sleep(Duration::ZERO));
-        poll_fn(|cx| {
-            while tokio::task::coop::has_budget_remaining() {
-                let _ = elapsed.as_mut().poll(cx);
-            }
-            miner.set_paused(false);
-            Poll::Ready(())
-        })
-        .await;
+        // Move the clock past the tick due at 1s without yielding to the timer driver.
+        assert!(tokio::time::advance(Duration::from_millis(1500)).now_or_never().is_none());
+        miner.set_paused(false);
 
         poll_fn(|cx| miner.poll(&pool, cx)).await;
         let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_secs(4));
-        assert!(elapsed <= Duration::from_millis(4001), "tick at {elapsed:?}");
+        assert!(elapsed >= Duration::from_secs(2));
+        assert!(elapsed <= Duration::from_millis(2001), "tick at {elapsed:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn late_tick_delays_schedule() {
+        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_secs(1)));
+        let pool = Arc::new(Pool::default());
+        let start = Instant::now();
+
+        poll_fn(|cx| miner.poll(&pool, cx)).await;
+        assert_eq!(start.elapsed(), Duration::from_secs(1));
+        tokio::time::advance(Duration::from_millis(1500)).await;
+        poll_fn(|cx| miner.poll(&pool, cx)).await;
+        assert_eq!(start.elapsed(), Duration::from_millis(2500));
+        poll_fn(|cx| miner.poll(&pool, cx)).await;
+        assert_eq!(start.elapsed(), Duration::from_millis(3500));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failure_selected_before_pause_keeps_schedule() {
+        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_secs(1)));
+        let pool = Arc::new(Pool::default());
+        let start = Instant::now();
+        let work = poll_fn(|cx| miner.poll(&pool, cx)).await;
+        miner.set_paused(true);
+        tokio::time::advance(Duration::from_millis(500)).await;
+        miner.set_paused(false);
+
+        // The candidate selected before the pause fails after mining resumed.
+        miner.handle_failed_candidate(work.generation);
+
+        poll_fn(|cx| miner.poll(&pool, cx)).await;
+        assert_eq!(start.elapsed(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn resume_retries_ready_transactions_after_failure() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mut miner = Miner::<()>::new(MiningMode::instant(1, rx));
+        let pool = Arc::new(Pool::default());
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        // The candidate failed before the pause, so its transactions are no longer retried.
+        assert!(miner.poll(&pool, &mut cx).is_pending());
+        miner.handle_failed_candidate(0);
+        miner.set_paused(true);
+        miner.set_paused(false);
+
+        let mode = miner.mode.read();
+        let MiningMode::Auto(auto) = &*mode else { panic!("expected auto mining") };
+        assert_eq!(auto.has_pending_txs, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overflowing_tick_waits_indefinitely() {
+        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::MAX));
+        let pool = Arc::new(Pool::default());
+        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        let start = Instant::now();
+        assert!(miner.poll(&pool, &mut cx).is_pending());
+        miner.set_paused(true);
+        tokio::time::advance(FAR_FUTURE).await;
+        miner.set_paused(false);
+        tokio::time::advance(FAR_FUTURE).await;
+        poll_fn(|cx| miner.poll(&pool, cx)).await;
+        assert!(start.elapsed() >= FAR_FUTURE * 2);
     }
 }
