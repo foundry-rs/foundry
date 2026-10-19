@@ -245,67 +245,60 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn redacts_reset_array_params() {
-        let params =
-            json!([{"forking": {"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"}}]);
-        assert_eq!(
-            redact_params("anvil_reset", &params),
-            json!([{"forking": {"jsonRpcUrl": "https://example.invalid/"}}])
-        );
-    }
-
-    #[test]
-    fn redacts_reset_object_params() {
-        let params =
-            json!({"forking": {"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"}});
-        assert_eq!(
-            redact_params("anvil_reset", &params),
-            json!({"forking": {"jsonRpcUrl": "https://example.invalid/"}})
-        );
-    }
-
-    #[test]
-    fn redacts_reset_legacy_object_params() {
-        let params = json!({"jsonRpcUrl": "https://example.invalid/rpc/synthetic-api-key"});
-        assert_eq!(
-            redact_params("hardhat_reset", &params),
-            json!({"jsonRpcUrl": "https://example.invalid/"})
-        );
-    }
-
-    #[test]
-    fn redacts_wrapped_reset_credentials_without_losing_context() {
-        let params = json!({"params": {"forking": {
-            "jsonRpcUrl": "https://user:pass@example.invalid:8545/key?token=x#secret",
-            "blockNumber": 42
-        }}});
-        let expected = json!({"params": {"forking": {
-            "jsonRpcUrl": "https://example.invalid:8545/",
-            "blockNumber": 42
-        }}});
-        for method in ["anvil_reset", "hardhat_reset"] {
-            assert_eq!(redact_params(method, &params), expected);
-            let mut redacted = params.clone();
-            redact_fork_credentials(method, &mut redacted);
-            assert_eq!(redacted, expected);
-        }
-    }
-
-    #[test]
-    fn redacts_rpc_url_credentials_without_length_heuristics() {
-        for url in [
-            "https://user:pass@example.invalid:8545/",
-            "https://example.invalid:8545/key?token=x#secret",
-            "https://example.invalid:8545/abcdefghijklmnop?api_key=abcdefghijklmnop",
-        ] {
-            assert_eq!(redact_url_credentials(url), "https://example.invalid:8545/");
-        }
-        assert_eq!(redact_url_credentials("invalid secret URL"), "[REDACTED_URL]");
-        for (mut params, expected) in [
+    fn redacts_url_credentials() {
+        for (url, expected) in [
+            ("https://user:pass@example.invalid:8545/", "https://example.invalid:8545/"),
+            ("https://example.invalid:8545/key?token=x#secret", "https://example.invalid:8545/"),
             (
-                json!(["https://user:pass@example.invalid/secret"]),
-                json!(["https://example.invalid/"]),
+                "https://example.invalid:8545/abcdefghijklmnop?api_key=abcdefghijklmnop",
+                "https://example.invalid:8545/",
             ),
+            ("invalid secret URL", "[REDACTED_URL]"),
+            ("https://user:pass@invalid host/secret", "[REDACTED_URL]"),
+            ("mykey:secret@example.invalid/rpc/key", "[REDACTED_URL]"),
+            ("mykey:/secret@example.invalid/rpc/key", "[REDACTED_URL]"),
+        ] {
+            assert_eq!(redact_url_credentials(url), expected, "{url}");
+        }
+    }
+
+    #[test]
+    fn redacts_fork_parameter_shapes_without_losing_context() {
+        let url = "https://user:pass@example.invalid:8545/key?token=x#secret";
+        let safe = "https://example.invalid:8545/";
+        for (params, expected) in [
+            (json!([{"forking": {"jsonRpcUrl": url}}]), json!([{"forking": {"jsonRpcUrl": safe}}])),
+            (json!({"forking": {"jsonRpcUrl": url}}), json!({"forking": {"jsonRpcUrl": safe}})),
+            (json!({"jsonRpcUrl": url}), json!({"jsonRpcUrl": safe})),
+            (
+                json!({"params": {"forking": {"jsonRpcUrl": url, "blockNumber": 42}}}),
+                json!({"params": {"forking": {"jsonRpcUrl": safe, "blockNumber": 42}}}),
+            ),
+            (json!([[url, "0x2a"]]), json!([[safe, "0x2a"]])),
+            (json!([{"forking": [url, 42]}]), json!([{"forking": [safe, 42]}])),
+            (json!({"params": [url, 42]}), json!({"params": [safe, 42]})),
+            (json!([[[url, 42]]]), json!([[[safe, 42]]])),
+            (json!({"params": [[url, 42]]}), json!({"params": [[safe, 42]]})),
+            (json!([[url]]), json!([[safe]])),
+            (json!([[null, "0x2a"]]), json!([[null, "0x2a"]])),
+            (
+                json!({"params": {"blockNumber": "0x2a", "extra": ["diagnostic"]}}),
+                json!({"params": {"blockNumber": "0x2a", "extra": ["diagnostic"]}}),
+            ),
+            (
+                json!({"params": {"forking": [null, 42], "extra": ["diagnostic"]}}),
+                json!({"params": {"forking": [null, 42], "extra": ["diagnostic"]}}),
+            ),
+        ] {
+            for method in ["anvil_reset", "hardhat_reset"] {
+                assert_eq!(redact_params(method, &params), expected, "{method}: {params}");
+                let mut failed = params.clone();
+                redact_fork_credentials(method, &mut failed);
+                assert_eq!(failed, expected, "{method}: {params}");
+            }
+        }
+        for (mut params, expected) in [
+            (json!([url]), json!([safe])),
             (json!(["invalid secret URL"]), json!(["[REDACTED_URL]"])),
         ] {
             assert_eq!(redact_params("anvil_setRpcUrl", &params), expected);
@@ -315,111 +308,35 @@ mod tests {
     }
 
     #[test]
-    fn preserves_noncredential_failure_params() {
-        let params = json!([{
-            "to": "0x1111111111111111111111111111111111111111",
-            "data": "0x12345678"
-        }, "0x100000"]);
-        let mut redacted = params.clone();
-        redact_fork_credentials("eth_call", &mut redacted);
-        assert_eq!(redacted, params);
-        let raw_params = json!(["0x12345678", 5000]);
-        let mut redacted = raw_params.clone();
-        redact_fork_credentials("eth_sendRawTransactionSync", &mut redacted);
-        assert_eq!(redacted, raw_params);
-        assert_eq!(
-            redact_params("eth_sendRawTransactionSync", &raw_params),
-            json!(["[SIGNED_TX]", 5000])
-        );
-    }
-
-    #[test]
-    fn redacts_positional_reset_credentials() {
-        for (url, safe_url) in [
-            (
-                "https://user:pass@example.invalid:8545/key?token=x#secret",
-                "https://example.invalid:8545/",
-            ),
-            ("https://user:pass@invalid host/secret", "[REDACTED_URL]"),
+    fn preserves_failure_params_and_redacts_only_trace_transactions() {
+        for method in [
+            "eth_sendRawTransaction",
+            "eth_sendRawTransactionSync",
+            "eth_sendRawTransactionConditional",
+            "eth_signRawTransaction",
+            "anvil_classifyTransaction",
+            "trace_rawTransaction",
         ] {
             for (params, expected) in [
-                (json!([[url, "0x2a"]]), json!([[safe_url, "0x2a"]])),
-                (json!([{"forking": [url, 42]}]), json!([{"forking": [safe_url, 42]}])),
-                (json!({"params": [url, 42]}), json!({"params": [safe_url, 42]})),
-                (json!([[[url, 42]]]), json!([[[safe_url, 42]]])),
-                (json!({"params": [[url, 42]]}), json!({"params": [[safe_url, 42]]})),
-                (json!([[url]]), json!([[safe_url]])),
-            ] {
-                for method in ["anvil_reset", "hardhat_reset"] {
-                    assert_eq!(redact_params(method, &params), expected);
-                    let mut redacted = params.clone();
-                    redact_fork_credentials(method, &mut redacted);
-                    assert_eq!(redacted, expected);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn preserves_reset_block_numbers_and_extra_fields() {
-        for params in [
-            json!([[null, "0x2a"]]),
-            json!({"params": {"blockNumber": "0x2a", "extra": ["diagnostic"]}}),
-            json!({"params": {"forking": [null, 42], "extra": ["diagnostic"]}}),
-        ] {
-            for method in ["anvil_reset", "hardhat_reset"] {
-                assert_eq!(redact_params(method, &params), params);
-                let mut redacted = params.clone();
-                redact_fork_credentials(method, &mut redacted);
-                assert_eq!(redacted, params);
-            }
-        }
-    }
-
-    #[test]
-    fn redacts_classification_and_trace_transactions() {
-        for (method, params, expected) in [
-            ("anvil_classifyTransaction", json!(["0x12345678"]), json!(["[SIGNED_TX]"])),
-            (
-                "trace_rawTransaction",
-                json!(["0x12345678", ["trace", "stateDiff"], "0x2a"]),
-                json!(["[SIGNED_TX]", ["trace", "stateDiff"], "0x2a"]),
-            ),
-            (
-                "trace_rawTransaction",
-                json!(["0x12345678", ["trace"]]),
-                json!(["[SIGNED_TX]", ["trace"]]),
-            ),
-        ] {
-            assert_eq!(redact_params(method, &params), expected);
-            let mut failed_params = params.clone();
-            redact_fork_credentials(method, &mut failed_params);
-            assert_eq!(failed_params, params);
-        }
-    }
-
-    #[test]
-    fn redacts_hostless_fork_urls() {
-        for url in ["mykey:secret@example.invalid/rpc/key", "mykey:/secret@example.invalid/rpc/key"]
-        {
-            for (method, params, expected) in [
-                ("anvil_setRpcUrl", json!([url]), json!(["[REDACTED_URL]"])),
+                (json!(["0x12345678"]), json!(["[SIGNED_TX]"])),
+                (json!(["0x12345678", 5000]), json!(["[SIGNED_TX]", 5000])),
                 (
-                    "anvil_reset",
-                    json!([{"forking": {"jsonRpcUrl": url, "blockNumber": 42}}]),
-                    json!([{"forking": {"jsonRpcUrl": "[REDACTED_URL]", "blockNumber": 42}}]),
+                    json!(["0x12345678", ["trace", "stateDiff"], "0x2a"]),
+                    json!(["[SIGNED_TX]", ["trace", "stateDiff"], "0x2a"]),
                 ),
-                (
-                    "hardhat_reset",
-                    json!({"params": [url, "0x2a"]}),
-                    json!({"params": ["[REDACTED_URL]", "0x2a"]}),
-                ),
+                (json!([]), json!([])),
+                (json!(null), json!(null)),
             ] {
-                assert_eq!(redact_params(method, &params), expected);
-                let mut failed_params = params;
-                redact_fork_credentials(method, &mut failed_params);
-                assert_eq!(failed_params, expected);
+                assert_eq!(redact_params(method, &params), expected, "{method}");
+                let mut failed = params.clone();
+                redact_fork_credentials(method, &mut failed);
+                assert_eq!(failed, params, "{method}");
             }
         }
+        let params = json!([{"to": "0x1111111111111111111111111111111111111111", "data": "0x12345678"}, "0x100000"]);
+        assert_eq!(redact_params("eth_call", &params), params);
+        let mut failed = params.clone();
+        redact_fork_credentials("eth_call", &mut failed);
+        assert_eq!(failed, params);
     }
 }

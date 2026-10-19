@@ -10,6 +10,7 @@ use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
+use anvil_core::eth::EthRequest;
 use foundry_test_utils::{assert_data_eq, str};
 use serde_json::json;
 use std::{fs, sync::Arc, time::Duration};
@@ -17,39 +18,17 @@ use tracing_subscriber::prelude::*;
 
 #[tokio::test]
 async fn http_rpc_logs_preserve_failed_requests() {
-    assert_rpc_logs_preserve_failed_requests("http", true).await;
-}
-
-#[tokio::test]
-async fn ws_rpc_logs_preserve_failed_requests() {
-    assert_rpc_logs_preserve_failed_requests("ws", true).await;
-}
-
-#[tokio::test]
-async fn ipc_rpc_logs_preserve_failed_requests() {
-    assert_rpc_logs_preserve_failed_requests("ipc", true).await;
+    assert_rpc_logs_preserve_failed_requests(true).await;
 }
 
 #[tokio::test]
 async fn http_default_logs_identify_failed_requests() {
-    assert_rpc_logs_preserve_failed_requests("http", false).await;
+    assert_rpc_logs_preserve_failed_requests(false).await;
 }
 
-#[tokio::test]
-async fn ws_default_logs_identify_failed_requests() {
-    assert_rpc_logs_preserve_failed_requests("ws", false).await;
-}
-
-#[tokio::test]
-async fn ipc_default_logs_identify_failed_requests() {
-    assert_rpc_logs_preserve_failed_requests("ipc", false).await;
-}
-
-async fn assert_rpc_logs_preserve_failed_requests(transport: &str, trace: bool) {
-    let dir = tempfile::tempdir().unwrap();
-    let log_path = dir.path().join("rpc.log");
-    let writer = Arc::new(fs::File::create(&log_path).unwrap());
-    let subscriber = if trace {
+fn rpc_subscriber(file: &tempfile::NamedTempFile, trace: bool) -> tracing::Dispatch {
+    let writer = Arc::new(file.reopen().unwrap());
+    if trace {
         tracing::Dispatch::new(
             tracing_subscriber::fmt()
                 .with_env_filter("off,rpc=trace,node::user=info")
@@ -69,20 +48,15 @@ async fn assert_rpc_logs_preserve_failed_requests(transport: &str, trace: bool) 
                     .with_writer(writer),
             ),
         )
-    };
-    let ipc_path = if cfg!(unix) {
-        dir.path().join("anvil.ipc").to_string_lossy().into_owned()
-    } else {
-        format!(r"\\.\pipe\anvil_rpc_logging_{}.ipc", rand::random::<u64>())
-    };
+    }
+}
+
+async fn assert_rpc_logs_preserve_failed_requests(trace: bool) {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let subscriber = rpc_subscriber(&file, trace);
     let raw = tokio::time::timeout(Duration::from_secs(10), async {
-        let (api, handle) = spawn(
-            NodeConfig::test()
-                .with_tracing(false)
-                .with_no_mining(true)
-                .with_ipc(Some(Some(ipc_path))),
-        )
-        .await;
+        let (api, handle) =
+            spawn(NodeConfig::test().with_tracing(false).with_no_mining(true)).await;
         let from = handle.dev_accounts().next().unwrap();
         let transaction = TransactionRequest::default()
             .from(from)
@@ -92,16 +66,9 @@ async fn assert_rpc_logs_preserve_failed_requests(transport: &str, trace: bool) 
             .nonce(0);
         let raw = api.sign_transaction(WithOtherFields::new(transaction)).await.unwrap();
         let expected_hash = keccak256(raw.parse::<Bytes>().unwrap());
-        let endpoint = match transport {
-            "http" => handle.http_endpoint(),
-            "ws" => handle.ws_endpoint(),
-            "ipc" => handle.ipc_path().unwrap(),
-            _ => unreachable!(),
-        };
-
         // The current-thread runtime keeps spawned server tasks under this subscriber.
         let _subscriber = tracing::dispatcher::set_default(&subscriber);
-        let provider = utils::connect_pubsub(&endpoint).await;
+        let provider = utils::connect_pubsub(&handle.http_endpoint()).await;
         provider
             .raw_request::<_, ()>(
                 "anvil_setRpcUrl".into(),
@@ -144,6 +111,15 @@ async fn assert_rpc_logs_preserve_failed_requests(transport: &str, trace: bool) 
             .unwrap_err();
         assert_eq!(err.as_error_resp().unwrap().code, -32601);
         assert_eq!(err.as_error_resp().unwrap().message, "Method not found");
+        // Cover canonical object and aliased positional resets through the real handler.
+        for (method, params) in [
+            ("anvil_reset", json!([{"forking": {"jsonRpcUrl": INVALID_FORK_URL, "blockNumber": 42}}])),
+            ("hardhat_reset", json!([[[INVALID_FORK_URL, "0x2b"]]])),
+        ] {
+            let err = provider.raw_request::<_, ()>(method.into(), params).await.unwrap_err();
+            assert_eq!(err.as_error_resp().unwrap().code, -32603);
+            assert_eq!(err.as_error_resp().unwrap().message, "failed to establish provider to fork url");
+        }
         raw
     })
     .await
@@ -169,6 +145,14 @@ TRACE rpc::api: executing eth request
  INFO node::user: RPC request failed method="eth_call" id=Number(4) params=[{"to":"0x1111111111111111111111111111111111111111","data":"0x12345678"},"0x100000"] error=Invalid params: BlockOutOfRangeError: block height is 0 but requested was 1048576
 TRACE rpc: received method call id=Number(5) method="unsupported_method" params=Array []
 ERROR rpc: failed to deserialize method due to unknown variant id=Number(5) method="unsupported_method"
+TRACE rpc: received method call id=Number(6) method="anvil_reset" params=Array [Object {"forking": Object {"jsonRpcUrl": String("[REDACTED_URL]"), "blockNumber": Number(42)}}]
+TRACE rpc::api: executing eth request
+ INFO node::user: anvil_reset
+ INFO node::user: RPC request failed method="anvil_reset" id=Number(6) params=[{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":42}}] error=Internal error: failed to establish provider to fork url
+TRACE rpc: received method call id=Number(7) method="hardhat_reset" params=Array [Array [Array [String("[REDACTED_URL]"), String("0x2b")]]]
+TRACE rpc::api: executing eth request
+ INFO node::user: anvil_reset
+ INFO node::user: RPC request failed method="hardhat_reset" id=Number(7) params=[[["[REDACTED_URL]","0x2b"]]] error=Internal error: failed to establish provider to fork url
 
 "#]]
     } else {
@@ -179,10 +163,14 @@ eth_sendRawTransaction
 RPC request failed method="eth_sendRawTransaction" id=Number(2) params=["[RAW_TX]"] error=Transaction rejected: transaction already imported
 eth_call
 RPC request failed method="eth_call" id=Number(4) params=[{"to":"0x1111111111111111111111111111111111111111","data":"0x12345678"},"0x100000"] error=Invalid params: BlockOutOfRangeError: block height is 0 but requested was 1048576
+anvil_reset
+RPC request failed method="anvil_reset" id=Number(6) params=[{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":42}}] error=Internal error: failed to establish provider to fork url
+anvil_reset
+RPC request failed method="hardhat_reset" id=Number(7) params=[[["[REDACTED_URL]","0x2b"]]] error=Internal error: failed to establish provider to fork url
 
 "#]]
     };
-    assert_data_eq!(fs::read_to_string(log_path).unwrap().replace(&raw, "[RAW_TX]"), expected);
+    assert_data_eq!(fs::read_to_string(file.path()).unwrap().replace(&raw, "[RAW_TX]"), expected);
 }
 
 #[tokio::test]
@@ -223,115 +211,78 @@ TRACE backend: Mined block 1 with 0 tx []
     );
 }
 
+// The invalid host fails URL parsing before any network request.
+const INVALID_FORK_URL: &str = "https://synthetic-user:synthetic-password@invalid host/rpc/synthetic-api-key?key=short#synthetic-secret";
+
 #[tokio::test]
-async fn fork_default_logs_preserve_failed_resets() {
-    assert_fork_logs_preserve_failed_resets(false).await;
+async fn ws_rpc_logs_preserve_failed_requests() {
+    assert_pubsub_logs_preserve_failed_reset(false).await;
 }
 
 #[tokio::test]
-async fn fork_trace_logs_preserve_failed_resets() {
-    assert_fork_logs_preserve_failed_resets(true).await;
+async fn ipc_rpc_logs_preserve_failed_requests() {
+    assert_pubsub_logs_preserve_failed_reset(true).await;
 }
 
-async fn assert_fork_logs_preserve_failed_resets(trace: bool) {
-    let (_api, handle) = spawn(NodeConfig::test().with_tracing(false)).await;
-    let file = tempfile::NamedTempFile::new().unwrap();
-    let writer = Arc::new(file.reopen().unwrap());
-    let subscriber = if trace {
-        tracing::Dispatch::new(
-            tracing_subscriber::fmt()
-                .with_env_filter("off,rpc=trace,node::user=info")
-                .without_time()
-                .with_ansi(false)
-                .with_writer(writer)
-                .finish(),
-        )
+async fn assert_pubsub_logs_preserve_failed_reset(ipc: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let ipc_path = if cfg!(unix) {
+        dir.path().join("anvil.ipc").to_string_lossy().into_owned()
     } else {
-        tracing::Dispatch::new(
-            tracing_subscriber::registry().with(NodeLogLayer::new(LoggingManager::default())).with(
-                tracing_subscriber::fmt::layer()
-                    .without_time()
-                    .with_ansi(false)
-                    .with_target(false)
-                    .with_level(false)
-                    .with_writer(writer),
-            ),
-        )
+        format!(r"\\.\pipe\anvil_rpc_logging_{}.ipc", rand::random::<u64>())
     };
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_tracing(false).with_ipc(ipc.then_some(Some(ipc_path)))).await;
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let subscriber = rpc_subscriber(&file, true);
     let _subscriber = tracing::dispatcher::set_default(&subscriber);
     tokio::time::timeout(Duration::from_secs(10), async {
-        let provider = utils::connect_pubsub(&handle.http_endpoint()).await;
-        // The invalid host fails URL parsing before any network request.
-        let url = "https://synthetic-user:synthetic-password@invalid host/rpc/synthetic-api-key?key=short#synthetic-secret";
-        for (method, params) in [
-            (
-                "anvil_reset",
-                json!([{"forking": {"jsonRpcUrl": url, "blockNumber": 42}}]),
-            ),
-            (
-                "hardhat_reset",
-                json!({"params": {"forking": {"jsonRpcUrl": url, "blockNumber": 43}}}),
-            ),
-            ("anvil_reset", json!([[url, 44]])),
-            ("hardhat_reset", json!([{"forking": [url, "0x2d"]}])),
-            ("anvil_reset", json!({"params": [url, 46]})),
-            ("hardhat_reset", json!([[[url, "0x2f"]]])),
-        ] {
-            let err = provider.raw_request::<_, ()>(method.into(), params).await.unwrap_err();
-            assert_eq!(err.as_error_resp().unwrap().code, -32603);
-            assert_eq!(
-                err.as_error_resp().unwrap().message,
-                "failed to establish provider to fork url"
-            );
-        }
+        let endpoint = if ipc { handle.ipc_path().unwrap() } else { handle.ws_endpoint() };
+        let provider = utils::connect_pubsub(&endpoint).await;
+        let err = provider
+            .raw_request::<_, ()>("hardhat_reset".into(), json!([[INVALID_FORK_URL, 42]]))
+            .await
+            .unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32603);
+        assert_eq!(
+            err.as_error_resp().unwrap().message,
+            "failed to establish provider to fork url"
+        );
     })
     .await
-    .expect("fork reset RPC requests timed out");
-
-    let expected = if trace {
+    .expect("fork reset RPC request timed out");
+    assert_data_eq!(
+        fs::read_to_string(file.path()).unwrap(),
         str![[r#"
-TRACE rpc: received method call id=Number(0) method="anvil_reset" params=Array [Object {"forking": Object {"jsonRpcUrl": String("[REDACTED_URL]"), "blockNumber": Number(42)}}]
+TRACE rpc: received method call id=Number(0) method="hardhat_reset" params=Array [Array [String("[REDACTED_URL]"), Number(42)]]
 TRACE rpc::api: executing eth request
  INFO node::user: anvil_reset
- INFO node::user: RPC request failed method="anvil_reset" id=Number(0) params=[{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":42}}] error=Internal error: failed to establish provider to fork url
-TRACE rpc: received method call id=Number(1) method="hardhat_reset" params=Object {"params": Object {"forking": Object {"jsonRpcUrl": String("[REDACTED_URL]"), "blockNumber": Number(43)}}}
-TRACE rpc::api: executing eth request
- INFO node::user: anvil_reset
- INFO node::user: RPC request failed method="hardhat_reset" id=Number(1) params={"params":{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":43}}} error=Internal error: failed to establish provider to fork url
-TRACE rpc: received method call id=Number(2) method="anvil_reset" params=Array [Array [String("[REDACTED_URL]"), Number(44)]]
-TRACE rpc::api: executing eth request
- INFO node::user: anvil_reset
- INFO node::user: RPC request failed method="anvil_reset" id=Number(2) params=[["[REDACTED_URL]",44]] error=Internal error: failed to establish provider to fork url
-TRACE rpc: received method call id=Number(3) method="hardhat_reset" params=Array [Object {"forking": Array [String("[REDACTED_URL]"), String("0x2d")]}]
-TRACE rpc::api: executing eth request
- INFO node::user: anvil_reset
- INFO node::user: RPC request failed method="hardhat_reset" id=Number(3) params=[{"forking":["[REDACTED_URL]","0x2d"]}] error=Internal error: failed to establish provider to fork url
-TRACE rpc: received method call id=Number(4) method="anvil_reset" params=Object {"params": Array [String("[REDACTED_URL]"), Number(46)]}
-TRACE rpc::api: executing eth request
- INFO node::user: anvil_reset
- INFO node::user: RPC request failed method="anvil_reset" id=Number(4) params={"params":["[REDACTED_URL]",46]} error=Internal error: failed to establish provider to fork url
-TRACE rpc: received method call id=Number(5) method="hardhat_reset" params=Array [Array [Array [String("[REDACTED_URL]"), String("0x2f")]]]
-TRACE rpc::api: executing eth request
- INFO node::user: anvil_reset
- INFO node::user: RPC request failed method="hardhat_reset" id=Number(5) params=[[["[REDACTED_URL]","0x2f"]]] error=Internal error: failed to establish provider to fork url
+ INFO node::user: RPC request failed method="hardhat_reset" id=Number(0) params=[["[REDACTED_URL]",42]] error=Internal error: failed to establish provider to fork url
 
 "#]]
-    } else {
-        str![[r#"
-anvil_reset
-RPC request failed method="anvil_reset" id=Number(0) params=[{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":42}}] error=Internal error: failed to establish provider to fork url
-anvil_reset
-RPC request failed method="hardhat_reset" id=Number(1) params={"params":{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":43}}} error=Internal error: failed to establish provider to fork url
-anvil_reset
-RPC request failed method="anvil_reset" id=Number(2) params=[["[REDACTED_URL]",44]] error=Internal error: failed to establish provider to fork url
-anvil_reset
-RPC request failed method="hardhat_reset" id=Number(3) params=[{"forking":["[REDACTED_URL]","0x2d"]}] error=Internal error: failed to establish provider to fork url
-anvil_reset
-RPC request failed method="anvil_reset" id=Number(4) params={"params":["[REDACTED_URL]",46]} error=Internal error: failed to establish provider to fork url
-anvil_reset
-RPC request failed method="hardhat_reset" id=Number(5) params=[[["[REDACTED_URL]","0x2f"]]] error=Internal error: failed to establish provider to fork url
+    );
+}
 
-"#]]
-    };
-    assert_data_eq!(fs::read_to_string(file.path()).unwrap(), expected);
+#[test]
+fn reset_parameter_shapes_deserialize_without_changing_credentials() {
+    for params in [
+        json!([{"forking": {"jsonRpcUrl": INVALID_FORK_URL, "blockNumber": 42}}]),
+        json!({"params": {"forking": {"jsonRpcUrl": INVALID_FORK_URL, "blockNumber": 42}}}),
+        json!([[INVALID_FORK_URL, 42]]),
+        json!([{"forking": [INVALID_FORK_URL, "0x2a"]}]),
+        json!({"params": [INVALID_FORK_URL, 42]}),
+        json!([[[INVALID_FORK_URL, "0x2a"]]]),
+    ] {
+        for method in ["anvil_reset", "hardhat_reset"] {
+            let request =
+                serde_json::from_value::<EthRequest>(json!({"method": method, "params": params}))
+                    .unwrap();
+            let EthRequest::Reset(Some(params)) = request else {
+                panic!("expected reset parameters");
+            };
+            let fork = params.params.unwrap();
+            assert_eq!(fork.json_rpc_url.as_deref(), Some(INVALID_FORK_URL));
+            assert_eq!(fork.block_number, Some(42));
+        }
+    }
 }

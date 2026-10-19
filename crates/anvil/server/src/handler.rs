@@ -127,9 +127,6 @@ mod tests {
         Allowed,
     }
 
-    #[derive(Clone)]
-    struct TypedHandler;
-
     #[derive(Clone, Default)]
     struct ErrorHandler {
         errors: Arc<Mutex<Vec<RecordedError>>>,
@@ -151,20 +148,12 @@ mod tests {
         }
     }
 
-    impl RpcHandler for TypedHandler {
+    impl RpcHandler for ErrorHandler {
         type Request = TypedRequest;
 
         async fn on_request(&self, request: Self::Request) -> ResponseResult {
             let TypedRequest::Known(params) = request;
             drop(params);
-            ResponseResult::success(())
-        }
-    }
-
-    impl RpcHandler for ErrorHandler {
-        type Request = TypedRequest;
-
-        async fn on_request(&self, _request: Self::Request) -> ResponseResult {
             ResponseResult::Error(RpcError::internal_error())
         }
 
@@ -247,18 +236,20 @@ mod tests {
     }
 
     #[test]
-    fn distinguishes_unknown_methods_from_unknown_parameter_variants() {
-        let unknown_method = run_ready(TypedHandler.on_call(typed_call("unknown")));
-        let invalid_params = run_ready(TypedHandler.on_call(typed_call("known")));
+    fn distinguishes_deserialization_errors_without_invoking_error_hook() {
+        let handler = ErrorHandler::default();
+        let invalid_params = run_ready(handler.on_call(typed_call("known")));
+        let unknown_method = run_ready(handler.on_call(typed_call("unknown")));
 
         assert_eq!(
-            serde_json::to_value(unknown_method).unwrap()["error"]["code"],
-            serde_json::json!(-32601)
+            invalid_params,
+            RpcResponse::new(
+                Id::Number(1),
+                RpcError::invalid_params("unknown variant `bogus`, expected `allowed`")
+            )
         );
-        assert_eq!(
-            serde_json::to_value(invalid_params).unwrap()["error"]["code"],
-            serde_json::json!(-32602)
-        );
+        assert_eq!(unknown_method, RpcResponse::new(Id::Number(1), RpcError::method_not_found()));
+        assert!(handler.errors.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -344,23 +335,6 @@ mod tests {
                 RpcError::internal_error()
             )]
         );
-    }
-
-    #[test]
-    fn request_error_hook_excludes_deserialization_errors() {
-        let handler = ErrorHandler::default();
-        let invalid_params = run_ready(handler.on_call(typed_call("known")));
-        let unknown_method = run_ready(handler.on_call(typed_call("unknown")));
-
-        assert_eq!(
-            invalid_params,
-            RpcResponse::new(
-                Id::Number(1),
-                RpcError::invalid_params("unknown variant `bogus`, expected `allowed`")
-            )
-        );
-        assert_eq!(unknown_method, RpcResponse::new(Id::Number(1), RpcError::method_not_found()));
-        assert!(handler.errors.lock().unwrap().is_empty());
     }
 
     #[test]
