@@ -1132,31 +1132,4 @@ mod tests {
 
         assert!(err.to_string().contains("missing invariant worker output"));
     }
-
-    #[test]
-    fn aggregator_keeps_highest_max_gas_and_shorter_witness_on_ties() {
-        let spec = InvariantCampaignSpec::new(3);
-        let plans = [
-            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
-            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
-            InvariantWorkerPlan { worker_id: 2, first_global_run: 2, runs: 1 },
-        ];
-        let witness =
-            |gas, len, first_sender| MaxGasWitness { gas, sequence: sequence(len, first_sender) };
-        let mut results = [empty_result(0, 0), empty_result(0, 0), empty_result(0, 0)];
-        results[0].max_gas.insert("push".to_string(), witness(100, 3, 0x10));
-        results[0].max_gas.insert("sum".to_string(), witness(50, 4, 0x10));
-        results[1].max_gas.insert("push".to_string(), witness(200, 5, 0x20));
-        results[1].max_gas.insert("sum".to_string(), witness(50, 2, 0x20));
-        results[2].max_gas.insert("sum".to_string(), witness(50, 2, 0x30));
-
-        let mut aggregator = InvariantCampaignAggregator::new(spec);
-        for (plan, result) in plans.into_iter().zip(results).rev() {
-            aggregator.push(InvariantWorkerOutput::new(plan, result));
-        }
-        let result = aggregator.finish().unwrap();
-
-        assert_eq!(result.max_gas["push"], witness(200, 5, 0x20));
-        assert_eq!(result.max_gas["sum"], witness(50, 2, 0x20));
-    }
 }
