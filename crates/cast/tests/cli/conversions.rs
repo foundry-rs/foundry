@@ -42,12 +42,15 @@ fn rlp(cmd: _) {
     cmd.cast_fuse().args(["from-rlp", "820002"]).assert_success().stdout_eq("\"0x0002\"\n");
     cmd.cast_fuse().args(["from-rlp", "00"]).assert_success().stdout_eq("\"0x00\"\n");
     cmd.cast_fuse().args(["from-rlp", "0xc0c0"]).assert_failure().stderr_eq(str![[r#"
-Error: Could not decode rlp: 1 trailing byte(s)
+Error: Could not decode rlp
+
+Context:
+- unexpected length
 
 "#]]);
     cmd.cast_fuse().args(["from-rlp", "--as-int", "0x0102"]).assert_failure().stderr_eq(str![[
         r#"
-Error: Could not decode rlp: 1 trailing byte(s)
+Error: unexpected length
 
 "#
     ]]);
