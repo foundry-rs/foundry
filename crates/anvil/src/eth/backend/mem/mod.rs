@@ -1414,27 +1414,27 @@ impl<N: Network> Backend<N> {
 
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::LONDON as u8)
+        self.spec_id().is_enabled_in(SpecId::LONDON)
     }
 
     /// Returns true for post Merge
     pub fn is_eip3675(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::MERGE as u8)
+        self.spec_id().is_enabled_in(SpecId::MERGE)
     }
 
     /// Returns true for post Berlin
     pub fn is_eip2930(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
+        self.spec_id().is_enabled_in(SpecId::BERLIN)
     }
 
     /// Returns true for post Cancun
     pub fn is_eip4844(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::CANCUN as u8)
+        self.spec_id().is_enabled_in(SpecId::CANCUN)
     }
 
     /// Returns true for post Prague
     pub fn is_eip7702(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
+        self.spec_id().is_enabled_in(SpecId::PRAGUE)
     }
 
     /// Returns true if op-stack deposits are active.
@@ -10314,6 +10314,8 @@ pub fn transaction_build(
 
         match maybe_deposit_fields {
             Ok(mut fields) => {
+                fields.remove("hash");
+                fields.remove("from");
                 // Add zeroed signature fields for backwards compatibility
                 // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
                 fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
@@ -10358,9 +10360,15 @@ pub fn transaction_build(
                 .expect("could not serialize canonical EIP-8130 transaction"),
         )
         .expect("EIP-8130 transaction must serialize to an object");
-        for key in
-            ["hash", "from", "blockHash", "blockNumber", "transactionIndex", "effectiveGasPrice"]
-        {
+        for key in [
+            "hash",
+            "type",
+            "from",
+            "blockHash",
+            "blockNumber",
+            "transactionIndex",
+            "effectiveGasPrice",
+        ] {
             fields.remove(key);
         }
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
@@ -10397,7 +10405,8 @@ pub fn transaction_build(
         let maybe_tempo_fields = OtherFields::try_from(ser);
 
         match maybe_tempo_fields {
-            Ok(fields) => {
+            Ok(mut fields) => {
+                fields.remove("hash");
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(TEMPO_TX_TYPE_ID),
                     fields,

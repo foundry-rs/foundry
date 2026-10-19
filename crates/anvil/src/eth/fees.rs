@@ -293,17 +293,17 @@ impl FeeManager {
 
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.state.read().rules.spec_id as u8) >= (SpecId::LONDON as u8)
+        self.state.read().rules.spec_id.is_enabled_in(SpecId::LONDON)
     }
 
     pub fn is_eip4844(&self) -> bool {
-        (self.state.read().rules.spec_id as u8) >= (SpecId::CANCUN as u8)
+        self.state.read().rules.spec_id.is_enabled_in(SpecId::CANCUN)
     }
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+        if state.rules.spec_id.is_enabled_in(SpecId::CANCUN) {
             state.blob_excess_gas_and_price.blob_gasprice
         } else {
             0
@@ -312,7 +312,7 @@ impl FeeManager {
 
     pub fn base_fee(&self) -> u64 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 }
+        if state.rules.spec_id.is_enabled_in(SpecId::LONDON) { state.base_fee } else { 0 }
     }
 
     pub const fn is_min_priority_fee_enforced(&self) -> bool {
@@ -326,13 +326,12 @@ impl FeeManager {
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
         let state = self.state.read();
-        ((state.rules.spec_id as u8) >= (SpecId::CANCUN as u8))
-            .then_some(state.blob_excess_gas_and_price)
+        state.rules.spec_id.is_enabled_in(SpecId::CANCUN).then_some(state.blob_excess_gas_and_price)
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+        if state.rules.spec_id.is_enabled_in(SpecId::CANCUN) {
             state.blob_excess_gas_and_price.blob_gasprice
         } else {
             0
@@ -367,7 +366,7 @@ impl FeeManager {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.is_enabled_in(SpecId::LONDON) || state.base_fee == 0 {
             return 0;
         }
         calculate_next_block_base_fee_per_gas(state.rules, gas_used, gas_limit, last_fee_per_gas)
@@ -376,7 +375,7 @@ impl FeeManager {
     /// Calculates the next block base fee from a complete parent header.
     pub(crate) fn get_next_block_base_fee_from_header<H: BlockHeader>(&self, header: &H) -> u64 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.is_enabled_in(SpecId::LONDON) || state.base_fee == 0 {
             return 0;
         }
         calculate_parent_header_fees(state.rules, header).base_fee
@@ -387,7 +386,7 @@ impl FeeManager {
     pub(crate) fn get_parent_header_fees<H: BlockHeader>(&self, header: &H) -> ParentHeaderFees {
         let state = self.state.read();
         let mut fees = calculate_parent_header_fees(state.rules, header);
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.is_enabled_in(SpecId::LONDON) || state.base_fee == 0 {
             fees.base_fee = 0;
         }
         fees
@@ -400,7 +399,7 @@ impl FeeManager {
         header: &H,
     ) -> u64 {
         let rules = self.state.read().rules;
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+        if !rules.spec_id.is_enabled_in(SpecId::LONDON) {
             return 0;
         }
         calculate_parent_header_fees(rules, header).base_fee
@@ -414,7 +413,7 @@ impl FeeManager {
     ) -> ParentHeaderFees {
         let rules = self.state.read().rules;
         let mut fees = calculate_parent_header_fees(rules, header);
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+        if !rules.spec_id.is_enabled_in(SpecId::LONDON) {
             fees.base_fee = 0;
         }
         fees
