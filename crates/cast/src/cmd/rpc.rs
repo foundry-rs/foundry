@@ -1,8 +1,15 @@
 use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{json::print_json_value_or_scalar, opts::RpcOpts, utils, utils::LoadConfig};
+use foundry_cli::{
+    json::{print_json_success, print_json_value_or_scalar},
+    opts::RpcOpts,
+    utils,
+    utils::LoadConfig,
+};
+use foundry_common::shell;
 use itertools::Itertools;
+use serde_json::value::RawValue;
 
 /// CLI arguments for `cast rpc`.
 #[derive(Clone, Debug, Parser)]
@@ -50,10 +57,22 @@ impl RpcArgs {
         };
 
         let result = utils::get_provider(&config)?
-            .raw_request::<_, serde_json::Value>(method.into(), params)
+            .raw_request::<_, Box<RawValue>>(method.into(), params)
             .await?;
-        let result = serde_json::to_string(&result)?;
-        print_json_value_or_scalar(result)
+
+        // Print the result as the node sent it, which avoids a `Value` tree of large results.
+        // JSON strings cannot contain raw newlines, so a newline means the node formatted the
+        // result over several lines: compact it through a `Value` to keep one line of output.
+        if result.get().contains('\n') {
+            let result = serde_json::from_str::<serde_json::Value>(result.get())?;
+            return print_json_value_or_scalar(result.to_string());
+        }
+        if shell::is_json() {
+            print_json_success(&*result)
+        } else {
+            sh_println!("{}", result.get())?;
+            Ok(())
+        }
     }
 }
 
