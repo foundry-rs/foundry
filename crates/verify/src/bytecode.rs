@@ -901,8 +901,7 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
         } = self;
         // Keep the network-native transaction and replace only its sender and input.
         let mut tx: TransactionRequestFor<FEN> = FEN::envelope_from_any_rpc(&transaction)?.into();
-        // Alloy's Ethereum envelope conversion maps CREATE to an unspecified destination, but
-        // building a request requires an explicit kind. Native batches keep their own call list.
+        // Restore CREATE's kind only for Ethereum envelopes, preserving native batches.
         if let Some(envelope) = transaction.as_envelope() {
             tx.set_kind(envelope.kind());
         }
