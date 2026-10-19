@@ -3975,12 +3975,6 @@ impl EthApi<FoundryNetwork> {
         if to_block > best {
             return Err(BlockchainError::BlockOutOfRange(best, to_block));
         }
-        let from_block =
-            self.backend.convert_block_number(filter.block_option.get_from_block().copied());
-        if from_block > to_block {
-            return Err(RpcError::invalid_params("invalid block range params").into());
-        }
-
         self.backend.logs(filter).await
     }
 
@@ -3989,12 +3983,6 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_newFilter`
     pub async fn new_filter(&self, filter: Filter) -> Result<String> {
         node_info!("eth_newFilter");
-        if let Some(from) = filter.block_option.get_from_block().and_then(|b| b.as_number())
-            && let Some(to) = filter.block_option.get_to_block().and_then(|b| b.as_number())
-            && from > to
-        {
-            return Err(RpcError::invalid_params("invalid block range params").into());
-        }
         // Valid future ranges have no historic logs to seed yet.
         let historic = match filter.block_option.get_from_block() {
             Some(BlockNumber::Number(from))
