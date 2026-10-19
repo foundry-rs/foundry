@@ -24,15 +24,17 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 /// Redacts sensitive information from RPC request parameters for TRACE logging.
 ///
 /// This function redacts:
-/// - Fork URLs in `anvil_reset` and `anvil_setRpcUrl` methods
-/// - Signed transaction data in `eth_sendRawTransaction*` methods
+/// - Fork URLs in `anvil_reset`, `hardhat_reset`, and `anvil_setRpcUrl` methods.
+/// - Signed transaction data in submission, signing, classification, and tracing methods.
 fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value {
     match method {
         // Redact signed transaction data, but keep transaction hashes visible
         "eth_sendRawTransaction"
         | "eth_sendRawTransactionSync"
         | "eth_sendRawTransactionConditional"
-        | "eth_signRawTransaction" => {
+        | "eth_signRawTransaction"
+        | "anvil_classifyTransaction"
+        | "trace_rawTransaction" => {
             if let Some(array) = params.as_array() {
                 if array.is_empty() {
                     params.clone()
@@ -92,9 +94,13 @@ fn redact_fork_params(param: &mut serde_json::Value) {
     }
 }
 
-/// Keeps only the URL's scheme, host, and port, matching Foundry's provider URL redaction.
+/// Keeps only the URL's scheme, host, and port, or fully redacts URLs without a host.
 fn redact_url_credentials(url: &str) -> String {
     let Ok(mut parsed) = url::Url::parse(url) else { return "[REDACTED_URL]".to_string() };
+    // A scheme-less credential string can parse with its username as the scheme.
+    if parsed.host().is_none() {
+        return "[REDACTED_URL]".to_string();
+    }
     // Credentials can occur in userinfo, paths, queries, or fragments regardless of length.
     let _ = parsed.set_username("");
     let _ = parsed.set_password(None);
@@ -366,6 +372,53 @@ mod tests {
                 let mut redacted = params.clone();
                 redact_fork_credentials(method, &mut redacted);
                 assert_eq!(redacted, params);
+            }
+        }
+    }
+
+    #[test]
+    fn redacts_classification_and_trace_transactions() {
+        for (method, params, expected) in [
+            ("anvil_classifyTransaction", json!(["0x12345678"]), json!(["[SIGNED_TX]"])),
+            (
+                "trace_rawTransaction",
+                json!(["0x12345678", ["trace", "stateDiff"], "0x2a"]),
+                json!(["[SIGNED_TX]", ["trace", "stateDiff"], "0x2a"]),
+            ),
+            (
+                "trace_rawTransaction",
+                json!(["0x12345678", ["trace"]]),
+                json!(["[SIGNED_TX]", ["trace"]]),
+            ),
+        ] {
+            assert_eq!(redact_params(method, &params), expected);
+            let mut failed_params = params.clone();
+            redact_fork_credentials(method, &mut failed_params);
+            assert_eq!(failed_params, params);
+        }
+    }
+
+    #[test]
+    fn redacts_hostless_fork_urls() {
+        for url in ["mykey:secret@example.invalid/rpc/key", "mykey:/secret@example.invalid/rpc/key"]
+        {
+            for (method, params, expected) in [
+                ("anvil_setRpcUrl", json!([url]), json!(["[REDACTED_URL]"])),
+                (
+                    "anvil_reset",
+                    json!([{"forking": {"jsonRpcUrl": url, "blockNumber": 42}}]),
+                    json!([{"forking": {"jsonRpcUrl": "[REDACTED_URL]", "blockNumber": 42}}]),
+                ),
+                (
+                    "hardhat_reset",
+                    json!({"params": [url, "0x2a"]}),
+                    json!({"params": ["[REDACTED_URL]", "0x2a"]}),
+                ),
+            ] {
+                assert_eq!(redact_params(method, &params), expected);
+                let mut failed_params = params.clone();
+                redact_fork_credentials(method, &mut failed_params);
+                assert_eq!(failed_params, expected);
             }
         }
     }
