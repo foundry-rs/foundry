@@ -346,7 +346,11 @@ pub struct HitMap {
     /// collector runs and moved into `hits` by [`Self::flush`].
     pending: Vec<u32>,
     /// Program counters with a non-zero counter in `pending`, in order of their first hit.
-    pending_pcs: Vec<u32>,
+    ///
+    /// `pending` is as long as the bytecode, but a call usually runs only a small part of it.
+    /// [`Self::flush`] visits only these program counters, so its cost follows the executed
+    /// instructions and not the bytecode size.
+    hit_pcs: Vec<u32>,
     bytecode: Bytes,
     creations: u32,
     empty_calls: CallHits,
@@ -362,7 +366,7 @@ impl HitMap {
             bytecode,
             hits: Default::default(),
             pending: Vec::new(),
-            pending_pcs: Vec::new(),
+            hit_pcs: Vec::new(),
             creations: 0,
             empty_calls: Default::default(),
             short_calls: Default::default(),
@@ -401,7 +405,7 @@ impl HitMap {
     pub(crate) fn record(&mut self, pc: usize) {
         if let Some(hits) = self.pending.get_mut(pc) {
             if *hits == 0 {
-                self.pending_pcs.push(pc as u32);
+                self.hit_pcs.push(pc as u32);
             }
             *hits += 1;
         } else {
@@ -420,9 +424,9 @@ impl HitMap {
     /// Moves the hits recorded by [`Self::record`] into the hit counters.
     pub(crate) fn flush(&mut self) {
         let pending = std::mem::take(&mut self.pending);
-        let pending_pcs = std::mem::take(&mut self.pending_pcs);
-        self.reserve(pending_pcs.len());
-        for pc in pending_pcs {
+        let hit_pcs = std::mem::take(&mut self.hit_pcs);
+        self.reserve(hit_pcs.len());
+        for pc in hit_pcs {
             self.hits(pc, pending[pc as usize]);
         }
     }
