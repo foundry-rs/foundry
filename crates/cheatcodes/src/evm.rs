@@ -2064,7 +2064,7 @@ fn transaction_accounts(state: &State<'_>) -> AddressSet {
         .collect()
 }
 
-/// Returns known storage slots that are loaded in the running transaction.
+/// Returns known slots loaded by the current transaction.
 pub(crate) fn loaded_slots(state: &State<'_>, address: &Address) -> Vec<U256> {
     let mut slots = state
         .overlay_db()
@@ -2084,8 +2084,7 @@ pub(crate) fn loaded_slots(state: &State<'_>, address: &Address) -> Vec<U256> {
     }));
     slots.sort_unstable();
     slots.dedup();
-    // Snapshotting can materialize setup state into the overlay. Those cached slots are not
-    // transaction-loaded storage unless this execution has actually read or written them.
+    // Exclude setup-only slots materialized by snapshots.
     slots.retain(|slot| state.get_storage(address, slot).is_some());
     slots
 }

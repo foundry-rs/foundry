@@ -155,8 +155,7 @@ contract CopyStorageTest is Test {
     }
 }
 
-/// Storage discovery includes slots the test loaded, but not slots only written in `setUp`, even
-/// after a snapshot materializes setup state.
+/// Setup-only slots stay excluded after snapshot materialization.
 contract CopyStorageLoadedSlotsTest is Test {
     address constant source = address(0x10000);
 

@@ -142,8 +142,7 @@ impl<N: Network, B: ForkBlockEnv> DynDatabase for ForkDb<SharedBackend<N, B>> {
     }
 
     fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
-        // RPC has no hash-only code lookup. The native fork cache keeps code inline in its
-        // accounts, whereas evm2 strips it from loaded metadata and subsequently asks by hash.
+        // RPC cannot fetch code by hash; the fork cache stores it inline.
         if let Some(code) =
             self.db.data().accounts.read().values().find_map(|info| {
                 (info.code_hash == *code_hash).then(|| info.code.clone()).flatten()
