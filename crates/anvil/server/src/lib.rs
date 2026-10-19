@@ -57,6 +57,7 @@ fn redact_params(method: &str, params: &serde_json::Value) -> serde_json::Value 
 }
 
 /// Redacts fork credentials while preserving the rest of a failed request dump.
+/// Signed transactions remain available in failed dumps for reproduction.
 fn redact_fork_credentials(method: &str, params: &mut serde_json::Value) {
     match method {
         "anvil_reset" | "hardhat_reset" => redact_fork_params(params),
@@ -69,21 +70,24 @@ fn redact_fork_credentials(method: &str, params: &mut serde_json::Value) {
     }
 }
 
-/// Redacts fork URLs in array, object, and wrapped `params` forms of a reset request.
+/// Follows reset wrappers and positional URL slots while preserving other fields.
 fn redact_fork_params(param: &mut serde_json::Value) {
     match param {
-        serde_json::Value::Array(array) => array.iter_mut().for_each(redact_fork_params),
+        serde_json::Value::Array(array) => {
+            // Serde accepts Params, tagged forking, and ForkOpts as sequences. Their first
+            // element is the next wrapper or the URL; the block number follows the URL.
+            if let Some(first) = array.first_mut() {
+                redact_fork_params(first);
+            }
+        }
         serde_json::Value::Object(object) => {
             for (key, value) in object {
-                if key == "jsonRpcUrl"
-                    && let serde_json::Value::String(url) = value
-                {
-                    *url = redact_url_credentials(url);
-                } else {
+                if matches!(key.as_str(), "params" | "forking" | "jsonRpcUrl") {
                     redact_fork_params(value);
                 }
             }
         }
+        serde_json::Value::String(url) => *url = redact_url_credentials(url),
         _ => {}
     }
 }
@@ -321,5 +325,48 @@ mod tests {
             redact_params("eth_sendRawTransactionSync", &raw_params),
             json!(["[SIGNED_TX]", 5000])
         );
+    }
+
+    #[test]
+    fn redacts_positional_reset_credentials() {
+        for (url, safe_url) in [
+            (
+                "https://user:pass@example.invalid:8545/key?token=x#secret",
+                "https://example.invalid:8545/",
+            ),
+            ("https://user:pass@invalid host/secret", "[REDACTED_URL]"),
+        ] {
+            for (params, expected) in [
+                (json!([[url, "0x2a"]]), json!([[safe_url, "0x2a"]])),
+                (json!([{"forking": [url, 42]}]), json!([{"forking": [safe_url, 42]}])),
+                (json!({"params": [url, 42]}), json!({"params": [safe_url, 42]})),
+                (json!([[[url, 42]]]), json!([[[safe_url, 42]]])),
+                (json!({"params": [[url, 42]]}), json!({"params": [[safe_url, 42]]})),
+                (json!([[url]]), json!([[safe_url]])),
+            ] {
+                for method in ["anvil_reset", "hardhat_reset"] {
+                    assert_eq!(redact_params(method, &params), expected);
+                    let mut redacted = params.clone();
+                    redact_fork_credentials(method, &mut redacted);
+                    assert_eq!(redacted, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_reset_block_numbers_and_extra_fields() {
+        for params in [
+            json!([[null, "0x2a"]]),
+            json!({"params": {"blockNumber": "0x2a", "extra": ["diagnostic"]}}),
+            json!({"params": {"forking": [null, 42], "extra": ["diagnostic"]}}),
+        ] {
+            for method in ["anvil_reset", "hardhat_reset"] {
+                assert_eq!(redact_params(method, &params), params);
+                let mut redacted = params.clone();
+                redact_fork_credentials(method, &mut redacted);
+                assert_eq!(redacted, params);
+            }
+        }
     }
 }

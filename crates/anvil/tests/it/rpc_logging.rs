@@ -272,6 +272,10 @@ async fn assert_fork_logs_preserve_failed_resets(trace: bool) {
                 "hardhat_reset",
                 json!({"params": {"forking": {"jsonRpcUrl": url, "blockNumber": 43}}}),
             ),
+            ("anvil_reset", json!([[url, 44]])),
+            ("hardhat_reset", json!([{"forking": [url, "0x2d"]}])),
+            ("anvil_reset", json!({"params": [url, 46]})),
+            ("hardhat_reset", json!([[[url, "0x2f"]]])),
         ] {
             let err = provider.raw_request::<_, ()>(method.into(), params).await.unwrap_err();
             assert_eq!(err.as_error_resp().unwrap().code, -32603);
@@ -294,6 +298,22 @@ TRACE rpc: received method call id=Number(1) method="hardhat_reset" params=Objec
 TRACE rpc::api: executing eth request
  INFO node::user: anvil_reset
  INFO node::user: RPC request failed method="hardhat_reset" id=Number(1) params={"params":{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":43}}} error=Internal error: failed to establish provider to fork url
+TRACE rpc: received method call id=Number(2) method="anvil_reset" params=Array [Array [String("[REDACTED_URL]"), Number(44)]]
+TRACE rpc::api: executing eth request
+ INFO node::user: anvil_reset
+ INFO node::user: RPC request failed method="anvil_reset" id=Number(2) params=[["[REDACTED_URL]",44]] error=Internal error: failed to establish provider to fork url
+TRACE rpc: received method call id=Number(3) method="hardhat_reset" params=Array [Object {"forking": Array [String("[REDACTED_URL]"), String("0x2d")]}]
+TRACE rpc::api: executing eth request
+ INFO node::user: anvil_reset
+ INFO node::user: RPC request failed method="hardhat_reset" id=Number(3) params=[{"forking":["[REDACTED_URL]","0x2d"]}] error=Internal error: failed to establish provider to fork url
+TRACE rpc: received method call id=Number(4) method="anvil_reset" params=Object {"params": Array [String("[REDACTED_URL]"), Number(46)]}
+TRACE rpc::api: executing eth request
+ INFO node::user: anvil_reset
+ INFO node::user: RPC request failed method="anvil_reset" id=Number(4) params={"params":["[REDACTED_URL]",46]} error=Internal error: failed to establish provider to fork url
+TRACE rpc: received method call id=Number(5) method="hardhat_reset" params=Array [Array [Array [String("[REDACTED_URL]"), String("0x2f")]]]
+TRACE rpc::api: executing eth request
+ INFO node::user: anvil_reset
+ INFO node::user: RPC request failed method="hardhat_reset" id=Number(5) params=[[["[REDACTED_URL]","0x2f"]]] error=Internal error: failed to establish provider to fork url
 
 "#]]
     } else {
@@ -302,6 +322,14 @@ anvil_reset
 RPC request failed method="anvil_reset" id=Number(0) params=[{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":42}}] error=Internal error: failed to establish provider to fork url
 anvil_reset
 RPC request failed method="hardhat_reset" id=Number(1) params={"params":{"forking":{"jsonRpcUrl":"[REDACTED_URL]","blockNumber":43}}} error=Internal error: failed to establish provider to fork url
+anvil_reset
+RPC request failed method="anvil_reset" id=Number(2) params=[["[REDACTED_URL]",44]] error=Internal error: failed to establish provider to fork url
+anvil_reset
+RPC request failed method="hardhat_reset" id=Number(3) params=[{"forking":["[REDACTED_URL]","0x2d"]}] error=Internal error: failed to establish provider to fork url
+anvil_reset
+RPC request failed method="anvil_reset" id=Number(4) params={"params":["[REDACTED_URL]",46]} error=Internal error: failed to establish provider to fork url
+anvil_reset
+RPC request failed method="hardhat_reset" id=Number(5) params=[[["[REDACTED_URL]","0x2f"]]] error=Internal error: failed to establish provider to fork url
 
 "#]]
     };
