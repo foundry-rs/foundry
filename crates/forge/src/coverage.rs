@@ -644,7 +644,7 @@ impl CoverageReporter for GapsReporter {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            let uncovered = items
+            let mut uncovered = items
                 .iter()
                 .filter(|item| item.hits == 0)
                 .map(|item| {
@@ -664,11 +664,11 @@ impl CoverageReporter for GapsReporter {
                         .unwrap_or_default()
                         .trim_end();
                     // A line item reuses the location of the first item on its line, so keep only
-                    // that line.
+                    // that line. `lines` is half-open, so subtract 1 to get the last included line.
                     let (line_end, byte_end) = if matches!(item.kind, CoverageItemKind::Line) {
-                        (item.loc.lines.start + 1, item.loc.bytes.start + snippet.len() as u32)
+                        (item.loc.lines.start, item.loc.bytes.start + snippet.len() as u32)
                     } else {
-                        (item.loc.lines.end, item.loc.bytes.end)
+                        (item.loc.lines.end - 1, item.loc.bytes.end)
                     };
                     GapItem {
                         kind,
@@ -684,6 +684,15 @@ impl CoverageReporter for GapsReporter {
                     }
                 })
                 .collect::<Vec<_>>();
+            // Drop statements that only repeat a line item.
+            let lines = uncovered
+                .iter()
+                .filter(|item| item.kind == "line")
+                .map(|item| (item.byte_start, item.byte_end))
+                .collect::<HashSet<_>>();
+            uncovered.retain(|item| {
+                item.kind != "statement" || !lines.contains(&(item.byte_start, item.byte_end))
+            });
             files.insert(path, uncovered);
         }
 
@@ -713,13 +722,13 @@ struct GapItem {
     /// The function that contains the item.
     #[serde(skip_serializing_if = "Option::is_none")]
     function: Option<String>,
-    /// The start of a 1-based, half-open line range.
+    /// The first line of the item, 1-based.
     line_start: u32,
-    /// The end of a 1-based, half-open line range.
+    /// The last line of the item, 1-based and inclusive.
     line_end: u32,
-    /// The start of a 0-based, half-open byte range in the LF-normalized source.
+    /// The start of a 0-based byte range in the LF-normalized source.
     byte_start: u32,
-    /// The end of a 0-based, half-open byte range in the LF-normalized source.
+    /// The end of the byte range, exclusive.
     byte_end: u32,
     /// The first source line of the item.
     snippet: String,

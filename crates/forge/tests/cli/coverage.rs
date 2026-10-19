@@ -4667,7 +4667,7 @@ contract AContractTest {
         "contract": "AContract",
         "function": "set",
         "line_start": 9,
-        "line_end": 14,
+        "line_end": 13,
         "byte_start": 180,
         "byte_end": 266,
         "snippet": "if (x > 10) {",
@@ -4679,17 +4679,7 @@ contract AContractTest {
         "contract": "AContract",
         "function": "set",
         "line_start": 12,
-        "line_end": 13,
-        "byte_start": 246,
-        "byte_end": 255,
-        "snippet": "value = 0"
-      },
-      {
-        "kind": "statement",
-        "contract": "AContract",
-        "function": "set",
-        "line_start": 12,
-        "line_end": 13,
+        "line_end": 12,
         "byte_start": 246,
         "byte_end": 255,
         "snippet": "value = 0"
@@ -4699,7 +4689,7 @@ contract AContractTest {
         "contract": "AContract",
         "function": "check",
         "line_start": 17,
-        "line_end": 18,
+        "line_end": 17,
         "byte_start": 326,
         "byte_end": 348,
         "snippet": "require(x > 0, \"zero\")",
@@ -4711,7 +4701,7 @@ contract AContractTest {
         "contract": "AContract",
         "function": "unused",
         "line_start": 20,
-        "line_end": 21,
+        "line_end": 20,
         "byte_start": 361,
         "byte_end": 387,
         "snippet": "function unused() public {"
@@ -4721,7 +4711,7 @@ contract AContractTest {
         "contract": "AContract",
         "function": "unused",
         "line_start": 20,
-        "line_end": 23,
+        "line_end": 22,
         "byte_start": 361,
         "byte_end": 413,
         "snippet": "function unused() public {"
@@ -4731,17 +4721,7 @@ contract AContractTest {
         "contract": "AContract",
         "function": "unused",
         "line_start": 21,
-        "line_end": 22,
-        "byte_start": 396,
-        "byte_end": 406,
-        "snippet": "value = 42"
-      },
-      {
-        "kind": "statement",
-        "contract": "AContract",
-        "function": "unused",
-        "line_start": 21,
-        "line_end": 22,
+        "line_end": 21,
         "byte_start": 396,
         "byte_end": 406,
         "snippet": "value = 42"
