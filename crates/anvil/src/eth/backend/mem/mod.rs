@@ -10390,6 +10390,8 @@ pub fn transaction_build(
 
         match maybe_deposit_fields {
             Ok(mut fields) => {
+                fields.remove("hash");
+                fields.remove("from");
                 // Add zeroed signature fields for backwards compatibility
                 // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
                 fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
@@ -10434,9 +10436,15 @@ pub fn transaction_build(
                 .expect("could not serialize canonical EIP-8130 transaction"),
         )
         .expect("EIP-8130 transaction must serialize to an object");
-        for key in
-            ["hash", "from", "blockHash", "blockNumber", "transactionIndex", "effectiveGasPrice"]
-        {
+        for key in [
+            "hash",
+            "type",
+            "from",
+            "blockHash",
+            "blockNumber",
+            "transactionIndex",
+            "effectiveGasPrice",
+        ] {
             fields.remove(key);
         }
         let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
@@ -10473,7 +10481,8 @@ pub fn transaction_build(
         let maybe_tempo_fields = OtherFields::try_from(ser);
 
         match maybe_tempo_fields {
-            Ok(fields) => {
+            Ok(mut fields) => {
+                fields.remove("hash");
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(TEMPO_TX_TYPE_ID),
                     fields,
