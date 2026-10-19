@@ -3183,8 +3183,7 @@ fn spawn_backend<FEN: FoundryEvmNetwork>(
     config: &Config,
     evm_opts: &EvmOpts,
 ) -> Result<Backend<FEN>> {
-    // Network state seeded at spawn, such as Base's precompile sentinels, follows the configured
-    // hardfork and the same resolved fork that supplies the backend's remote state.
+    // Configure the hardfork before seeding network state, using the resolved fork.
     let configure_env = |env: &mut _, context| {
         resolve_execution_spec(
             &EvmFactoryFor::<FEN>::default(),

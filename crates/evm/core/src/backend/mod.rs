@@ -171,8 +171,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Self::new(MultiFork::spawn(), fork, env)
     }
 
-    /// Creates a backend from a single resolved fork, configuring its environment before any
-    /// network state is initialized.
+    /// Resolves the fork once, configuring its environment before initializing network state.
     pub fn spawn_fork(
         fork: CreateFork,
         configure_env: impl FnOnce(&mut EvmEnvFor<FEN>, ExecutionSpecContext),
@@ -1162,7 +1161,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(self.insert_prepared_fork(url, resolved, env))
     }
 
-    /// Registers a resolved RPC fork without fetching its block again.
+    /// Registers a resolved fork without refetching its block.
     fn insert_prepared_fork(
         &mut self,
         url: String,

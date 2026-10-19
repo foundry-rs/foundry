@@ -57,7 +57,7 @@ contract CounterTest is Test {
 "#,
     );
     for isolate in [false, true] {
-        // Drop cached mutant results so each mode evaluates every mutant.
+        // Reevaluate all mutants in each mode.
         let _ = fs::remove_dir_all(prj.root().join("cache"));
         cmd.forge_fuse().args([
             "test",
@@ -73,7 +73,7 @@ contract CounterTest is Test {
         if isolate {
             cmd.arg("--isolate");
         }
-        // The survivor proves that setup writes leaking across workers do not kill every mutant.
+        // A survivor rules out kills caused by leaked setup writes.
         cmd.assert_success().stdout_eq(str![[r#"
 ...
 Running mutation tests with 4 parallel workers...
