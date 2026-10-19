@@ -134,8 +134,9 @@ pub struct FuzzCorpusConfig {
     pub corpus_min_size: usize,
     /// Approximate memory budget in MiB for each worker's in-memory corpus. Equal calldata is
     /// shared and counted once. When the corpus grows over this budget, the comparison hints of
-    /// non-favored entries are dropped first, then entries are evicted from memory until it fits
-    /// again. Evicted entries stay on disk. Set to 0 to disable the budget.
+    /// non-favored entries are dropped first, then non-favored entries are evicted from memory,
+    /// the largest and most stale first, until it fits again. Favored entries are never evicted
+    /// for the budget. Evicted entries stay on disk. Set to 0 to disable the budget.
     pub corpus_max_memory_mb: usize,
     /// Whether to collect and display edge coverage metrics.
     pub show_edge_coverage: bool,

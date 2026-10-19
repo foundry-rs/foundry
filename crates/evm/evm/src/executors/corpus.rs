@@ -132,6 +132,10 @@ struct CorpusEntry {
     /// Original filename for an entry imported from another worker.
     #[serde(skip_serializing)]
     persisted_file_name: Option<String>,
+    /// Value of [`WorkerCorpus::mutation_clock`] when this entry was stored or last produced
+    /// new finds as a mutation source.
+    #[serde(skip_serializing)]
+    last_productive_at: u64,
 }
 
 impl CorpusEntry {
@@ -158,6 +162,7 @@ impl CorpusEntry {
                 .expect("time went backwards")
                 .as_secs(),
             persisted_file_name: None,
+            last_productive_at: 0,
         }
     }
 
@@ -207,6 +212,12 @@ impl CorpusEntry {
     /// [`WorkerCorpus::calldata_refs`].
     fn overhead_size(&self) -> usize {
         self.tx_seq.len() * size_of::<BasicTxDetails>() + self.cmp_size()
+    }
+
+    /// Approximate heap size of the entry, counting its calldata even when shared, in bytes.
+    fn nominal_size(&self) -> usize {
+        self.overhead_size()
+            + self.tx_seq.iter().map(|tx| tx.call_details.calldata.len()).sum::<usize>()
     }
 
     /// Approximate heap size of the comparison hints, in bytes.
@@ -709,6 +720,8 @@ pub struct WorkerCorpus {
     sequence_generator: SequenceGenerator,
     /// Identifier of current mutated entry for this worker.
     current_mutated_index: Option<usize>,
+    /// Number of corpus mutations run by this worker. Used to rank stale entries for eviction.
+    mutation_clock: u64,
     /// Config
     config: Arc<FuzzCorpusConfig>,
     /// Whether this corpus participates in stateless worker synchronization.
@@ -986,6 +999,7 @@ impl WorkerCorpus {
             metrics: seed.metrics,
             sequence_generator,
             current_mutated_index: None,
+            mutation_clock: 0,
             config: config.into(),
             worker_sync_enabled: false,
             new_entry_indices: Default::default(),
@@ -1065,10 +1079,12 @@ impl WorkerCorpus {
         // Update stats of current mutated primary corpus.
         if let Some(index) = self.current_mutated_index.take() {
             let should_credit = new_coverage || improved_optimization;
+            self.mutation_clock += 1;
             if let Some(corpus) = self.in_memory_corpus.get_mut(index) {
                 corpus.total_mutations += 1;
                 if should_credit {
-                    corpus.new_finds_produced += 1
+                    corpus.new_finds_produced += 1;
+                    corpus.last_productive_at = self.mutation_clock;
                 }
                 let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
                     > FAVORABILITY_THRESHOLD;
@@ -1170,6 +1186,7 @@ impl WorkerCorpus {
 
     /// Stores an entry in memory and evicts entries if the corpus is over its memory budget.
     fn store_entry(&mut self, mut corpus: CorpusEntry) {
+        corpus.last_productive_at = self.mutation_clock;
         self.track_entry(&mut corpus);
         self.in_memory_corpus.push(corpus);
         self.enforce_memory_budget();
@@ -1419,8 +1436,9 @@ impl WorkerCorpus {
     /// Shrinks and evicts entries until the corpus fits in `corpus_max_memory_mb`.
     ///
     /// First, the comparison hints of non-favored entries are dropped. If the corpus is still
-    /// too large, entries allowed by the regular eviction policy go first, then the oldest entry
-    /// that is not pending synchronization. Evicted entries stay on disk.
+    /// too large, non-favored entries that are not pending synchronization are evicted, the
+    /// largest and most stale first. Favored entries are never evicted for the budget, so the
+    /// corpus can stay over it. Evicted entries stay on disk.
     fn enforce_memory_budget(&mut self) {
         let max_bytes = self.config.corpus_max_memory_mb.saturating_mul(MIB);
         if max_bytes == 0 || self.metrics.memory_bytes <= max_bytes {
@@ -1430,19 +1448,32 @@ impl WorkerCorpus {
         while self.metrics.memory_bytes > max_bytes
             && self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
         {
-            let Some(index) = self.evictable_index().or_else(|| {
-                (0..self.in_memory_corpus.len()).find(|&index| !self.is_pending_sync(index))
-            }) else {
+            let Some((index, _)) = self
+                .in_memory_corpus
+                .iter()
+                .enumerate()
+                // Reverse so that ties evict the oldest entry.
+                .rev()
+                .filter(|(index, corpus)| !corpus.is_favored && !self.is_pending_sync(*index))
+                .max_by_key(|(_, corpus)| self.staleness_score(corpus.nominal_size(), corpus))
+            else {
                 break;
             };
             self.remove_corpus_entry(index);
         }
     }
 
+    /// Returns `size` weighted by the number of mutations since `corpus` was stored or last
+    /// produced new finds. Higher scores are dropped first under memory pressure.
+    fn staleness_score(&self, size: usize, corpus: &CorpusEntry) -> u128 {
+        let staleness = self.mutation_clock.saturating_sub(corpus.last_productive_at) + 1;
+        size as u128 * staleness as u128
+    }
+
     /// Drops the comparison hints of non-favored entries until the corpus fits in `max_bytes`.
     ///
-    /// Entries allowed by the regular eviction policy go first, then the largest hint sets.
-    /// These entries stay in memory and can still get ABI mutations.
+    /// The largest and most stale hint sets go first. These entries stay in memory and can still
+    /// get ABI mutations.
     fn strip_comparison_hints(&mut self, max_bytes: usize) {
         let mut candidates = self
             .in_memory_corpus
@@ -1450,8 +1481,8 @@ impl WorkerCorpus {
             .enumerate()
             .filter(|(_, corpus)| !corpus.is_favored && !corpus.cmp_seq.is_empty())
             .map(|(index, corpus)| {
-                let evictable = corpus.total_mutations > self.config.corpus_min_mutations;
-                (evictable, corpus.cmp_size(), index)
+                let size = corpus.cmp_size();
+                (self.staleness_score(size, corpus), size, index)
             })
             .collect::<Vec<_>>();
         candidates.sort_unstable_by(|a, b| b.cmp(a));
@@ -3607,7 +3638,9 @@ mod tests {
         manager.insert_corpus_entry(large_entry(2), CorpusInsertionMode::Live);
         assert_eq!(manager.in_memory_corpus.len(), 2);
 
-        // Over the budget, the oldest entry is evicted although the regular policy rejects it.
+        // Over the budget, the oldest non-favored entry is evicted although the regular policy
+        // rejects it. The favored entry stays.
+        let favored_uuid = manager.in_memory_corpus[0].uuid;
         let newest = large_entry(3);
         let newest_uuid = newest.uuid;
         manager.in_memory_corpus[0].is_favored = true;
@@ -3615,8 +3648,9 @@ mod tests {
         manager.insert_corpus_entry(newest, CorpusInsertionMode::Live);
 
         assert_eq!(manager.in_memory_corpus.len(), 2);
-        assert_eq!(manager.metrics.favored_items, 0);
+        assert_eq!(manager.metrics.favored_items, 1);
         assert_eq!(manager.metrics.evicted_entries, 1);
+        assert_eq!(manager.in_memory_corpus[0].uuid, favored_uuid);
         assert_eq!(manager.in_memory_corpus[1].uuid, newest_uuid);
         assert_eq!(manager.metrics.memory_bytes, expected_memory_bytes(&manager));
         assert!(manager.metrics.memory_bytes <= MIB);
@@ -3625,6 +3659,57 @@ mod tests {
             read_corpus_dir(&manager.worker_dir.clone().unwrap().join(CORPUS_DIR)).count(),
             3
         );
+    }
+
+    #[test]
+    fn memory_budget_never_evicts_favored_entries() {
+        let mut manager = memory_test_manager(1);
+        for byte in 1..=2 {
+            let mut entry = CorpusEntry::new(vec![basic_tx_with_calldata(vec![byte; 600 * 1024])]);
+            entry.is_favored = true;
+            manager.insert_corpus_entry(entry, CorpusInsertionMode::Live);
+        }
+
+        assert_eq!(manager.in_memory_corpus.len(), 2);
+        assert_eq!(manager.metrics.evicted_entries, 0);
+        assert!(manager.metrics.memory_bytes > MIB);
+    }
+
+    #[test]
+    fn memory_budget_evicts_by_size_and_staleness() {
+        let mut manager = memory_test_manager(1);
+        let entry = |byte: u8, kib: usize| {
+            CorpusEntry::new(vec![basic_tx_with_calldata(vec![byte; kib * 1024])])
+        };
+        let small_stale = entry(1, 100);
+        let small_stale_uuid = small_stale.uuid;
+        let fresh = entry(2, 300);
+        let fresh_uuid = fresh.uuid;
+        let medium_stale = entry(3, 300);
+        let medium_stale_uuid = medium_stale.uuid;
+        for entry in [small_stale, fresh, medium_stale] {
+            manager.insert_corpus_entry(entry, CorpusInsertionMode::Live);
+        }
+        manager.mutation_clock = 100;
+        manager.in_memory_corpus[0].last_productive_at = 0;
+        manager.in_memory_corpus[1].last_productive_at = 100;
+        manager.in_memory_corpus[2].last_productive_at = 90;
+
+        // The small entry is the most stale: 100 KiB x 101 beats 300 KiB x 11.
+        manager.insert_corpus_entry(entry(4, 400), CorpusInsertionMode::Live);
+        let uuids = |manager: &WorkerCorpus| {
+            manager.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<Vec<_>>()
+        };
+        assert!(!uuids(&manager).contains(&small_stale_uuid));
+        assert_eq!(manager.metrics.evicted_entries, 1);
+
+        // Then the medium entry: 300 KiB x 11 beats the fresh 300 KiB and 400 KiB entries.
+        manager.insert_corpus_entry(entry(5, 100), CorpusInsertionMode::Live);
+        assert!(!uuids(&manager).contains(&medium_stale_uuid));
+        assert!(uuids(&manager).contains(&fresh_uuid));
+        assert_eq!(manager.metrics.evicted_entries, 2);
+        assert_eq!(manager.metrics.memory_bytes, expected_memory_bytes(&manager));
+        assert!(manager.metrics.memory_bytes <= MIB);
     }
 
     #[test]
