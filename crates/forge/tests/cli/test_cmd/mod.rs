@@ -135,59 +135,6 @@ const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4232Test|Issue4640Test|Issue14212Te
 // transaction lookups that are not reliably served by the public Base RPC endpoint used in CI.
 const FLAKY_TESTDATA_RUN_CONTRACTS: &str = "Issue4232Test|Issue4640Test";
 
-#[forgetest_init]
-fn internal_cheatcode_warnings(prj: _, cmd: _) {
-    prj.update_config(|config| config.fuzz.runs = 16);
-    prj.add_test(
-        "Internal.t.sol",
-        r#"
-interface VmInternal {
-    function _expectCheatcodeRevert() external;
-    function parseJsonUint(string calldata, string calldata) external returns (uint256);
-}
-contract InternalTest {
-    VmInternal constant vm = VmInternal(address(uint160(uint256(keccak256("hevm cheat code")))));
-    constructor() { useInternal(); }
-    function setUp() public { useInternal(); }
-    function useInternal() internal {
-        vm._expectCheatcodeRevert();
-        vm.parseJsonUint("invalid", ".x");
-    }
-    function testUnit() public { useInternal(); }
-    function testFuzz(uint256) public { useInternal(); }
-    /// forge-config: default.networks.network = "tempo"
-    function testTempo() public { useInternal(); }
-}
-contract CleanTest {
-    function testClean() public pure {}
-}
-"#,
-    );
-    cmd.args(["test"]).assert_success().stderr_eq(str![[r#"
-Warning: test/Internal.t.sol:InternalTest: cheatcode _expectCheatcodeRevert() is internal and may change or be removed
-
-"#]]);
-    cmd.forge_fuse()
-        .args(["test", "--match-contract", "CleanTest"])
-        .assert_success()
-        .stderr_eq(str![""]);
-    cmd.forge_fuse().args(["test", "--quiet"]).assert_success().stderr_eq(str![""]);
-    prj.add_test(
-        "Failure.t.sol",
-        r#"
-import {InternalTest} from "./Internal.t.sol";
-contract FailureTest is InternalTest {
-    constructor() { assert(false); }
-}
-"#,
-    );
-    cmd.forge_fuse().args(["test", "--match-contract", "FailureTest"])
-        .assert_failure().stderr_eq(str![[r#"
-Warning: test/Failure.t.sol:FailureTest: cheatcode _expectCheatcodeRevert() is internal and may change or be removed
-
-"#]]);
-}
-
 // Run `forge test` on `/testdata`.
 #[forgetest]
 fn testdata(cmd: _) {

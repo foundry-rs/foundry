@@ -1923,13 +1923,6 @@ impl TestArgs {
                     merge_outcomes(&mut outcome, pass_outcome);
                 }
                 if is_multi_pass {
-                    if !shell::is_json() && !self.junit {
-                        for (suite, result) in &outcome.results {
-                            for warning in &result.warnings {
-                                sh_warn!("{suite}: {warning}")?;
-                            }
-                        }
-                    }
                     // Per-pass summaries are suppressed in `run_tests_inner`.
                     self.print_summary(&outcome, multi_pass_timer.elapsed())?;
                 }
@@ -2581,10 +2574,8 @@ impl TestArgs {
             // Print suite header.
             if !silent {
                 sh_println!()?;
-                if !is_multi_pass {
-                    for warning in &suite_result.warnings {
-                        sh_warn!("{warning}")?;
-                    }
+                for warning in &suite_result.warnings {
+                    sh_warn!("{warning}")?;
                 }
                 if has_tests {
                     let tests = if len > 1 { "tests" } else { "test" };
@@ -3383,11 +3374,7 @@ fn merge_suite_results(
     for (suite_id, other_suite) in other {
         if let Some(base_suite) = base.get_mut(&suite_id) {
             base_suite.test_results.extend(other_suite.test_results);
-            for warning in other_suite.warnings {
-                if !base_suite.warnings.contains(&warning) {
-                    base_suite.warnings.push(warning);
-                }
-            }
+            base_suite.warnings.extend(other_suite.warnings);
             base_suite.duration = base_suite.duration.max(other_suite.duration);
         } else {
             base.insert(suite_id, other_suite);
