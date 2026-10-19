@@ -5526,7 +5526,6 @@ fn preprocess_via_ir_codegen(prj: _, cmd: _) {
         config.optimizer_runs = Some(200);
         config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
         config.cbor_metadata = false;
-        config.lint.lint_on_build = false;
     });
     prj.add_raw_source(
         "core/HedgerPool.sol",
@@ -5536,7 +5535,7 @@ fn preprocess_via_ir_codegen(prj: _, cmd: _) {
         "Repro.t.sol",
         include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/Repro.t.sol"),
     );
-    cmd.args(["test", "--force", "--match-contract", "^DeploymentSmokeTest$"])
+    cmd.args(["test", "--match-contract", "^DeploymentSmokeTest$"])
         .assert_success()
         .stderr_eq("")
         .stdout_eq(str![[r#"
