@@ -426,8 +426,12 @@ impl StagedForkCacheLeaseInner {
     fn invalidate(&self) -> Result<(), BlockchainError> {
         self.db.db().clear();
         self.db.cache().flush();
+        // Forge can store the block cache as a file, so a child endpoint cache cannot exist.
         if let Err(err) = std::fs::remove_file(&self.cache_path)
-            && err.kind() != std::io::ErrorKind::NotFound
+            && !matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            )
         {
             return Err(BlockchainError::Internal(format!(
                 "failed to invalidate fork cache at {}: {err}",
@@ -1313,11 +1317,6 @@ impl<N: Network> Backend<N> {
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> u64 {
         self.blockchain.storage.read().best_number
-    }
-
-    /// Sets the block number
-    pub fn set_block_number(&self, number: u64) {
-        self.evm_env.write().block_env.number = U256::from(number);
     }
 
     /// Returns the client coinbase address.
@@ -3764,16 +3763,6 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    pub fn call_with_state(
-        &self,
-        state: &dyn DatabaseRef,
-        request: WithOtherFields<TransactionRequest>,
-        fee_details: FeeDetails,
-        block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
-        self.call_with_state_and_context(state, request, fee_details, block_env, None)
-    }
-
     pub(crate) fn call_with_state_and_context(
         &self,
         state: &dyn DatabaseRef,
@@ -3884,16 +3873,6 @@ impl<N: Network> Backend<N> {
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
         Ok((exit_reason, out, gas_used as u128, state))
-    }
-
-    pub fn build_access_list_with_state(
-        &self,
-        state: &dyn DatabaseRef,
-        request: WithOtherFields<TransactionRequest>,
-        fee_details: FeeDetails,
-        block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        self.build_access_list_with_state_and_context(state, request, fee_details, block_env, None)
     }
 
     pub(crate) fn build_access_list_with_state_and_context(
@@ -5588,43 +5567,6 @@ impl<N: Network> Backend<N> {
         }
         self.fees.restore(fees);
         Ok(true)
-    }
-
-    /// executes the transactions without writing to the underlying database
-    pub async fn inspect_tx(
-        &self,
-        tx: Arc<PoolTransaction<FoundryTxEnvelope>>,
-    ) -> Result<
-        (InstructionResult, Option<Output>, u64, StateChangeset, Vec<revm::primitives::Log>),
-        BlockchainError,
-    > {
-        let db = self.db.read().await;
-        let evm_env = self.next_evm_env(&**db)?;
-        let mut inspector = self.build_inspector();
-        #[cfg(feature = "monad")]
-        let mut monad_context = self
-            .is_monad()
-            .then(|| self.monad_context_for_child_of(self.best_hash()))
-            .transpose()?;
-        #[cfg(not(feature = "monad"))]
-        let mut monad_context = None;
-        let (ResultAndState { result, state }, _) = self
-            .transact_envelope_with_inspector_ref_and_context(
-                &**db,
-                &evm_env,
-                &mut inspector,
-                &tx.pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
-            )?;
-        let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
-
-        inspector.print_logs();
-
-        if self.print_traces {
-            inspector.print_traces(self.call_trace_decoder());
-        }
-
-        Ok((exit_reason, out, gas_used, state, logs))
     }
 }
 
