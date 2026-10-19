@@ -1109,7 +1109,9 @@ async fn test_simulate_returns_unchanged_state_root_rpc() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
-    for hardfork in [EthereumHardfork::Cancun, EthereumHardfork::Prague] {
+    for hardfork in
+        [EthereumHardfork::Cancun, EthereumHardfork::Prague, EthereumHardfork::Amsterdam]
+    {
         let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
         let provider = handle.http_provider();
         let genesis = provider
@@ -1118,6 +1120,19 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
             .unwrap()
             .expect("genesis block should exist");
         let next_timestamp = genesis.header.timestamp + 12;
+        // Write storage and return distinct builder requests.
+        let expected_requests_hash = if hardfork == EthereumHardfork::Amsterdam {
+            for (address, code) in [
+                (BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, "0x602a5f5560aa5f5360015ff3"),
+                (BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS, "0x602b5f5560bb5f5360015ff3"),
+            ] {
+                api.anvil_set_code(address, code.parse().unwrap()).await.unwrap();
+            }
+            Requests::new(vec![Bytes::from_static(&[3, 0xaa]), Bytes::from_static(&[4, 0xbb])])
+                .requests_hash()
+        } else {
+            EMPTY_REQUESTS_HASH
+        };
 
         let simulated = api
             .simulate_v1(
@@ -1148,7 +1163,7 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
 
         if hardfork >= EthereumHardfork::Prague {
             assert_eq!(simulated.inner.header.requests_hash, mined.header.requests_hash);
-            assert_eq!(mined.header.requests_hash, Some(EMPTY_REQUESTS_HASH));
+            assert_eq!(mined.header.requests_hash, Some(expected_requests_hash));
         }
     }
 }

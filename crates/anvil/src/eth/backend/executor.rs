@@ -19,8 +19,12 @@ use crate::{
 };
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, Transaction, TransactionEnvelope};
 use alloy_eips::{
-    eip6110::DEPOSIT_REQUEST_TYPE, eip7002::WITHDRAWAL_REQUEST_TYPE,
-    eip7251::CONSOLIDATION_REQUEST_TYPE, eip7685::Requests, eip7928::BlockAccessList,
+    eip6110::DEPOSIT_REQUEST_TYPE,
+    eip7002::WITHDRAWAL_REQUEST_TYPE,
+    eip7251::CONSOLIDATION_REQUEST_TYPE,
+    eip7685::Requests,
+    eip7928::BlockAccessList,
+    eip8282::{BUILDER_DEPOSIT_REQUEST_TYPE, BUILDER_EXIT_REQUEST_TYPE},
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, Bytes, Log, U256, map::HashSet};
@@ -29,9 +33,9 @@ use anvil_core::eth::transaction::{MaybeImpersonatedTransaction, TransactionInfo
 use evm2::{
     AccountInfo, Evm,
     evm::{
-        BEACON_ROOTS_ADDRESS, BlockAccessIndex, BlockStateAccumulator,
-        CONSOLIDATION_REQUEST_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx,
-        WITHDRAWAL_REQUEST_ADDRESS,
+        BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_REQUEST_ADDRESS, BUILDER_EXIT_REQUEST_ADDRESS,
+        BlockAccessIndex, BlockStateAccumulator, CONSOLIDATION_REQUEST_ADDRESS,
+        HISTORY_STORAGE_ADDRESS, SystemTx, WITHDRAWAL_REQUEST_ADDRESS,
     },
 };
 use foundry_evm_hardforks::FoundryHardfork;
@@ -459,6 +463,17 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                     self.system_call(CONSOLIDATION_REQUEST_ADDRESS, Bytes::new())?;
                 if !consolidations.is_empty() {
                     requests.push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidations);
+                }
+                if transitions.hardfork >= EthereumHardfork::Amsterdam {
+                    let deposits =
+                        self.system_call(BUILDER_DEPOSIT_REQUEST_ADDRESS, Bytes::new())?;
+                    if !deposits.is_empty() {
+                        requests.push_request_with_type(BUILDER_DEPOSIT_REQUEST_TYPE, deposits);
+                    }
+                    let exits = self.system_call(BUILDER_EXIT_REQUEST_ADDRESS, Bytes::new())?;
+                    if !exits.is_empty() {
+                        requests.push_request_with_type(BUILDER_EXIT_REQUEST_TYPE, exits);
+                    }
                 }
                 requests
             }
