@@ -376,22 +376,6 @@ impl FeeManager {
         calculate_next_block_base_fee_per_gas(state.rules, gas_used, gas_limit, last_fee_per_gas)
     }
 
-    /// Calculates the next block base fee from the parent block without applying the configured
-    /// zero-fee sentinel.
-    #[cfg(test)]
-    pub(crate) fn calculate_next_block_base_fee_per_gas(
-        &self,
-        gas_used: u64,
-        gas_limit: u64,
-        last_fee_per_gas: u64,
-    ) -> u64 {
-        let rules = self.state.read().rules;
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
-            return 0;
-        }
-        calculate_next_block_base_fee_per_gas(rules, gas_used, gas_limit, last_fee_per_gas)
-    }
-
     /// Calculates the next block base fee from a complete parent header.
     pub(crate) fn get_next_block_base_fee_from_header<H: BlockHeader>(&self, header: &H) -> u64 {
         let state = self.state.read();
@@ -857,17 +841,18 @@ mod tests {
 
     #[test]
     fn raw_next_base_fee_respects_london_activation() {
+        let parent = alloy_consensus::Header {
+            gas_used: 30_000_000,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..Default::default()
+        };
+
         let berlin = fee_manager(SpecId::BERLIN);
-        assert_eq!(
-            berlin.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
-            0
-        );
+        assert_eq!(berlin.calculate_next_block_base_fee_from_header(&parent), 0);
 
         let london = fee_manager(SpecId::LONDON);
-        assert_ne!(
-            london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
-            0
-        );
+        assert_ne!(london.calculate_next_block_base_fee_from_header(&parent), 0);
     }
 
     #[cfg(feature = "optimism")]
