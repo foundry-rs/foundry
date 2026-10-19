@@ -445,7 +445,7 @@ pub(crate) trait ToRpcResponseResult {
 
 /// Converts a serializable value into a `ResponseResult`
 pub fn to_rpc_result<T: Serialize>(val: T) -> ResponseResult {
-    match serde_json::to_value(val) {
+    match serde_json::value::to_raw_value(&val) {
         Ok(success) => ResponseResult::Success(success),
         Err(err) => {
             error!(%err, "Failed serialize rpc response");

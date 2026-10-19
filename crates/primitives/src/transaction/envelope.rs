@@ -446,7 +446,9 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                         .map_err(|err| ConversionError::Custom(err.to_string()));
                 }
                 if tx.ty() == TEMPO_TX_TYPE_ID {
-                    let tempo_tx = tx.inner.fields.deserialize_into::<AASigned>().map_err(|e| {
+                    let mut fields = tx.inner.fields;
+                    fields.insert("hash".into(), serde_json::to_value(tx.hash).unwrap());
+                    let tempo_tx = fields.deserialize_into::<AASigned>().map_err(|e| {
                         ConversionError::Custom(format!("Failed to deserialize tempo tx: {e}"))
                     })?;
                     return Ok(Self::Tempo(tempo_tx));
