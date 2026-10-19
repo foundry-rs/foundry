@@ -1120,7 +1120,7 @@ async fn test_simulated_and_mined_ethereum_transitions_match_rpc() {
             .unwrap()
             .expect("genesis block should exist");
         let next_timestamp = genesis.header.timestamp + 12;
-        // Builder predeploys write state and return requests, exercising both commit and hash.
+        // Write storage and return distinct builder requests.
         let expected_requests_hash = if hardfork == EthereumHardfork::Amsterdam {
             for (address, code) in [
                 (BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, "0x602a5f5560aa5f5360015ff3"),
