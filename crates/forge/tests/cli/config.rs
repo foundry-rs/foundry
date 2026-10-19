@@ -3689,3 +3689,59 @@ optimizer_runs = "invalid"
 "#]]
     );
 }
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_preserves_config_file_symlink(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected");
+    let shared = prj.root().join("shared");
+    fs::create_dir_all(&selected).unwrap();
+    fs::create_dir_all(&shared).unwrap();
+    let config_path = selected.join(Config::FILE_NAME);
+    let target = shared.join("custom.toml");
+    let sibling = shared.join(Config::FILE_NAME);
+    let unselected = prj.root().join(Config::FILE_NAME);
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    fs::write(&unselected, legacy).unwrap();
+    std::os::unix::fs::symlink("../shared/custom.toml", &config_path).unwrap();
+
+    for sibling_exists in [false, true] {
+        for path in [
+            PathBuf::from(Config::FILE_NAME),
+            PathBuf::from("../selected/foundry.toml"),
+            config_path.clone(),
+        ] {
+            fs::write(&target, legacy).unwrap();
+            if sibling_exists {
+                fs::write(&sibling, legacy).unwrap();
+            }
+
+            cmd.forge_fuse();
+            cmd.env("HOME", test_home.path());
+            cmd.unset_env("FOUNDRY_CONFIG");
+            cmd.current_dir(&selected)
+                .args(["config", "--fix", "--config-path"])
+                .arg(path)
+                .assert_success()
+                .stdout_eq(str![""])
+                .stderr_eq(str![""]);
+
+            assert_data_eq!(
+                fs::read_to_string(&target).unwrap(),
+                str![[r#"
+[profile.default]
+optimizer_runs = 123
+
+"#]]
+            );
+            if sibling_exists {
+                assert_eq!(fs::read_to_string(&sibling).unwrap(), legacy);
+            } else {
+                assert!(!sibling.exists());
+            }
+            assert_eq!(fs::read_to_string(&unselected).unwrap(), legacy);
+            assert_eq!(fs::read_link(&config_path).unwrap(), Path::new("../shared/custom.toml"));
+        }
+    }
+}

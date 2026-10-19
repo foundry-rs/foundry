@@ -29,8 +29,15 @@ pub struct ConfigArgs {
 impl ConfigArgs {
     pub fn run(self) -> Result<()> {
         if self.fix {
-            let root = self.build.build.project_paths.try_project_root()?;
-            for warning in fix_tomls_with_root(root) {
+            let paths = &self.build.build.project_paths;
+            let root = paths.try_project_root()?;
+            // Preserve the selected filename when a symlink points to a differently named file.
+            let fix_root = paths
+                .config_path
+                .as_deref()
+                .and_then(|path| path.parent())
+                .unwrap_or(root.as_path());
+            for warning in fix_tomls_with_root(fix_root) {
                 sh_warn!("{warning}")?;
             }
             return Ok(());
