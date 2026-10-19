@@ -82,6 +82,34 @@ contract CoolPersistenceTest is Test {
         assertEq(preexisting.value(), 2);
         assertEq(created.value(), 1);
     }
+
+    function testCool_EXTCODESIZE() public {
+        address target = address(preexisting);
+        assertGt(target.code.length, 0);
+
+        uint256 warmGas;
+        uint256 coldGas;
+        uint256 warmSize;
+        uint256 coldSize;
+        assembly {
+            let start := gas()
+            warmSize := extcodesize(target)
+            warmGas := sub(start, gas())
+        }
+
+        vm.cool(target);
+
+        assembly {
+            let start := gas()
+            coldSize := extcodesize(target)
+            coldGas := sub(start, gas())
+        }
+
+        assertEq(coldSize, warmSize);
+        // Stack operations can differ between reads; only the cooled read pays the 2600 cold cost.
+        assertLt(warmGas, 2600);
+        assertGe(coldGas, 2600);
+    }
 }
 
 /// forge-config: default.isolate = true
