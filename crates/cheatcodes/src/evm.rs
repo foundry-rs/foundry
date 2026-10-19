@@ -5,7 +5,6 @@ use crate::{
     CheatsCtxt, Error, Result, Vm::*, env::FORGE_CONTEXT, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
-use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{
     Address, B256, Bytes, KECCAK256_EMPTY, U256, hex, keccak256,
@@ -39,7 +38,6 @@ use foundry_evm_core::{
         EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork, TxEnvelopeFor,
         TxPayload, evm_env,
     },
-    utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
@@ -771,17 +769,8 @@ impl Cheatcode for blobBaseFeeCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        // The value is the excess blob gas the blob base fee derives from.
-        let excess_blob_gas: u64 = (*newBlobBaseFee).to();
-        let spec: SpecId = ccx.spec().into();
-        let update_fraction = get_blob_base_fee_update_fraction_by_spec_id(spec);
-        let blob_basefee = fake_exponential(
-            BLOB_TX_MIN_BLOB_GASPRICE,
-            excess_blob_gas as u128,
-            update_fraction as u128,
-        );
-        ccx.update_block(|block| block.blob_basefee = U256::from(blob_basefee));
-        ccx.state.blob_excess_gas = Some(excess_blob_gas);
+        ensure!(*newBlobBaseFee <= U256::from(u128::MAX), "blob base fee must be less than 2^128");
+        ccx.update_block(|block| block.blob_basefee = *newBlobBaseFee);
         Ok(Default::default())
     }
 }
@@ -789,7 +778,7 @@ impl Cheatcode for blobBaseFeeCall {
 impl Cheatcode for getBlobBaseFeeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        Ok(ccx.state.blob_excess_gas.unwrap_or(0).abi_encode())
+        Ok(ccx.evm.block().blob_basefee.abi_encode())
     }
 }
 
@@ -910,9 +899,9 @@ impl Cheatcode for setLogoURICall {
 impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
-        // evm2 cannot cool an account, only its storage slots.
         let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), target);
         let state = ccx.evm.state_mut();
+        state.set_account_warm(target, false);
         for slot in slots {
             state.set_storage_warm(target, slot, false);
         }

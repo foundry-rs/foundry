@@ -61,8 +61,7 @@ explicitly or is documented as different; none falls back to REVM.
 | Lifecycle | A fork switch replaces the running state with the target fork's. | Accounts the running transaction created or loaded on the source fork are not visible on the target fork unless persistent (`Issue6032.t.sol`, `Fork2.t.sol`'s `testForkDumpState*`); REVM's journal kept them until the transaction ended. | None needed. |
 | Transactions | evm2 frames borrow the transaction environment (origin, gas price, chain ID, blob hashes) for the whole transaction. | `vm.prank` with origin, `vm.txGasPrice`, `vm.blobhashes` and `vm.chainId` inside a transaction override the `ORIGIN`, `GASPRICE`, `BLOBHASH` and `CHAINID` opcodes at once; fee accounting keeps the transaction's values, and the chain ID applies to validation from the next transaction (`EnvTransition::Deferred`). | Mutable `TxEnv` for nested frames. |
 | Cheatcodes | `vm.transact` and `vm.broadcastRawTransaction` execute through `Backend::transact*`, which cannot re-enter the cheatcode inspector that drives them. | The replayed transaction runs with the stack's tracing, logging and other non-cheatcode inspectors, and its logs reach `vm.expectEmit` and `vm.recordLogs` after it ends; REVM also ran the cheatcode inspector inside it, so other cheatcodes such as `vm.expectCall` do not observe its calls. | Re-entrant inspector access from `Backend::transact*`. |
-| Cheatcodes | evm2's `BlockEnv` has no excess blob gas. | `vm.blobBaseFee` sets the blob base fee from `fake_exponential`; `vm.getBlobBaseFee` returns the last value set, which snapshots and fork switches do not revert. | Excess blob gas on `BlockEnv`. |
-| Cheatcodes | evm2 has no API to mark a warm account cold. | `vm.cool` cools the account's loaded storage slots but not the account. | `State::set_account_cold`. |
+| Cheatcodes | Transaction-base warmth is separate from runtime warmth. | `vm.cool` cools loaded accounts and storage slots, except entries in the transaction-base pre-warmed set. | Cheatcode-specific pre-warmed-set removal. |
 | Cheatcodes | evm2 does not expose an iterator over transaction-loaded accounts and slots. | `vm.dumpState` sees the accounts the running transaction changed or warmed and the accounts it created. `vm.cloneAccount`, `vm.copyStorage` and dumped storage filter known overlay/journal keys to slots loaded in the running transaction, excluding setup-only cache entries. Unjournaled account loads and loaded slots no longer present in either candidate source can still be omitted; the dump also does not keep accounts that a fork switch, fork roll or enclosing revert removed from the active fork's state. | Loaded-state iteration on `State`. |
 | Cheatcodes | evm2 has no re-entrant host call from a storage hook. | Storage hook callbacks run on a separate frame EVM with warmth restored afterwards. | None needed. |
 | Cheatcodes | A snapshot revert or fork switch inside an isolated call replaces state the parent frame cannot merge. | The parent adopts the isolated child's whole state. | None needed. |
@@ -107,25 +106,26 @@ explicitly or is documented as different; none falls back to REVM.
 
 ## Dependencies
 
-evm2 is patched workspace-wide onto
+All migration dependencies use the `mablr` forks. Foundry and its satellites share
 [`mablr/evm2@mablr/foundry-completion`](https://github.com/mablr/evm2/tree/mablr/foundry-completion).
 It adds suspended-state lifecycle APIs (`finalize_transaction`, warmth restoration,
 `cool_loaded_state`, `set_prewarm_set`) and independent `BLOB_BASE_FEE_CHECK` policy on upstream
-`de6c02d`, plus resolution of already-present delegation code before Prague, matching REVM.
-Authorization processing remains Prague-gated. The upstream source patch also covers Tempo's
-older engine requirement; the lockfile must contain one evm2 graph, not separate engines for
-different networks.
+`1dc7f6a`, including account warmth control from evm2#705, plus resolution of already-present
+delegation code before Prague, matching REVM.
+Authorization processing remains Prague-gated. The lockfile must contain one evm2 graph, not
+separate engines for different networks.
 
-[`foundry-core@mablr/fork-db-evm2-completion`](https://github.com/foundry-rs/foundry-core/tree/mablr/fork-db-evm2-completion)
+[`foundry-core@mablr/fork-db-evm2-completion`](https://github.com/mablr/foundry-core/tree/mablr/fork-db-evm2-completion)
 stores native evm2 accounts and bytecode. Existing JSON/zstd caches remain readable, including
 legacy analyzed bytecode and EIP-7702 delegation. RPC cache reads remain separate from execution
-commits. Its dependency and
-[`evm2-networks`](https://github.com/mablr/evm2-networks/tree/main)'s dependency use upstream evm2;
-neither requires Foundry's lifecycle patch in isolation.
+commits. [`evm2-networks`](https://github.com/mablr/evm2-networks/tree/main) provides the network
+adapters. Tempo's integration uses
+[`mablr/reth@mablr/evm2-migration`](https://github.com/mablr/reth/tree/mablr/evm2-migration).
 
-`tempo-evm` and `tempo-hardfork` name Tempo's evm2 revision. `tempo-primitives-evm2` and
-`tempo-precompiles-evm2` alias it while the REVM-era `tempo-primitives` (used by the RPC types)
-and `tempo-precompiles` pins remain in use.
+`tempo-evm` and `tempo-hardfork` use
+[`mablr/tempo@mablr/evm2-migration`](https://github.com/mablr/tempo/tree/mablr/evm2-migration).
+`tempo-primitives-evm2` and `tempo-precompiles-evm2` alias that revision while RPC types retain
+the REVM-era Tempo pin on the same fork.
 
 ## Completion follow-ups
 

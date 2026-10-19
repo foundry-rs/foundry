@@ -1584,7 +1584,7 @@ pub fn calculate_stipend<FEN: FoundryEvmNetwork>(
     tx: &TransactionRequestFor<FEN>,
 ) -> u64 {
     let access_list = tx.access_list();
-    evm2::ethereum::intrinsic_gas(
+    evm2::ethereum::intrinsic_and_floor_gas(
         &evm_env.version,
         tx.from().unwrap_or_default(),
         tx.kind().unwrap_or(TxKind::Create),
@@ -1593,6 +1593,7 @@ pub fn calculate_stipend<FEN: FoundryEvmNetwork>(
         access_list.map_or(0, |list| list.iter().map(|item| item.storage_keys.len() as u64).sum()),
         tx.value().unwrap_or_default(),
     )
+    .0
 }
 
 /// Converts the data aggregated in the `inspector` and `execution` to a `RawCallResult`.

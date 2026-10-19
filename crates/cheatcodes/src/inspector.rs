@@ -898,11 +898,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
-
-    /// Excess blob gas set by `vm.blobBaseFee`, which `vm.getBlobBaseFee` returns.
-    ///
-    /// evm2's block environment only carries the derived blob base fee.
-    pub blob_excess_gas: Option<u64>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -932,7 +927,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_emit_failure: Default::default(),
             state_epoch: Default::default(),
             root_call_target: Default::default(),
-            blob_excess_gas: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
             assume_no_revert: Default::default(),

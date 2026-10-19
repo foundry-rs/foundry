@@ -4727,14 +4727,23 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_anvil_reset_rejects_self_reference_without_mutation() {
+async fn test_fork_reset_rejects_self_reference_with_existing_forge_cache() {
     let marker = Address::random();
     let marker_balance = U256::from(91_337u64);
-    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let cache_path = Config::foundry_block_cache_dir(chain_id, 0).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    // Forge persists the block cache as a file rather than a directory of endpoint caches.
+    std::fs::write(&cache_path, b"existing Forge cache").unwrap();
+
+    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
     origin_api.anvil_set_balance(marker, marker_balance).await.unwrap();
     let origin_url = origin_handle.http_endpoint();
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
     let provider = handle.http_provider();
+    let local_balance = U256::from(42u64);
+    api.anvil_set_balance(marker, local_balance).await.unwrap();
     let metadata_before = api.anvil_metadata().await.unwrap();
     let info_before = api.anvil_node_info().await.unwrap();
 
@@ -4743,14 +4752,31 @@ async fn test_anvil_reset_rejects_self_reference_without_mutation() {
             .anvil_reset(Some(Forking { json_rpc_url: Some(self_url), block_number: None }))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("own RPC endpoint"), "{err}");
+        let anvil::eth::error::BlockchainError::RpcError(err) = err else {
+            panic!("unexpected reset error: {err}");
+        };
+        assert_eq!(
+            err,
+            anvil_rpc::error::RpcError::invalid_params(
+                "cannot reset Anvil to its own RPC endpoint"
+            )
+        );
 
         let fork = api.backend.get_fork().unwrap();
         assert_eq!(fork.config.read().fork_urls, vec![origin_url.clone()]);
         assert_eq!(api.anvil_metadata().await.unwrap(), metadata_before);
         assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
-        assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
+        assert_eq!(provider.get_balance(marker).await.unwrap(), local_balance);
     }
+
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
+    assert_eq!(std::fs::read(&cache_path).unwrap(), b"existing Forge cache");
+
+    // Release the disk-backed fork before cleanup so shutdown cannot recreate its cache.
+    api.anvil_reset(None).await.unwrap();
+    drop((provider, api, handle, origin_api, origin_handle));
+    std::fs::remove_dir_all(cache_dir).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

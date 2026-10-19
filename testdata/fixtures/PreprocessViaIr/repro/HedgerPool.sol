@@ -29,3 +29,7 @@ contract HedgerPool {
     }
     function upgradeToAndCall(address, bytes memory) external payable {}
 }
+
+contract Empty {
+    constructor() payable {}
+}

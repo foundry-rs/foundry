@@ -12,7 +12,7 @@ use alloy_primitives::{
 use evm2::{
     EvmFeatures, ExecutionError, Inspector,
     bytecode::Bytecode,
-    ethereum::{floor_gas, intrinsic_gas},
+    ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, JournalEntry, PendingState, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
 };
@@ -1088,16 +1088,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let (al_accounts, al_keys) = access_list.as_ref().map_or((0, 0), |list| {
             (list.len() as u64, list.iter().map(|item| item.storage_keys.len() as u64).sum())
         });
-        let intrinsic = intrinsic_gas(
-            &version,
-            message.caller,
-            kind,
-            &message.input,
-            al_accounts,
-            al_keys,
-            message.value,
-        );
-        let floor = floor_gas(
+        let (intrinsic, floor) = intrinsic_and_floor_gas(
             &version,
             message.caller,
             kind,

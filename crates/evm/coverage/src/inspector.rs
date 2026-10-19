@@ -41,13 +41,11 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
         if let Some((call, with_value)) = call {
             map.call(call, with_value);
         }
-        // Reserve some space early to avoid reallocating too often.
-        map.reserve(8192.min(interp.original_bytecode_slice().len()));
     }
 
     fn step(&mut self, interp: &mut Interpreter<'_, '_, T>) {
-        let pc = interp.pc() as u32;
-        self.get_or_insert_map(interp).hit(pc);
+        let pc = interp.pc();
+        self.get_or_insert_map(interp).record(pc);
     }
 
     fn create_end(
@@ -66,7 +64,8 @@ impl<T: EvmTypesHost> Inspector<T> for LineCoverageCollector {
 
 impl LineCoverageCollector {
     /// Finish collecting coverage information and return the [`HitMaps`].
-    pub fn finish(self) -> HitMaps {
+    pub fn finish(mut self) -> HitMaps {
+        self.maps.values_mut().for_each(HitMap::flush);
         self.maps
     }
 
