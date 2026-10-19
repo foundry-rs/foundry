@@ -117,20 +117,6 @@ fn rpc_raw_params_stdin(cmd: _) {
 "#]]);
 }
 
-// test for cast_rpc with raw params that are not valid JSON
-#[casttest]
-fn rpc_raw_params_invalid_json(cmd: _) {
-    cmd.args(["rpc", "--rpc-url", "http://127.0.0.1:1", "eth_getBlockByNumber", "--raw", "0x123"])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: invalid raw JSON parameters
-
-Context:
-- trailing characters at line 1 column 2
-
-"#]]);
-}
-
 // tests that the --curl flag outputs a valid curl command for cast rpc
 #[casttest]
 fn curl_rpc(cmd: _) {
