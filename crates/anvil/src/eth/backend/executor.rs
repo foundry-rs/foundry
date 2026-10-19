@@ -583,7 +583,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             let cumulative_gas = self.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
             let max_block_gas = cumulative_gas.saturating_add(pending.transaction.gas_limit());
             if !gas_config.disable_block_gas_limit && max_block_gas > gas_limit {
-                trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "block gas limit exhausting, skipping transaction");
+                trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), tx_hash = ?pool_tx.hash(), "block gas limit exhausting, skipping transaction");
                 unavailable_markers.extend(pool_tx.provides.iter().cloned());
                 continue;
             }
@@ -592,7 +592,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             if let Some(tx_gas_limit_cap) = gas_config.enforced_tx_gas_limit_cap
                 && pending.transaction.gas_limit() > tx_gas_limit_cap
             {
-                trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
+                trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), tx_hash = ?pool_tx.hash(), "transaction gas limit exhausting, skipping transaction");
                 unavailable_markers.extend(pool_tx.provides.iter().cloned());
                 continue;
             }
@@ -601,7 +601,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             // again against the execution result below.
             let declared_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
             if blob_gas_used.saturating_add(declared_blob_gas) > gas_config.max_blob_gas_per_block {
-                trace!(target: "backend", blob_gas = %declared_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+                trace!(target: "backend", blob_gas = %declared_blob_gas, tx_hash = ?pool_tx.hash(), "block blob gas limit exhausting, skipping transaction");
                 unavailable_markers.extend(pool_tx.provides.iter().cloned());
                 continue;
             }
