@@ -8632,3 +8632,117 @@ fn latest_broadcast_path(root: &Path) -> PathBuf {
         })
         .expect("no latest broadcast artifact")
 }
+
+const AMSTERDAM_STATE_GAS_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+import {LargeRuntime} from "../src/LargeRuntime.sol";
+
+contract Store {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract AmsterdamStateGas is Script {
+    function run() external {
+        deploy();
+    }
+
+    function runOnFork(string calldata rpc) external {
+        vm.createSelectFork(rpc);
+        deploy();
+    }
+
+    function deploy() internal {
+        vm.startBroadcast();
+        new LargeRuntime();
+        Store store = new Store();
+        store.set(1);
+        (bool ok,) = payable(address(0xBEEF)).call{value: 1 ether}("");
+        require(ok);
+        vm.stopBroadcast();
+    }
+}
+"#;
+
+// Gas limits simulated against an Amsterdam chain must include EIP-8037 state gas, even when the
+// configured EVM version predates Amsterdam.
+#[forgetest_init]
+async fn script_broadcast_charges_amsterdam_state_gas(prj: _, cmd: _) {
+    prj.add_source("LargeRuntime.sol", &generate_large_runtime_contract(4_000));
+    let script = prj.add_script("AmsterdamStateGas.s.sol", AMSTERDAM_STATE_GAS_SCRIPT);
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    for evm_version in ["osaka", "amsterdam"] {
+        cmd.forge_fuse()
+            .arg("script")
+            .arg(&script)
+            .args([
+                "--tc",
+                "AmsterdamStateGas",
+                "--rpc-url",
+                &handle.http_endpoint(),
+                "--sender",
+                &sender.to_string(),
+                "--unlocked",
+                "--broadcast",
+                "--slow",
+                "--evm-version",
+                evm_version,
+            ])
+            .assert_success();
+
+        let sequence: Value =
+            foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+        let receipts = sequence["receipts"].as_array().unwrap();
+        assert_eq!(receipts.len(), 4);
+        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"), "{receipts:#?}");
+    }
+
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 8);
+    assert_eq!(
+        provider.get_balance(address!("0x000000000000000000000000000000000000BEEF")).await.unwrap(),
+        U256::from(2e18 as u64)
+    );
+}
+
+// Scripts that select an Amsterdam fork through a cheatcode simulate their transactions against
+// that chain's gas schedule.
+#[forgetest_init]
+async fn script_fork_cheatcode_broadcast_charges_amsterdam_state_gas(prj: _, cmd: _) {
+    prj.add_source("LargeRuntime.sol", &generate_large_runtime_contract(4_000));
+    let script = prj.add_script("AmsterdamStateGas.s.sol", AMSTERDAM_STATE_GAS_SCRIPT);
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script")
+        .arg(&script)
+        .args([
+            "--tc",
+            "AmsterdamStateGas",
+            "--sig",
+            "runOnFork(string)",
+            &handle.http_endpoint(),
+            "--sender",
+            &sender.to_string(),
+            "--unlocked",
+            "--broadcast",
+            "--slow",
+        ])
+        .assert_success();
+
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 4);
+    assert!(!provider.get_code_at(sender.create(0)).await.unwrap().is_empty());
+    assert_eq!(provider.get_storage_at(sender.create(1), U256::ZERO).await.unwrap(), U256::from(1));
+    assert_eq!(
+        provider.get_balance(address!("0x000000000000000000000000000000000000BEEF")).await.unwrap(),
+        U256::from(1e18 as u64)
+    );
+}
