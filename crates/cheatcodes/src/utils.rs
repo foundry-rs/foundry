@@ -255,9 +255,10 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
+        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), from);
         let state = ccx.evm.state_mut();
         state.account(to)?.touch();
-        for slot in crate::evm::loaded_slots(state, from) {
+        for slot in slots {
             let value = state.storage_slot_untracked(from, &slot)?;
             state.storage_slot(to, slot)?.set(value);
         }

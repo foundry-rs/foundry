@@ -29,7 +29,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    backend::RevertStateSnapshotAction,
+    backend::{Backend, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -371,7 +371,7 @@ impl Cheatcode for cloneAccountCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { source, target } = self;
 
-        let genesis = genesis_account(ccx.evm.state_mut(), source)?;
+        let genesis = genesis_account(ccx.evm.state_mut(), ccx.backend.backend(), source)?;
         let (evm, db) = ccx.evm_db_mut();
         db.clone_account(&genesis, target, evm)?;
         // Cloned account should persist in forked envs.
@@ -412,7 +412,7 @@ impl Cheatcode for dumpStateCall {
             {
                 continue;
             }
-            alloc.insert(address, genesis_account(state, &address)?);
+            alloc.insert(address, genesis_account(state, ccx.backend.backend(), &address)?);
         }
 
         let mut ordered_alloc = Vec::with_capacity(alloc.len());
@@ -911,8 +911,9 @@ impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
         // evm2 cannot cool an account, only its storage slots.
+        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), target);
         let state = ccx.evm.state_mut();
-        for slot in loaded_slots(state, target) {
+        for slot in slots {
             state.set_storage_warm(target, slot, false);
         }
         Ok(Default::default())
@@ -2064,34 +2065,13 @@ fn transaction_accounts(state: &State<'_>) -> AddressSet {
         .collect()
 }
 
-/// Returns known slots loaded by the current transaction.
-pub(crate) fn loaded_slots(state: &State<'_>, address: &Address) -> Vec<U256> {
-    let mut slots = state
-        .overlay_db()
-        .cache
-        .storage
-        .get(address)
-        .map(|storage| storage.slots.keys().copied().collect::<Vec<_>>())
-        .unwrap_or_default();
-    slots.extend(state.journal().iter().filter_map(|entry| match entry {
-        JournalEntry::StorageChange { address: changed, key, .. }
-        | JournalEntry::StorageWarmed { address: changed, key }
-            if changed == address =>
-        {
-            Some(*key)
-        }
-        _ => None,
-    }));
-    slots.sort_unstable();
-    slots.dedup();
-    // Exclude setup-only slots materialized by snapshots.
-    slots.retain(|slot| state.get_storage(address, slot).is_some());
-    slots
-}
-
 /// Creates a `GenesisAccount` from the account at `address` and its known storage.
-fn genesis_account(state: &mut State<'_>, address: &Address) -> Result<GenesisAccount> {
-    let slots = loaded_slots(state, address);
+fn genesis_account<FEN: FoundryEvmNetwork>(
+    state: &mut State<'_>,
+    backend: &Backend<FEN>,
+    address: &Address,
+) -> Result<GenesisAccount> {
+    let slots = backend.lifecycle().loaded_storage(state, address);
     let (nonce, balance, code) = {
         let mut account = state.account(address)?;
         (account.nonce(), account.balance(), account.load_code()?)
