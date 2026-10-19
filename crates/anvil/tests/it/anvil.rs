@@ -82,6 +82,8 @@ async fn test_pause_interval_mining() {
     let provider = handle.http_provider();
 
     api.anvil_set_interval_mining(1).unwrap();
+    // Sleep until deadlines relative to the interval start, so setup time does not shift them.
+    let start = tokio::time::Instant::now();
     assert!(!provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
     api.anvil_set_mining_paused(true).await.unwrap();
     assert!(provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
@@ -92,17 +94,17 @@ async fn test_pause_interval_mining() {
     let pending = provider.send_transaction(tx.into()).await.unwrap();
 
     // the block due after 1 second is skipped while paused
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    tokio::time::sleep_until(start + std::time::Duration::from_millis(1500)).await;
     assert_eq!(provider.get_block_number().await.unwrap(), 0);
 
     // and not mined on resume
     api.anvil_set_mining_paused(false).await.unwrap();
     assert!(!api.anvil_get_mining_paused().unwrap());
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tokio::time::sleep_until(start + std::time::Duration::from_millis(1700)).await;
     assert_eq!(provider.get_block_number().await.unwrap(), 0);
 
     // the original schedule is kept, so the next block lands at the 2 second mark
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    tokio::time::sleep_until(start + std::time::Duration::from_millis(2300)).await;
     assert_eq!(provider.get_block_number().await.unwrap(), 1);
     assert_eq!(pending.get_receipt().await.unwrap().block_number, Some(1));
 }
