@@ -201,8 +201,6 @@ where
                         // it has resumed since. Ready transactions are mined by auto mining on
                         // resume, or by the next tick.
                         if miner.is_stale(pause_epoch) {
-                            drop(mining_guard);
-                            miner.retry_ready_transactions();
                             return (Ok(None), backend, generation);
                         }
                         let transactions =

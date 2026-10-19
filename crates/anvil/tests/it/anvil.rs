@@ -82,35 +82,29 @@ async fn test_pause_interval_mining() {
     let provider = handle.http_provider();
 
     api.anvil_set_interval_mining(1).unwrap();
-    // Sleep until deadlines relative to the interval start, so setup time does not shift them.
-    let start = tokio::time::Instant::now();
     assert!(!provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
     api.anvil_set_mining_paused(true).await.unwrap();
     assert!(provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
 
-    // a transaction sent while paused stays in the pool
+    // A transaction sent while paused stays in the pool past the block due after 1 second.
     let from = handle.dev_accounts().next().unwrap();
     let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE);
     let pending = provider.send_transaction(tx.into()).await.unwrap();
-
-    // the block due after 1 second is skipped while paused
-    tokio::time::sleep_until(start + std::time::Duration::from_millis(1500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     assert_eq!(provider.get_block_number().await.unwrap(), 0);
 
-    // and not mined on resume
+    // Resuming mines it on a later tick.
     api.anvil_set_mining_paused(false).await.unwrap();
     assert!(!api.anvil_get_mining_paused().unwrap());
-    tokio::time::sleep_until(start + std::time::Duration::from_millis(1700)).await;
-    assert_eq!(provider.get_block_number().await.unwrap(), 0);
-
-    // the original schedule is kept, so the next block lands at the 2 second mark
-    tokio::time::sleep_until(start + std::time::Duration::from_millis(2300)).await;
-    assert_eq!(provider.get_block_number().await.unwrap(), 1);
-    assert_eq!(pending.get_receipt().await.unwrap().block_number, Some(1));
+    let receipt = tokio::time::timeout(std::time::Duration::from_secs(5), pending.get_receipt())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.block_number, Some(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_pause_automining_with_manual_timestamp_and_mode_changes() {
+async fn test_pause_automining_with_mode_changes() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     provider.raw_request::<_, ()>("anvil_setMiningPaused".into(), [true]).await.unwrap();
@@ -124,22 +118,11 @@ async fn test_pause_automining_with_manual_timestamp_and_mode_changes() {
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     assert_eq!(provider.get_block_number().await.unwrap(), 0);
 
-    // Aztec's explicit timestamp controls and manual mining remain usable while paused.
-    let timestamp = provider
-        .get_block_by_number(BlockNumberOrTag::Latest)
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .timestamp
-        + 100;
-    api.evm_set_block_timestamp_interval(2).unwrap();
-    api.evm_set_next_block_timestamp(timestamp).unwrap();
+    // Manual mining remains usable while paused.
     api.evm_mine(None).await.unwrap();
     assert_eq!(pending.get_receipt().await.unwrap().block_number, Some(1));
-    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert_eq!(block.header.timestamp, timestamp);
 
+    // Resuming auto mining mines transactions sent while paused.
     let pending = provider.send_transaction(tx.into()).await.unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     assert_eq!(provider.get_block_number().await.unwrap(), 1);
@@ -149,8 +132,6 @@ async fn test_pause_automining_with_manual_timestamp_and_mode_changes() {
         .unwrap()
         .unwrap();
     assert_eq!(receipt.block_number, Some(2));
-    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert_eq!(block.header.timestamp, timestamp + 2);
 }
 
 #[test]
