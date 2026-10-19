@@ -80,7 +80,12 @@ impl ProjectPathOpts {
     /// Panics if `--config-path` is invalid or the project root cannot be found.
     #[track_caller]
     pub fn project_root(&self) -> PathBuf {
-        self.try_project_root().expect("could not determine project root")
+        if self.config_path.is_some() {
+            // Preserve the existing config-path validation diagnostics.
+            self.try_project_root().unwrap_or_else(|err| panic!("error: {err}"))
+        } else {
+            self.try_project_root().expect("could not determine project root")
+        }
     }
 
     /// Returns the remappings to add to the config
