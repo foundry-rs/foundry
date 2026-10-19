@@ -1776,7 +1776,7 @@ impl TestArgs {
             };
             let config = Arc::new(config);
             passes.push(dispatch_network!(&evm_opts, |Net| {
-                let backend = spawn_backend::<Net>(&config, &evm_opts).await?;
+                let backend = spawn_backend::<Net>(&config, &evm_opts)?;
                 let runner = self
                     .build_runner::<Net>(
                         config,
@@ -1878,7 +1878,7 @@ impl TestArgs {
         // Box each network's run so the dispatch arms' locals stay off this frame.
         dispatch_network!(&evm_opts, |Net| {
             Box::pin(async {
-                let backend = spawn_backend::<Net>(&config, &evm_opts).await?;
+                let backend = spawn_backend::<Net>(&config, &evm_opts)?;
                 // Retain the baseline inputs for the mutation campaign.
                 let config_for_mutation = config.clone();
                 let evm_opts_for_mutation = evm_opts.clone();
@@ -2215,7 +2215,7 @@ impl TestArgs {
         let verbosity = evm_opts.verbosity;
         let config = Arc::new(config);
         dispatch_network!(&evm_opts, |Net| {
-            let backend = spawn_backend::<Net>(&config, &evm_opts).await?;
+            let backend = spawn_backend::<Net>(&config, &evm_opts)?;
             let runner = self
                 .build_runner::<Net>(
                     config.clone(),
@@ -3179,25 +3179,28 @@ impl Provider for TestArgs {
 }
 
 /// Spawns the backend of a test run, starting on the configured fork, if any.
-async fn spawn_backend<FEN: FoundryEvmNetwork>(
+fn spawn_backend<FEN: FoundryEvmNetwork>(
     config: &Config,
     evm_opts: &EvmOpts,
 ) -> Result<Backend<FEN>> {
-    let (mut env, _, fork_context) = evm_opts.env_with_fork_context::<FEN>().await?;
-    // Network state seeded at spawn, such as Base's precompile sentinels, follows the configured
-    // hardfork the tests run on.
-    resolve_execution_spec(
-        &EvmFactoryFor::<FEN>::default(),
-        config.evm_version,
-        config.hardfork,
-        &mut env,
-        ExecutionSpecContext::local_or_fork(
-            fork_context.as_ref().map(|context| context.source_chain_id),
-            fork_context.as_ref().and_then(|context| context.hardfork),
-        ),
-        None,
-    );
-    Backend::spawn(evm_opts.get_fork(config, evm_opts.env.chain_id.unwrap_or_default(), None), env)
+    // Configure the hardfork before seeding network state, using the resolved fork.
+    let configure_env = |env: &mut _, context| {
+        resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
+            config.evm_version,
+            config.hardfork,
+            env,
+            context,
+            None,
+        );
+    };
+    if let Some(fork) = evm_opts.get_fork(config, evm_opts.env.chain_id.unwrap_or_default(), None) {
+        Backend::spawn_fork(fork, configure_env)
+    } else {
+        let mut env = evm_opts.local_evm_env::<FEN>();
+        configure_env(&mut env, ExecutionSpecContext::Local);
+        Backend::spawn(None, env)
+    }
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {

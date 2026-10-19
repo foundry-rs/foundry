@@ -36,41 +36,59 @@ contract Counter {
         "Counter.t.sol",
         r#"
 pragma solidity ^0.8.13;
+import "forge-std/Test.sol";
 import "../src/Counter.sol";
-contract CounterTest {
+contract CounterTest is Test {
+    function setUp() public {
+        assertEq(address(0x1234).balance, 42);
+        assertEq(vm.load(address(0x1234), bytes32(0)), bytes32(0));
+        vm.deal(address(0x1234), 99);
+        vm.store(address(0x1234), bytes32(0), bytes32(uint256(123)));
+    }
+
     function testIncrement() public {
-        require(address(0x1234).balance == 42, "wrong remote state");
+        assertEq(address(0x1234).balance, 99);
+        assertEq(vm.load(address(0x1234), bytes32(0)), bytes32(uint256(123)));
         Counter counter = new Counter();
         counter.increment();
-        assert(counter.number() == 1);
+        assertEq(counter.number(), 1);
     }
 }
 "#,
     );
-    cmd.args([
-        "test",
-        "--fork-url",
-        &endpoint,
-        "--mutate",
-        "src/Counter.sol",
-        "--mutation-jobs",
-        "4",
-        "--threads",
-        "1",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+    for isolate in [false, true] {
+        // Reevaluate all mutants in each mode.
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        cmd.forge_fuse().args([
+            "test",
+            "--fork-url",
+            &endpoint,
+            "--mutate",
+            "src/Counter.sol",
+            "--mutation-jobs",
+            "4",
+            "--threads",
+            "1",
+        ]);
+        if isolate {
+            cmd.arg("--isolate");
+        }
+        // A survivor rules out kills caused by leaked setup writes.
+        cmd.assert_success().stdout_eq(str![[r#"
 ...
 Running mutation tests with 4 parallel workers...
+...
+  1. src/Counter.sol:6
 ...
 3 mutants killed
 ...
 "#]]);
-    assert_eq!(
-        blocks.lock().unwrap().len(),
-        1,
-        "baseline and mutants must use one prepared backend"
-    );
+        assert_eq!(
+            std::mem::take(&mut *blocks.lock().unwrap()).len(),
+            1,
+            "baseline and mutants must use one prepared backend"
+        );
+    }
 }
 
 #[forgetest_init]
