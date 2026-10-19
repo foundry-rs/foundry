@@ -1,6 +1,9 @@
 //! A clone-on-write wrapper around [`Backend`] used for fuzzing.
 
-use crate::{backend::Backend, evm::FoundryEvmNetwork};
+use crate::{
+    backend::Backend,
+    evm::{FoundryEvmFor, FoundryEvmNetwork},
+};
 use alloy_primitives::{Address, TxKind};
 use std::{
     borrow::Cow,
@@ -63,6 +66,14 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
     /// Returns whether the backend was cloned.
     pub const fn is_owned(&self) -> bool {
         matches!(self.backend, Cow::Owned(_))
+    }
+
+    /// Parks accepted state on owned backends; leaves pending writes uncommitted.
+    pub fn park_detached(&mut self, evm: FoundryEvmFor<'_, FEN>) {
+        if let Cow::Owned(backend) = &mut self.backend {
+            backend.lifecycle.park_detached(evm);
+            backend.bal = None;
+        }
     }
 }
 

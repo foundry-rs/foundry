@@ -1,5 +1,7 @@
 use super::*;
+use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::{RpcEndpointUrl, RpcEndpoints};
 
 #[forgetest]
 fn invariant_after_invariant(prj: _, cmd: _) {
@@ -1230,9 +1232,16 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 }
 
 #[forgetest_init]
-fn invariant_roll_inactive_fork_preserves_active_block(prj: _, cmd: _) {
-    prj.add_rpc_endpoints();
+async fn invariant_roll_inactive_fork_preserves_active_block(prj: _, cmd: _) {
+    let (api, anvil) =
+        spawn(NodeConfig::test().with_no_mining(true).with_genesis_block_number(Some(19812632u64)))
+            .await;
+    for _ in 0..2 {
+        api.mine_one().await.unwrap();
+    }
     prj.update_config(|config| {
+        config.rpc_endpoints =
+            RpcEndpoints::new([("mainnet", RpcEndpointUrl::Url(anvil.http_endpoint()))]);
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.shrink_run_limit = 0;
     });
@@ -1255,8 +1264,10 @@ contract InactiveRollForkHandler is Test {
         if (calls == 1) {
             vm.rollFork(block.number + 1);
         } else {
+            require(block.number == 19812633, "lost active roll");
             vm.rollFork(inactiveFork, block.number + 1);
         }
+        require(block.number == 19812633, "active block changed");
     }
 }
 
@@ -3465,4 +3476,90 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+}
+
+#[forgetest_init]
+fn invariant_recorded_failures_do_not_poison_later_checks(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.fail_on_revert = false;
+        config.assertions_revert = false;
+        config.legacy_assertions = true;
+        config.fuzz.seed = Some(U256::from(119u32));
+    });
+    prj.add_test(
+        "RecordedFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract OncePoisonHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool immutable snapshotFailure;
+    uint256 public counter;
+    bool private _failed;
+
+    constructor(bool snapshotFailure_) { snapshotFailure = snapshotFailure_; }
+
+    function failed() external view returns (bool) { return _failed; }
+
+    function step() external {
+        counter++;
+        if (counter == 1) {
+            if (snapshotFailure) {
+                uint256 snapshot = vm.snapshotState();
+                vm.assertEq(uint256(1), uint256(2));
+                require(vm.revertToState(snapshot), "snapshot missing");
+                // Reassert after restoring the global failure slot.
+                vm.assertEq(uint256(1), uint256(2));
+            } else {
+                _failed = true;
+                vm.assertEq(uint256(1), uint256(2));
+            }
+        }
+    }
+}
+
+abstract contract RecordedFailureTest is Test {
+    OncePoisonHandler handler;
+
+    function invariant_counter_below_three() public view {
+        require(handler.counter() < 3, "counter reached 3");
+    }
+}
+
+contract SnapshotPoisonTest is RecordedFailureTest {
+    function setUp() public {
+        handler = new OncePoisonHandler(true);
+        targetContract(address(handler));
+    }
+}
+
+contract LegacyPoisonTest is RecordedFailureTest {
+    function setUp() public {
+        handler = new OncePoisonHandler(false);
+        targetContract(address(handler));
+    }
+}
+"#,
+    );
+
+    for contract in ["SnapshotPoisonTest", "LegacyPoisonTest"] {
+        cmd.forge_fuse()
+            .args(["test", "--match-contract", contract])
+            .assert_with(&[("[SEQUENCE]", r"\[Sequence\].*(\n\t\t.*)*")])
+            .failure()
+            .stdout_eq(str![[r#"
+...
+[FAIL: counter reached 3]
+	[SEQUENCE]
+
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: assertion failed] test/RecordedFailure.t.sol:OncePoisonHandler::step
+	[SEQUENCE]
+ invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
+...
+"#]]);
+    }
 }
