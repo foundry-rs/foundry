@@ -138,6 +138,14 @@ jobs:
           key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-foundry-${{ matrix.name }}-
+      - name: External compiler cache
+        if: contains(matrix.name, 'external')
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/foundry-external-tests
+          key: v1-${{ runner.os }}-external-build-${{ matrix.target }}-${{ matrix.partition }}-${{ github.run_id }}
+          restore-keys: |
+            v1-${{ runner.os }}-external-build-${{ matrix.target }}-${{ matrix.partition }}-
       - name: Seed signatures used by trace snapshots
         shell: bash
         run: |
@@ -175,6 +183,7 @@ jobs:
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
+          FOUNDRY_EXTERNAL_TEST_CACHE: ${{ runner.temp }}/foundry-external-tests
         shell: bash
         run: |
           args=(-E "$NEXTEST_FILTER")
@@ -182,4 +191,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked --features base,monad "${args[@]}"
+          cargo nextest run --locked --features base,monad --profile ci "${args[@]}"
