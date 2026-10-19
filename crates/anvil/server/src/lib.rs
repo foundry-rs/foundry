@@ -416,7 +416,7 @@ mod tests {
                 ),
             ] {
                 assert_eq!(redact_params(method, &params), expected);
-                let mut failed_params = params.clone();
+                let mut failed_params = params;
                 redact_fork_credentials(method, &mut failed_params);
                 assert_eq!(failed_params, expected);
             }
