@@ -8,7 +8,6 @@ use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
 use std::{
-    cmp::Reverse,
     collections::{HashMap, HashSet, hash_map::Entry},
     sync::{
         Arc, Mutex,
@@ -238,8 +237,7 @@ impl InvariantWorkerOutput {
 /// - handler assertion failures keep the shorter reproducer, with equal lengths preserving the
 ///   earlier logical worker;
 /// - optimization mode keeps the maximum value, with ties preserving the earlier logical worker;
-/// - max gas per selector keeps the highest gas, with ties keeping the shorter sequence and then
-///   the earlier logical worker;
+/// - max gas per selector keeps the highest gas, with ties preserving the earlier logical worker;
 /// - `failed_corpus_replays` is a master-worker-only value from worker `0`;
 /// - run/call counts, reverts, gas traces, selector metrics, and line coverage accumulate into the
 ///   logical campaign result.
@@ -427,21 +425,17 @@ fn merge_metrics(
     }
 }
 
-/// Keeps the highest gas witness per selector, preferring shorter sequences on ties.
+/// Keeps the highest gas witness per selector, using logical run order to break ties.
 fn merge_max_gas(
     merged: &mut HashMap<String, MaxGasWitness>,
     worker_max_gas: HashMap<String, MaxGasWitness>,
 ) {
     for (selector, witness) in worker_max_gas {
         match merged.entry(selector) {
-            Entry::Occupied(mut entry) => {
-                let best = entry.get();
-                if (witness.gas, Reverse(witness.sequence.len()))
-                    > (best.gas, Reverse(best.sequence.len()))
-                {
-                    entry.insert(witness);
-                }
+            Entry::Occupied(mut best) if witness.gas > best.get().gas => {
+                best.insert(witness);
             }
+            Entry::Occupied(_) => {}
             Entry::Vacant(entry) => {
                 entry.insert(witness);
             }
