@@ -6,12 +6,11 @@ use super::{
 use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
-    Address, B256, Bytes, KECCAK256_EMPTY, Log, TxKind, U256, keccak256,
+    Address, B256, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressSet},
 };
 use evm2::{
     EvmFeatures, ExecutionError, Inspector,
-    bytecode::Bytecode,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, JournalEntry, PendingState, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -28,7 +27,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
         InterpreterFor, MessageFor, MessageResultFor, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, evm_env, merge_nested_changes, merge_pending_changes,
+        TxResultFor, TypesFor, evm_env, mark_created, merge_nested_changes, merge_pending_changes,
         release_inspector,
     },
     precompiles::P256_VERIFY,
@@ -1157,9 +1156,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         *child.ext_mut() = evm.ext().clone();
         // Accounts the running transaction created stay created in the nested one, so that
         // EIP-6780 SELFDESTRUCT still deletes them.
-        let features = child.version().features;
         for address in &self.inner.tx_created {
-            if mark_created(child.state_mut(), address, features).is_err() {
+            if mark_created(child.state_mut(), address).is_err() {
                 return not_executed(Bytes::new());
             }
         }
@@ -1991,30 +1989,6 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
             message.code = code;
         }
     }
-}
-
-/// Marks the existing `address` as created in the running transaction of `state`, keeping its
-/// account fields.
-///
-/// evm2 only marks accounts created by `CREATE` and `CREATE2`, so this recreates the account
-/// over an empty one and restores its nonce and code.
-fn mark_created(state: &mut State<'_>, address: &Address, features: EvmFeatures) -> DbResult<()> {
-    let (nonce, code_hash, code) = {
-        let mut account = state.account(address)?;
-        if account.is_created() || !account.exists() {
-            return Ok(());
-        }
-        let (nonce, code_hash, code) = (account.nonce(), account.code_hash(), account.load_code()?);
-        account.set_nonce(0);
-        account.set_code(KECCAK256_EMPTY, Bytecode::default());
-        (nonce, code_hash, code)
-    };
-    // The account is empty and the endowment is zero, so the creation cannot fail.
-    let _ = state.create_account(address, address, &U256::ZERO, features)?;
-    let mut account = state.account(address)?;
-    account.set_nonce(nonce);
-    account.set_code(code_hash, code);
-    Ok(())
 }
 
 /// Warms in `state` the accounts a successful nested transaction loaded and the storage slots it

@@ -276,3 +276,47 @@ fn fork_loaded_storage_lifetime() {
     assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
     assert_eq!(slot(&mut evm), U256::from(97));
 }
+
+#[test]
+fn fork_carries_created_accounts() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::PRAGUE;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let persistent = Address::with_last_byte(0xC0);
+    let local = Address::with_last_byte(0xC1);
+    let changed = Address::with_last_byte(0xC2);
+    let on_fork = Address::with_last_byte(0xC3);
+    let mut fork_db = db_with(&[(changed, 5)], 0);
+    // The fork holds storage at an address the transaction creates locally.
+    fork_db.insert_account_storage(&persistent, &U256::ZERO, &U256::from(17));
+    let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
+    let first = memory_fork(&mut backend, fork_db, env);
+    let second = memory_fork(&mut backend, db_with(&[], 0), env);
+    let phase = ExecutionPhase::InFlight;
+    let mut evm = backend.create_evm();
+    let features = evm.version().features;
+    for address in [persistent, local] {
+        evm.state_mut().create_account(&CALLER, &address, &U256::ZERO, features).unwrap().unwrap();
+    }
+    evm.state_mut().storage_slot(&persistent, U256::ONE).unwrap().set(U256::from(23));
+    evm.state_mut().account(&changed).unwrap().set_balance(U256::from(9));
+    backend.add_persistent_account(persistent);
+
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    assert_eq!(nonce(&mut evm, local), 1);
+    let storage = |evm: &mut FoundryEvmFor<'_, EthEvmNetwork>, key| {
+        evm.state_mut().storage_slot_untracked(&persistent, &U256::from(key)).unwrap()
+    };
+    assert_eq!(storage(&mut evm, 0), U256::ZERO);
+    assert_eq!(storage(&mut evm, 1), U256::from(23));
+    assert_eq!(balance(&mut evm, changed), U256::from(5));
+
+    evm.state_mut().create_account(&CALLER, &on_fork, &U256::ZERO, features).unwrap().unwrap();
+    let _ =
+        backend.lifecycle.roll_fork(&mut evm, Some(first), db_with(&[], 0), env, phase).unwrap();
+    assert_eq!(nonce(&mut evm, on_fork), 1);
+    assert_eq!(nonce(&mut evm, local), 1);
+
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert_eq!(nonce(&mut evm, on_fork), 0);
+}

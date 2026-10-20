@@ -52,6 +52,8 @@ pub struct Parked<T: EvmTypesHost> {
     pub cache: Option<Arc<Cache>>,
     /// Slots loaded before suspending this context, cleared at the transaction boundary.
     pub(super) loaded_storage: AddressMap<HashSet<U256>>,
+    /// Accounts created before suspending this context, cleared at the transaction boundary.
+    pub(super) created: AddressSet,
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
@@ -63,6 +65,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             ext: StoredExt::new(&ext),
             cache: None,
             loaded_storage: AddressMap::default(),
+            created: AddressSet::default(),
         }
     }
 }
@@ -75,6 +78,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
             ext: self.ext.clone(),
             cache: self.cache.clone(),
             loaded_storage: self.loaded_storage.clone(),
+            created: self.created.clone(),
         }
     }
 }
@@ -240,24 +244,7 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
 
     /// Copies persistent accounts' accepted state from `source` into `target`.
     pub(super) fn merge_persistent(&self, source: &Cache, target: &mut Cache) {
-        for address in &self.persistent {
-            if let Some(account) = source.accounts.get(address) {
-                target.accounts.insert(*address, account.clone());
-                if let Some(info) = account
-                    && let Some(code) = source.contracts.get(&info.code_hash)
-                {
-                    target.contracts.insert(info.code_hash, code.clone());
-                }
-            }
-            match source.storage.get(address) {
-                Some(storage) => {
-                    target.storage.insert(*address, storage.clone());
-                }
-                None => {
-                    target.storage.remove(address);
-                }
-            }
-        }
+        copy_accounts(&self.persistent, source, target);
     }
 
     /// Copies persistent accounts' transaction-loaded slots alongside their accepted state.
@@ -276,5 +263,36 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
                 }
             }
         }
+    }
+}
+
+/// Copies the accepted state of `addresses` from `source` into `target`.
+fn copy_accounts(addresses: &AddressSet, source: &Cache, target: &mut Cache) {
+    for address in addresses {
+        if let Some(account) = source.accounts.get(address) {
+            target.accounts.insert(*address, account.clone());
+            if let Some(info) = account
+                && let Some(code) = source.contracts.get(&info.code_hash)
+            {
+                target.contracts.insert(info.code_hash, code.clone());
+            }
+        }
+        match source.storage.get(address) {
+            Some(storage) => {
+                target.storage.insert(*address, storage.clone());
+            }
+            None => {
+                target.storage.remove(address);
+            }
+        }
+    }
+}
+
+/// Copies accounts created in the running transaction from `source` into `target`. Their
+/// unwritten slots read as zero, whatever `target`'s backing database holds.
+pub(super) fn copy_created(created: &AddressSet, source: &Cache, target: &mut Cache) {
+    copy_accounts(created, source, target);
+    for address in created {
+        target.storage.entry(*address).or_default().wiped = true;
     }
 }

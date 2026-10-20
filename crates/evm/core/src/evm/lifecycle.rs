@@ -28,7 +28,7 @@
 
 use super::{
     AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt, FoundryEvmFactory,
-    LifecycleSnapshot, Parked, StoredExt, evm_env,
+    LifecycleSnapshot, Parked, StoredExt, evm_env, fork::copy_created,
 };
 use crate::{
     backend::{RevertStateSnapshotAction, transaction_error},
@@ -37,7 +37,7 @@ use crate::{
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{
     Address, KECCAK256_EMPTY, Log, U256,
-    map::{AddressMap, HashSet},
+    map::{AddressMap, AddressSet, HashSet},
 };
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
@@ -219,8 +219,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         context.env = env;
         context.ext = StoredExt::new(&ext);
         self.forks.local.loaded_storage.clear();
+        self.forks.local.created.clear();
         for entry in self.forks.forks.values_mut() {
             entry.context.loaded_storage.clear();
+            entry.context.created.clear();
         }
     }
 
@@ -268,7 +270,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
 
     /// Makes `id` the running context, or the local context for `None`.
     ///
-    /// Persistent accounts carry their accepted state into the target.
+    /// Persistent accounts carry their accepted state into the target. Leaving the local context
+    /// also carries the accounts the running transaction created there, as REVM started forks
+    /// from the local journal.
     pub fn select_fork(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
@@ -281,15 +285,18 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if id == self.forks.active() {
             return Ok(EnvTransition::Applied);
         }
+        let leaves_local = self.forks.active().is_none();
         let suspended = self.suspend(evm);
+        let created = if leaves_local { suspended.created.clone() } else { AddressSet::default() };
         self.forks.active = id;
-        Ok(self.resume(evm, suspended, phase))
+        Ok(self.resume(evm, suspended, &created, phase))
     }
 
     /// Moves fork `id`, or the running context for `None`, onto a new backing database and
     /// environment, such as a later block.
     ///
-    /// The fork's accepted state is discarded except for persistent accounts.
+    /// The fork's accepted state is discarded except for persistent accounts and, when rolling
+    /// the running context, accounts the running transaction created on it.
     pub fn roll_fork(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
@@ -320,10 +327,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
         let suspended = self.suspend(evm);
+        let created = suspended.created.clone();
         let context = self.active_mut();
         *context = Parked::new(Box::new(db), env, ext);
         context.cache = cache.map(Arc::new);
-        Ok(self.resume(evm, suspended, phase))
+        Ok(self.resume(evm, suspended, &created, phase))
     }
 
     /// Moves the inactive fork `id`, or the local context for `None`, onto a new backing database
@@ -598,6 +606,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Accepts the running state and stores it, with the running environment, in the active
     /// context. Returns what the running transaction carries into the next context.
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
+        let created = created_accounts(evm.state_mut());
+        self.active_mut().created.extend(created);
         let state = evm.state();
         let cached = state
             .overlay_db()
@@ -628,18 +638,26 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         context.cache = Some(Arc::new(cache.clone()));
         context.env = env;
         context.ext = StoredExt::new(&ext);
-        Suspended { cache, loaded_storage: context.loaded_storage.clone(), logs, prewarm }
+        Suspended {
+            cache,
+            loaded_storage: context.loaded_storage.clone(),
+            created: context.created.clone(),
+            logs,
+            prewarm,
+        }
     }
 
-    /// Installs the active context into `evm`, carrying persistent accounts, logs and base warmth
-    /// over from the suspended context.
+    /// Installs the active context into `evm`, carrying persistent accounts, the `created`
+    /// accounts, logs and base warmth over from the suspended context.
     fn resume(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
         suspended: Suspended,
+        created: &AddressSet,
         phase: ExecutionPhase,
     ) -> EnvTransition {
-        let Suspended { cache: source, loaded_storage: source_loaded, logs, prewarm } = suspended;
+        let Suspended { cache: source, loaded_storage: source_loaded, logs, prewarm, .. } =
+            suspended;
         let context = self.active_mut();
         let fresh = context.cache.is_none();
         // The running EVM owns the active context's accepted state.
@@ -649,8 +667,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let env = context.env;
         let ext = context.ext.get();
         self.forks.merge_persistent(&source, &mut cache);
+        copy_created(created, &source, &mut cache);
         self.forks.merge_persistent_loaded_storage(&source_loaded, &mut loaded_storage);
-        self.active_mut().loaded_storage = loaded_storage;
+        let context = self.active_mut();
+        context.loaded_storage = loaded_storage;
+        context.created.extend(created);
 
         let mut state = State::new(db.clone_backing());
         state.overlay_db_mut().cache = cache;
@@ -718,6 +739,8 @@ struct Suspended {
     cache: Cache,
     /// Slots loaded in the suspended context during the current transaction.
     loaded_storage: AddressMap<HashSet<U256>>,
+    /// Accounts created in the suspended context during the current transaction.
+    created: AddressSet,
     /// Logs of the running transaction.
     logs: Vec<Log>,
     /// Base warmth of the running transaction, such as its access list.
@@ -765,7 +788,7 @@ pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> D
 }
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
-/// journaled writes.
+/// journaled writes. Accounts the nested transaction created stay created.
 fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
@@ -799,7 +822,35 @@ fn merge_changes<'c>(
         for (key, slot) in change.storage.changed_slots() {
             state.storage_slot(&address, *key)?.set(slot.current);
         }
+        if change.created && change.current.is_some() {
+            mark_created(state, &address)?;
+        }
     }
+    Ok(())
+}
+
+/// Marks the existing `address` as created in the running transaction of `state`, keeping its
+/// account fields.
+///
+/// evm2 only marks accounts created by `CREATE` and `CREATE2`, so this recreates the account
+/// over an empty one and restores its nonce and code.
+pub fn mark_created(state: &mut State<'_>, address: &Address) -> DbResult<()> {
+    let (nonce, code_hash, code) = {
+        let mut account = state.account(address)?;
+        if account.is_created() || !account.exists() {
+            return Ok(());
+        }
+        let (nonce, code_hash, code) = (account.nonce(), account.code_hash(), account.load_code()?);
+        account.set_nonce(0);
+        account.set_code(KECCAK256_EMPTY, Bytecode::default());
+        (nonce, code_hash, code)
+    };
+    // The account is empty and the endowment is zero, so the creation cannot fail. The features
+    // only choose the initial nonce, which is restored below.
+    let _ = state.create_account(address, address, &U256::ZERO, EvmFeatures::empty())?;
+    let mut account = state.account(address)?;
+    account.set_nonce(nonce);
+    account.set_code(code_hash, code);
     Ok(())
 }
 
@@ -824,4 +875,18 @@ fn loaded_slots(state: &State<'_>, address: &Address) -> Vec<U256> {
     // Exclude setup-only slots materialized by snapshots or fork switches.
     slots.retain(|slot| state.get_storage(address, slot).is_some());
     slots
+}
+
+/// Returns the accounts the live transaction state created.
+fn created_accounts(state: &mut State<'_>) -> AddressSet {
+    let mut changed = state
+        .journal()
+        .iter()
+        .filter_map(|entry| match entry {
+            JournalEntry::AccountChange { address, .. } => Some(*address),
+            _ => None,
+        })
+        .collect::<AddressSet>();
+    changed.retain(|address| state.account(address).is_ok_and(|account| account.is_created()));
+    changed
 }
