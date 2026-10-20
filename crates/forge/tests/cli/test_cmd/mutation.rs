@@ -38,10 +38,22 @@ exclude_operators = ["assembly", "binary-op", "delete-expression", "elim-delegat
 "#,
     )
     .unwrap();
-    cmd.args(["test", "--mutate", "src/Body.sol", "--mutation-jobs", "1", "--json"])
-        .assert_json_stdout(str![[r#"
+    // A fixed seed keeps the execution cache key, and so the persisted spans, stable across runs.
+    let args =
+        ["test", "--mutate", "src/Body.sol", "--mutation-jobs", "1", "--fuzz-seed", "1", "--json"];
+    let expected = str![[r#"
 {"summary":{"total":3,"killed":1,"survived":2,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":33.33333333333333,"duration_secs":"{...}"},"survived_mutants":{"src/Body.sol":[{"line":5,"column":54,"original":"{ number = 7; return value; }","mutant":"{ return true; }"},{"line":5,"column":56,"original":"number = 7","mutant":"0"}]}}
-"#]]);
+"#]];
+    cmd.args(args).assert_json_stdout(expected.clone());
+
+    // Resume from the persisted survived spans without a complete results cache.
+    for entry in fs::read_dir(prj.root().join("cache/mutation")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "results") {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    cmd.forge_fuse().args(args).assert_json_stdout(expected);
 }
 
 #[forgetest_init]
