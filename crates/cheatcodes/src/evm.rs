@@ -33,7 +33,6 @@ use foundry_evm_core::{
     },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor, merge_child_state, prepare_child_state},
-    utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
@@ -313,7 +312,7 @@ impl Cheatcode for loadCall {
                     .state
                     .cached_arbitrary_storage_value(target, slot.into())
                     .unwrap_or_else(|| ccx.state.core.rng().random());
-                ccx.state.arbitrary_storage.as_mut().unwrap().save(
+                ccx.state.core.arbitrary_storage.as_mut().unwrap().save(
                     ccx.ecx,
                     target,
                     slot.into(),
@@ -325,7 +324,7 @@ impl Cheatcode for loadCall {
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
                 let rand_value = ccx.state.core.rng().random();
-                val.data = ccx.state.arbitrary_storage.as_mut().unwrap().copy(
+                val.data = ccx.state.core.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.ecx,
                     target,
                     slot.into(),
@@ -788,11 +787,8 @@ impl Cheatcode for blobBaseFeeCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        let spec: SpecId = ccx.spec().into();
-        ccx.ecx.block_mut().set_blob_excess_gas_and_price(
-            (*newBlobBaseFee).to(),
-            get_blob_base_fee_update_fraction_by_spec_id(spec),
-        );
+        ensure!(*newBlobBaseFee <= U256::from(u128::MAX), "blob base fee must be less than 2^128");
+        ccx.ecx.block_mut().set_blob_gasprice(newBlobBaseFee.saturating_to());
         Ok(Default::default())
     }
 }
@@ -800,7 +796,7 @@ impl Cheatcode for blobBaseFeeCall {
 impl Cheatcode for getBlobBaseFeeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        Ok(ccx.blob_excess_gas().unwrap_or(0).abi_encode())
+        Ok(U256::from(ccx.blob_gasprice().unwrap_or_default()).abi_encode())
     }
 }
 
@@ -921,7 +917,7 @@ impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
         if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(target) {
-            account.unmark_touch();
+            account.mark_cold();
             account.storage.values_mut().for_each(|slot| slot.mark_cold());
         }
         Ok(Default::default())

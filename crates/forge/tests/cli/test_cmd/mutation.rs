@@ -744,7 +744,13 @@ contract StackTooDeepTest {
 
 #[forgetest_init]
 fn mutation_testing_uses_mutation_profile_for_initial_compile(prj: _, cmd: _) {
-    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = false\n").unwrap();
+    // Only the assertion needs mutating to exercise the compiler profile. Mutating every
+    // arithmetic expression in the stack-depth fixture needlessly repeats the expensive IR build.
+    fs::write(
+        prj.root().join("foundry.toml"),
+        "[profile.default]\nvia_ir = false\n\n[mutation]\nexclude_operators = [\"binary-op\"]\n",
+    )
+    .unwrap();
 
     prj.add_source(
         "StackTooDeep.sol",
@@ -754,6 +760,7 @@ pragma solidity ^0.8.20;
 
 contract StackTooDeep {
     function manyLocals(uint256 x) public pure returns (uint256) {
+        assert(x != 0);
         uint256 a00 = x + 0;
         uint256 a01 = x + 1;
         uint256 a02 = x + 2;
@@ -798,7 +805,11 @@ contract StackTooDeepTest {
 "#,
     );
 
+    // The ordinary profile must still fail, or the mutation profile override is not being tested.
+    cmd.arg("build").assert_failure();
+
     let output = cmd
+        .forge_fuse()
         .args([
             "test",
             "--mutate",
@@ -812,7 +823,9 @@ contract StackTooDeepTest {
         .assert_success();
     let summary = mutation_summary(&output.get_output().stdout_lossy());
 
-    assert!(summary["total"].as_u64().unwrap() > 0, "unexpected summary:\n{summary}");
+    assert_eq!(summary["total"], 3, "unexpected summary:\n{summary}");
+    assert_eq!(summary["killed"], 2, "unexpected summary:\n{summary}");
+    assert_eq!(summary["survived"], 1, "unexpected summary:\n{summary}");
 }
 
 #[forgetest_init]

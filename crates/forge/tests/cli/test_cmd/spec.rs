@@ -2339,3 +2339,60 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#
     ]]);
 }
+
+// Access lists do not exist before Berlin, so `vm.accessList` must not break isolated calls there.
+#[forgetest]
+fn test_access_list_before_berlin(prj: _, cmd: _) {
+    prj.add_test(
+        "AccessListBeforeBerlin.t.sol",
+        r#"
+interface Vm {
+    struct AccessListItem {
+        address target;
+        bytes32[] storageKeys;
+    }
+
+    function accessList(AccessListItem[] calldata access) external;
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract AccessListBeforeBerlinTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_access_list_call() public {
+        Counter counter = new Counter();
+        Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
+        accessList[0] = Vm.AccessListItem(address(counter), new bytes32[](0));
+        vm.accessList(accessList);
+
+        counter.increment();
+        require(counter.number() == 1, "increment");
+    }
+}
+"#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.evm_version = EvmVersion::Istanbul;
+            config.isolate = isolate;
+        });
+        cmd.forge_fuse()
+            .args(["test", "--mc", "AccessListBeforeBerlinTest"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/AccessListBeforeBerlin.t.sol:AccessListBeforeBerlinTest
+[PASS] test_access_list_call() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}

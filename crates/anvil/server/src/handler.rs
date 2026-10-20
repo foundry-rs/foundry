@@ -66,7 +66,7 @@ pub async fn handle_request<Handler: RpcHandler>(
 async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Option<RpcResponse> {
     match call {
         RpcCall::MethodCall(call) => {
-            trace!(target: "rpc", id = ?call.id , method = ?call.method,  "handling call");
+            // Detailed logging with params is done in on_call
             Some(handler.on_call(call).await)
         }
         RpcCall::Notification(notification) => {
@@ -102,7 +102,7 @@ mod tests {
     use std::{
         pin::pin,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
         task::{Context, Poll, Waker},
@@ -117,7 +117,7 @@ mod tests {
     #[derive(Clone, Debug, serde::Deserialize)]
     #[serde(tag = "method", content = "params")]
     enum TypedRequest {
-        #[serde(rename = "known")]
+        #[serde(rename = "known", alias = "known_alias")]
         Known(Vec<TestParam>),
     }
 
@@ -127,8 +127,17 @@ mod tests {
         Allowed,
     }
 
-    #[derive(Clone)]
-    struct TypedHandler;
+    #[derive(Clone, Default)]
+    struct ErrorHandler {
+        errors: Arc<Mutex<Vec<RecordedError>>>,
+    }
+
+    type RecordedError = (String, Id, serde_json::Value, RpcError);
+
+    #[derive(Clone, Default)]
+    struct CredentialHandler {
+        observed: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
 
     impl RpcHandler for TestHandler {
         type Request = serde_json::Value;
@@ -139,13 +148,47 @@ mod tests {
         }
     }
 
-    impl RpcHandler for TypedHandler {
+    impl RpcHandler for ErrorHandler {
         type Request = TypedRequest;
 
         async fn on_request(&self, request: Self::Request) -> ResponseResult {
             let TypedRequest::Known(params) = request;
             drop(params);
-            ResponseResult::success(())
+            ResponseResult::Error(RpcError::internal_error())
+        }
+
+        fn on_request_error(
+            &self,
+            method: &str,
+            id: &Id,
+            params: &serde_json::Value,
+            error: &RpcError,
+        ) {
+            self.errors.lock().unwrap().push((
+                method.to_owned(),
+                id.clone(),
+                params.clone(),
+                error.clone(),
+            ));
+        }
+    }
+
+    impl RpcHandler for CredentialHandler {
+        type Request = serde_json::Value;
+
+        async fn on_request(&self, request: Self::Request) -> ResponseResult {
+            self.observed.lock().unwrap().push(request);
+            ResponseResult::Error(RpcError::internal_error())
+        }
+
+        fn on_request_error(
+            &self,
+            _method: &str,
+            _id: &Id,
+            params: &serde_json::Value,
+            _error: &RpcError,
+        ) {
+            self.observed.lock().unwrap().push(params.clone());
         }
     }
 
@@ -193,18 +236,20 @@ mod tests {
     }
 
     #[test]
-    fn distinguishes_unknown_methods_from_unknown_parameter_variants() {
-        let unknown_method = run_ready(TypedHandler.on_call(typed_call("unknown")));
-        let invalid_params = run_ready(TypedHandler.on_call(typed_call("known")));
+    fn distinguishes_deserialization_errors_without_invoking_error_hook() {
+        let handler = ErrorHandler::default();
+        let invalid_params = run_ready(handler.on_call(typed_call("known")));
+        let unknown_method = run_ready(handler.on_call(typed_call("unknown")));
 
         assert_eq!(
-            serde_json::to_value(unknown_method).unwrap()["error"]["code"],
-            serde_json::json!(-32601)
+            invalid_params,
+            RpcResponse::new(
+                Id::Number(1),
+                RpcError::invalid_params("unknown variant `bogus`, expected `allowed`")
+            )
         );
-        assert_eq!(
-            serde_json::to_value(invalid_params).unwrap()["error"]["code"],
-            serde_json::json!(-32602)
-        );
+        assert_eq!(unknown_method, RpcResponse::new(Id::Number(1), RpcError::method_not_found()));
+        assert!(handler.errors.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -263,8 +308,88 @@ mod tests {
         let body = run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap();
 
         assert_eq!(
-            serde_json::from_slice::<Response>(&body).unwrap(),
-            Response::error(RpcError::parse_error())
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::to_value(Response::error(RpcError::parse_error())).unwrap()
+        );
+    }
+
+    #[test]
+    fn request_error_hook_preserves_method_alias_id_and_params() {
+        let handler = ErrorHandler::default();
+        let id = Id::String("request-7".to_owned());
+        let call = RpcMethodCall {
+            params: RequestParams::Array(vec![serde_json::json!("allowed")]),
+            id: id.clone(),
+            ..typed_call("known_alias")
+        };
+
+        let response = run_ready(handler.on_call(call));
+
+        assert_eq!(response, RpcResponse::new(id.clone(), RpcError::internal_error()));
+        assert_eq!(
+            *handler.errors.lock().unwrap(),
+            vec![(
+                "known_alias".to_owned(),
+                id,
+                serde_json::json!(["allowed"]),
+                RpcError::internal_error()
+            )]
+        );
+    }
+
+    #[test]
+    fn request_error_hook_handles_notifications_without_response() {
+        let handler = ErrorHandler::default();
+        let call = RpcCall::Notification(RpcNotification {
+            jsonrpc: Some(Version::V2),
+            method: "known".to_owned(),
+            params: RequestParams::Array(vec![serde_json::json!("allowed")]),
+        });
+
+        let response = run_ready(handle_request(Request::Single(call), handler.clone()));
+
+        assert_eq!(response, None);
+        assert_eq!(
+            *handler.errors.lock().unwrap(),
+            vec![(
+                "known".to_owned(),
+                Id::Null,
+                serde_json::json!(["allowed"]),
+                RpcError::internal_error()
+            )]
+        );
+    }
+
+    #[test]
+    fn request_error_hook_redacts_credentials_after_execution() {
+        let handler = CredentialHandler::default();
+        let params = serde_json::json!({"params": {"forking": {
+            "jsonRpcUrl": "https://user:pass@example.invalid/key?token=x#secret",
+            "blockNumber": 42
+        }}});
+        let call = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "hardhat_reset",
+            "params": params,
+            "id": "reset"
+        }))
+        .unwrap();
+
+        let response = run_ready(handler.on_call(call));
+
+        assert_eq!(
+            response,
+            RpcResponse::new(Id::String("reset".to_owned()), RpcError::internal_error())
+        );
+        assert_eq!(
+            *handler.observed.lock().unwrap(),
+            vec![
+                serde_json::json!({"method": "hardhat_reset", "params": params}),
+                serde_json::json!({"params": {"forking": {
+                    "jsonRpcUrl": "https://example.invalid/",
+                    "blockNumber": 42
+                }}})
+            ]
         );
     }
 }

@@ -19,11 +19,6 @@ pub struct MutationGenerationResult {
 }
 
 impl MutatorRegistry {
-    #[cfg(test)]
-    pub fn default() -> Self {
-        Self::from_enabled(&MutatorType::all())
-    }
-
     pub fn from_enabled(enabled: &[MutatorType]) -> Self {
         let mut registry = Self { mutators: Vec::new() };
 

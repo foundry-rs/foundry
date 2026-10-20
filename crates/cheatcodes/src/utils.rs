@@ -230,18 +230,18 @@ impl Cheatcode for interceptInitcodeCall {
 }
 
 impl Cheatcode for setArbitraryStorage_0Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { target } = self;
-        ccx.state.arbitrary_storage().mark_arbitrary(target, false);
+        state.arbitrary_storage().mark_arbitrary(target, false);
 
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for setArbitraryStorage_1Call {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { target, overwrite } = self;
-        ccx.state.arbitrary_storage().mark_arbitrary(target, *overwrite);
+        state.arbitrary_storage().mark_arbitrary(target, *overwrite);
 
         Ok(Default::default())
     }
@@ -261,7 +261,7 @@ impl Cheatcode for copyStorageCall {
             if ccx.ecx.journal_mut().load_account(*to).is_ok() {
                 // SAFETY: We ensured the account was already loaded.
                 ccx.ecx.journal_mut().evm_state_mut().get_mut(to).unwrap().storage = from_storage;
-                if let Some(arbitrary_storage) = &mut ccx.state.arbitrary_storage {
+                if let Some(arbitrary_storage) = &mut ccx.state.core.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
                 }
             }

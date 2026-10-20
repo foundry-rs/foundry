@@ -52,33 +52,12 @@ impl<'src> MutantVisitor<'src> {
         }
     }
 
-    /// Use all mutators from registry (all operators enabled)
-    #[cfg(test)]
-    pub fn default(path: PathBuf) -> Self {
-        Self {
-            mutation_to_conduct: Vec::new(),
-            errors: Vec::new(),
-            mutator_registry: MutatorRegistry::default(),
-            path,
-            source: None,
-            contract_filter: None,
-            in_allowed_contract: true,
-            mutation_exclusions: MutationExclusionSet::new(),
-        }
-    }
-
     /// Use only a set of mutators
     #[cfg(test)]
     pub fn new_with_mutators(path: PathBuf, mutators: Vec<Box<dyn Mutator>>) -> Self {
         Self {
-            mutation_to_conduct: Vec::new(),
-            errors: Vec::new(),
             mutator_registry: MutatorRegistry::new_with_mutators(mutators),
-            path,
-            source: None,
-            contract_filter: None,
-            in_allowed_contract: true,
-            mutation_exclusions: MutationExclusionSet::new(),
+            ..Self::with_operators(path, &[])
         }
     }
 
@@ -368,7 +347,7 @@ contract Test {
                 .unwrap();
             let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
             drop(parser);
-            let mut visitor = MutantVisitor::default(path)
+            let mut visitor = MutantVisitor::with_operators(path, &MutatorType::all())
                 .with_source(source)
                 .with_mutation_exclusions(mutation_exclusions);
 
