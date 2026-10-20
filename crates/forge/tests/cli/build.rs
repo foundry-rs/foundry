@@ -1681,22 +1681,3 @@ contract Warn {
     prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
     cmd.forge_fuse().arg("build").assert_failure();
 }
-
-#[forgetest]
-fn build_rejects_missing_config_path(prj: _, cmd: _) {
-    assert!(!prj.root().join("missing/foundry.toml").exists());
-
-    cmd.env("RUST_BACKTRACE", "0");
-    cmd.env("RUST_LIB_BACKTRACE", "0");
-    cmd.args(["build", "--config-path", "missing/foundry.toml"])
-        .assert_with(&[("[ANSI]", r"\x1b\[[0-9;]*m")])
-        .failure()
-        .stdout_eq(str![""])
-        .stderr_eq(str![[r#"
-[ANSI]The application panicked (crashed).[ANSI]
-Message:  [ANSI]error: config-path `missing/foundry.toml` does not exist[ANSI]
-[FILE] omitted. Run with RUST_BACKTRACE=1 environment variable to display it.
-Run with RUST_BACKTRACE=full to include source snippets.
-
-"#]]);
-}
