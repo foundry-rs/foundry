@@ -3692,7 +3692,7 @@ optimizer_runs = "invalid"
 
 #[cfg(unix)]
 #[forgetest]
-fn config_fix_preserves_config_file_symlink(prj: _, cmd: _) {
+fn config_fix_matches_loading_for_config_file_symlink(prj: _, cmd: _) {
     let test_home = tempfile::tempdir().unwrap();
     let selected = prj.root().join("selected");
     let shared = prj.root().join("shared");
@@ -3714,34 +3714,58 @@ fn config_fix_preserves_config_file_symlink(prj: _, cmd: _) {
         ] {
             fs::write(&target, legacy).unwrap();
             if sibling_exists {
-                fs::write(&sibling, legacy).unwrap();
+                fs::write(&sibling, "[default]\noptimizer_runs = 456\n").unwrap();
             }
+
+            let expected_stderr = if sibling_exists {
+                str![""]
+            } else {
+                str![[r#"
+Warning: No local TOML found to fix at [..]/shared/foundry.toml.
+Change the current directory to a project path or set the foundry.toml path with the `FOUNDRY_CONFIG` environment variable
+
+"#]]
+            };
 
             cmd.forge_fuse();
             cmd.env("HOME", test_home.path());
             cmd.unset_env("FOUNDRY_CONFIG");
             cmd.current_dir(&selected)
                 .args(["config", "--fix", "--config-path"])
-                .arg(path)
+                .arg(&path)
                 .assert_success()
                 .stdout_eq(str![""])
-                .stderr_eq(str![""]);
+                .stderr_eq(expected_stderr);
 
-            assert_data_eq!(
-                fs::read_to_string(&target).unwrap(),
-                str![[r#"
+            assert_eq!(fs::read_to_string(&target).unwrap(), legacy);
+            if sibling_exists {
+                assert_data_eq!(
+                    fs::read_to_string(&sibling).unwrap(),
+                    str![[r#"
 [profile.default]
-optimizer_runs = 123
+optimizer_runs = 456
 
 "#]]
-            );
-            if sibling_exists {
-                assert_eq!(fs::read_to_string(&sibling).unwrap(), legacy);
+                );
             } else {
                 assert!(!sibling.exists());
             }
             assert_eq!(fs::read_to_string(&unselected).unwrap(), legacy);
             assert_eq!(fs::read_link(&config_path).unwrap(), Path::new("../shared/custom.toml"));
+
+            let expected_config = if sibling_exists {
+                str![[r#"{ "optimizer_runs": 456, "...": "{...}" }"#]]
+            } else {
+                str![[r#"{ "optimizer_runs": 200, "...": "{...}" }"#]]
+            };
+            cmd.forge_fuse();
+            cmd.env("HOME", test_home.path());
+            cmd.unset_env("FOUNDRY_CONFIG");
+            cmd.current_dir(&selected)
+                .args(["config", "--json", "--config-path"])
+                .arg(path)
+                .assert_json_stdout_with_status(true, expected_config)
+                .stderr_eq(str![""]);
         }
     }
 }
