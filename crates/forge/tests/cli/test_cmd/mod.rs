@@ -570,6 +570,7 @@ contract DecodeDelegatecallStorageTest is Test {
         Implementation implementation = new Implementation();
         Proxy proxy = new Proxy(address(implementation));
 
+        vm.chainId(42);
         vm.startStateDiffRecording();
         Implementation(address(proxy)).setValue(42);
         string memory diff = vm.getStateDiffJson();
