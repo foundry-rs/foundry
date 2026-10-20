@@ -44,6 +44,8 @@ jobs:
         with:
           # Same as test.yml: avoids building Vyper's `immutables` dependency from source.
           python-version: "3.13"
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip==26.2.2
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
