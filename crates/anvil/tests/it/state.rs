@@ -664,7 +664,7 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     let tmp = tempfile::tempdir().unwrap();
     let state_file = tmp.path().join("state.json");
 
-    let TestNode { api, handle, provider } = TestNode::spawn().await;
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let greeter = Greeter::deploy(&provider, "Hello".to_string()).await.unwrap();
 
