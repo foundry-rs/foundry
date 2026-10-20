@@ -563,6 +563,7 @@ abstract contract Target {
         return true;
     }
     function constantSigned() public pure returns (int256) {return -1;}
+    function commentedBoolean() public pure returns (bool) { /* Always on. */ return true; }
     function implicitReturn() public pure returns (uint256 result) {}
     receive() external payable { revert(); }
     fallback() external { revert(); }
@@ -620,10 +621,7 @@ contract Other { function ignored() public { revert(); } }
                     ("function constantBoolean() public pure returns (bool)", "{ return false; }"),
                     ("function constantSigned() public pure returns (int256)", "{ return 0; }"),
                     ("function constantSigned() public pure returns (int256)", "{ return 1; }"),
-                    (
-                        "function implicitReturn() public pure returns (uint256 result)",
-                        "{ return 0; }"
-                    ),
+                    ("function commentedBoolean() public pure returns (bool)", "{ return false; }"),
                     (
                         "function implicitReturn() public pure returns (uint256 result)",
                         "{ return 1; }"
