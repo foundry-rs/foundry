@@ -5,6 +5,9 @@
 version = 2
 yanked = "warn"
 ignore = [
+    # The 0.26.11 compatibility crates re-export the patched 1.x certificate data.
+    # The bans below reject every older data version and compatibility wrapper.
+    { id = "RUSTSEC-2026-0381", reason = "0.26.11 re-exports webpki-roots >=1.0.10; bans enforce the patched data" },
     # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
     "RUSTSEC-2024-0436",
     # https://rustsec.org/advisories/RUSTSEC-2026-0173 proc-macro-error2 is unmaintained
@@ -35,7 +38,11 @@ multiple-versions = "allow"
 wildcards = "allow"
 highlight = "all"
 # List of crates to deny
-deny = [{ name = "openssl" }]
+deny = [
+    { name = "openssl" },
+    { name = "webpki-roots", version = "<0.26.11" },
+    { name = "webpki-roots", version = ">0.26.11, <1.0.10" },
+]
 # Certain crates/versions that will be skipped when doing duplicate detection.
 skip = []
 # Similarly to `skip` allows you to skip certain crates during duplicate
