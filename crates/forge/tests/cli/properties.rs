@@ -553,3 +553,29 @@ fn properties_check_rebases_remapping_providers(prj: _, cmd: _) {
         cmd.unset_env(variable);
     }
 }
+
+// A last round whose tests do not compile earns one repair round with the compiler errors.
+#[forgetest_init]
+fn properties_repairs_a_round_that_does_not_compile(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let args = properties_args(
+        &prj,
+        r#"
+if grep -q '^  "round": 2,' "$prompt"; then
+    grep -q 'Undeclared identifier' "$prompt"
+    body='require(Fee.fee(100) == 1);'
+else
+    body='missing();'
+fi
+cat > "$output" <<JSON
+{"schema": "foundry/properties-candidate-v1", "rationale": "small fees are 1%", "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        $body\n    }\n}\n"}]}
+JSON
+"#,
+    );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+added 1 generated test file(s):
+  test/generated/agent-1/FeeSpec.t.sol
+
+"#]]);
+    assert_eq!(rounds(&prj).as_array().unwrap().len(), 2);
+}

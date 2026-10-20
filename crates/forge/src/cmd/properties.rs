@@ -64,6 +64,9 @@ const MAX_PROMPT_TEST_FILES: usize = 2;
 /// The test names listed per target function in `existing_tests`. More are counted, not named, so
 /// the list stays small for large suites.
 const MAX_EXISTING_TESTS_PER_FUNCTION: usize = 5;
+/// Extra rounds for an agent whose last round left no kept file and no possible bug. In the swarm
+/// study, 8 small-model reports named a real root cause, but their tests did not compile or run.
+const MAX_REPAIR_ROUNDS: usize = 1;
 /// Records every test that fails on every seed in a `--check` run, one JSON object per line.
 const CHECK_JOURNAL: &str = "check-failures.jsonl";
 /// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
@@ -169,7 +172,10 @@ pub struct PropertiesArgs {
     #[arg(long, required = true, action = clap::ArgAction::Append, value_name = "SEED")]
     seed: Vec<U256>,
 
-    /// Maximum number of generator rounds of each agent.
+    /// Number of generator rounds of each agent.
+    ///
+    /// An agent whose last round leaves no kept file and no possible bug, for example because its
+    /// tests do not compile, gets one repair round with the errors in its feedback.
     #[arg(long, default_value_t = 1, value_name = "N")]
     rounds: usize,
 
@@ -958,7 +964,10 @@ impl Agent<'_> {
 
         // An error ends the rounds after `rounds.json` is written, so the kept files are not lost.
         let mut error = None;
-        for _ in 0..args.rounds {
+        // A last round that leaves no kept file and no possible bug, such as one whose tests do not
+        // compile, earns a repair round with its errors in the feedback.
+        let mut rounds = args.rounds;
+        while self.rounds.len() < rounds {
             let round = self.rounds.len() + 1;
             let round_dir = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
             let prompt_path = round_dir.path().join("prompt.json");
@@ -1051,7 +1060,14 @@ impl Agent<'_> {
                 }
                 Err(error) => record.reasons.push(error.to_string()),
             }
+            let repair = round == rounds
+                && rounds < args.rounds + MAX_REPAIR_ROUNDS
+                && record.kept.is_empty()
+                && record.possible_bugs.is_empty();
             self.rounds.push(record);
+            if repair {
+                rounds += 1;
+            }
         }
         fs::write(self.cache.join("rounds.json"), serde_json::to_vec_pretty(&self.rounds)?)?;
         error.map_or(Ok(()), Err)
