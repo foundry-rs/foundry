@@ -907,7 +907,6 @@ impl CallTraceDecoder {
             abi,
             constructor_args_offset,
             artifact_id: _,
-            is_library,
         } in addrs
         {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
@@ -922,12 +921,6 @@ impl CallTraceDecoder {
 
             if let Some(abi) = abi {
                 self.collect_abi(&abi, Some(address), global);
-            }
-
-            // Library ABIs omit external functions with storage parameters, so the selector set
-            // cannot tell if a call selects an unknown function.
-            if is_library {
-                self.non_fallback_contracts.remove(&address);
             }
 
             if let Some(offset) = constructor_args_offset {
@@ -1115,8 +1108,10 @@ impl CallTraceDecoder {
             let contract_functions = self.select_contract_function(functions, trace);
 
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
-            // non-fallback contract + no receive
-            if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address)
+            // non-fallback contract + no receive. Skip delegate calls: library ABIs omit external
+            // functions with storage parameters.
+            if !trace.kind.is_delegate()
+                && let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address)
                 && !contract_selectors.contains(&selector)
                 && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
             {
@@ -3791,7 +3786,6 @@ mod tests {
                     abi: Some(Cow::Borrowed(&self.abi)),
                     constructor_args_offset: None,
                     artifact_id: None,
-                    is_library: false,
                 })
                 .collect()
         }
