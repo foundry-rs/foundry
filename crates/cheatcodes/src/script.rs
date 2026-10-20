@@ -208,6 +208,7 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
         .into());
     }
 
+    ccx.state.revert_effects.code_changed(ccx.evm.state().journal().len());
     let mut account = ccx.evm.state_mut().account(&authority)?;
     if auth.address.is_zero() {
         // Set empty code if the delegation address of authority is 0x.

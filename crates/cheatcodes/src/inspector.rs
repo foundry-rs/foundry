@@ -28,7 +28,6 @@ use alloy_primitives::{
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
     EvmTypesHost, ExecutionError,
-    bytecode::Bytecode,
     evm::{DbResult, JournalEntry, State},
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
@@ -68,6 +67,10 @@ use std::{
 
 mod env_overrides;
 pub use env_overrides::EnvOverrideState;
+
+mod revert_effects;
+pub use revert_effects::RevertEffects;
+pub(crate) use revert_effects::SurvivingWrite;
 
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
@@ -669,21 +672,6 @@ struct FrameCheckpoint {
     depth: usize,
     /// Length of [`Cheatcodes::created_account_changes`] when the frame started.
     created_accounts: usize,
-    /// Length of [`Cheatcodes::surviving_writes`] when the frame started.
-    surviving_writes: usize,
-}
-
-/// A cheatcode state write that survives reverts and halts of the frames enclosing it.
-///
-/// evm2 journals every state write, so a failed frame rolls these back with ordinary EVM writes.
-/// The inspector reapplies them as journaled writes of the parent frame once the engine has rolled
-/// the failed frame back, so each enclosing revert reapplies them again.
-#[derive(Clone, Debug)]
-pub(crate) enum SurvivingWrite {
-    Balance(Address, U256),
-    Nonce(Address, u64),
-    Code(Address, B256, Bytecode),
-    Storage(Address, U256, U256),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -818,8 +806,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Checkpoints for frames observed by this inspector.
     frames: Vec<FrameCheckpoint>,
 
-    /// Cheatcode writes of the running transaction that survive enclosing reverts, in order.
-    surviving_writes: Vec<SurvivingWrite>,
+    /// Rollback corrections belonging to the currently executing native journal.
+    pub revert_effects: RevertEffects,
 
     /// Creation lists captured by state snapshots.
     created_accounts_snapshots: HashMap<U256, CreatedAccountsSnapshot>,
@@ -961,7 +949,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             created_account_bindings: Default::default(),
             created_account_changes: Default::default(),
             frames: Default::default(),
-            surviving_writes: Default::default(),
+            revert_effects: Default::default(),
             created_accounts_snapshots: Default::default(),
             record_debug_steps_info: Default::default(),
             expected_emits: Default::default(),
@@ -1159,61 +1147,63 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     /// Records a cheatcode write that survives reverts and halts of the enclosing frames.
-    pub(crate) fn record_surviving_write(&mut self, write: SurvivingWrite) {
-        self.surviving_writes.push(write);
+    pub(crate) fn record_surviving_write(
+        &mut self,
+        state: &mut State<'_>,
+        start: usize,
+        write: SurvivingWrite,
+    ) -> DbResult<()> {
+        self.revert_effects.record(state, start, vec![write])
     }
 
     /// Records the current values of the accounts and storage slots changed by the journal
     /// entries from `journal_start` on as writes surviving enclosing reverts, such as the changes a
     /// nested transaction merged into the running one.
-    pub(crate) fn record_surviving_changes(
+    pub fn record_surviving_changes(
         &mut self,
         state: &mut State<'_>,
         journal_start: usize,
     ) -> DbResult<()> {
-        let mut accounts = Vec::<(Address, B256)>::new();
-        let mut slots = Vec::new();
+        let mut accounts = AddressHashMap::default();
+        let mut slots = HashSet::<_>::default();
         for entry in state.journal().get(journal_start..).unwrap_or_default() {
             match entry {
-                JournalEntry::AccountChange { address, previous, .. }
-                    if !accounts.iter().any(|(changed, _)| changed == address) =>
-                {
+                JournalEntry::AccountChange { address, previous, .. } => {
                     let code_hash =
                         previous.as_ref().map_or(KECCAK256_EMPTY, |info| info.code_hash);
-                    accounts.push((*address, code_hash));
+                    accounts.entry(*address).or_insert(code_hash);
                 }
-                JournalEntry::StorageChange { address, key, .. }
-                    if !slots.contains(&(*address, *key)) =>
-                {
-                    slots.push((*address, *key));
+                JournalEntry::StorageChange { address, key, .. } => {
+                    slots.insert((*address, *key));
                 }
                 _ => {}
             }
         }
+        let mut writes = Vec::new();
         for (address, previous_code_hash) in accounts {
             let mut account = state.account(&address)?;
-            self.surviving_writes.push(SurvivingWrite::Balance(address, account.balance()));
-            self.surviving_writes.push(SurvivingWrite::Nonce(address, account.nonce()));
+            writes.push(SurvivingWrite::Balance(address, account.balance()));
+            writes.push(SurvivingWrite::Nonce(address, account.nonce()));
+            if account.is_created() {
+                writes.push(SurvivingWrite::Created(address, true));
+            }
             let code_hash = account.code_hash();
             if code_hash != previous_code_hash {
                 let code = account.load_code()?;
-                self.surviving_writes.push(SurvivingWrite::Code(address, code_hash, code));
+                writes.push(SurvivingWrite::Code(address, code_hash, Some(code)));
             }
         }
         for (address, key) in slots {
             let value = state.storage_slot_untracked(&address, &key)?;
-            self.surviving_writes.push(SurvivingWrite::Storage(address, key, value));
+            writes.push(SurvivingWrite::Storage(address, key, value));
         }
-        Ok(())
+        self.revert_effects.record(state, journal_start, writes)
     }
 
     /// Discards the surviving writes recorded so far, when a fork operation switches or replaces
     /// the running context they were made to.
     pub(crate) fn discard_surviving_writes(&mut self) {
-        self.surviving_writes.clear();
-        for frame in &mut self.frames {
-            frame.surviving_writes = 0;
-        }
+        self.revert_effects.clear();
     }
 
     fn start_frame(&mut self, reset: bool, kind: FrameKind, depth: usize) {
@@ -1222,7 +1212,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             self.created_account_bindings.clear();
             self.created_account_changes.clear();
             self.frames.clear();
-            self.surviving_writes.clear();
+            self.revert_effects = RevertEffects::default();
             // Earlier snapshots contain no creations from the new root transaction.
             for snapshot in self.created_accounts_snapshots.values_mut() {
                 snapshot.bindings.clear();
@@ -1232,7 +1222,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             kind,
             depth,
             created_accounts: self.created_account_changes.len(),
-            surviving_writes: self.surviving_writes.len(),
         });
     }
 
@@ -1249,14 +1238,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             return;
         };
         self.frames.pop();
+        if let Err(err) = self.revert_effects.finish_frame(state, success) {
+            error!(target: "cheatcodes", %err, "failed to restore unjournaled writes");
+        }
         if !success {
-            // evm2 already rolled the failed frame back, including the cheatcode writes made in
-            // it; reapply them to the parent frame.
-            for write in self.surviving_writes.get(frame.surviving_writes..).unwrap_or_default() {
-                if let Err(err) = apply_surviving_write(state, write) {
-                    error!(target: "cheatcodes", ?write, %err, "failed to reapply cheatcode write");
-                }
-            }
             let checkpoint = frame.created_accounts;
             while self.created_account_changes.len() > checkpoint {
                 let change = self.created_account_changes.pop().expect("length checked");
@@ -1416,6 +1401,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let tx_origin = interp.tx_env().origin;
         let curr_depth = usize::from(call.depth);
         self.start_frame(curr_depth == 0, FrameKind::Call, curr_depth);
+        let evm = interp.host();
+        self.revert_effects.start_frame(evm.state(), evm.version().features);
         if curr_depth == 0 {
             self.root_call_target = Some(call.destination);
         }
@@ -1631,7 +1618,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     if !active_delegations.is_empty() {
                         if let Err(err) = apply_authorization_nonces::<FEN>(
                             evm,
-                            &mut self.surviving_writes,
+                            &mut self.revert_effects,
                             &active_delegations,
                             new_origin,
                             chain_id,
@@ -1656,11 +1643,26 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
-                    if !isolate_call && let Ok(mut account) = evm.state_mut().account(&new_origin) {
-                        let prev = account.nonce();
-                        account.set_nonce(prev + 1);
-                        self.surviving_writes.push(SurvivingWrite::Nonce(new_origin, prev + 1));
-                        debug!(target: "cheatcodes", address=%new_origin, nonce=prev+1, prev, "incremented nonce");
+                    if !isolate_call {
+                        let start = evm.state().journal().len();
+                        let result = evm.state_mut().account(&new_origin).map(|mut account| {
+                            let nonce = account.nonce() + 1;
+                            account.set_nonce(nonce);
+                            nonce
+                        });
+                        if let Ok(nonce) = result
+                            && let Err(err) = self.record_surviving_write(
+                                evm.state_mut(),
+                                start,
+                                SurvivingWrite::Nonce(new_origin, nonce),
+                            )
+                        {
+                            return Some(message_result(
+                                call,
+                                InstrStop::Revert,
+                                Error::encode(err),
+                            ));
+                        }
                     }
                 } else if single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -1973,6 +1975,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Called after a frame interpreter has been initialized.
     pub fn initialize_interp_hook(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        let message = interp.message();
+        if matches!(message.kind, MessageKind::Create | MessageKind::Create2) {
+            let (address, value) = (message.destination, message.value);
+            self.revert_effects.created(interp.host().state(), address, value);
+        }
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -2499,6 +2506,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let tx_origin = interp.tx_env().origin;
         let curr_depth = usize::from(input.depth);
         self.start_frame(curr_depth == 0, FrameKind::Create, curr_depth);
+        let evm = interp.host();
+        self.revert_effects.start_frame(evm.state(), evm.version().features);
         if curr_depth == 0 {
             self.root_call_target = None;
         }
@@ -3691,7 +3700,7 @@ fn set_return<E>(outcome: &mut MessageResultExt<E>, output: Bytes) {
 /// EIP-7702 does, for a transaction that is broadcast but not executed.
 fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     evm: &mut FoundryEvmFor<'_, FEN>,
-    surviving_writes: &mut Vec<SurvivingWrite>,
+    revert_effects: &mut RevertEffects,
     authorizations: &[SignedAuthorization],
     sender: Address,
     chain_id: u64,
@@ -3705,29 +3714,19 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         let Ok(authority) = auth.recover_authority() else { continue };
         // The authority code check is skipped because attaching the delegation already replaced
         // the local code that EIP-7702 validates.
+        let start = evm.state().journal().len();
         let mut account = evm.state_mut().account(&authority)?;
         account.touch();
         // The sender nonce has not been incremented for the transaction yet.
         let nonce = account.nonce();
         if auth.nonce() == nonce + u64::from(authority == sender) {
             account.set_nonce(nonce + 1);
-            surviving_writes.push(SurvivingWrite::Nonce(authority, nonce + 1));
-        }
-    }
-    Ok(())
-}
-
-/// Applies a surviving cheatcode write to `state` as a journaled write.
-fn apply_surviving_write(state: &mut State<'_>, write: &SurvivingWrite) -> DbResult<()> {
-    match write {
-        SurvivingWrite::Balance(address, balance) => state.account(address)?.set_balance(*balance),
-        SurvivingWrite::Nonce(address, nonce) => state.account(address)?.set_nonce(*nonce),
-        SurvivingWrite::Code(address, code_hash, code) => {
-            state.account(address)?.set_code(*code_hash, code.clone());
-        }
-        SurvivingWrite::Storage(address, key, value) => {
-            state.account(address)?.touch();
-            state.storage_slot(address, *key)?.set(*value);
+            drop(account);
+            revert_effects.record(
+                evm.state_mut(),
+                start,
+                vec![SurvivingWrite::Nonce(authority, nonce + 1)],
+            )?;
         }
     }
     Ok(())

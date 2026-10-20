@@ -681,6 +681,38 @@ contract ForkTest is Test {
         assertEq(vm.parseJsonAddress(data, ".to"), 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D, "tx to mismatch");
         assertEq(vm.parseJsonBytes(data, ".blockNumber"), hex"f82248", "tx blockNumber mismatch");
     }
+
+    function restoreSnapshotAndRevert(uint256 snapshot) external {
+        require(vm.revertToState(snapshot));
+        revert("restored");
+    }
+
+    function replaceForkAndCatchSnapshotRevert(uint256 fork, bool roll) external {
+        if (roll) vm.rollFork(block.number - 1);
+        else vm.selectFork(fork);
+        uint256 snapshot = vm.snapshotState();
+        try this.restoreSnapshotAndRevert(snapshot) {
+            revert("unexpected success");
+        } catch Error(string memory reason) {
+            assertEq(reason, "restored");
+        }
+    }
+
+    /// forge-config: default.isolate = true
+    function testForkReplacementSurvivesCaughtSnapshotRevert() public {
+        vm.selectFork(mainnetFork);
+        uint256 other = vm.createFork("mainnet", block.number - 1);
+        address target = address(uint160(uint256(keccak256("fork replacement undo"))));
+        vm.selectFork(other);
+        uint256 balance = target.balance;
+        for (uint256 i; i < 2; i++) {
+            vm.selectFork(mainnetFork);
+            vm.deal(target, balance + 123);
+            this.replaceForkAndCatchSnapshotRevert(other, i == 1);
+            assertEq(vm.activeFork(), i == 1 ? mainnetFork : other);
+            assertEq(target.balance, balance);
+        }
+    }
 }
 
 contract DummyContract {

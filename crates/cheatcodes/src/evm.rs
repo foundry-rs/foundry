@@ -788,12 +788,18 @@ impl Cheatcode for getBlobBaseFeeCall {
 impl Cheatcode for dealCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
+        let start = ccx.evm.state().journal().len();
         let mut account = ccx.evm.state_mut().account(&address)?;
         let old_balance = account.balance();
         account.set_balance(new_balance);
+        drop(account);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
-        ccx.state.record_surviving_write(SurvivingWrite::Balance(address, new_balance));
+        ccx.state.record_surviving_write(
+            ccx.evm.state_mut(),
+            start,
+            SurvivingWrite::Balance(address, new_balance),
+        )?;
         Ok(Default::default())
     }
 }
@@ -817,6 +823,7 @@ impl Cheatcode for etchCall {
         {
             clear_eip2935_history_storage(state, features)?;
         }
+        ccx.state.revert_effects.code_changed(state.journal().len());
         state.account(target)?.set_code_slow(bytecode);
         Ok(Default::default())
     }
@@ -825,6 +832,7 @@ impl Cheatcode for etchCall {
 impl Cheatcode for resetNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account } = self;
+        let start = ccx.evm.state().journal().len();
         let mut account = ccx.evm.state_mut().account(account)?;
         // Per EIP-161, EOA nonces start at 0, but contract nonces
         // start at 1. Comparing by code_hash instead of code
@@ -833,8 +841,13 @@ impl Cheatcode for resetNonceCall {
         let empty = code_hash == KECCAK256_EMPTY || code_hash.is_zero();
         let nonce = if empty { 0 } else { 1 };
         account.set_nonce(nonce);
+        drop(account);
         debug!(target: "cheatcodes", nonce, "reset");
-        ccx.state.record_surviving_write(SurvivingWrite::Nonce(self.account, nonce));
+        ccx.state.record_surviving_write(
+            ccx.evm.state_mut(),
+            start,
+            SurvivingWrite::Nonce(self.account, nonce),
+        )?;
         Ok(Default::default())
     }
 }
@@ -842,6 +855,7 @@ impl Cheatcode for resetNonceCall {
 impl Cheatcode for setNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
+        let start = ccx.evm.state().journal().len();
         let mut account = ccx.evm.state_mut().account(&account)?;
         // nonce must increment only
         let current = account.nonce();
@@ -851,7 +865,12 @@ impl Cheatcode for setNonceCall {
              account's current nonce ({current})"
         );
         account.set_nonce(newNonce);
-        ccx.state.record_surviving_write(SurvivingWrite::Nonce(self.account, newNonce));
+        drop(account);
+        ccx.state.record_surviving_write(
+            ccx.evm.state_mut(),
+            start,
+            SurvivingWrite::Nonce(self.account, newNonce),
+        )?;
         Ok(Default::default())
     }
 }
@@ -859,8 +878,13 @@ impl Cheatcode for setNonceCall {
 impl Cheatcode for setNonceUnsafeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
+        let start = ccx.evm.state().journal().len();
         ccx.evm.state_mut().account(&account)?.set_nonce(newNonce);
-        ccx.state.record_surviving_write(SurvivingWrite::Nonce(account, newNonce));
+        ccx.state.record_surviving_write(
+            ccx.evm.state_mut(),
+            start,
+            SurvivingWrite::Nonce(account, newNonce),
+        )?;
         Ok(Default::default())
     }
 }
@@ -1335,7 +1359,6 @@ impl Cheatcode for broadcastRawTransactionCall {
         for log in &result.logs {
             ccx.state.log_hook(log);
         }
-        ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1578,6 +1601,9 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    if ccx.backend.backend().lifecycle().has_snapshot(snapshot_id) {
+        ccx.state.revert_effects.before_restore(ccx.evm.state());
+    }
     let (evm, db) = ccx.evm_db_mut();
     if db
         .revert_state(
@@ -1609,6 +1635,9 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    if ccx.backend.backend().lifecycle().has_snapshot(snapshot_id) {
+        ccx.state.revert_effects.before_restore(ccx.evm.state());
+    }
     let (evm, db) = ccx.evm_db_mut();
     if db
         .revert_state(

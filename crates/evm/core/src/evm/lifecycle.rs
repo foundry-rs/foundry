@@ -784,6 +784,10 @@ fn merge_changes<'c>(
                     account.set_nonce(info.nonce);
                     if let Some((code_hash, code)) = change.code {
                         account.set_code(code_hash, code.clone());
+                    } else if info.code_hash == KECCAK256_EMPTY
+                        && account.code_hash() != KECCAK256_EMPTY
+                    {
+                        account.set_code(KECCAK256_EMPTY, Bytecode::default());
                     }
                 }
                 None => {
@@ -793,6 +797,9 @@ fn merge_changes<'c>(
                 }
             }
         }
+        if change.created && change.current.is_some() {
+            mark_created(state, &address)?;
+        }
         if change.current.is_none() || change.storage.wiped {
             state.storage(&address)?.wipe();
         }
@@ -800,6 +807,27 @@ fn merge_changes<'c>(
             state.storage_slot(&address, *key)?.set(slot.current);
         }
     }
+    Ok(())
+}
+
+/// Marks an account created without changing its fields, using evm2's account-creation API.
+pub fn mark_created(state: &mut State<'_>, address: &Address) -> DbResult<()> {
+    let (nonce, code_hash, code) = {
+        let mut account = state.account(address)?;
+        if account.is_created() || !account.exists() {
+            return Ok(());
+        }
+        let info = (account.nonce(), account.code_hash(), account.load_code()?);
+        account.set_nonce(0);
+        account.set_code(KECCAK256_EMPTY, Bytecode::default());
+        info
+    };
+    // No collision or endowment is possible. EIP-161's initial nonce is irrelevant because the
+    // original nonce is restored below.
+    let _ = state.create_account(address, address, &U256::ZERO, EvmFeatures::empty())?;
+    let mut account = state.account(address)?;
+    account.set_nonce(nonce);
+    account.set_code(code_hash, code);
     Ok(())
 }
 
