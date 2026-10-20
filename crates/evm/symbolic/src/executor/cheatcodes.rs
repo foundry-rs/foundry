@@ -1326,11 +1326,22 @@ impl SymbolicExecutor {
             resetNonceCall::SELECTOR => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let nonce = if state.world.extcode(&mut self.cx, executor, target)?.is_empty() {
-                    0
-                } else {
-                    1
-                };
+                let code = state.world.extcode(&mut self.cx, executor, target)?;
+                // Like the concrete cheatcode, EIP-7702 delegated EOAs reset to 0.
+                let is_eoa = code.is_empty()
+                    || (code.len() == EIP7702_BYTECODE_LEN && {
+                        let prefix = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01, 0x00]);
+                        code.read_bytes(&mut self.cx, 0, prefix.len())
+                            .prefix_condition(&mut self.cx, &prefix)
+                            .map(|condition| {
+                                condition.as_const().ok_or(SymbolicError::Unsupported(
+                                    "symbolic vm.resetNonce code prefix",
+                                ))
+                            })
+                            .transpose()?
+                            .unwrap_or(false)
+                    });
+                let nonce = if is_eoa { 0 } else { 1 };
                 state.world.set_nonce(target, nonce);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
