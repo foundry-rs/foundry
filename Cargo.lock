@@ -12982,7 +12982,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-nitro-attestation"
-version = "1.16.0"
+version = "1.16.1"
+source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
 dependencies = [
  "arrayvec",
  "aws-lc-rs",
