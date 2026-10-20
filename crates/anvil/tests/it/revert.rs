@@ -5,12 +5,11 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deploy_reverting() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     let code = bytes!("5f5ffd"); // PUSH0 PUSH0 REVERT
@@ -30,8 +29,7 @@ async fn test_deploy_reverting() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invalid_opcode_rpc_error_code() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     // Deploy a contract whose runtime bytecode is the invalid opcode 0xfe.
@@ -99,8 +97,7 @@ async fn test_revert_messages() {
         }
     );
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let contract = Contract::deploy(&provider).await.unwrap();
 
@@ -138,8 +135,7 @@ async fn test_another_revert_message() {
         }
     );
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let contract = Contract::deploy(&provider).await.unwrap();
 
@@ -162,8 +158,7 @@ async fn test_solc_revert_custom_errors() {
         }
     );
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let contract = Contract::deploy(&provider).await.unwrap();
 

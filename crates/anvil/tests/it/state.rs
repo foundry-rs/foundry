@@ -9,7 +9,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, EvmOverrides, StateOverride},
 };
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
+use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn, test_helpers::TestNode};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc::next_http_archive_rpc_url;
 use revm::{
@@ -630,9 +630,7 @@ async fn test_make_sure_historical_state_is_not_cleared_on_dump() {
     let tmp = tempfile::tempdir().unwrap();
     let state_file = tmp.path().join("state.json");
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
-
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let greeter = Greeter::deploy(&provider, "Hello".to_string()).await.unwrap();
 
@@ -666,9 +664,7 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     let tmp = tempfile::tempdir().unwrap();
     let state_file = tmp.path().join("state.json");
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
-
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let greeter = Greeter::deploy(&provider, "Hello".to_string()).await.unwrap();
 

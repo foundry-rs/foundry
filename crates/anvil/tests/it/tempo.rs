@@ -34,7 +34,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
-use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
+use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn, test_helpers::TestNode};
 use anvil_core::eth::block::Block;
 use foundry_common::FoundryTransactionBuilder;
 use foundry_evm::core::tempo::{
@@ -909,8 +909,7 @@ async fn test_anvil_deal_tip20_rejects_invalid_token() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_deal_tip20_rejects_non_tempo_node() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
     let result: std::result::Result<(), _> = provider
         .raw_request("anvil_dealTIP20".into(), (Address::random(), ALPHA_USD, U256::ONE))
         .await;
@@ -3084,8 +3083,7 @@ async fn test_tempo_sign_raw_transaction_rejects_invalid_requests() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sign_raw_transaction_unsupported_without_tempo() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let err = provider
         .raw_request::<_, Bytes>("eth_signRawTransaction".into(), (Bytes::from_static(&[0x76]),))
@@ -3126,8 +3124,7 @@ async fn test_tempo_call_executes_all_calls() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fields_do_not_change_ethereum_call_classification() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_accounts().next().unwrap();
 
     provider

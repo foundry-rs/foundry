@@ -23,6 +23,7 @@ use anvil::{
     NodeConfig,
     eth::{api::CLIENT_VERSION, fees::INITIAL_BASE_FEE, pool::transactions::PoolTransaction},
     spawn,
+    test_helpers::TestNode,
 };
 use anvil_core::{
     eth::{EthRequest, transaction::PendingTransaction},
@@ -179,9 +180,7 @@ async fn can_set_storage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -218,9 +217,7 @@ async fn can_impersonate_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_auto_impersonate_account() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let impersonate = Address::random();
     let to = Address::random();
@@ -260,9 +257,7 @@ async fn can_auto_impersonate_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_contract() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
     let impersonate = greeter_contract.address().to_owned();
@@ -330,8 +325,7 @@ async fn can_impersonate_gnosis_safe() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_multiple_accounts() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let impersonate0 = Address::random();
     let impersonate1 = Address::random();
@@ -379,8 +373,7 @@ async fn can_impersonate_multiple_accounts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_manually() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let start_num = provider.get_block_number().await.unwrap();
 
@@ -395,8 +388,7 @@ async fn can_mine_manually() {
 async fn get_last_block_wall_time_updates_after_mining() {
     let before_spawn =
         SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
     let genesis_wall_time: u64 =
         provider.raw_request("anvil_getLastBlockWallTime".into(), ()).await.unwrap();
     let after_spawn =
@@ -422,8 +414,7 @@ async fn get_last_block_wall_time_updates_after_mining() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_timestamp() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -449,8 +440,7 @@ async fn test_set_next_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -473,8 +463,7 @@ async fn test_evm_set_time() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time_in_past() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
@@ -493,8 +482,7 @@ async fn test_evm_set_time_in_past() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_timestamp_interval() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     api.evm_mine(None).await.unwrap();
     let interval = 10;
@@ -673,8 +661,7 @@ async fn metadata_changes_on_reset() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transaction_receipt() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // set the base fee
     let new_base_fee = U256::from(1000);
@@ -703,8 +690,7 @@ async fn test_get_transaction_receipt() {
 // test can set chain id
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_chain_id() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let chain_id = provider.get_chain_id().await.unwrap();
     assert_eq!(chain_id, 31337);
 
@@ -838,8 +824,7 @@ async fn test_set_next_block_prevrandao() {
 // set value for the overridden block.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_block_prevrandao_evm() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // deploying the contract auto-mines a block
     let multicall = Multicall::deploy(&provider).await.unwrap();
@@ -910,8 +895,7 @@ async fn test_set_next_block_prevrandao_restored_on_revert() {
 // next mined block only, and that the EIP-4788 contract stores it for that block's timestamp.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_block_parent_beacon_block_root() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
     api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
@@ -939,8 +923,7 @@ async fn test_set_next_block_parent_beacon_block_root() {
 // pending calls observe the root the next mined block will use.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_block_parent_beacon_block_root_pending() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
     api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
@@ -1071,8 +1054,7 @@ async fn can_remove_pool_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_reorg() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
 
@@ -1584,8 +1566,7 @@ async fn test_reorg_zero_depth_with_transactions_is_rejected() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reorg_blockhash_opcode_consistency() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let multicall = Multicall::deploy(&provider).await.unwrap();
 
@@ -1636,8 +1617,7 @@ async fn test_reorg_blockhash_opcode_consistency() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reorg_deep_blockhash_consistency() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let multicall = Multicall::deploy(&provider).await.unwrap();
 
@@ -1704,8 +1684,7 @@ async fn test_reorg_deep_blockhash_consistency() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rollback() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // Mine 5 blocks
     for _ in 0..5 {
@@ -1755,8 +1734,7 @@ async fn test_arb_get_block() {
 // api.evm_set_next_block_timestamp(0).unwrap();
 #[tokio::test(flavor = "multi_thread")]
 async fn test_mine_blk_with_prev_timestamp() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1795,8 +1773,7 @@ async fn test_mine_blk_with_prev_timestamp() {
 // increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
 #[tokio::test(flavor = "multi_thread")]
 async fn test_increase_time_by_zero() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1819,8 +1796,7 @@ async fn test_increase_time_by_zero() {
 // evm_mine(MineOptions::Timestamp(prev_block_timestamp))
 #[tokio::test(flavor = "multi_thread")]
 async fn evm_mine_blk_with_same_timestamp() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1935,8 +1911,7 @@ async fn test_safe_and_finalized_use_configured_slots_in_epoch() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_non_fork() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // Get initial state
     let init_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
@@ -2171,8 +2146,7 @@ async fn can_get_default_base_fee_tempo_t0() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_automine_state() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // Queried over RPC so the request name, parameter handling and dispatch arm are covered too,
     // not just the handler.
@@ -2228,8 +2202,7 @@ async fn can_drop_all_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_unsigned_transaction() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // Any address can send, without a signer and without impersonating it first.
     let sender = Address::repeat_byte(0x77);
@@ -2262,8 +2235,7 @@ async fn can_send_unsigned_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn send_unsigned_transaction_requires_a_sender() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let err = provider
         .client()

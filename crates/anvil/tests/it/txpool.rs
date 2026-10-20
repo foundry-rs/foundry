@@ -6,14 +6,13 @@ use alloy_primitives::{TxHash, U256};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use std::time::Duration;
 use tokio::time::sleep;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -60,8 +59,7 @@ async fn geth_txpool() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool_separates_queued_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -172,8 +170,7 @@ async fn mines_successor_after_nonce_fast_forward() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_debug_clear_txpool() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -211,8 +208,7 @@ async fn can_debug_clear_txpool() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool_content_from_filters_sender() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -279,8 +275,7 @@ async fn geth_txpool_content_from_filters_sender() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_filter_full_pending_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -397,8 +392,7 @@ async fn accepts_spend_after_funding_when_pool_checks_disabled() {
 /// Queued replacements must remove the previous transaction.
 #[tokio::test(flavor = "multi_thread")]
 async fn queued_tx_replacement_removes_old_tx() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     _api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -475,8 +469,7 @@ async fn queued_tx_replacement_removes_old_tx() {
 /// Dropping a transaction must also search the queued pool.
 #[tokio::test(flavor = "multi_thread")]
 async fn anvil_drop_transaction_removes_queued_tx() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -509,8 +502,7 @@ async fn anvil_drop_transaction_removes_queued_tx() {
 /// Dropping a transaction must also remove transactions that depend on its nonce.
 #[tokio::test(flavor = "multi_thread")]
 async fn anvil_drop_transaction_removes_nonce_dependents() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -549,8 +541,7 @@ async fn anvil_drop_transaction_removes_nonce_dependents() {
 /// Dropping a queued transaction must also remove its queued nonce dependents.
 #[tokio::test(flavor = "multi_thread")]
 async fn anvil_drop_transaction_removes_queued_nonce_dependents() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -584,8 +575,7 @@ async fn anvil_drop_transaction_removes_queued_nonce_dependents() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn evm_revert_restores_transaction_pool() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
@@ -623,8 +613,7 @@ async fn evm_revert_restores_transaction_pool() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn evm_revert_wakes_autominer_for_restored_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();

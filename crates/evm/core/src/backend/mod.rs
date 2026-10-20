@@ -3509,7 +3509,7 @@ mod tests {
     };
     use alloy_serde::WithOtherFields;
     use alloy_sol_types::SolValue;
-    use anvil::{NodeConfig, spawn};
+    use anvil::{NodeConfig, spawn, test_helpers::TestNode};
     use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
     use foundry_config::{Config, NamedChain};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
@@ -4391,8 +4391,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn temporary_backend_preserves_fork_position() {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let provider = handle.http_provider();
+        let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
         let block_number = provider.get_block_number().await.unwrap();
 
         let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();

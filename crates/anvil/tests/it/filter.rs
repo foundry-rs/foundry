@@ -8,15 +8,14 @@ use alloy_network::EthereumWallet;
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Filter, Log};
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 
 /// An id that was never handed out by `eth_new*Filter`.
 const UNKNOWN_FILTER_ID: &str = "0xdeadbeefdeadbeefdeadbeefdeadbeef";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn block_filter_drains_new_block_hashes() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let filter_id: String = provider.client().request_noparams("eth_newBlockFilter").await.unwrap();
 
@@ -183,8 +182,7 @@ async fn get_filter_logs_ignores_poll_position() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_filter_logs_rejects_non_log_filters() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let block_filter: String =
         provider.client().request_noparams("eth_newBlockFilter").await.unwrap();
@@ -207,8 +205,7 @@ async fn get_filter_logs_rejects_non_log_filters() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn uninstall_filter_reports_whether_a_filter_was_removed() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let filter_id: String = provider.client().request_noparams("eth_newBlockFilter").await.unwrap();
 
@@ -236,8 +233,7 @@ async fn uninstall_filter_reports_whether_a_filter_was_removed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_filter_changes_rejects_unknown_ids() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let err = provider
         .client()

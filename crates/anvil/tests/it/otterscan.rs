@@ -10,7 +10,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolError, SolValue, sol};
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use foundry_evm::hardfork::EthereumHardfork;
 use std::collections::VecDeque;
 
@@ -35,8 +35,7 @@ async fn ots_get_api_level() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_internal_operations_contract_deploy() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     let contract_receipt =
@@ -56,8 +55,7 @@ async fn ots_get_internal_operations_contract_deploy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_internal_operations_contract_transfer() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -94,8 +92,7 @@ async fn ots_get_internal_operations_contract_create2() {
         }
     );
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let contract = Contract::deploy(&provider).await.unwrap();
 
@@ -163,8 +160,7 @@ async fn ots_get_internal_operations_contract_selfdestruct(hardfork: EthereumHar
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_has_code() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     api.mine_one().await.unwrap();
@@ -216,8 +212,7 @@ async fn test_call_ots_trace_transaction() {
         }
     );
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let sender = wallets[0].address();
 
@@ -291,8 +286,7 @@ async fn ots_get_transaction_error() {
         }
     );
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let contract = Contract::deploy(&provider).await.unwrap();
 
@@ -305,8 +299,7 @@ async fn ots_get_transaction_error() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_transaction_error_no_error() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // Send a successful transaction
     let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
@@ -319,8 +312,7 @@ async fn ots_get_transaction_error_no_error() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_block_details() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
     let tx = WithOtherFields::new(tx);
@@ -333,8 +325,7 @@ async fn ots_get_block_details() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_block_details_by_hash() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
     let tx = WithOtherFields::new(tx);
@@ -348,8 +339,7 @@ async fn ots_get_block_details_by_hash() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_block_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     // disable automine
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -387,8 +377,7 @@ async fn ots_get_block_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_search_transactions_before() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     let mut hashes = vec![];
@@ -422,8 +411,7 @@ async fn ots_search_transactions_before() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_search_transactions_after() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     let mut hashes = VecDeque::new();
@@ -457,8 +445,7 @@ async fn ots_search_transactions_after() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_transaction_by_sender_and_nonce() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     let tx1 = WithOtherFields::new(
@@ -490,8 +477,7 @@ async fn ots_get_transaction_by_sender_and_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_contract_creator() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let sender = handle.dev_accounts().next().unwrap();
 
     let receipt =

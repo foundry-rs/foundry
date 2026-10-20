@@ -25,7 +25,9 @@ use alloy_rpc_types_eth::{Bundle, EthCallResponse};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolCall;
-use anvil::{CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn};
+use anvil::{
+    CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn, test_helpers::TestNode,
+};
 use futures::join;
 use std::time::Duration;
 
@@ -44,8 +46,7 @@ async fn can_get_block_number() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_block_transaction_count_is_none() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let count: Option<U256> = provider
         .client()
@@ -58,8 +59,7 @@ async fn unknown_block_transaction_count_is_none() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
@@ -83,8 +83,7 @@ async fn can_dev_get_balance() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_price() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let gas_price = provider.get_gas_price().await.unwrap();
     assert!(gas_price > 0);
@@ -126,8 +125,7 @@ async fn can_get_null_base_fee_before_london() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_accounts() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let accounts = provider.get_accounts().await.unwrap();
     let dev_accounts: Vec<_> = handle.dev_accounts().collect();
@@ -139,8 +137,7 @@ async fn can_get_accounts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_client_version() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let version = provider.get_client_version().await.unwrap();
     assert_eq!(CLIENT_VERSION, version);
@@ -148,8 +145,7 @@ async fn can_get_client_version() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_chain_id() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let chain_id = provider.get_chain_id().await.unwrap();
     assert_eq!(chain_id, CHAIN_ID);
@@ -170,8 +166,7 @@ async fn can_modify_chain_id() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_network_id() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let network_id = api.network_id().unwrap().unwrap();
     assert_eq!(network_id, CHAIN_ID.to_string());
@@ -614,8 +609,7 @@ async fn can_call_many() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn call_many_progresses_block_context() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
     let probe = Address::repeat_byte(0x42);
     // Return NUMBER followed by TIMESTAMP.
     api.anvil_set_code(probe, bytes!("435f524260205260405ff3")).await.unwrap();
@@ -649,8 +643,7 @@ async fn call_many_progresses_block_context() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_bundle() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let sender = wallets[1].address();
     let coinbase = wallets[2].address();
@@ -809,8 +802,7 @@ async fn can_send_raw_tx_sync() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_parse_raw_tx_sync_timeout() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let one_arg: Result<serde_json::Value, _> = provider
         .client()
@@ -916,8 +908,7 @@ async fn can_send_raw_transaction_conditional() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ignores_raw_transaction_conditional_prestate() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let result: std::result::Result<serde_json::Value, _> = provider
         .raw_request(
@@ -967,8 +958,7 @@ async fn can_get_code_by_hash_from_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_debug_get_modified_accounts_by_number() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let response: serde_json::Value = provider
         .raw_request("debug_getModifiedAccountsByNumber".into(), (0u64, 1u64))
@@ -979,8 +969,7 @@ async fn can_debug_get_modified_accounts_by_number() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_debug_free_os_memory() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let response: serde_json::Value =
         provider.raw_request("debug_freeOSMemory".into(), ()).await.unwrap();

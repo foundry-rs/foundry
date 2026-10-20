@@ -18,7 +18,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use serde_json::{Value, json};
@@ -54,8 +54,7 @@ async fn assert_all_null<N: Network>(provider: &impl Provider<N>, hash: B256, nu
 
 #[tokio::test(flavor = "multi_thread")]
 async fn block_access_list_is_null_before_amsterdam() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     api.mine_one().await.unwrap();
     let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
@@ -236,8 +235,7 @@ async fn reverting_snapshot_removes_local_block_access_list() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn block_access_list_rejects_out_of_range_blocks() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     // Block resolution happens before the fork check, so an out-of-range number is an error
     // rather than a `null` access list.

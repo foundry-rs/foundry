@@ -20,7 +20,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use anvil_core::eth::block::Block;
 use eyre::Ok;
 use foundry_evm::hardfork::EthereumHardfork;
@@ -32,8 +32,7 @@ use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -69,8 +68,7 @@ async fn can_transfer_eth() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -108,8 +106,7 @@ async fn can_get_pending_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     // disable automine
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -150,8 +147,7 @@ async fn can_order_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -346,8 +342,7 @@ async fn can_reject_invalid_resend_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_too_high_gas_limits() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -522,8 +517,7 @@ async fn can_deploy_and_mine_manually() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_automatically() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     // disable auto mine
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -552,8 +546,7 @@ async fn can_mine_automatically() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
 
@@ -630,8 +623,7 @@ async fn can_deploy_get_code() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_blocktimestamp_works() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let contract = Multicall::deploy(provider.clone()).await.unwrap();
 
@@ -665,8 +657,7 @@ async fn get_blocktimestamp_works() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn call_past_state() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
     let contract_addr =
@@ -1035,8 +1026,7 @@ async fn can_get_raw_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_raw_header() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let from = handle.dev_wallets().next().unwrap().address();
     let tx = TransactionRequest::default().from(from).value(U256::ONE).to(Address::random());
@@ -1061,8 +1051,7 @@ async fn can_get_raw_header() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_raw_block() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let from = handle.dev_wallets().next().unwrap().address();
     let tx = TransactionRequest::default().from(from).value(U256::ONE).to(Address::random());
@@ -1176,8 +1165,7 @@ async fn concurrent_unlocked_transactions_assign_unique_nonces_with_automining()
 }
 
 async fn assert_concurrent_unlocked_transactions(automine: bool) {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
     let to = Address::random();
 
@@ -1228,8 +1216,7 @@ async fn assert_concurrent_unlocked_transactions(automine: bool) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_historic_info() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -1289,9 +1276,7 @@ async fn test_tx_receipt() {
 // <https://github.com/foundry-rs/foundry/issues/12837>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reverted_contract_creation_has_contract_address() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let wallet = handle.dev_wallets().next().unwrap();
 
     // Init code that immediately reverts: PUSH1 0x00 PUSH1 0x00 REVERT (0x60006000fd)
@@ -1428,9 +1413,7 @@ async fn test_tx_access_list() {
     //     - When a contract calls a contract, the latter one should be in the AL
     //     - No precompiles should be in the AL
     //     - The sender shouldn't be in the AL
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let sender = Address::random();
     let other_acc = Address::random();
@@ -1547,8 +1530,7 @@ async fn test_tx_access_list() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_create_access_list_with_state_override() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let sender = Address::random();
     let target = Address::random();
@@ -1682,8 +1664,7 @@ async fn test_block_override() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_gas_too_low() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let account = handle.dev_accounts().next().unwrap();
 
@@ -1866,8 +1847,7 @@ async fn can_send_tx_osaka_valid_with_limit_disabled() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_tx_by_sender_and_nonce() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let sender = accounts[0].address();
@@ -2249,8 +2229,7 @@ async fn instant_mine_keeps_successors_of_tx_skipped_by_block_gas_limit() {
 /// A leftover tx that can never fit must not keep the instant miner producing blocks.
 #[tokio::test(flavor = "multi_thread")]
 async fn instant_mine_stops_retrying_tx_exceeding_block_gas_limit() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
     let to = accounts[2];
 
@@ -2289,8 +2268,7 @@ async fn instant_mine_stops_retrying_tx_exceeding_block_gas_limit() {
 /// Manually mining a block that leaves ready txs behind must hand them back to the instant miner.
 #[tokio::test(flavor = "multi_thread")]
 async fn manual_mine_resumes_instant_mining_of_leftover_txs() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
@@ -2372,8 +2350,7 @@ async fn tx_sync_returns_receipt_for_tx_skipped_by_block_gas_limit() {
 async fn instant_mine_drains_backlog_larger_than_default_block_cap() {
     const TXS_PER_SENDER: u64 = 250;
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let senders = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
     let to = Address::random();
 

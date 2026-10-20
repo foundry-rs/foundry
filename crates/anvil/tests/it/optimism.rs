@@ -10,7 +10,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking, trace::parity::Action,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn, test_helpers::TestNode};
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::redact_url;
 use foundry_evm::hardfork::OpHardfork;
@@ -109,8 +109,7 @@ async fn inferred_optimism_fork_reset_to_base_preserves_execution_hardfork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();

@@ -84,6 +84,9 @@ pub mod args;
 #[cfg(feature = "cmd")]
 pub mod opts;
 
+#[doc(hidden)]
+pub mod test_helpers;
+
 #[macro_use]
 extern crate foundry_common;
 

@@ -1891,6 +1891,7 @@ mod tests {
     use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
+    use anvil::test_helpers::TestNode;
     use foundry_common::tempo::PATH_USD_ADDRESS;
     use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
@@ -1907,8 +1908,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn next_nonce_uses_exact_fork_hash() {
-        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-        let provider = handle.http_provider();
+        let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
         let sender = handle.dev_accounts().next().unwrap();
         let recipient = Address::with_last_byte(1);
 

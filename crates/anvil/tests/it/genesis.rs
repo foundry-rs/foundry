@@ -5,7 +5,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{Address, U256, address, b256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 
 const GENESIS: &str = r#"{
   "config": {
@@ -151,8 +151,7 @@ async fn chain_id_precedence() {
     assert_eq!(chain_id, 19763u64);
 
     // default
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
     let chain_id = provider.get_chain_id().await.unwrap();
     assert_eq!(chain_id, 31337);
 }

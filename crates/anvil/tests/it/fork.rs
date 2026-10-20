@@ -34,7 +34,9 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{
     EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
     eth::{EthApi, fees::INITIAL_BASE_FEE},
-    spawn, try_spawn,
+    spawn,
+    test_helpers::TestNode,
+    try_spawn,
 };
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
@@ -1789,8 +1791,7 @@ async fn test_fork_reset() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_setup() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let dead_addr = address!("000000000000000000000000000000000000dEaD");
 

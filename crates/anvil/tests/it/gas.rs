@@ -18,6 +18,7 @@ use anvil::{
         fees::INITIAL_BASE_FEE,
     },
     spawn,
+    test_helpers::TestNode,
 };
 use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
 use foundry_evm_networks::arbitrum;
@@ -182,8 +183,7 @@ async fn test_respect_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cap_only_calls_pay_the_base_fee() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
 
     // Returns GASPRICE.
@@ -434,8 +434,7 @@ async fn test_fee_history_historical_next_block_fee() {
 // chain reuses the same block number.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fee_history_ignores_stale_cache_after_reset() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let old_history =
         api.fee_history(U256::ONE, BlockNumberOrTag::Number(0), vec![]).await.unwrap();
@@ -460,8 +459,7 @@ async fn test_fee_history_ignores_stale_cache_after_reset() {
 // Zero gas limits must not serialize gasUsedRatio as null.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fee_history_zero_gas_limit_does_not_produce_null_ratio() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     assert!(api.evm_set_block_gas_limit(U256::ZERO).unwrap());
     api.mine_one().await.unwrap();
@@ -715,8 +713,7 @@ async fn test_estimation_with_print_traces() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn zero_fee_calls_observe_zero_base_fee() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
 
     // Returns BASEFEE.
@@ -759,8 +756,7 @@ async fn zero_fee_calls_observe_zero_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn priced_calls_below_base_fee_are_rejected() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
     let to = handle.dev_accounts().nth(1).unwrap();
 

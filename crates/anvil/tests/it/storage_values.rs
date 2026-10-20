@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use std::sync::atomic::Ordering;
 
@@ -13,8 +13,7 @@ fn slot(n: u64) -> B256 {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_values_batches_multiple_accounts() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     let first = Address::repeat_byte(0x01);
     let second = Address::repeat_byte(0x02);
@@ -42,8 +41,7 @@ async fn storage_values_batches_multiple_accounts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_values_rejects_empty_request() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let err = provider
         .client()
@@ -58,8 +56,7 @@ async fn storage_values_rejects_empty_request() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_values_rejects_more_than_1024_slots() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
     let address = Address::repeat_byte(0x03);
 
     let at_limit = HashMap::<Address, Vec<B256>>::from_iter([(
@@ -94,8 +91,7 @@ async fn storage_values_rejects_more_than_1024_slots() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_values_agrees_with_get_storage_at() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
     let address = Address::repeat_byte(0x05);
 
     api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(0x11)).await.unwrap();
@@ -161,8 +157,7 @@ async fn test_fork_storage_values_skips_upstream_for_local_state() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_values_defaults_to_latest_block() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let requests =
         HashMap::<Address, Vec<B256>>::from_iter([(Address::repeat_byte(0x07), vec![slot(0)])]);

@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, bytes, map::B256HashSet};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, Log, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use anvil_core::types::ReorgOptions;
 use futures::StreamExt;
 
@@ -298,8 +298,7 @@ async fn get_filter_changes_reorg_removed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_logs_unknown_block_hash_returns_error() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let unknown_hash = B256::with_last_byte(1);
     let filter = Filter::new().at_block_hash(unknown_hash);
@@ -313,8 +312,7 @@ async fn get_logs_unknown_block_hash_returns_error() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_logs_future_to_block_returns_error() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     let best = provider.get_block_number().await.unwrap();
     let filter = Filter::new().from_block(0).to_block(best + 1);
@@ -328,8 +326,7 @@ async fn get_logs_future_to_block_returns_error() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_logs_reversed_block_range_returns_error() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
     api.mine_one().await.unwrap();
 
     let filter = Filter::new().from_block(1).to_block(0);

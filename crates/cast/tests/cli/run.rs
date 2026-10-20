@@ -3,6 +3,7 @@
 use super::*;
 use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
+use anvil::test_helpers::TestNode;
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
@@ -510,8 +511,7 @@ Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debu
 // the fork, and the executor.
 #[casttest]
 async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _, handle, provider } = TestNode::spawn().await;
     let from = provider.get_accounts().await.unwrap()[0];
     let tx_hash = provider
         .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
@@ -545,8 +545,7 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
 // Tracing replays exact chain history, so it ignores the number-based state opt-in.
 #[casttest]
 async fn cast_run_keeps_hash_addressed_state(cmd: _) {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _, handle, provider } = TestNode::spawn().await;
     let from = provider.get_accounts().await.unwrap()[0];
     let tx_hash = provider
         .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
@@ -646,8 +645,7 @@ Warning: the replay does not match the transaction's receipt: it used 61000 gas 
 // EIP-7702 authorization of an authority that did not exist before the transaction.
 #[casttest]
 async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _, handle, provider } = TestNode::spawn().await;
     let from = provider.get_accounts().await.unwrap()[0];
     let authority = PrivateKeySigner::random();
     let authorization = Authorization {
@@ -684,8 +682,7 @@ async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
 // Prints the ERC-8021 attribution codes appended to the transaction calldata.
 #[casttest]
 async fn cast_run_prints_erc8021_attribution(cmd: _) {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _, handle, provider } = TestNode::spawn().await;
     let from = provider.get_accounts().await.unwrap()[0];
     // ERC-8021 schema 2 test vector with app, wallet and service codes.
     let tx = TransactionRequest::default().with_from(from).with_to(from).with_input(hex!(
@@ -712,8 +709,7 @@ ERC-8021 attribution: baseapp (app), privy (wallet), flashbots (service), titan 
 // The transaction returned by the RPC must be the one that was requested.
 #[casttest]
 async fn cast_run_rejects_mismatched_transaction(cmd: _) {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _, handle, provider } = TestNode::spawn().await;
     let from = provider.get_accounts().await.unwrap()[0];
     let mut tx_hashes = Vec::new();
     for to in [Address::with_last_byte(0xaa), Address::with_last_byte(0xbb)] {

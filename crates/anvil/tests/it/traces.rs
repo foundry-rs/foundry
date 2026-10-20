@@ -1,3 +1,4 @@
+use anvil::test_helpers::TestNode;
 use std::collections::HashMap;
 
 use crate::{
@@ -211,8 +212,7 @@ async fn test_trace_block_opcode_gas_latest_at_fork_point() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_raw_transaction_local() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -253,8 +253,7 @@ async fn test_trace_raw_transaction_local() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_raw_transaction_rejects_code_sender() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -288,8 +287,7 @@ async fn test_trace_raw_transaction_rejects_code_sender() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_account_info_at_local() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -401,8 +399,7 @@ async fn test_debug_account_info_at_delegates_pre_fork_block() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_local() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -494,8 +491,7 @@ const INIT_STORING_AND_RETURNING_2A: &str = "0x602a600055602a60005360016000f3";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_state_diff_created_account() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
     let nonce = provider.get_transaction_count(from).await.unwrap();
     let created = from.create(nonce);
@@ -541,8 +537,7 @@ async fn test_trace_call_state_diff_created_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_state_diff_funded_account() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
 
@@ -583,8 +578,7 @@ async fn test_trace_call_state_diff_funded_account_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_state_diff_create_and_selfdestruct() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
     let nonce = provider.get_transaction_count(from).await.unwrap();
 
@@ -818,8 +812,7 @@ async fn test_trace_call_many_local() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_empty_trace_types() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
 
     // NUMBER PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN
@@ -843,8 +836,7 @@ async fn test_trace_call_empty_trace_types() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_many_defaults_to_latest() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
 
     // NUMBER PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN
@@ -921,8 +913,7 @@ async fn test_trace_get_local() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_block_traces_reject_pending() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
     api.mine_one().await.unwrap();
 
     let pending = BlockId::pending();
@@ -978,8 +969,7 @@ async fn test_calls_reject_conflicting_fields() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_transaction_omits_nested_precompile_calls() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
 
     // Zero-value CALL to the identity precompile, then a zero-value CALL to 0xbeef.
@@ -1025,8 +1015,7 @@ async fn test_trace_transaction_omits_nested_precompile_calls() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_transaction_keeps_root_and_valued_precompile_calls() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
     let identity = Address::with_last_byte(4);
 
@@ -1578,8 +1567,7 @@ async fn test_debug_trace_call_tx_index() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_transaction_reports_transaction_gas() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -1783,8 +1771,7 @@ async fn test_trace_replays_report_unavailable_historical_state() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_unknown_block_and_transaction() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
     let head = provider.get_block_number().await.unwrap();
     let next = BlockId::number(head + 1);
 
@@ -2378,8 +2365,7 @@ async fn test_trace_address_fork2() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_get_rejects_integer_indices() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let tx = TransactionRequest::default()
         .to(accounts[1].address())
@@ -2918,8 +2904,7 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_replay_block_transactions_local() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -2997,8 +2982,7 @@ async fn test_trace_replay_block_transactions_local() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_replay_transaction() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -3086,8 +3070,7 @@ async fn test_trace_replay_transaction_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_replay_state_diff_account_lifecycle() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let from = handle.dev_wallets().next().unwrap().address();
     let fresh = Address::repeat_byte(0x66);
     let nonce = provider.get_transaction_count(from).await.unwrap();
@@ -3335,8 +3318,7 @@ async fn test_debug_trace_block_without_history() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_block_by_number() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -3377,8 +3359,7 @@ async fn test_debug_trace_block_by_number() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_block_by_hash() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -3419,8 +3400,7 @@ async fn test_debug_trace_block_by_hash() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_block() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();

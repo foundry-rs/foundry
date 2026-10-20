@@ -6,6 +6,8 @@ use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 use alloy_primitives::{Address, B256};
 #[cfg(feature = "monad")]
 use alloy_rpc_types::TransactionRequest;
+#[cfg(feature = "monad")]
+use anvil::test_helpers::TestNode;
 
 #[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
@@ -703,8 +705,7 @@ async fn execute_transaction_uses_monad_fork_context(prj: _, cmd: _) {
     const MAX_FEE_PER_GAS: u128 = 2_000_000_000;
     const MAX_PRIORITY_FEE_PER_GAS: u128 = 1_000_000_000;
 
-    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let ancestor = wallets[0].address();
     let control = wallets[1].address();
@@ -924,8 +925,7 @@ async fn transaction_fork_excludes_future_monad_participants(prj: _, cmd: _) {
     const GAS_LIMIT: u64 = 100_000;
     const MAX_FEE_PER_GAS: u128 = 3_000_000_000;
 
-    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let target_sender = wallets[3].address();
     let future_sender = wallets[0].address();
@@ -1184,8 +1184,7 @@ async fn monad_fork_aux_lifecycle_tracks_outer_context(prj: _, cmd: _) {
     const CHAIN_ID: u64 = 31_337;
     const MAX_FEE_PER_GAS: u128 = 3_000_000_000;
 
-    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let sender = wallets[0].address();
     let spender = wallets[3].address();
@@ -1839,8 +1838,7 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x33);
     const VALIDATOR_ID: u64 = 7;
 
-    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     let mon = alloy_primitives::U256::from(1_000_000_000_000_000_000u128);
     let reward = alloy_primitives::U256::from(25) * mon;
     let initial_system_balance = alloy_primitives::U256::from(100) * mon;

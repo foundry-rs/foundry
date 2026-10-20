@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, U256, bytes, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_sol_types::SolCall;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use foundry_evm::{core::precompiles::P256_VERIFY, hardfork::EthereumHardfork};
 
 const BSC_MAINNET_CHAIN_ID: u64 = 56;
@@ -46,8 +46,7 @@ async fn dropping_handle_releases_http_listener() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     assert!(api.anvil_get_auto_mine().unwrap());
     assert!(api.anvil_get_interval_mining().unwrap().is_none());
@@ -78,8 +77,7 @@ async fn test_can_change_mining_mode() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pause_interval_mining() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
 
     api.anvil_set_interval_mining(1).unwrap();
     assert!(!provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
@@ -105,8 +103,7 @@ async fn test_pause_interval_mining() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pause_automining_with_mode_changes() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle, provider } = TestNode::spawn().await;
     provider.raw_request::<_, ()>("anvil_setMiningPaused".into(), [true]).await.unwrap();
 
     // Changing modes must not unpause mining.
@@ -167,8 +164,7 @@ fn test_pause_skips_queued_interval_block() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_default_dev_keys() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle, provider } = TestNode::spawn().await;
 
     let dev_accounts = handle.dev_accounts().collect::<Vec<_>>();
     let accounts = provider.get_accounts().await.unwrap();
@@ -311,8 +307,7 @@ async fn bsc_pre_haber_eth_config_omits_p256() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_default_genesis_timestamp() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     assert_ne!(0u64, provider.get_block(0.into()).await.unwrap().unwrap().header.timestamp);
 }
@@ -367,8 +362,7 @@ async fn test_can_set_genesis_block_number() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_default_genesis_block_number() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     assert_eq!(0, provider.get_block(0.into()).await.unwrap().unwrap().header.number);
 }
@@ -421,8 +415,7 @@ async fn test_number_opcode_reflects_genesis_block_number() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_recover_signature() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
     alloy_sol_types::sol! {
     #[sol(rpc)]
         contract TestRecover {
@@ -454,8 +447,7 @@ async fn test_anvil_recover_signature() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fake_signature_transaction() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
     alloy_sol_types::sol! {
     #[sol(rpc)]
         contract TestRecover {

@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, spawn, test_helpers::TestNode};
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
@@ -157,8 +157,7 @@ async fn pending_transaction_by_block_number_and_index() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn uncle_endpoints_report_no_uncles() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api, handle: _handle, provider } = TestNode::spawn().await;
 
     api.mine_one().await.unwrap();
     let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
@@ -195,8 +194,7 @@ async fn uncle_endpoints_report_no_uncles() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn uncle_count_rejects_unknown_blocks() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let TestNode { api: _api, handle: _handle, provider } = TestNode::spawn().await;
 
     // `BlockNotFound` surfaces as the JSON-RPC resource-not-found code.
     let err = provider
