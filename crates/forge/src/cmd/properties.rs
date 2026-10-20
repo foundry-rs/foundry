@@ -1,6 +1,7 @@
-//! The `forge properties` command: an external generator audits the targets and writes their
-//! documented properties as tests. Forge reports the tests that fail on every seed as possible bugs
-//! and keeps the tests that pass.
+//! The `forge properties` command: several external generator agents audit the targets
+//! independently and in parallel, and write their documented properties as tests. Forge reports a
+//! test that fails on every seed as a possible bug only when enough agents agree on its root cause,
+//! and keeps one copy of each passing test file.
 
 use crate::{
     cmd::test::RerunFailure,
@@ -24,18 +25,34 @@ use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ffi::OsString,
     fs,
     io::Write,
+    ops::Add,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::LazyLock,
+    thread,
 };
 use tempfile::TempDir;
 
 const CANDIDATE_SCHEMA: &str = "foundry/properties-candidate-v1";
-const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v2";
+const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v3";
+/// In an offline analysis of 12 held-out cases, three independent agents with a quorum of two
+/// kept 8 or 9 of 9 confirmed bugs and removed most wrong reports and duplicates.
+const DEFAULT_AGENTS: usize = 3;
+const DEFAULT_QUORUM: usize = 2;
+/// Two claims agree when at least 3/10 of their combined words are shared, the threshold of the
+/// offline analysis.
+const CLAIM_OVERLAP: (usize, usize) = (3, 10);
+/// Words that do not tell two claims apart.
+const STOP_WORDS: [&str; 31] = [
+    "the", "a", "an", "of", "to", "is", "in", "on", "and", "or", "must", "be", "it", "that",
+    "with", "for", "not", "when", "as", "by", "at", "from", "than", "its", "this", "are", "which",
+    "so", "any", "if", "no",
+];
 // Bound each source section so it cannot dominate the prompt. Targets hold the documentation that
 // defines correct behavior, so they get the largest share; 64 KiB holds most contracts in full.
 const MAX_PROMPT_TARGET_BYTES: usize = 64 * 1024;
@@ -70,8 +87,24 @@ static DECLARATION: LazyLock<Regex> = LazyLock::new(|| {
 static INHERITANCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:contract|interface)\s+[A-Za-z_$][A-Za-z0-9_$]*\s+is\s+([^{]+)\{").unwrap()
 });
+/// A Solidity file path.
+static SOLIDITY_FILE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w./-]+\.sol").unwrap());
+/// A function name followed by its argument list.
+static FUNCTION_CALL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[A-Za-z_][A-Za-z0-9_]*\(").unwrap());
+/// A camelCase identifier.
+static CAMEL_CASE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b_?[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b").unwrap());
+/// A lowercase word.
+static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-z0-9_]+").unwrap());
+/// The path of an import directive.
+static IMPORT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\bimport\s+(?:[^;]*?\bfrom\s+)?["']([^"']+)["']"#).unwrap());
 /// The protocol steps, one per bullet under `## Protocol` in `guidance.md`.
 static PROTOCOL: LazyLock<Vec<&'static str>> = LazyLock::new(|| guidance_section("## Protocol"));
+/// The audit lenses, one per bullet under `## Lenses` in `guidance.md`, each named before its
+/// colon.
+static LENSES: LazyLock<Vec<&'static str>> = LazyLock::new(|| guidance_section("## Lenses"));
 /// The generator rules, one per bullet under `## Rules` in `guidance.md`.
 static GUIDANCE: LazyLock<Vec<&'static str>> = LazyLock::new(|| guidance_section("## Rules"));
 
@@ -119,9 +152,29 @@ pub struct PropertiesArgs {
     #[arg(long, required = true, action = clap::ArgAction::Append, value_name = "SEED")]
     seed: Vec<U256>,
 
-    /// Maximum number of generator rounds.
+    /// Maximum number of generator rounds of each agent.
     #[arg(long, default_value_t = 1, value_name = "N")]
     rounds: usize,
+
+    /// Number of generator agents. Each agent runs the generator independently and in parallel
+    /// in its own copy of the project.
+    #[arg(long, default_value_t = DEFAULT_AGENTS, value_name = "N")]
+    agents: usize,
+
+    /// Number of agents that must report the same root cause before Forge reports it as a
+    /// possible bug.
+    ///
+    /// Two failing tests have the same root cause when their evidence names the same target file
+    /// in `code_path` and they share a function name, or at least 30% of their claim words.
+    /// Groups below the quorum are only in `cache/properties/report.json`. Defaults to 2, or 1
+    /// with a single agent.
+    #[arg(long, value_name = "K")]
+    quorum: Option<usize>,
+
+    /// Agent whose check journal records a `--check` run. Forge sets it in the check command of
+    /// each agent.
+    #[arg(long, hide = true, requires = "check", value_name = "ID")]
+    agent: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -137,6 +190,32 @@ struct Candidate {
     /// Why each test that the generator expects to fail is a possible bug, by `Contract::test`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     evidence: BTreeMap<String, Evidence>,
+    /// What the generator spent to write this candidate, if it reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    usage: Option<Usage>,
+}
+
+/// Model usage that a generator reports.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+struct Usage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(default)]
+    cost_usd: f64,
+}
+
+impl Add for Usage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cost_usd: self.cost_usd + other.cost_usd,
+        }
+    }
 }
 
 /// One claim of the audit: what the documentation demands and how a test proves it.
@@ -210,11 +289,13 @@ struct CandidateFile {
 struct GeneratorPrompt<'a> {
     schema: &'static str,
     round: usize,
+    agent: AgentPrompt,
     project: &'a Path,
     brief: &'a str,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     context: &'a [PromptSource],
     protocol: &'static [&'static str],
+    lenses: &'static [&'static str],
     guidance: &'static [&'static str],
     targets: &'a [PathBuf],
     seeds: &'a [U256],
@@ -225,6 +306,19 @@ struct GeneratorPrompt<'a> {
     last_rejected_sources: &'a [PromptSource],
     previous_feedback: &'a [Round],
     output_contract: OutputContract,
+}
+
+/// Who the agent is in the run, so independent agents can diversify.
+#[derive(Debug, Serialize)]
+struct AgentPrompt {
+    /// The agent's number, from 1.
+    id: usize,
+    /// The number of agents in the run.
+    count: usize,
+    /// The lens that the agent starts its audit with.
+    focus: &'static str,
+    /// A seed of this agent, for example to vary sampling or the order of hypotheses.
+    seed: U256,
 }
 
 #[derive(Debug, Serialize)]
@@ -278,8 +372,8 @@ struct Round {
     /// Tests that fail on every seed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     possible_bugs: Vec<CheckFailure>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<Usage>,
 }
 
 /// The hypothesis counts of one proposal, by result.
@@ -339,25 +433,77 @@ impl CheckFailure {
     }
 }
 
-impl std::fmt::Display for CheckFailure {
+/// A test of one agent that fails on every seed.
+#[derive(Debug, Serialize)]
+struct AgentFailure {
+    agent: usize,
+    #[serde(flatten)]
+    failure: CheckFailure,
+    /// Where Forge saw the failure.
+    note: String,
+}
+
+impl std::fmt::Display for AgentFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Some(evidence) = &self.evidence else {
-            return write!(f, "possible bug (no evidence): {} ({})", self.test, self.reason);
-        };
-        let basis = match evidence.basis {
-            EvidenceBasis::Documented => "documented",
-            EvidenceBasis::Inferred => "inferred",
-        };
-        write!(
-            f,
-            "possible bug ({basis}): {} ({})\n  claim: {}\n  quote: {:?} ({})\n  code path: {}",
-            self.test,
-            self.reason,
-            evidence.claim,
-            evidence.quote,
-            evidence.source,
-            evidence.code_path
-        )
+        let failure = &self.failure;
+        write!(f, "  agent {}: {} ({})", self.agent, failure.test, failure.reason)?;
+        if let Some(evidence) = &failure.evidence {
+            write!(
+                f,
+                "\n    claim: {}\n    quote: {:?} ({})\n    code path: {}",
+                evidence.claim, evidence.quote, evidence.source, evidence.code_path
+            )?;
+        }
+        write!(f, "\n    {}", self.note)
+    }
+}
+
+/// The failing tests of all agents that have one root cause.
+#[derive(Debug, Serialize)]
+struct BugGroup {
+    /// The agents that report the root cause.
+    agents: Vec<usize>,
+    /// The failing tests, by agent. The first test has the strongest evidence.
+    failures: Vec<AgentFailure>,
+}
+
+/// What two failing tests must share to have one root cause: the target file in the evidence, and
+/// a function name or most of the claim's words.
+struct RootCause {
+    /// The file name of the first Solidity path in `code_path`, else in `source`.
+    file: String,
+    /// The function calls and camelCase identifiers in `code_path` and `claim`.
+    identifiers: HashSet<String>,
+    /// The words of `claim`, without stop words and words of one or two letters.
+    words: HashSet<String>,
+}
+
+impl RootCause {
+    fn new(evidence: &Evidence) -> Option<Self> {
+        let paths = format!("{} {}", evidence.code_path, evidence.source);
+        let file = SOLIDITY_FILE.find(&paths)?.as_str().rsplit('/').next()?.to_string();
+        let text = format!("{} {}", evidence.code_path, evidence.claim);
+        let identifiers = FUNCTION_CALL
+            .find_iter(&text)
+            .chain(CAMEL_CASE.find_iter(&text))
+            .map(|identifier| identifier.as_str().to_string())
+            .collect();
+        let claim = evidence.claim.to_lowercase();
+        let words = WORD
+            .find_iter(&claim)
+            .map(|word| word.as_str())
+            .filter(|word| word.len() > 2 && !STOP_WORDS.contains(word))
+            .map(String::from)
+            .collect();
+        Some(Self { file, identifiers, words })
+    }
+
+    fn agrees(&self, other: &Self) -> bool {
+        let shared = self.words.intersection(&other.words).count();
+        let all = self.words.union(&other.words).count();
+        self.file == other.file
+            && (!self.identifiers.is_disjoint(&other.identifiers)
+                || (shared > 0 && shared * CLAIM_OVERLAP.1 >= all * CLAIM_OVERLAP.0))
     }
 }
 
@@ -382,6 +528,9 @@ impl PropertiesArgs {
             "--seed values must be distinct"
         );
         ensure!(self.rounds > 0, "--rounds must be greater than zero");
+        ensure!(self.agents > 0, "--agents must be greater than zero");
+        let quorum = self.quorum.unwrap_or(self.agents.min(DEFAULT_QUORUM));
+        ensure!((1..=self.agents).contains(&quorum), "--quorum must be between 1 and --agents");
         ensure!(
             self.target.iter().all(|path| workspace::is_safe_relative_path(path)),
             "--target paths must be project-relative paths"
@@ -393,18 +542,8 @@ impl PropertiesArgs {
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
         let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
         let cache_root = config.cache_path.join("properties");
-        let mut campaign = Campaign {
-            args: &self,
-            config: &config,
-            forge,
-            generated_tests,
-            cache_root,
-            targets: vec![],
-            rounds: vec![],
-            current: None,
-            current_tests: vec![],
-            rejected_sources: vec![],
-        };
+        let campaign =
+            Campaign { args: &self, config: &config, forge, generated_tests, cache_root, quorum };
         if let Some(path) = &self.check {
             return campaign.check(path);
         }
@@ -412,15 +551,34 @@ impl PropertiesArgs {
     }
 }
 
-/// The state of one `forge properties` run.
+/// The settings of one `forge properties` run.
 struct Campaign<'a> {
     args: &'a PropertiesArgs,
     config: &'a Config,
     forge: PathBuf,
     generated_tests: PathBuf,
     cache_root: PathBuf,
+    quorum: usize,
+}
+
+/// The inputs that every agent shares.
+struct AgentInputs {
+    brief: String,
+    context: Vec<PromptSource>,
+    generator: PathBuf,
     /// The target files, relative to the project root.
     targets: Vec<PathBuf>,
+    project_context: ProjectContext,
+}
+
+/// The state of one generator agent.
+struct Agent<'a> {
+    campaign: &'a Campaign<'a>,
+    id: usize,
+    /// The directory of this agent's generated files, relative to the project root.
+    generated_tests: PathBuf,
+    /// The directory of this agent's candidates, rounds, and check journal.
+    cache: PathBuf,
     rounds: Vec<Round>,
     /// The kept files.
     current: Option<Candidate>,
@@ -431,7 +589,7 @@ struct Campaign<'a> {
 }
 
 impl Campaign<'_> {
-    fn run(&mut self) -> Result<()> {
+    fn run(&self) -> Result<()> {
         let (Some(brief), Some(generator)) = (&self.args.brief, &self.args.generator) else {
             eyre::bail!("--brief and --generator are required");
         };
@@ -447,258 +605,155 @@ impl Campaign<'_> {
             })
             .collect::<Result<Vec<_>>>()?;
         let generator = generator.canonicalize().wrap_err("failed to resolve generator")?;
-        self.targets = if self.args.target.is_empty() {
+        let targets = if self.args.target.is_empty() {
             source_files_iter(&self.config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                 .map(|path| workspace::relative_to_root(&self.config.root, &path))
                 .collect()
         } else {
             self.args.target.clone()
         };
-        fs::create_dir_all(&self.cache_root)?;
-        // Generator checks of this run start a new journal.
-        let journal = self.cache_root.join(CHECK_JOURNAL);
-        if let Err(error) = fs::remove_file(&journal)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(error).wrap_err("failed to reset the check journal");
-        }
-        let project_context = project_context(self.config, &self.targets);
-        let check_command = [self.forge.as_os_str(), "properties".as_ref(), "--root".as_ref()]
-            .into_iter()
-            .chain([self.config.root.as_os_str(), "--check".as_ref(), "CANDIDATE_JSON".as_ref()])
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .chain(
-                self.args.seed.iter().flat_map(|seed| ["--seed".to_string(), format!("{seed:#x}")]),
-            )
-            .collect::<Vec<_>>();
+        let project_context = project_context(self.config, &targets);
+        let inputs = AgentInputs { brief, context, generator, targets, project_context };
 
-        // An error ends the run after the report, so the kept files are not lost.
-        let mut error = None;
-        for _ in 0..self.args.rounds {
-            let round = self.rounds.len() + 1;
-            let round_dir = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
-            let prompt_path = round_dir.path().join("prompt.json");
-            let candidate_path = round_dir.path().join("candidate.json");
-            let example_contract = format!("GeneratedRound{round}Test");
-            let prompt = GeneratorPrompt {
-                    schema: PROMPT_SCHEMA,
-                    round,
-                    project: &self.config.root,
-                    brief: &brief,
-                    context: &context,
-                    protocol: &PROTOCOL,
-                    guidance: &GUIDANCE,
-                    targets: &self.targets,
-                    seeds: &self.args.seed,
-                    project_context: &project_context,
-                    current_candidate: self.current.as_ref(),
-                    last_rejected_sources: &self.rejected_sources,
-                    previous_feedback: &self.rounds,
-                    output_contract: OutputContract {
-                        schema: CANDIDATE_SCHEMA,
-                        allowed_path_prefix: self.generated_tests.clone(),
-                        check_command: check_command.clone(),
-                        example: Candidate {
-                            schema: CANDIDATE_SCHEMA.to_string(),
-                            rationale: "One line per hypothesis: its id, finding, refuted, or not testable, and why.".to_string(),
-                            generator: Some(GeneratorMetadata {
-                                agent: "generator name".to_string(),
-                                model: "model name".to_string(),
-                            }),
-                            files: vec![CandidateFile {
-                                path: self.generated_tests.join(format!("GeneratedRound{round}.t.sol")),
-                                content: format!(
-                                    "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testProperty() external {{}}\n}}\n"
-                                ),
-                            }],
-                            hypotheses: vec![Hypothesis {
-                                id: "testProperty".to_string(),
-                                lens: "spec".to_string(),
-                                function: "Contract.function".to_string(),
-                                claim: "The documented behavior and its source (path:line, or a standard and its clause).".to_string(),
-                                recipe: "The concrete setup, the call, and the result the documentation demands.".to_string(),
-                                result: HypothesisResult::Finding,
-                            }],
-                            evidence: BTreeMap::from([(
-                                format!("{example_contract}::testProperty"),
-                                Evidence {
-                                    claim: "The documented behavior that the failing test asserts.".to_string(),
-                                    quote: "The documentation sentence, verbatim.".to_string(),
-                                    source: "src/Contract.sol:12, or the standard and its clause".to_string(),
-                                    basis: EvidenceBasis::Documented,
-                                    code_path: "src/Contract.sol:40 and what the code does there instead.".to_string(),
-                                },
-                            )]),
-                        },
-                        note: "Return one JSON object with exactly this shape. Keep schema unchanged and replace the example's rationale, files, generator metadata, hypotheses, and evidence. Forge runs every test in the files on every seed. It keeps a file only if all of its tests pass on every seed, and it reports the tests that fail on every seed as possible bugs. Each file path must be new relative to current_candidate. The generator object is optional. List every hypothesis of the audit in hypotheses, with its result. Add one evidence entry, keyed by Contract::test, for every test that fails against the current implementation.",
-                    },
-                };
-            fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
-            self.rejected_sources.clear();
-
-            let output = Command::new(&generator)
-                .args(&self.args.generator_arg)
-                .arg(&prompt_path)
-                .arg(&candidate_path)
-                .current_dir(&self.config.root)
-                .output()
-                .wrap_err("failed to invoke generator")?;
-            if !output.status.success() {
-                error = Some(eyre!(
-                    "generator failed in round {round} ({}): {}",
-                    output.status,
-                    stderr(&output)
-                ));
-                break;
-            }
-            let mut record = Round { round, ..Default::default() };
-            match read_candidate(&candidate_path, &self.generated_tests) {
-                Ok(proposal) => {
-                    record.generator = proposal.generator.clone();
-                    record.rationale = Some(proposal.rationale.clone());
-                    record.audit = AuditSummary::new(&proposal.hypotheses);
-                    if let Err(error) = self.evaluate(&proposal, &mut record) {
-                        record.reasons.push(error.to_string());
-                    }
-                    self.rejected_sources = prompt_sources(
-                        proposal
-                            .files
-                            .iter()
-                            .filter(|file| !record.kept.contains(&file.path))
-                            .map(|file| (file.path.as_path(), file.content.as_str())),
-                        MAX_PROMPT_SOURCE_BYTES,
-                    );
-                }
-                Err(error) => record.reasons.push(error.to_string()),
-            }
-            self.rounds.push(record);
-        }
-        fs::write(self.cache_root.join("rounds.json"), serde_json::to_vec_pretty(&self.rounds)?)?;
-        self.report(&journal)?;
-        error.map_or(Ok(()), Err)
-    }
-
-    /// Evaluates a proposal and keeps its files whose tests pass on every seed.
-    ///
-    /// Problems with the proposal are errors that become rejection reasons; failures of Forge
-    /// itself also stop only this round.
-    fn evaluate(&mut self, proposal: &Candidate, record: &mut Round) -> Result<()> {
-        let candidate = merge_candidate(self.current.as_ref(), proposal, &self.generated_tests)?;
-        for file in &proposal.files {
-            let path = self.config.root.join(&file.path);
-            ensure!(!path.exists(), "candidate would overwrite {}", file.path.display());
-            // A symlinked directory on the path must not lead outside the project.
-            if let Some(existing) = path.ancestors().find(|ancestor| ancestor.exists()) {
-                workspace::ensure_within_root(
-                    &self.config.root,
-                    existing,
-                    "generated test",
-                    &file.path,
-                )?;
-            }
-        }
-        let digest = keccak256(serde_json::to_vec(&candidate)?).to_string();
-        let cache = self.cache_root.join(&digest);
-        fs::create_dir_all(&cache)?;
-        fs::write(cache.join("candidate.json"), serde_json::to_vec_pretty(&candidate)?)?;
-        record.candidate_digest = Some(digest);
-
-        let workspace = candidate_workspace(self.config, &candidate.files)?;
-        let run = self.run_tests(workspace.path(), &candidate)?;
-        record.reasons = run.reasons;
-        record.possible_bugs = run.possible_bugs;
-        let passing_files = proposal
-            .files
-            .iter()
-            .filter(|file| {
-                !run.failing_files.contains(&file.path)
-                    && run.passing.iter().any(|test| test_path(test) == file.path)
-            })
-            .map(|file| file.path.clone())
-            .collect::<HashSet<_>>();
-        let kept = required_candidate_files(
-            self.config,
-            workspace.path(),
-            &candidate.files,
-            &passing_files,
-        )?;
-        ensure!(
-            kept.iter().all(|path| !run.failing_files.contains(path)),
-            "a passing test imports a candidate file with a failing test"
-        );
-        let tests = run
-            .passing
-            .into_iter()
-            .filter(|test| {
-                let path = test_path(test);
-                kept.contains(&path)
-                    || self.current_tests.iter().any(|current| test_path(current) == path)
+        let mut agents = (1..=self.args.agents)
+            .map(|id| Agent {
+                campaign: self,
+                id,
+                generated_tests: self.generated_tests.join(format!("agent-{id}")),
+                cache: self.cache_root.join(format!("agent-{id}")),
+                rounds: vec![],
+                current: None,
+                current_tests: vec![],
+                rejected_sources: vec![],
             })
             .collect::<Vec<_>>();
-
-        if !kept.is_empty() {
-            let mut current = candidate;
-            current.files.retain(|file| {
-                kept.contains(&file.path)
-                    || self.current.as_ref().is_some_and(|current| {
-                        current.files.iter().any(|kept| kept.path == file.path)
-                    })
-            });
-            self.current = Some(current);
-            self.current_tests = tests;
-        }
-        record.kept = kept;
+        // An agent error ends only that agent, and the run reports it after the other agents, so
+        // their results are not lost.
+        let errors = thread::scope(|scope| {
+            let inputs = &inputs;
+            let agents = agents
+                .iter_mut()
+                .map(|agent| scope.spawn(move || agent.run(inputs)))
+                .collect::<Vec<_>>();
+            agents
+                .into_iter()
+                .map(|agent| agent.join().expect("agent thread panicked"))
+                .collect::<Vec<_>>()
+        });
+        let errors = errors
+            .into_iter()
+            .zip(&agents)
+            .filter_map(|(result, agent)| Some(format!("agent {}: {:#}", agent.id, result.err()?)))
+            .collect::<Vec<_>>();
+        self.report(&agents)?;
+        ensure!(errors.is_empty(), "{}", errors.join("\n"));
         Ok(())
     }
 
-    /// Prints the possible bugs and writes the kept files to the project.
-    fn report(&self, journal: &Path) -> Result<()> {
-        let mut possible_bugs = self
-            .rounds
+    /// Prints the possible bugs that reach the quorum and writes one copy of each kept file to the
+    /// project.
+    fn report(&self, agents: &[Agent<'_>]) -> Result<()> {
+        let mut failures = Vec::new();
+        for agent in agents {
+            failures.extend(agent.possible_bugs()?);
+        }
+        let (possible_bugs, below_quorum) = group_failures(failures)
+            .into_iter()
+            .partition::<Vec<_>, _>(|group| group.agents.len() >= self.quorum);
+        for group in &possible_bugs {
+            let lead = &group.failures[0].failure;
+            let (basis, summary) = match &lead.evidence {
+                Some(evidence) if evidence.basis == EvidenceBasis::Documented => {
+                    ("documented", evidence.claim.as_str())
+                }
+                Some(evidence) => ("inferred", evidence.claim.as_str()),
+                None => ("no evidence", lead.test.as_str()),
+            };
+            let agreement = format!("{}/{} agents", group.agents.len(), self.args.agents);
+            sh_println!("possible bug ({basis}, {agreement}): {summary}")?;
+            for failure in &group.failures {
+                sh_println!("{failure}")?;
+            }
+        }
+        let report_path = self.cache_root.join("report.json");
+        let report_display = report_path.strip_prefix(&self.config.root).unwrap_or(&report_path);
+        if !below_quorum.is_empty() {
+            sh_println!(
+                "{} possible bug(s) below the quorum of {}: see {}",
+                below_quorum.len(),
+                self.quorum,
+                report_display.display()
+            )?;
+        }
+        for agent in agents {
+            for round in &agent.rounds {
+                if let Some(audit) = &round.audit {
+                    sh_println!("audit agent {} round {}: {audit}", agent.id, round.round)?;
+                }
+            }
+        }
+        let usage = agents
             .iter()
-            .flat_map(|round| {
-                let digest = round.candidate_digest.as_deref().unwrap_or_default();
-                let path = self.cache_root.join(digest);
-                let path = path.strip_prefix(&self.config.root).unwrap_or(&path).display();
-                let note = format!("fails on every seed; candidate: {path}");
-                round.possible_bugs.iter().map(move |failure| (failure, note.clone()))
+            .filter_map(|agent| {
+                let usage =
+                    agent.rounds.iter().filter_map(|round| round.usage).reduce(Usage::add)?;
+                Some(serde_json::json!({ "agent": agent.id, "usage": usage }))
             })
             .collect::<Vec<_>>();
-        // A generator can remove a failing test after a check. Report the failures that no round
-        // reported and that the kept files do not hold.
-        let journal_failures = read_check_journal(journal)?;
-        let journal = journal.strip_prefix(&self.config.root).unwrap_or(journal);
-        let note =
-            format!("seen in a generator check, then removed; journal: {}", journal.display());
-        for failure in &journal_failures {
-            let reported = possible_bugs.iter().any(|(reported, _)| reported.test == failure.test);
-            let name =
-                failure.test.rsplit_once("::").map_or(failure.test.as_str(), |(_, name)| name);
-            let kept = self.current.as_ref().is_some_and(|current| {
-                current.files.iter().any(|file| {
-                    file.path == failure.path && file.content.contains(&format!("function {name}("))
-                })
-            });
-            if !reported && !kept {
-                possible_bugs.push((failure, note.clone()));
-            }
-        }
-        possible_bugs.sort_by(|(a, _), (b, _)| a.report_key().cmp(&b.report_key()));
-        for (failure, note) in &possible_bugs {
-            sh_println!("{failure}\n  {note}")?;
-        }
-        for round in &self.rounds {
-            if let Some(audit) = &round.audit {
-                sh_println!("audit round {}: {audit}", round.round)?;
-            }
+        if let Some(total) = agents
+            .iter()
+            .flat_map(|agent| &agent.rounds)
+            .filter_map(|round| round.usage)
+            .reduce(Usage::add)
+        {
+            sh_println!(
+                "generator usage: {} input tokens, {} output tokens, {:.2} USD",
+                total.input_tokens,
+                total.output_tokens,
+                total.cost_usd
+            )?;
         }
 
-        let Some(current) = &self.current else {
+        // Keep one copy of each file. A file that another file of the same agent imports stays,
+        // so the imports still resolve.
+        let mut seen = HashSet::new();
+        let mut kept = Vec::new();
+        let mut duplicates = Vec::new();
+        for current in agents.iter().filter_map(|agent| agent.current.as_ref()) {
+            for file in &current.files {
+                let normalized =
+                    COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
+                let imported = current.files.iter().any(|other| {
+                    other.path != file.path
+                        && IMPORT.captures_iter(&other.content).any(|import| {
+                            Path::new(&import[1]).file_name() == file.path.file_name()
+                        })
+                });
+                if seen.insert(normalized) || imported {
+                    kept.push(file);
+                } else {
+                    duplicates.push(&file.path);
+                }
+            }
+        }
+        fs::create_dir_all(&self.cache_root)?;
+        let report = serde_json::json!({
+            "agents": self.args.agents,
+            "quorum": self.quorum,
+            "possible_bugs": possible_bugs,
+            "below_quorum": below_quorum,
+            "kept": kept.iter().map(|file| &file.path).collect::<Vec<_>>(),
+            "duplicates": duplicates,
+            "usage": usage,
+        });
+        fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
+
+        if kept.is_empty() {
             sh_println!("no generated test file was kept")?;
             return Ok(());
-        };
+        }
         // Evaluation rejects paths that exist or leave the project, so this only adds files.
-        for file in &current.files {
+        for file in &kept {
             let path = self.config.root.join(&file.path);
             fs::create_dir_all(path.parent().expect("candidate path has a parent"))?;
             fs::OpenOptions::new()
@@ -708,9 +763,15 @@ impl Campaign<'_> {
                 .and_then(|mut target| target.write_all(file.content.as_bytes()))
                 .wrap_err_with(|| format!("failed to write {}", file.path.display()))?;
         }
-        sh_println!("added {} generated test file(s):", current.files.len())?;
-        for file in &current.files {
+        sh_println!("added {} generated test file(s):", kept.len())?;
+        for file in &kept {
             sh_println!("  {}", file.path.display())?;
+        }
+        if !duplicates.is_empty() {
+            sh_println!(
+                "skipped {} generated test file(s) that repeat a file of another agent",
+                duplicates.len()
+            )?;
         }
         Ok(())
     }
@@ -738,12 +799,17 @@ impl Campaign<'_> {
                 serde_json::to_writer(&mut lines, failure)?;
                 lines.push(b'\n');
             }
-            fs::create_dir_all(&self.cache_root)?;
+            // Each agent has its own journal.
+            let journal = match self.args.agent {
+                Some(id) => self.cache_root.join(format!("agent-{id}")),
+                None => self.cache_root.clone(),
+            };
+            fs::create_dir_all(&journal)?;
             // One write per check keeps the lines of concurrent checks apart.
             fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(self.cache_root.join(CHECK_JOURNAL))
+                .open(journal.join(CHECK_JOURNAL))
                 .and_then(|mut file| file.write_all(&lines))
                 .wrap_err("failed to write the check journal")?;
         }
@@ -838,6 +904,326 @@ impl Campaign<'_> {
             .env_remove("FOUNDRY_TEST");
         command
     }
+}
+
+impl Agent<'_> {
+    /// Runs the generator rounds of this agent in its own copy of the project.
+    fn run(&mut self, inputs: &AgentInputs) -> Result<()> {
+        let campaign = self.campaign;
+        let args = campaign.args;
+        fs::create_dir_all(&self.cache)?;
+        // Generator checks of this run start a new journal.
+        if let Err(error) = fs::remove_file(self.cache.join(CHECK_JOURNAL))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error).wrap_err("failed to reset the check journal");
+        }
+        let workspace = agent_workspace(campaign.config)?;
+        let check_command = [campaign.forge.as_os_str(), "properties".as_ref(), "--root".as_ref()]
+            .into_iter()
+            .chain([
+                campaign.config.root.as_os_str(),
+                "--check".as_ref(),
+                "CANDIDATE_JSON".as_ref(),
+            ])
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .chain(args.seed.iter().flat_map(|seed| ["--seed".to_string(), format!("{seed:#x}")]))
+            .chain(["--agent".to_string(), self.id.to_string()])
+            .collect::<Vec<_>>();
+        let lens = LENSES[(self.id - 1) % LENSES.len()];
+        let focus = lens.split_once(':').map_or(lens, |(name, _)| name);
+        let seed = keccak256(
+            [args.seed[0].to_be_bytes::<32>(), U256::from(self.id).to_be_bytes()].concat(),
+        )
+        .into();
+
+        // An error ends the rounds after `rounds.json` is written, so the kept files are not lost.
+        let mut error = None;
+        for _ in 0..args.rounds {
+            let round = self.rounds.len() + 1;
+            let round_dir = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
+            let prompt_path = round_dir.path().join("prompt.json");
+            let candidate_path = round_dir.path().join("candidate.json");
+            let example_contract = format!("GeneratedRound{round}Test");
+            let prompt = GeneratorPrompt {
+                schema: PROMPT_SCHEMA,
+                round,
+                agent: AgentPrompt { id: self.id, count: args.agents, focus, seed },
+                project: workspace.path(),
+                brief: &inputs.brief,
+                context: &inputs.context,
+                protocol: &PROTOCOL,
+                lenses: &LENSES,
+                guidance: &GUIDANCE,
+                targets: &inputs.targets,
+                seeds: &args.seed,
+                project_context: &inputs.project_context,
+                current_candidate: self.current.as_ref(),
+                last_rejected_sources: &self.rejected_sources,
+                previous_feedback: &self.rounds,
+                output_contract: OutputContract {
+                    schema: CANDIDATE_SCHEMA,
+                    allowed_path_prefix: self.generated_tests.clone(),
+                    check_command: check_command.clone(),
+                    example: Candidate {
+                        schema: CANDIDATE_SCHEMA.to_string(),
+                        rationale: "One line per hypothesis: its id, result, and why.".to_string(),
+                        generator: Some(GeneratorMetadata {
+                            agent: "generator name".to_string(),
+                            model: "model name".to_string(),
+                        }),
+                        files: vec![CandidateFile {
+                            path: self.generated_tests.join(format!("GeneratedRound{round}.t.sol")),
+                            content: format!(
+                                "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testProperty() external {{}}\n}}\n"
+                            ),
+                        }],
+                        hypotheses: vec![Hypothesis {
+                            id: "testProperty".to_string(),
+                            lens: focus.to_string(),
+                            function: "Contract.function".to_string(),
+                            claim: "The documented behavior and its source.".to_string(),
+                            recipe: "The concrete setup, the call, and the documented result.".to_string(),
+                            result: HypothesisResult::Finding,
+                        }],
+                        evidence: BTreeMap::from([(
+                            format!("{example_contract}::testProperty"),
+                            Evidence {
+                                claim: "The documented behavior that the failing test asserts.".to_string(),
+                                quote: "The documentation sentence, verbatim.".to_string(),
+                                source: "src/Contract.sol:12, or the standard and its clause".to_string(),
+                                basis: EvidenceBasis::Documented,
+                                code_path: "src/Contract.sol:40 Contract.function() and what it does instead.".to_string(),
+                            },
+                        )]),
+                        usage: Some(Usage::default()),
+                    },
+                    note: "Return one JSON object with this shape and schema. Replace the example values; generator and usage are optional. Forge runs every test in the files on every seed, keeps a file only if all of its tests pass, and reports tests that fail on every seed as possible bugs. Use new file paths. List every hypothesis with its result, and add one evidence entry, keyed by Contract::test, for every failing test.",
+                },
+            };
+            fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
+            self.rejected_sources.clear();
+
+            let output = Command::new(&inputs.generator)
+                .args(&args.generator_arg)
+                .arg(&prompt_path)
+                .arg(&candidate_path)
+                .current_dir(workspace.path())
+                .output()
+                .wrap_err("failed to invoke generator")?;
+            if !output.status.success() {
+                error = Some(eyre!(
+                    "generator failed in round {round} ({}): {}",
+                    output.status,
+                    stderr(&output)
+                ));
+                break;
+            }
+            let mut record = Round { round, ..Default::default() };
+            match read_candidate(&candidate_path, &self.generated_tests) {
+                Ok(proposal) => {
+                    record.generator = proposal.generator.clone();
+                    record.rationale = Some(proposal.rationale.clone());
+                    record.audit = AuditSummary::new(&proposal.hypotheses);
+                    record.usage = proposal.usage;
+                    if let Err(error) = self.evaluate(&proposal, &mut record) {
+                        record.reasons.push(error.to_string());
+                    }
+                    self.rejected_sources = prompt_sources(
+                        proposal
+                            .files
+                            .iter()
+                            .filter(|file| !record.kept.contains(&file.path))
+                            .map(|file| (file.path.as_path(), file.content.as_str())),
+                        MAX_PROMPT_SOURCE_BYTES,
+                    );
+                }
+                Err(error) => record.reasons.push(error.to_string()),
+            }
+            self.rounds.push(record);
+        }
+        fs::write(self.cache.join("rounds.json"), serde_json::to_vec_pretty(&self.rounds)?)?;
+        error.map_or(Ok(()), Err)
+    }
+
+    /// Evaluates a proposal and keeps its files whose tests pass on every seed.
+    ///
+    /// Problems with the proposal are errors that become rejection reasons; failures of Forge
+    /// itself also stop only this round.
+    fn evaluate(&mut self, proposal: &Candidate, record: &mut Round) -> Result<()> {
+        let config = self.campaign.config;
+        let candidate = merge_candidate(self.current.as_ref(), proposal, &self.generated_tests)?;
+        for file in &proposal.files {
+            let path = config.root.join(&file.path);
+            ensure!(!path.exists(), "candidate would overwrite {}", file.path.display());
+            // A symlinked directory on the path must not lead outside the project.
+            if let Some(existing) = path.ancestors().find(|ancestor| ancestor.exists()) {
+                workspace::ensure_within_root(
+                    &config.root,
+                    existing,
+                    "generated test",
+                    &file.path,
+                )?;
+            }
+        }
+        let digest = keccak256(serde_json::to_vec(&candidate)?).to_string();
+        let cache = self.cache.join(&digest);
+        fs::create_dir_all(&cache)?;
+        fs::write(cache.join("candidate.json"), serde_json::to_vec_pretty(&candidate)?)?;
+        record.candidate_digest = Some(digest);
+
+        let workspace = candidate_workspace(config, &candidate.files)?;
+        let run = self.campaign.run_tests(workspace.path(), &candidate)?;
+        record.reasons = run.reasons;
+        record.possible_bugs = run.possible_bugs;
+        let passing_files = proposal
+            .files
+            .iter()
+            .filter(|file| {
+                !run.failing_files.contains(&file.path)
+                    && run.passing.iter().any(|test| test_path(test) == file.path)
+            })
+            .map(|file| file.path.clone())
+            .collect::<HashSet<_>>();
+        let kept =
+            required_candidate_files(config, workspace.path(), &candidate.files, &passing_files)?;
+        ensure!(
+            kept.iter().all(|path| !run.failing_files.contains(path)),
+            "a passing test imports a candidate file with a failing test"
+        );
+        let tests = run
+            .passing
+            .into_iter()
+            .filter(|test| {
+                let path = test_path(test);
+                kept.contains(&path)
+                    || self.current_tests.iter().any(|current| test_path(current) == path)
+            })
+            .collect::<Vec<_>>();
+
+        if !kept.is_empty() {
+            let mut current = candidate;
+            current.files.retain(|file| {
+                kept.contains(&file.path)
+                    || self.current.as_ref().is_some_and(|current| {
+                        current.files.iter().any(|kept| kept.path == file.path)
+                    })
+            });
+            self.current = Some(current);
+            self.current_tests = tests;
+        }
+        record.kept = kept;
+        Ok(())
+    }
+
+    /// Returns the tests of this agent that fail on every seed, from its rounds and its check
+    /// journal.
+    fn possible_bugs(&self) -> Result<Vec<AgentFailure>> {
+        let config = self.campaign.config;
+        let mut failures = Vec::new();
+        for round in &self.rounds {
+            let digest = round.candidate_digest.as_deref().unwrap_or_default();
+            let path = self.cache.join(digest);
+            let path = path.strip_prefix(&config.root).unwrap_or(&path).display();
+            let note = format!("fails on every seed; candidate: {path}");
+            failures.extend(round.possible_bugs.iter().map(|failure| AgentFailure {
+                agent: self.id,
+                failure: failure.clone(),
+                note: note.clone(),
+            }));
+        }
+        // A generator can remove a failing test after a check. Report the failures that no round
+        // reported and that the kept files do not hold.
+        let journal = self.cache.join(CHECK_JOURNAL);
+        let journal_failures = read_check_journal(&journal)?;
+        let journal = journal.strip_prefix(&config.root).unwrap_or(&journal);
+        let note =
+            format!("seen in a generator check, then removed; journal: {}", journal.display());
+        for failure in journal_failures {
+            let reported = failures.iter().any(|reported| reported.failure.test == failure.test);
+            let name =
+                failure.test.rsplit_once("::").map_or(failure.test.as_str(), |(_, name)| name);
+            let kept = self.current.as_ref().is_some_and(|current| {
+                current.files.iter().any(|file| {
+                    file.path == failure.path && file.content.contains(&format!("function {name}("))
+                })
+            });
+            if !reported && !kept {
+                failures.push(AgentFailure { agent: self.id, failure, note: note.clone() });
+            }
+        }
+        Ok(failures)
+    }
+}
+
+/// Groups the failing tests of all agents by root cause with single linkage: two tests are in one
+/// group when a chain of agreeing pairs links them. A test without evidence agrees with no other
+/// test. Groups with documented evidence come first, then groups with more agents.
+fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
+    let causes = failures
+        .iter()
+        .map(|failure| failure.failure.evidence.as_ref().and_then(RootCause::new))
+        .collect::<Vec<_>>();
+    let mut group_of = (0..failures.len()).collect::<Vec<_>>();
+    for (i, a) in causes.iter().enumerate() {
+        for (j, b) in causes.iter().enumerate().skip(i + 1) {
+            if let (Some(a), Some(b)) = (a, b)
+                && a.agrees(b)
+                && group_of[i] != group_of[j]
+            {
+                let (from, to) = (group_of[j], group_of[i]);
+                group_of.iter_mut().filter(|group| **group == from).for_each(|group| *group = to);
+            }
+        }
+    }
+    let mut groups = BTreeMap::<usize, Vec<AgentFailure>>::new();
+    for (failure, group) in failures.into_iter().zip(group_of) {
+        groups.entry(group).or_default().push(failure);
+    }
+    let mut groups = groups
+        .into_values()
+        .map(|mut failures| {
+            // The failure with the strongest evidence leads, then the failures by agent.
+            failures.sort_by_key(|failure| {
+                let (no_evidence, basis, test) = failure.failure.report_key();
+                (no_evidence, basis, failure.agent, test.to_string())
+            });
+            let agents = failures.iter().map(|failure| failure.agent).collect::<BTreeSet<_>>();
+            BugGroup { agents: agents.into_iter().collect(), failures }
+        })
+        .collect::<Vec<_>>();
+    groups.sort_by(|a, b| {
+        let key = |group: &BugGroup| {
+            let (no_evidence, basis, test) = group.failures[0].failure.report_key();
+            (no_evidence, basis, Reverse(group.agents.len()), test.to_string())
+        };
+        key(a).cmp(&key(b))
+    });
+    groups
+}
+
+/// Copies the project for one agent and links the other top-level entries of the project, such as
+/// the README and docs, so the agent can read them.
+fn agent_workspace(config: &Config) -> Result<TempDir> {
+    let workspace = candidate_workspace(config, &[])?;
+    for entry in fs::read_dir(&config.root)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name() else { continue };
+        let target = workspace.path().join(name);
+        if target.exists()
+            || name.to_string_lossy().starts_with('.')
+            || path == config.out
+            || path == config.cache_path
+        {
+            continue;
+        }
+        if !path.is_dir() {
+            fs::copy(&path, &target)?;
+        } else if workspace::symlink_dir(&path, &target).is_err() {
+            workspace::copy_dir_recursive(&path, &target)?;
+        }
+    }
+    Ok(workspace)
 }
 
 /// Copies the project into a temporary workspace and adds the files.

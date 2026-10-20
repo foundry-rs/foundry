@@ -57,75 +57,108 @@ fn properties_args(prj: &TestProject, script: &str) -> Vec<String> {
     .to_vec()
 }
 
-/// Returns `cache/properties/rounds.json`.
+/// Returns the first agent's `rounds.json`.
 fn rounds(prj: &TestProject) -> serde_json::Value {
-    let rounds = fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap();
+    let rounds =
+        fs::read_to_string(prj.root().join("cache/properties/agent-1/rounds.json")).unwrap();
     serde_json::from_str(&rounds).unwrap()
 }
 
-// The audit reports the failing tests with their evidence, documented first, and keeps the files
-// whose tests pass. Without targets, the prompt has every source file.
+// Three agents run in parallel. Forge reports a possible bug only when two agents agree on its
+// root cause, keeps the other failures in the report file, keeps one copy of identical passing
+// files, and sums the usage that agents report.
 #[forgetest_init]
-fn properties_reports_possible_bugs_by_evidence(prj: _, cmd: _) {
+fn properties_reports_bugs_that_agents_agree_on(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
+    fs::write(prj.root().join("README.md"), "readme-marker").unwrap();
     let context = prj.root().join("context.md");
     fs::write(&context, "context-marker: rounding notes").unwrap();
     let mut args = properties_args(
         &prj,
         r#"
-grep -q 'audit first, test second' "$prompt"
+agent=$(sed -n 's/^    "id": \([0-9][0-9]*\),$/\1/p' "$prompt" | head -n 1)
+case "$agent" in 1) focus=spec ;; 2) focus=state ;; 3) focus=code ;; esac
+grep -q "\"focus\": \"$focus\"" "$prompt"
+grep -q '"count": 3' "$prompt"
+grep -q "\"allowed_path_prefix\": \"test/generated/agent-$agent\"" "$prompt"
 grep -q '"path": "src/Fee.sol"' "$prompt"
 grep -q 'context-marker: rounding notes' "$prompt"
-cat > "$output" <<'JSON'
+# Each agent works in its own copy of the project, with the project's other files.
+grep -q readme-marker README.md
+dir="test/generated/agent-$agent"
+spec='{"path": "'$dir'/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}'
+usage='"usage": {"input_tokens": 1000, "output_tokens": 200, "cost_usd": 0.01}'
+case "$agent" in
+1) cat > "$output" <<JSON
 {
   "schema": "foundry/properties-candidate-v1",
-  "rationale": "cap: finding; charges: finding; rounding: finding; small fee: refuted",
-  "files": [
-    {"path": "test/generated/FeeAudit.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeAuditTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n    function testChargesZero() public pure {\n        require(Fee.charges(0));\n    }\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n"},
-    {"path": "test/generated/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}
-  ],
-  "evidence": {
-    "FeeAuditTest::testChargesZero": {
-      "claim": "A zero amount is charged.",
-      "quote": "",
-      "source": "the name of charges",
-      "basis": "inferred",
-      "code_path": "src/Fee.sol:11 returns false for amounts below 100."
-    },
-    "FeeAuditTest::testDocumentedCap": {
-      "claim": "The fee is capped at 100 ether.",
-      "quote": "Charges 1% of `amount`, capped at 100 ether.",
-      "source": "src/Fee.sol:3",
-      "basis": "documented",
-      "code_path": "src/Fee.sol:7 caps the fee at 10 ether."
-    }
-  }
+  "rationale": "cap: finding",
+  "files": [$spec, {"path": "$dir/FeeCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeCapTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}],
+  "hypotheses": [{"id": "testDocumentedCap", "lens": "spec", "function": "Fee.fee", "claim": "capped at 100 ether", "recipe": "fee(1e30)", "result": "finding"}],
+  "evidence": {"FeeCapTest::testDocumentedCap": {"claim": "The fee is capped at 100 ether.", "quote": "Charges 1% of \`amount\`, capped at 100 ether.", "source": "src/Fee.sol:3", "basis": "documented", "code_path": "src/Fee.sol:7 fee() caps the fee at 10 ether."}},
+  $usage
 }
 JSON
-# A checked failure that the generator keeps is reported once.
-check "$output"
+;;
+2) cat > "$output" <<JSON
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "cap: finding; rounding: refuted",
+  "files": [$spec, {"path": "$dir/FeeRounding.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeRoundingTest {\n    function testRoundsDown() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n"}, {"path": "$dir/FeeLimit.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeLimitTest {\n    function testReachesCap() public pure {\n        require(Fee.fee(2e22) == 100 ether);\n    }\n}\n"}],
+  "evidence": {"FeeLimitTest::testReachesCap": {"claim": "fee(amount) reaches the documented cap for large amounts.", "quote": "capped at 100 ether", "source": "src/Fee.sol:3", "basis": "documented", "code_path": "src/Fee.sol:7 caps at 10 ether."}},
+  $usage
+}
+JSON
+;;
+3) cat > "$output" <<JSON
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "charges: finding",
+  "files": [$spec, {"path": "$dir/FeeCharges.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeChargesTest {\n    function testChargesZero() public pure {\n        require(Fee.charges(0));\n    }\n}\n"}],
+  "evidence": {"FeeChargesTest::testChargesZero": {"claim": "A zero amount is charged.", "quote": "", "source": "the name of charges", "basis": "inferred", "code_path": "src/Fee.sol:11 charges() returns false below 100."}},
+  $usage
+}
+JSON
+;;
+esac
 "#,
     );
     args.extend(["--context".to_string(), context.to_str().unwrap().to_string()]);
     cmd.args(args).assert_success().stdout_eq(str![[r#"
-possible bug (documented): FeeAuditTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-  claim: The fee is capped at 100 ether.
-  quote: "Charges 1% of `amount`, capped at 100 ether." (src/Fee.sol:3)
-  code path: src/Fee.sol:7 caps the fee at 10 ether.
-  fails on every seed; candidate: cache/properties/0x[..]
-possible bug (inferred): FeeAuditTest::testChargesZero (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-  claim: A zero amount is charged.
-  quote: "" (the name of charges)
-  code path: src/Fee.sol:11 returns false for amounts below 100.
-  fails on every seed; candidate: cache/properties/0x[..]
-possible bug (no evidence): FeeAuditTest::testRoundsUp (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-  fails on every seed; candidate: cache/properties/0x[..]
-added 1 generated test file(s):
-  test/generated/FeeSpec.t.sol
+possible bug (documented, 2/3 agents): The fee is capped at 100 ether.
+  agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: The fee is capped at 100 ether.
+    quote: "Charges 1% of `amount`, capped at 100 ether." (src/Fee.sol:3)
+    code path: src/Fee.sol:7 fee() caps the fee at 10 ether.
+    fails on every seed; candidate: cache/properties/agent-1/0x[..]
+  agent 2: FeeLimitTest::testReachesCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: fee(amount) reaches the documented cap for large amounts.
+    quote: "capped at 100 ether" (src/Fee.sol:3)
+    code path: src/Fee.sol:7 caps at 10 ether.
+    fails on every seed; candidate: cache/properties/agent-2/0x[..]
+1 possible bug(s) below the quorum of 2: see cache/properties/report.json
+audit agent 1 round 1: audited 1 hypotheses: 1 findings, 0 refuted, 0 not testable
+generator usage: 3000 input tokens, 600 output tokens, 0.03 USD
+added 2 generated test file(s):
+  test/generated/agent-1/FeeSpec.t.sol
+  test/generated/agent-2/FeeRounding.t.sol
+skipped 2 generated test file(s) that repeat a file of another agent
 
 "#]]);
 
-    assert!(!prj.root().join("test/generated/FeeAudit.t.sol").exists());
+    let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
+    let report = serde_json::from_str::<serde_json::Value>(&report).unwrap();
+    let below = &report["below_quorum"][0];
+    assert_data_eq!(
+        format!("{} {}", below["agents"], below["failures"][0]["test"]),
+        str![[r#"[3] "FeeChargesTest::testChargesZero""#]]
+    );
+    assert_data_eq!(
+        report["duplicates"].to_string(),
+        str![[
+            r#"["test/generated/agent-2/FeeSpec.t.sol","test/generated/agent-3/FeeSpec.t.sol"]"#
+        ]]
+    );
 }
 
 // A kept property must keep its imported helper, while an unrelated proposal file can be dropped.
@@ -140,22 +173,24 @@ cat > "$output" <<'JSON'
   "schema": "foundry/properties-candidate-v1",
   "rationale": "the fee is one percent",
   "files": [
-    {"path": "test/generated/Helper.sol", "content": "pragma solidity ^0.8.20;\nlibrary Helper { function fee(uint256 amount) internal pure returns (uint256) { return amount / 100; } }\n"},
-    {"path": "test/generated/Property.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\nimport {Helper} from \"./Helper.sol\";\ncontract PropertyTest { function testFee() public pure { require(Fee.fee(199) == Helper.fee(199)); } }\n"},
-    {"path": "test/generated/Unused.sol", "content": "pragma solidity ^0.8.20;\nlibrary Unused {}\n"}
+    {"path": "test/generated/agent-1/Helper.sol", "content": "pragma solidity ^0.8.20;\nlibrary Helper { function fee(uint256 amount) internal pure returns (uint256) { return amount / 100; } }\n"},
+    {"path": "test/generated/agent-1/Property.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\nimport {Helper} from \"./Helper.sol\";\ncontract PropertyTest { function testFee() public pure { require(Fee.fee(199) == Helper.fee(199)); } }\n"},
+    {"path": "test/generated/agent-1/Unused.sol", "content": "pragma solidity ^0.8.20;\nlibrary Unused {}\n"}
   ]
 }
 JSON
 "#,
     );
-    cmd.args(args).args(["--target", "src/Fee.sol"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
+        str![[r#"
 added 2 generated test file(s):
-  test/generated/Helper.sol
-  test/generated/Property.t.sol
+  test/generated/agent-1/Helper.sol
+  test/generated/agent-1/Property.t.sol
 
-"#]]);
+"#]],
+    );
 
-    assert!(!prj.root().join("test/generated/Unused.sol").exists());
+    assert!(!prj.root().join("test/generated/agent-1/Unused.sol").exists());
     cmd.forge_fuse().args(["test", "--match-contract", "PropertyTest"]).assert_success();
 }
 
@@ -174,7 +209,7 @@ cat > removed.json <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "the documented cap is 100 ether",
-  "files": [{"path": "test/generated/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]
+  "files": [{"path": "test/generated/agent-1/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]
 }
 JSON
 check removed.json
@@ -182,29 +217,31 @@ cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "small fees are 1%",
-  "files": [{"path": "test/generated/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
+  "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
 }
 JSON
 "#,
     );
     cmd.args(args)
-        .args(["--target", "src/Fee.sol", "--rounds", "2"])
+        .args(["--agents", "1", "--target", "src/Fee.sol", "--rounds", "2"])
         .assert_failure()
         .stdout_eq(str![[r#"
-possible bug (no evidence): FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-  seen in a generator check, then removed; journal: cache/properties/check-failures.jsonl
+possible bug (no evidence, 1/1 agents): FeeRemovedTest::testDocumentedCap
+  agent 1: FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    seen in a generator check, then removed; journal: cache/properties/agent-1/check-failures.jsonl
 added 1 generated test file(s):
-  test/generated/FeeSpec.t.sol
+  test/generated/agent-1/FeeSpec.t.sol
 
 "#]])
         .stderr_eq(str![[r#"
-Error: generator failed in round 2 (exit status: 3): generator quota exceeded
+Error: agent 1: generator failed in round 2 (exit status: 3): generator quota exceeded
 
 "#]]);
 
     // The journal keeps the removed test's source for review.
     let journal =
-        fs::read_to_string(prj.root().join("cache/properties/check-failures.jsonl")).unwrap();
+        fs::read_to_string(prj.root().join("cache/properties/agent-1/check-failures.jsonl"))
+            .unwrap();
     let journal = serde_json::from_str::<serde_json::Value>(&journal).unwrap();
     assert!(journal["source"].as_str().unwrap().contains("function testDocumentedCap()"));
 }
@@ -273,16 +310,16 @@ grep -q 'bucket-spec-marker' "$prompt"
 name=Lower
 body='require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);'
 cat > "$output" <<JSON
-{"schema": "foundry/properties-candidate-v1", "rationale": "$name", "files": [{"path": "test/generated/Arithmetic$name.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"bucket/Arithmetic.sol\";\ncontract Arithmetic${name}Test {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testBoundary() public view {\n        $body\n    }\n}\n"}]}
+{"schema": "foundry/properties-candidate-v1", "rationale": "$name", "files": [{"path": "test/generated/agent-1/Arithmetic$name.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"bucket/Arithmetic.sol\";\ncontract Arithmetic${name}Test {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testBoundary() public view {\n        $body\n    }\n}\n"}]}
 JSON
 "#,
     );
     cmd.args(args)
-        .args(["--target", "node_modules/bucket/Arithmetic.sol"])
+        .args(["--agents", "1", "--target", "node_modules/bucket/Arithmetic.sol"])
         .assert_success()
         .stdout_eq(str![[r#"
 added 1 generated test file(s):
-  test/generated/ArithmeticLower.t.sol
+  test/generated/agent-1/ArithmeticLower.t.sol
 
 "#]]);
 }
@@ -293,7 +330,7 @@ fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
     let outside = tempfile::tempdir().unwrap();
     fs::create_dir_all(prj.root().join("test/generated")).unwrap();
-    std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated/link")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated/agent-1")).unwrap();
     // Internal runs keep their own `--rerun` state; the project's file stays as it is.
     let failures = prj.root().join("cache/test-failures");
     fs::create_dir_all(failures.parent().unwrap()).unwrap();
@@ -305,19 +342,19 @@ cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "small fees are 1%",
-  "files": [{"path": "test/generated/link/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
+  "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
 }
 JSON
 "#,
     );
-    cmd.args(args).assert_success().stdout_eq(str![[r#"
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 no generated test file was kept
 
 "#]]);
 
     assert_data_eq!(
         rounds(&prj)[0]["reasons"][0].as_str().unwrap(),
-        str!["generated test path test/generated/link/FeeSpec.t.sol escapes project root [..]"]
+        str!["generated test path test/generated/agent-1/FeeSpec.t.sol escapes project root [..]"]
     );
     assert!(!outside.path().join("FeeSpec.t.sol").exists());
     assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
