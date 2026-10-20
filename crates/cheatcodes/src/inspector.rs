@@ -1602,7 +1602,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 ),
                 Err(_) => (false, U256::ZERO, 0),
             };
-            let chain_id = evm.version().chain_id;
+            // Fork switches and `vm.chainId` take effect before the execution version changes.
+            let chain_id = self
+                .env_overrides
+                .get(backend.backend().active_fork_id())
+                .and_then(|overrides| overrides.chain_id)
+                .unwrap_or(evm.version().chain_id);
 
             let kind = match call.kind {
                 MessageKind::CallCode => crate::Vm::AccountAccessKind::CallCode,
@@ -2525,7 +2530,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
                     forkId: backend.backend().active_fork_id().unwrap_or_default(),
-                    chainId: interp.tx_env().chain_id,
+                    chainId: self
+                        .env_overrides
+                        .get(backend.backend().active_fork_id())
+                        .and_then(|overrides| overrides.chain_id)
+                        .map(U256::from)
+                        .unwrap_or(interp.tx_env().chain_id),
                 },
                 accessor: input.caller,
                 account: address,
@@ -3123,8 +3133,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         let opcode = interp.opcode();
         let accessor = interp.message().destination;
-        let fork_id = backend.backend().active_fork_id().unwrap_or_default();
-        let chain_id = interp.tx_env().chain_id;
+        let fork_id = backend.backend().active_fork_id();
+        let chain_id = self
+            .env_overrides
+            .get(fork_id)
+            .and_then(|overrides| overrides.chain_id)
+            .map(U256::from)
+            .unwrap_or(interp.tx_env().chain_id);
+        let fork_id = fork_id.unwrap_or_default();
         let depth = curr_depth as u64;
         match opcode {
             op::SELFDESTRUCT => {
