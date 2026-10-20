@@ -528,7 +528,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
         self._setup(call_setup).unwrap_or_else(|err| {
-            if err.to_string().contains("skipped") {
+            if matches!(err.downcast_ref::<EvmError<FEN>>(), Some(EvmError::Skip(_))) {
                 TestSetup::skipped(err.to_string())
             } else {
                 TestSetup::failed(err.to_string())
