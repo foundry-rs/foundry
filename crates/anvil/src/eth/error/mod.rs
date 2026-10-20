@@ -14,6 +14,7 @@ use evm2::{interpreter::InstrStop, registry::HandlerError};
 use foundry_evm_core::decode::RevertDecoder;
 use foundry_fork_db::DatabaseError;
 use serde::Serialize;
+use tempo_evm::TempoInvalidTransaction;
 use tokio::time::Duration;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
@@ -221,6 +222,12 @@ impl From<HandlerError> for BlockchainError {
                             Self::DepositTransactionUnsupported
                         }
                     };
+                }
+                // Preserve the native-value call/estimate RPC response, not pool rejection errors.
+                if let Some(err @ TempoInvalidTransaction::ValueTransferNotAllowed) =
+                    err.downcast_ref::<TempoInvalidTransaction>()
+                {
+                    return Self::Message(format!("tempo transaction error: {err}"));
                 }
                 Self::InvalidTransaction(InvalidTransactionError::Rejected(err.to_string()))
             }
