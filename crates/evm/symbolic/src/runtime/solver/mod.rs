@@ -16,7 +16,7 @@ mod smt;
 
 use fallback::{checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first};
 use normalize::{
-    constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
+    NormalizationCache, constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
     sorted_bool_exprs_are_subset,
 };
 use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
@@ -123,7 +123,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_scheduler: PortfolioScheduler,
     heuristic_witnesses: usize,
     replayable_storage: SymbolicVars,
-    normalization_cache: HashMap<SymBoolExpr, SymBoolExpr>,
+    normalization_cache: NormalizationCache,
     sat_cache: HashMap<Vec<SymBoolExpr>, bool>,
     model_cache: HashMap<Vec<SymBoolExpr>, SymbolicModel>,
     sat_queries: usize,
@@ -151,7 +151,7 @@ impl SmtLibSubprocessSolver {
             portfolio_scheduler: PortfolioScheduler::default(),
             heuristic_witnesses: 0,
             replayable_storage: SymbolicVars::default(),
-            normalization_cache: HashMap::default(),
+            normalization_cache: NormalizationCache::default(),
             sat_cache: HashMap::default(),
             model_cache: HashMap::default(),
             sat_queries: 0,
@@ -685,7 +685,7 @@ where
 fn normalize_sat_constraints(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
-    normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
+    normalization_cache: &mut NormalizationCache,
 ) -> Vec<SymBoolExpr> {
     let constraints = remove_implied_monotonic_constraints(
         normalize_constraints_for_solver_cached(cx, constraints, normalization_cache),
