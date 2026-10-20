@@ -49,7 +49,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor,
-        TxFor, TxResultFor, TypesFor,
+        TxFor, TxResultFor, TypesFor, merge_pending_changes, release_inspector,
     },
 };
 use foundry_evm_traces::{
@@ -88,8 +88,9 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     ) -> Result<MessageResultFor<FEN>, ExecutionError>;
 
     /// Executes `tx` as a nested transaction of the transaction `evm` is running, with `env` or
-    /// the running environment, and merges its changes, such as for `executeTransaction`. A
-    /// failed transaction only keeps its nonce increment.
+    /// the running environment, and merges its changes, such as for `executeTransaction`.
+    /// Preserves nested block and backend changes without replacing the parent journal.
+    /// A failed transaction keeps its nonce increment and fee payment, but not its frame's writes.
     ///
     /// `depth` is the depth of the cheatcode call; the nested transaction's root frame duplicates
     /// it, so its children run one level deeper.
@@ -174,10 +175,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut child = backend.backend().nested_evm(evm, tx, env);
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
-        let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        let result = child.transact(tx).map(|executed| executed.detach());
+        let child = release_inspector(child);
+        evm.set_block(*child.block());
+        evm.state_mut().overlay_db_mut().db = backend.backend().lifecycle().forks().active_db();
+        let executed = result.map_err(|err| eyre::eyre!("{err:?}"))?;
         // A failed transaction keeps its nonce increment.
-        foundry_evm_core::evm::merge_nested_changes(evm.state_mut(), &executed)?;
-        Ok(executed.result().clone())
+        merge_pending_changes(evm.state_mut(), &executed.pending_state, false)?;
+        Ok(executed.result)
     }
 
     fn transact(

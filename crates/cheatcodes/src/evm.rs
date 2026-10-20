@@ -28,7 +28,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    backend::{Backend, RevertStateSnapshotAction},
+    backend::{Backend, CowBackend, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -1318,14 +1318,21 @@ impl Cheatcode for broadcastRawTransactionCall {
             }
             env
         });
-        let _ = executor.nested_transaction(
+        // Raw broadcasts import account changes, not snapshots, fork selection or block changes.
+        let block = *ccx.evm.block();
+        let mut backend = CowBackend::new_borrowed(ccx.backend.backend());
+        let result = executor.nested_transaction(
             ccx.state,
-            ccx.backend,
+            &mut backend,
             ccx.evm,
             ccx.depth as u16,
             &evm_tx,
             env,
-        )?;
+        );
+        ccx.evm.set_block(block);
+        ccx.evm.state_mut().overlay_db_mut().db =
+            ccx.backend.backend().lifecycle().forks().active_db();
+        let _ = result?;
         ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {
@@ -1416,9 +1423,20 @@ impl Cheatcode for executeTransactionCall {
             ccx.state.record_created_account(fork_id, address);
         }
 
-        let res = executor
-            .nested_transaction(ccx.state, ccx.backend, ccx.evm, ccx.depth as u16, &tx, Some(env))
-            .map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
+        let basefee = ccx.evm.block().basefee;
+        let res = executor.nested_transaction(
+            ccx.state,
+            ccx.backend,
+            ccx.evm,
+            ccx.depth as u16,
+            &tx,
+            Some(env),
+        );
+        // Keep nested block changes, except the base fee zeroed for this transaction.
+        let mut block = *ccx.evm.block();
+        block.basefee = basefee;
+        ccx.evm.set_block(block);
+        let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
         // Return output bytes.
         if !res.status {

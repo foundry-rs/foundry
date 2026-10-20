@@ -537,10 +537,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         });
         let result =
             child.transact(tx).map(|executed| executed.detach()).map_err(transaction_error);
-        drop(release_inspector(child));
+        let child = release_inspector(child);
         let restored = mem::replace(&mut cheats.snapshot_restores, snapshot_restores).kept();
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
+        // Nested restorations can change the block and the database used for uncached reads.
+        // Keep the parent's journal: only the child's account changes are merged below.
+        evm.set_block(*child.block());
+        evm.state_mut().overlay_db_mut().db = backend.backend().lifecycle().forks().active_db();
         let executed = result?;
         // A restoration's unchanged slots can differ from the suspended parent's values.
         // A failed transaction still keeps its nonce increment.

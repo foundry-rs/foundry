@@ -456,17 +456,37 @@ abstract contract NestedRestoreFrameRevertBase is Test {
     function testExecuteTransactionRestoreMergesLoadedState() public {
         assertEq(store.value(), 0);
         bytes memory code = address(helper).code;
+        vm.warp(100);
         uint256 snapshotId = vm.snapshotState();
+        vm.warp(200);
         store.set(2);
         store.mark(MARKER);
         vm.etch(address(helper), hex"00");
 
         vm.executeTransaction(signedTransaction(abi.encodeCall(this.restoreTransaction, (snapshotId))));
 
+        assertEq(vm.getBlockTimestamp(), 100);
         assertEq(store.value(), 0);
         assertEq(address(helper).code, code);
         // Nested transactions merge loaded state, not slots absent from the snapshot.
         assertEq(store.marker(), MARKER);
+    }
+
+    function testRawTransactionSnapshotDeletionIsTemporary() public {
+        vm.warp(100);
+        uint256 snapshotId = vm.snapshotState();
+        vm.warp(200);
+        vm.broadcastRawTransaction(signedTransaction(abi.encodeCall(this.restoreAndDeleteTransaction, (snapshotId))));
+
+        assertEq(store.marker(), 99);
+        assertEq(vm.getBlockTimestamp(), 200);
+        assertTrue(vm.revertToState(snapshotId));
+        assertEq(vm.getBlockTimestamp(), 100);
+    }
+
+    function restoreAndDeleteTransaction(uint256 snapshotId) external {
+        require(vm.revertToStateAndDelete(snapshotId), "restore failed");
+        store.mark(99);
     }
 
     function caughtTransactionRestore() external {
