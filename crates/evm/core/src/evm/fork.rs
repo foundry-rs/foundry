@@ -50,9 +50,13 @@ pub struct Parked<T: EvmTypesHost> {
     /// The cache is shared with snapshots and with EVMs created over the context, so taking a
     /// snapshot or starting an execution does not copy it.
     pub cache: Option<Arc<Cache>>,
-    /// Slots loaded before suspending this context, cleared at the transaction boundary.
+    /// Whether this fork has received the initial local state, independently of replayed cache.
+    pub(super) seeded: bool,
+    /// Local seeding populated the cache before network initialization ran.
+    pub(super) needs_init: bool,
+    /// Accounts and their slots loaded before suspending this context.
     pub(super) loaded_storage: AddressMap<HashSet<U256>>,
-    /// Accounts created before suspending this context, cleared at the transaction boundary.
+    /// Accounts created before suspending this context.
     pub(super) created: AddressSet,
 }
 
@@ -64,9 +68,40 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             env,
             ext: StoredExt::new(&ext),
             cache: None,
+            seeded: false,
+            needs_init: false,
             loaded_storage: AddressMap::default(),
             created: AddressSet::default(),
         }
+    }
+
+    /// Seeds a fresh fork from the initial local journal, not setup-only accepted entries.
+    pub(super) fn seed_local(&mut self, local: &Self) {
+        if self.seeded {
+            return;
+        }
+        self.seeded = true;
+        let Some(initial) = &local.cache else { return };
+        self.needs_init = self.cache.is_none();
+        let cache = Arc::make_mut(self.cache.get_or_insert_default());
+        let addresses = local.loaded_storage.keys().copied().collect();
+        copy_account_info(&addresses, initial, cache);
+        for (address, slots) in &local.loaded_storage {
+            let target = cache.storage.entry(*address).or_default();
+            if local.created.contains(address) {
+                target.slots.clear();
+                target.wiped = true;
+            }
+            if let Some(storage) = initial.storage.get(address) {
+                for key in slots {
+                    if let Some(value) = storage.slots.get(key) {
+                        target.slots.insert(*key, *value);
+                    }
+                }
+            }
+        }
+        self.loaded_storage.clone_from(&local.loaded_storage);
+        self.created.clone_from(&local.created);
     }
 }
 
@@ -77,6 +112,8 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
             env: self.env,
             ext: self.ext.clone(),
             cache: self.cache.clone(),
+            seeded: self.seeded,
+            needs_init: self.needs_init,
             loaded_storage: self.loaded_storage.clone(),
             created: self.created.clone(),
         }
@@ -244,7 +281,14 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
 
     /// Copies persistent accounts' accepted state from `source` into `target`.
     pub(super) fn merge_persistent(&self, source: &Cache, target: &mut Cache) {
-        copy_accounts(&self.persistent, source, target);
+        copy_account_info(&self.persistent, source, target);
+        for address in &self.persistent {
+            if let Some(storage) = source.storage.get(address) {
+                let target = target.storage.entry(*address).or_default();
+                target.wiped |= storage.wiped;
+                target.slots.extend(&storage.slots);
+            }
+        }
     }
 
     /// Copies persistent accounts' transaction-loaded slots alongside their accepted state.
@@ -254,20 +298,15 @@ impl<T: EvmTypesHost> ForkRegistry<T> {
         target: &mut AddressMap<HashSet<U256>>,
     ) {
         for address in &self.persistent {
-            match source.get(address) {
-                Some(slots) => {
-                    target.insert(*address, slots.clone());
-                }
-                None => {
-                    target.remove(address);
-                }
+            if let Some(slots) = source.get(address) {
+                target.entry(*address).or_default().extend(slots);
             }
         }
     }
 }
 
-/// Copies the accepted state of `addresses` from `source` into `target`.
-fn copy_accounts(addresses: &AddressSet, source: &Cache, target: &mut Cache) {
+/// Copies account info and code without changing the target's storage.
+fn copy_account_info(addresses: &AddressSet, source: &Cache, target: &mut Cache) {
     for address in addresses {
         if let Some(account) = source.accounts.get(address) {
             target.accounts.insert(*address, account.clone());
@@ -277,22 +316,16 @@ fn copy_accounts(addresses: &AddressSet, source: &Cache, target: &mut Cache) {
                 target.contracts.insert(info.code_hash, code.clone());
             }
         }
-        match source.storage.get(address) {
-            Some(storage) => {
-                target.storage.insert(*address, storage.clone());
-            }
-            None => {
-                target.storage.remove(address);
-            }
-        }
     }
 }
 
 /// Copies accounts created in the running transaction from `source` into `target`. Their
 /// unwritten slots read as zero, whatever `target`'s backing database holds.
 pub(super) fn copy_created(created: &AddressSet, source: &Cache, target: &mut Cache) {
-    copy_accounts(created, source, target);
+    copy_account_info(created, source, target);
     for address in created {
-        target.storage.entry(*address).or_default().wiped = true;
+        let mut storage = source.storage.get(address).cloned().unwrap_or_default();
+        storage.wiped = true;
+        target.storage.insert(*address, storage);
     }
 }

@@ -153,6 +153,27 @@ contract CopyStorageTest is Test {
         assert(value2 != value6);
         assertEq(value4, value6);
     }
+
+    function test_copy_storage_read_zero() public {
+        CopyStorageContract source = new CopyStorageContract();
+        bytes32 slot = bytes32(uint256(9));
+        vm.store(address(csc_2), slot, bytes32(uint256(31)));
+        assertEq(vm.load(address(source), slot), bytes32(0));
+        vm.copyStorage(address(source), address(csc_2));
+        assertEq(vm.load(address(csc_2), slot), bytes32(0));
+
+        // A reverted frame keeps its loaded slots, but not their warmth or writes.
+        slot = bytes32(uint256(10));
+        vm.store(address(csc_2), slot, bytes32(uint256(37)));
+        try this.loadAndRevert(address(source), slot) {} catch {}
+        vm.copyStorage(address(source), address(csc_2));
+        assertEq(vm.load(address(csc_2), slot), bytes32(0));
+    }
+
+    function loadAndRevert(address source, bytes32 slot) external {
+        vm.load(source, slot);
+        revert();
+    }
 }
 
 /// Setup-only slots stay excluded after snapshot materialization.

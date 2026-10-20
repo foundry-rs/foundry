@@ -218,12 +218,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         context.env = env;
         context.ext = StoredExt::new(&ext);
-        self.forks.local.loaded_storage.clear();
-        self.forks.local.created.clear();
-        for entry in self.forks.forks.values_mut() {
-            entry.context.loaded_storage.clear();
-            entry.context.created.clear();
-        }
+        // Only this context finished a transaction. Inactive forks retain their saved journal
+        // membership, and the suspended local context still seeds later forks.
+        context.loaded_storage.clear();
+        context.created.clear();
     }
 
     /// Parks accepted state, environment and extensions without committing pending writes.
@@ -288,6 +286,31 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let leaves_local = self.forks.active().is_none();
         let suspended = self.suspend(evm);
         let created = if leaves_local { suspended.created.clone() } else { AddressSet::default() };
+        if leaves_local {
+            let local = &self.forks.local;
+            let precompiles = self.factory.precompiles(&local.env, &local.ext.get());
+            for entry in self.forks.forks.values_mut() {
+                let context = &mut entry.context;
+                let mut refreshed = Vec::new();
+                for address in local.loaded_storage.keys() {
+                    if !local.created.contains(address)
+                        && !self.forks.persistent.contains(address)
+                        && !precompiles.contains(address)
+                    {
+                        let info =
+                            match context.cache.as_ref().and_then(|c| c.accounts.get(address)) {
+                                Some(info) => info.clone(),
+                                None => context.db.get_account(address)?,
+                            };
+                        refreshed.push((*address, info));
+                    }
+                }
+                context.seed_local(local);
+                Arc::make_mut(context.cache.as_mut().expect("local state seeded"))
+                    .accounts
+                    .extend(refreshed);
+            }
+        }
         self.forks.active = id;
         Ok(self.resume(evm, suspended, &created, phase))
     }
@@ -328,10 +351,18 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
         let suspended = self.suspend(evm);
         let created = suspended.created.clone();
+        let loaded = suspended.loaded_storage.keys().copied().collect::<Vec<_>>();
         let context = self.active_mut();
         *context = Parked::new(Box::new(db), env, ext);
         context.cache = cache.map(Arc::new);
-        Ok(self.resume(evm, suspended, &created, phase))
+        context.seeded = true;
+        let transition = self.resume(evm, suspended, &created, phase);
+        // REVM reloads previously visible accounts from the rolled fork, without carrying their
+        // old storage. As there, a failed read does not prevent the fork from rolling.
+        for address in loaded {
+            let _ = evm.state_mut().account(&address);
+        }
+        Ok(transition)
     }
 
     /// Moves the inactive fork `id`, or the local context for `None`, onto a new backing database
@@ -574,6 +605,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             Some(cache) => {
                 let mut executor = factory.new_evm(db, env);
                 executor.state_mut().overlay_db_mut().cache = Cache::clone(cache);
+                if context.needs_init {
+                    factory.initialize_evm(&mut executor, context.db.is_forked_mode());
+                }
                 executor
             }
         };
@@ -582,7 +616,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         // Carry the running transaction's accepted and in-flight persistent accounts over.
         self.materialize(evm);
         let mut running = evm.state().snapshot().into_state(self.forks.active_db());
-        running.commit_transaction();
+        commit_loaded(&mut running, evm.state());
         self.forks.merge_persistent(
             &running.overlay_db().cache,
             &mut executor.state_mut().overlay_db_mut().cache,
@@ -599,7 +633,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let result = executed.commit();
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
-        self.forks.context_mut(id).expect("context exists").cache = Some(Arc::new(cache));
+        let context = self.forks.context_mut(id).expect("context exists");
+        context.cache = Some(Arc::new(cache));
+        context.needs_init = false;
         Ok(result)
     }
 
@@ -608,30 +644,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
         let created = created_accounts(evm.state_mut());
         self.active_mut().created.extend(created);
-        let state = evm.state();
-        let cached = state
-            .overlay_db()
-            .cache
-            .storage
-            .iter()
-            .flat_map(|(address, storage)| storage.slots.keys().map(move |key| (address, key)));
-        let journaled = state.journal().iter().filter_map(|entry| match entry {
-            JournalEntry::StorageChange { address, key, .. }
-            | JournalEntry::StorageWarmed { address, key } => Some((address, key)),
-            _ => None,
-        });
-        let loaded = &mut self.active_mut().loaded_storage;
-        for (address, key) in cached.chain(journaled) {
-            if state.get_storage(address, key).is_some() {
-                loaded.entry(*address).or_default().insert(*key);
-            }
-        }
         self.materialize(evm);
         let state = evm.state_mut();
+        let mut probe = state.clone_with(EmptyDB::default());
+        for (address, slots) in commit_loaded(&mut probe, state) {
+            self.active_mut().loaded_storage.entry(address).or_default().extend(slots);
+        }
         state.commit_transaction();
         let logs = mem::take(state.logs_mut());
         let prewarm = state.prewarm_set().clone();
-        let cache = state.overlay_db().cache.clone();
+        let cache = mem::take(&mut probe.overlay_db_mut().cache);
         let env = evm_env(evm);
         let ext = evm.ext().clone();
         let context = self.active_mut();
@@ -658,8 +680,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     ) -> EnvTransition {
         let Suspended { cache: source, loaded_storage: source_loaded, logs, prewarm, .. } =
             suspended;
+        if let Some(id) = self.forks.active {
+            self.forks
+                .forks
+                .get_mut(&id)
+                .expect("active fork exists")
+                .context
+                .seed_local(&self.forks.local);
+        }
         let context = self.active_mut();
-        let fresh = context.cache.is_none();
+        let fresh = mem::take(&mut context.needs_init) || context.cache.is_none();
         // The running EVM owns the active context's accepted state.
         let mut cache = context.cache.take().map(Arc::unwrap_or_clone).unwrap_or_default();
         let mut loaded_storage = mem::take(&mut context.loaded_storage);
@@ -669,6 +699,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.forks.merge_persistent(&source, &mut cache);
         copy_created(created, &source, &mut cache);
         self.forks.merge_persistent_loaded_storage(&source_loaded, &mut loaded_storage);
+        for address in created {
+            if let Some(slots) = source_loaded.get(address) {
+                loaded_storage.insert(*address, slots.clone());
+            }
+        }
         let context = self.active_mut();
         context.loaded_storage = loaded_storage;
         context.created.extend(created);
@@ -721,15 +756,29 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
     }
 
-    /// Returns known slots loaded in this transaction, including before fork switches.
+    /// Returns slots loaded in this transaction, including before fork switches.
     pub fn loaded_storage(&self, state: &State<'_>, address: &Address) -> Vec<U256> {
-        let mut slots = loaded_slots(state, address);
-        if let Some(carried) = self.active().loaded_storage.get(address) {
-            slots.extend(carried);
-        }
+        let mut slots = self
+            .loaded_state(state)
+            .remove(address)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<Vec<_>>();
         slots.sort_unstable();
-        slots.dedup();
         slots
+    }
+
+    /// Returns loaded addresses and slots, including absent accounts and read-only zero slots.
+    /// Accepted setup-only cache entries are excluded, even after snapshot materialization.
+    pub fn loaded_state(&self, state: &State<'_>) -> AddressMap<HashSet<U256>> {
+        // A fresh BAL builder inventories the live transaction exactly. Commit only the clone:
+        // discovery must neither accept writes nor change the running transaction's metadata.
+        let mut probe = state.clone_with(EmptyDB::default());
+        let mut loaded = self.active().loaded_storage.clone();
+        for (address, slots) in commit_loaded(&mut probe, state) {
+            loaded.entry(address).or_default().extend(slots);
+        }
+        loaded
     }
 }
 
@@ -737,7 +786,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
 struct Suspended {
     /// The suspended context's accepted state, the source of persistent accounts.
     cache: Cache,
-    /// Slots loaded in the suspended context during the current transaction.
+    /// Accounts and slots loaded in the suspended context during the current transaction.
     loaded_storage: AddressMap<HashSet<U256>>,
     /// Accounts created in the suspended context during the current transaction.
     created: AddressSet,
@@ -854,29 +903,6 @@ pub fn mark_created(state: &mut State<'_>, address: &Address) -> DbResult<()> {
     Ok(())
 }
 
-/// Returns known slots loaded by the live transaction state.
-fn loaded_slots(state: &State<'_>, address: &Address) -> Vec<U256> {
-    let mut slots = state
-        .overlay_db()
-        .cache
-        .storage
-        .get(address)
-        .map(|storage| storage.slots.keys().copied().collect::<Vec<_>>())
-        .unwrap_or_default();
-    slots.extend(state.journal().iter().filter_map(|entry| match entry {
-        JournalEntry::StorageChange { address: changed, key, .. }
-        | JournalEntry::StorageWarmed { address: changed, key }
-            if changed == address =>
-        {
-            Some(*key)
-        }
-        _ => None,
-    }));
-    // Exclude setup-only slots materialized by snapshots or fork switches.
-    slots.retain(|slot| state.get_storage(address, slot).is_some());
-    slots
-}
-
 /// Returns the accounts the live transaction state created.
 fn created_accounts(state: &mut State<'_>) -> AddressSet {
     let mut changed = state
@@ -889,4 +915,30 @@ fn created_accounts(state: &mut State<'_>) -> AddressSet {
         .collect::<AddressSet>();
     changed.retain(|address| state.account(address).is_ok_and(|account| account.is_created()));
     changed
+}
+
+/// Commits a clone of `live`, retaining its loaded inventory and authoritative slot values.
+/// Native accepted storage can omit unchanged zero reads; they must still override another
+/// fork's nonzero values when the resulting cache is merged.
+fn commit_loaded(probe: &mut State<'_>, live: &State<'_>) -> AddressMap<HashSet<U256>> {
+    probe.enable_bal_builder();
+    probe.commit_transaction();
+    let mut loaded = AddressMap::default();
+    for (address, account) in probe.take_bal_builder().expect("builder was enabled").accounts {
+        let slots = account.storage.storage.into_keys().collect::<HashSet<_>>();
+        for key in &slots {
+            if let Some(value) = live.get_storage(&address, key) {
+                probe
+                    .overlay_db_mut()
+                    .cache
+                    .storage
+                    .entry(address)
+                    .or_default()
+                    .slots
+                    .insert(*key, value);
+            }
+        }
+        loaded.insert(address, slots);
+    }
+    loaded
 }

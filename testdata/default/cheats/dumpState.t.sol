@@ -307,3 +307,40 @@ contract DumpStateTest is Test {
         return vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(account)), '"'));
     }
 }
+
+contract DumpStateLoadedAccountsTest is Test {
+    address constant readOnly = address(0x10001);
+    address constant modified = address(0x10002);
+    address constant setupOnly = address(0x10003);
+    address constant absent = address(0x10004);
+
+    function setUp() public {
+        vm.etch(readOnly, hex"6000");
+        vm.setNonce(readOnly, 7);
+        vm.etch(modified, hex"6001");
+        vm.etch(setupOnly, hex"6002");
+    }
+
+    function testDumpStateReadOnlyAccounts() public {
+        // Materializing a snapshot must not turn setup-only cache entries into live accounts.
+        uint256 snapshot = vm.snapshotState();
+        assertEq(vm.getNonce(readOnly), 7);
+        assertEq(vm.getNonce(absent), 0);
+        vm.deal(modified, 23);
+
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_loaded_accounts.json");
+        vm.dumpState(path);
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonKeys(json, "").length, 2);
+        assertEq(vm.parseJsonUint(json, string.concat(".", vm.toString(readOnly), ".nonce")), 7);
+        assertEq(vm.parseJsonBytes(json, string.concat(".", vm.toString(readOnly), ".code")), hex"6000");
+        assertEq(vm.parseJsonUint(json, string.concat(".", vm.toString(modified), ".balance")), 23);
+        assertTrue(!vm.keyExistsJson(json, string.concat(".", vm.toString(setupOnly))));
+        assertTrue(!vm.keyExistsJson(json, string.concat(".", vm.toString(absent))));
+
+        assertTrue(vm.revertToState(snapshot));
+        vm.dumpState(path);
+        assertEq(vm.parseJsonKeys(vm.readFile(path), "").length, 0);
+        vm.removeFile(path);
+    }
+}

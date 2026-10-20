@@ -1214,8 +1214,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             true
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
-                && (!result.status
-                    || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok());
+                && merge_accesses(evm.state_mut(), &executed.pending_state, result.status).is_ok();
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             evm.ext_mut().replace_while_executing(child.ext().clone());
@@ -1991,14 +1990,19 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
     }
 }
 
-/// Warms in `state` the accounts a successful nested transaction loaded and the storage slots it
-/// accessed, as accesses across an isolated call boundary stay warm for the calling frame.
-fn warm_accessed(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
+/// Retains the nested transaction's loaded accounts and slots, including reads from reverted
+/// frames. Only successful calls carry access warmth into the calling frame.
+fn merge_accesses(state: &mut State<'_>, pending: &PendingState, success: bool) -> DbResult<()> {
     for change in pending.account_changes() {
-        state.account(&change.address)?.warm();
+        let mut account = state.account(&change.address)?;
+        if success {
+            account.warm();
+        }
+        drop(account);
         for (key, slot) in &change.storage.slots {
-            if slot.is_warm {
-                state.storage_slot(&change.address, *key)?.warm();
+            let mut loaded = state.storage_slot(&change.address, *key)?;
+            if success && slot.is_warm {
+                loaded.warm();
             }
         }
     }

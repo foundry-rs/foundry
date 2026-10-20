@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::evm::{
-    EvmEnv, TransactionRequestFor,
+    EvmEnv, TempoEvmNetwork, TransactionRequestFor,
     tests::{ETHER, STORE, STORE_ADDRESS, balance, db_with, nonce, slot, store_request},
 };
 use alloy_consensus::{Signed, TxEnvelope, TxLegacy};
@@ -273,8 +273,40 @@ fn fork_loaded_storage_lifetime() {
     let mut evm = backend.create_evm();
     assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
     let _ = backend.select_fork(second, &mut evm, phase).unwrap();
-    assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
+    assert_eq!(
+        backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS),
+        [U256::ZERO, U256::ONE]
+    );
     assert_eq!(slot(&mut evm), U256::from(97));
+
+    evm.state_mut().account(&STORE_ADDRESS).unwrap();
+    let appeared = Address::with_last_byte(0xC4);
+    evm.state_mut().account(&appeared).unwrap();
+    let _ = backend
+        .lifecycle
+        .roll_fork(&mut evm, Some(second), db_with(&[(appeared, 11)], 41), env, phase)
+        .unwrap();
+    let loaded = backend.lifecycle().loaded_state(evm.state());
+    assert!(loaded.contains_key(&STORE_ADDRESS));
+    assert!(loaded.contains_key(&appeared));
+    assert_eq!(balance(&mut evm, appeared), U256::from(11));
+    assert_eq!(slot(&mut evm), U256::from(41));
+
+    // Persistence overlays source slots without dropping the target's disjoint reads or writes.
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::from(2)).unwrap().set(U256::from(43));
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(19));
+    backend.add_persistent_account(STORE_ADDRESS);
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert_eq!(
+        backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS),
+        [U256::ZERO, U256::from(2)]
+    );
+    assert_eq!(slot(&mut evm), U256::from(19));
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::from(2)).unwrap(),
+        U256::from(43)
+    );
 }
 
 #[test]
@@ -286,37 +318,145 @@ fn fork_carries_created_accounts() {
     let local = Address::with_last_byte(0xC1);
     let changed = Address::with_last_byte(0xC2);
     let on_fork = Address::with_last_byte(0xC3);
-    let mut fork_db = db_with(&[(changed, 5)], 0);
+    let read_only = Address::with_last_byte(0xC4);
+    let mut fork_db = db_with(&[(changed, 5), (read_only, 11)], 0);
     // The fork holds storage at an address the transaction creates locally.
     fork_db.insert_account_storage(&persistent, &U256::ZERO, &U256::from(17));
+    fork_db.insert_account_storage(&read_only, &U256::ZERO, &U256::from(17));
     let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
-    let first = memory_fork(&mut backend, fork_db, env);
-    let second = memory_fork(&mut backend, db_with(&[], 0), env);
+    let first = memory_fork(&mut backend, fork_db.clone(), env);
+    let mut replay = Cache::default();
+    replay.accounts.insert(read_only, Some(AccountInfo::default().with_balance(U256::from(19))));
+    backend.lifecycle.replace_inactive(Some(first), fork_db, env, Some(replay)).unwrap();
+    let second = memory_fork(&mut backend, db_with(&[(read_only, 13)], 0), env);
     let phase = ExecutionPhase::InFlight;
     let mut evm = backend.create_evm();
     let features = evm.version().features;
     for address in [persistent, local] {
         evm.state_mut().create_account(&CALLER, &address, &U256::ZERO, features).unwrap().unwrap();
     }
+    // Record slots 7 and 8 into 9 and 10 when called on an inactive fork.
+    evm.state_mut().account(&local).unwrap().set_code_slow(Bytecode::new_legacy(
+        Bytes::from_static(&[0x60, 7, 0x54, 0x60, 9, 0x55, 0x60, 8, 0x54, 0x60, 10, 0x55, 0x00]),
+    ));
     evm.state_mut().storage_slot(&persistent, U256::ONE).unwrap().set(U256::from(23));
+    evm.state_mut().storage_slot(&local, U256::from(2)).unwrap().set(U256::from(29));
     evm.state_mut().account(&changed).unwrap().set_balance(U256::from(9));
+    evm.state_mut().account(&read_only).unwrap();
+    evm.state_mut().storage_slot(&read_only, U256::ZERO).unwrap();
     backend.add_persistent_account(persistent);
 
     let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    assert!(backend.lifecycle().loaded_state(evm.state()).contains_key(&read_only));
+    assert_eq!(balance(&mut evm, read_only), U256::from(19));
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&read_only, &U256::ZERO).unwrap(),
+        U256::ZERO
+    );
     assert_eq!(nonce(&mut evm, local), 1);
+    assert_eq!(backend.lifecycle().loaded_storage(evm.state(), &local), [U256::from(2)]);
     let storage = |evm: &mut FoundryEvmFor<'_, EthEvmNetwork>, key| {
         evm.state_mut().storage_slot_untracked(&persistent, &U256::from(key)).unwrap()
     };
     assert_eq!(storage(&mut evm, 0), U256::ZERO);
     assert_eq!(storage(&mut evm, 1), U256::from(23));
     assert_eq!(balance(&mut evm, changed), U256::from(5));
+    evm.state_mut().storage_slot(&local, U256::from(7)).unwrap().set(U256::from(43));
+    evm.state_mut().storage_slot(&local, U256::from(8)).unwrap().set(U256::from(55));
 
     evm.state_mut().create_account(&CALLER, &on_fork, &U256::ZERO, features).unwrap().unwrap();
     let _ =
         backend.lifecycle.roll_fork(&mut evm, Some(first), db_with(&[], 0), env, phase).unwrap();
     assert_eq!(nonce(&mut evm, on_fork), 1);
     assert_eq!(nonce(&mut evm, local), 1);
+    assert_eq!(
+        backend.lifecycle().loaded_storage(evm.state(), &local),
+        [U256::from(2), U256::from(7), U256::from(8)]
+    );
 
     let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert!(backend.lifecycle().loaded_state(evm.state()).contains_key(&read_only));
+    assert_eq!(balance(&mut evm, read_only), U256::from(13));
     assert_eq!(nonce(&mut evm, on_fork), 0);
+    assert_eq!(nonce(&mut evm, local), 1);
+    assert_eq!(backend.lifecycle().loaded_storage(evm.state(), &local), [U256::from(2)]);
+
+    // A read of implicit zero on the source overrides a target write, but not disjoint slots.
+    assert_eq!(evm.state_mut().storage_slot(&local, U256::from(7)).unwrap().current(), U256::ZERO);
+    backend.add_persistent_account(local);
+    let tx = EthEvmNetwork::tx_from_request(store_request::<EthEvmNetwork>(
+        CALLER, local, 0, 0, CHAIN_ID,
+    ))
+    .unwrap();
+    assert!(
+        backend
+            .lifecycle
+            .transact_on_inactive(&mut evm, Some(first), &tx, Default::default())
+            .unwrap()
+            .status
+    );
+    assert_eq!(evm.state_mut().storage_slot_untracked(&local, &U256::from(9)).unwrap(), U256::ZERO);
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&local, &U256::from(10)).unwrap(),
+        U256::from(55)
+    );
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    assert_eq!(evm.state_mut().storage_slot_untracked(&local, &U256::from(7)).unwrap(), U256::ZERO);
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&local, &U256::from(8)).unwrap(),
+        U256::from(55)
+    );
+    backend.remove_persistent_account(&local);
+
+    backend.park(evm);
+    let third = memory_fork(&mut backend, db_with(&[], 0), env);
+    // A fork positioned before a transaction already has a replay cache when first selected.
+    backend
+        .lifecycle
+        .replace_inactive(Some(third), db_with(&[], 0), env, Some(Cache::default()))
+        .unwrap();
+    let mut evm = backend.create_evm();
+    let _ = backend.select_fork(third, &mut evm, phase).unwrap();
+    assert!(backend.lifecycle().loaded_state(evm.state()).contains_key(&read_only));
+    assert_eq!(balance(&mut evm, read_only), U256::ZERO);
+    assert_eq!(nonce(&mut evm, local), 1);
+    assert_eq!(backend.lifecycle().loaded_storage(evm.state(), &local), [U256::from(2)]);
+}
+
+#[test]
+fn fork_inactive_initializes_seeded_context() {
+    let factory = EvmFactoryFor::<TempoEvmNetwork>::default();
+    let spec = tempo_hardfork::TempoHardfork::default();
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let mut db = db_with(&[(CALLER, ETHER)], 0);
+    // Store the code size of a network-initialized precompile sentinel.
+    let mut code = vec![0x73];
+    code.extend_from_slice(crate::tempo::PATH_USD_ADDRESS.as_slice());
+    code.extend_from_slice(&[0x3b, 0x5f, 0x55, 0x00]);
+    let mut info = AccountInfo::default().with_code(Bytecode::new_legacy(code.into()));
+    db.insert_contract(&mut info);
+    db.insert_account_info(&STORE_ADDRESS, info);
+    let mut backend = Backend::<TempoEvmNetwork>::with_db(db.clone(), env);
+    let first = memory_fork(&mut backend, db.clone(), env);
+    let second = memory_fork(&mut backend, db, env);
+    let mut evm = backend.create_evm();
+    let phase = ExecutionPhase::Boundary;
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    let tx = TempoEvmNetwork::tx_from_request(store_request::<TempoEvmNetwork>(
+        CALLER,
+        STORE_ADDRESS,
+        0,
+        0,
+        CHAIN_ID,
+    ))
+    .unwrap();
+    assert!(
+        backend
+            .lifecycle
+            .transact_on_inactive(&mut evm, Some(second), &tx, Default::default())
+            .unwrap()
+            .status
+    );
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert_eq!(slot(&mut evm), U256::ONE);
 }
