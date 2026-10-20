@@ -957,8 +957,8 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_transaction_hash_replay_error_fails_startup() {
-    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin_provider = origin_handle.http_provider();
+    let TestNode { api: _origin_api, handle: origin_handle, provider: origin_provider } =
+        TestNode::spawn().await;
     let sender = origin_handle.dev_wallets().next().unwrap().address();
     let pending = origin_provider
         .send_transaction(WithOtherFields::new(
@@ -1268,8 +1268,8 @@ async fn test_fork_debug_get_raw_transactions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_debug_account_info_at() {
     // Use a local anvil node as the upstream so we can advance it deterministically.
-    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin_provider = origin_handle.http_provider();
+    let TestNode { api: origin_api, handle: origin_handle, provider: origin_provider } =
+        TestNode::spawn().await;
 
     let account = origin_handle.dev_wallets().next().unwrap().address();
     let to = Address::random();
@@ -1326,8 +1326,8 @@ async fn test_fork_debug_account_info_at() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_trace_replay_block_transactions_forwards_trace_types() {
     // Use a local anvil node as the upstream so the request path is fully exercised in-process.
-    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin_provider = origin_handle.http_provider();
+    let TestNode { api: _origin_api, handle: origin_handle, provider: origin_provider } =
+        TestNode::spawn().await;
 
     let account = origin_handle.dev_wallets().next().unwrap().address();
     let to = Address::random();
@@ -1373,8 +1373,8 @@ async fn test_fork_trace_replay_block_transactions_forwards_trace_types() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_debug_trace_cache_includes_options() {
-    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin_provider = origin_handle.http_provider();
+    let TestNode { api: _origin_api, handle: origin_handle, provider: origin_provider } =
+        TestNode::spawn().await;
     let from = origin_handle.dev_wallets().next().unwrap().address();
     let receipt = origin_provider
         .send_transaction(WithOtherFields::new(

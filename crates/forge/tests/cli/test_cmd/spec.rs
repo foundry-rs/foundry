@@ -1927,8 +1927,8 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     assert_eq!(target_block["result"]["transactions"][0]["s"], transaction["result"]["s"]);
     assert_eq!(target_block["result"]["transactions"][0]["v"], transaction["result"]["v"]);
 
-    let (failed_api, failed_handle) = anvil::spawn(anvil::NodeConfig::test()).await;
-    let failed_provider = failed_handle.http_provider();
+    let TestNode { api: failed_api, handle: failed_handle, provider: failed_provider } =
+        TestNode::spawn().await;
     failed_api.anvil_impersonate_account(SYSTEM_ADDRESS).await.unwrap();
     failed_api.anvil_set_nonce(SYSTEM_ADDRESS, alloy_primitives::U256::from(11)).await.unwrap();
     failed_api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();

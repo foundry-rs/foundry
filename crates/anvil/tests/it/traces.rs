@@ -322,8 +322,8 @@ async fn test_debug_account_info_at_local() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_account_info_at_local_block_on_fork() {
-    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin_provider = origin_handle.http_provider();
+    let TestNode { api: _origin_api, handle: origin_handle, provider: origin_provider } =
+        TestNode::spawn().await;
     let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
     let origin_signer: EthereumWallet = origin_accounts[0].clone().into();
     let origin_provider_with_signer =
@@ -367,8 +367,8 @@ async fn test_debug_account_info_at_local_block_on_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_account_info_at_delegates_pre_fork_block() {
-    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin_provider = origin_handle.http_provider();
+    let TestNode { api: _origin_api, handle: origin_handle, provider: origin_provider } =
+        TestNode::spawn().await;
     let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
     let from = origin_accounts[0].address();
     let to = origin_accounts[1].address();
@@ -929,8 +929,7 @@ async fn test_block_traces_reject_pending() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_calls_reject_conflicting_fields() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let client = handle.http_provider();
+    let TestNode { api: _api, handle, provider: client } = TestNode::spawn().await;
     let client = client.client();
     let from = handle.dev_wallets().next().unwrap().address();
     let input_error = "both \"data\" and \"input\" are set and not equal. Please use \"input\" to \
@@ -1139,8 +1138,8 @@ async fn test_trace_transaction_unknown_hash_local() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_transaction_unknown_hash_fork() {
-    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin = origin_handle.http_provider();
+    let TestNode { api: origin_api, handle: origin_handle, provider: origin } =
+        TestNode::spawn().await;
     origin_api.mine_one().await.unwrap();
     origin_api.anvil_set_auto_mine(false).await.unwrap();
 
@@ -3019,8 +3018,8 @@ async fn test_trace_replay_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_replay_transaction_fork() {
-    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
-    let origin = origin_handle.http_provider();
+    let TestNode { api: _origin_api, handle: origin_handle, provider: origin } =
+        TestNode::spawn().await;
     let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
     let tx = TransactionRequest::default()
         .to(accounts[1].address())
