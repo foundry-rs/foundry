@@ -4167,7 +4167,9 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     assert!(api.backend.spec_id() >= SpecId::CANCUN);
     assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
     let err = call().await.unwrap_err();
-    assert!(err.to_string().contains("Excess blob gas not set"), "{err:?}");
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "Excess blob gas not set.");
 
     api.anvil_reset(Some(Forking { json_rpc_url: Some(polygon_url), block_number: Some(0) }))
         .await
@@ -4184,6 +4186,16 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
             .map(|blob| blob.excess_blob_gas),
         Some(0)
     );
+
+    // The same Ethereum origin is valid when its required blob fields are preserved.
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(ethereum_origin.http_endpoint()),
+        block_number: Some(0),
+    }))
+    .await
+    .unwrap();
+    assert!(api.backend.spec_id() >= SpecId::CANCUN);
+    assert_eq!(call().await.unwrap(), Bytes::from(vec![0; 32]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
