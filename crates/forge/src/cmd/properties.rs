@@ -2104,13 +2104,18 @@ fn seed_dir(config: &Config, workspace: &Path, seed: &U256) -> PathBuf {
 
 /// Returns stderr without compiler warning blocks and keeps both ends when it is still long.
 /// Warnings can fill the limit before the decisive error, and many tools print the error last.
+/// Without a compiler error, as with `deny = "warnings"`, the warnings are the errors and stay.
 fn stderr(output: &Output) -> String {
     const HALF: usize = 1_000;
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let has_error = stderr.lines().any(|line| line.starts_with("Error ("));
     let mut in_warning = false;
     let stderr = stderr
         .lines()
         .filter(|line| {
+            if !has_error {
+                return true;
+            }
             if line.starts_with("Warning") {
                 in_warning = true;
             } else if line.starts_with("Error") {

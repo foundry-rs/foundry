@@ -92,12 +92,12 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
     temp_config.ignored_error_codes_from = config
         .ignored_error_codes_from
         .iter()
-        .map(|(path, codes)| (rebase_project_path(&config.root, temp_path, path), codes.clone()))
+        .map(|(path, codes)| (rebase_source_prefix(&config.root, temp_path, path), codes.clone()))
         .collect();
     temp_config.ignored_file_paths = config
         .ignored_file_paths
         .iter()
-        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .map(|path| rebase_source_prefix(&config.root, temp_path, path))
         .collect();
 
     if let Some(path) = &config.fuzz.failure_persist_dir {
@@ -153,6 +153,15 @@ fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
     let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
     if rel.is_absolute() { resolved } else { temp_path.join(rel) }
+}
+
+/// Compiler diagnostics name sources relative to the project root, so a relative prefix that
+/// selects them stays valid in the workspace and must stay relative to match.
+fn rebase_source_prefix(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    if path.is_relative() {
+        return path.to_path_buf();
+    }
+    rebase_project_path(root, temp_path, path)
 }
 
 fn rebase_mutable_project_path(config: &Config, temp_path: &Path, path: &Path) -> PathBuf {
@@ -1188,6 +1197,32 @@ mod tests {
             contracts.contains_key(&workspace.join("src").join("Target.sol").display().to_string())
         );
         assert!(contracts.contains_key(&external.join("External.sol").display().to_string()));
+    }
+
+    // `ignored_warnings_from = ["src/test"]` must still match the root-relative source names of
+    // the workspace, or a project with `deny = "warnings"` does not compile there.
+    #[test]
+    fn test_rebase_config_paths_keeps_relative_ignored_warning_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
+        let config = Config {
+            root: root.clone(),
+            ignored_error_codes_from: vec![(
+                PathBuf::from("src/test"),
+                vec![foundry_config::SolidityErrorCode::UnusedLocalVariable],
+            )],
+            ignored_file_paths: vec![PathBuf::from("src/test"), root.join("src/Ignored.sol")],
+            ..Default::default()
+        };
+
+        let temp_config = rebase_config_paths(&config, &workspace);
+
+        assert_eq!(temp_config.ignored_error_codes_from[0].0, PathBuf::from("src/test"));
+        assert_eq!(
+            temp_config.ignored_file_paths,
+            vec![PathBuf::from("src/test"), workspace.join("src/Ignored.sol")]
+        );
     }
 
     #[test]

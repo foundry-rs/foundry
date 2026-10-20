@@ -820,3 +820,43 @@ fn properties_check_copies_other_project_directories(prj: _, cmd: _) {
 
 "#]]);
 }
+
+// With `deny = "warnings"`, the project's ignored warning paths must still apply in the workspace,
+// and a warning in a generated test must reach the generator, because it is the compiler error.
+#[forgetest_init]
+fn properties_check_reports_denied_warnings(prj: _, cmd: _) {
+    prj.add_test(
+        "legacy/Legacy.t.sol",
+        "pragma solidity ^0.8.20;\ncontract LegacyTest {\n    function testLegacy() public pure {\n        uint256 unused = 1;\n    }\n}\n",
+    );
+    prj.update_config(|config| {
+        config.deny = foundry_config::DenyLevel::Warnings;
+        config.ignored_file_paths = vec!["test/legacy".into()];
+    });
+    let passing = write_stub_candidate(
+        &prj,
+        "passing.json",
+        "pragma solidity ^0.8.20;\ncontract StubTest {\n    function testStub() public pure {}\n}\n",
+    );
+    let warning = write_stub_candidate(
+        &prj,
+        "warning.json",
+        "pragma solidity ^0.8.20;\ncontract StubTest {\n    function testStub() public pure {\n        uint256 unused = 1;\n    }\n}\n",
+    );
+    let check = ["properties", "--check", "CANDIDATE", "--seed", "1", "--seed", "2"];
+    let check = |candidate: &str| {
+        check.map(|arg| if arg == "CANDIDATE" { candidate.to_string() } else { arg.to_string() })
+    };
+    cmd.args(check(&passing)).assert_success();
+    cmd.forge_fuse().args(check(&warning)).assert_failure().stdout_eq(str![[r#"
+{
+  "passed": false,
+  "reasons": [
+    "candidate tests failed on seed 1: Error: Compiler run failed:/nWarning (2072): Unused local variable./n [FILE]:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^",
+    "candidate tests failed on seed 2: Error: Compiler run failed:/nWarning (2072): Unused local variable./n [FILE]:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^"
+  ],
+  "possible_bugs": []
+}
+
+"#]]);
+}
