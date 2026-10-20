@@ -579,3 +579,159 @@ added 1 generated test file(s):
 "#]]);
     assert_eq!(rounds(&prj).as_array().unwrap().len(), 2);
 }
+
+const VAULT: &str = r#"
+pragma solidity ^0.8.20;
+
+contract Vault {
+    error ZeroAmount();
+
+    mapping(address => uint256) public balanceOf;
+
+    /// @notice Deposits `amount`. A zero amount is allowed.
+    function deposit(uint256 amount) external {
+        if (amount == 0) revert ZeroAmount();
+        balanceOf[msg.sender] += amount;
+    }
+
+    /// @notice Returns one share per asset.
+    function shares(uint256 assets) external pure returns (uint256) {
+        return assets / 2;
+    }
+}
+"#;
+
+// By default five agents run, each with its own lens. A possible bug whose failing call a project
+// test asserts in the same state contradicts that test and comes last. A kept test that its agent
+// reported as a bug is a possible lock-in.
+#[forgetest_init]
+fn properties_checks_bugs_against_existing_tests(prj: _, cmd: _) {
+    prj.add_source("Vault.sol", VAULT);
+    prj.add_test(
+        "Vault.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "../src/Vault.sol";
+contract VaultTest is Test {
+    Vault internal vault;
+    function setUp() public {
+        vault = new Vault();
+    }
+    function testRejectsZero() public {
+        vm.expectRevert(Vault.ZeroAmount.selector);
+        vault.deposit(0);
+    }
+    function testDeposit() public {
+        vault.deposit(5);
+        assertEq(vault.balanceOf(address(this)), 5);
+    }
+}
+"#,
+    );
+    let args = properties_args(
+        &prj,
+        r#"
+agent=$(sed -n 's/^    "id": \([0-9][0-9]*\),$/\1/p' "$prompt" | head -n 1)
+case "$agent" in 1|5) lens=spec ;; 2) lens=state ;; 3) lens=code ;; 4) lens=tests ;; esac
+grep -q "\"lens\": \"$lens: " "$prompt"
+grep -q '"count": 5' "$prompt"
+grep -q '"shares": \[\]' "$prompt"
+grep -q '"testRejectsZero"' "$prompt"
+dir="test/generated/agent-$agent"
+head='pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Vault} from \"../../../src/Vault.sol\";\n'
+setup='    Vault internal vault;\n    function setUp() public {\n        vault = new Vault();\n    }\n'
+zero='{"claim": "deposit(amount) accepts a zero amount.", "quote": "A zero amount is allowed.", "source": "src/Vault.sol:9", "basis": "documented", "code_path": "src/Vault.sol:11 deposit() reverts ZeroAmount."}'
+shares='{"claim": "shares(assets) returns one share per asset.", "quote": "Returns one share per asset.", "source": "src/Vault.sol:15", "basis": "documented", "code_path": "src/Vault.sol:17 shares() halves the assets."}'
+case "$agent" in
+1|2) files="{\"path\": \"$dir/VaultBug.t.sol\", \"content\": \"${head}contract VaultBugTest is Test {\n${setup}    function testDepositZero() public {\n        vault.deposit(0);\n    }\n    function testShares() public view {\n        assertEq(vault.shares(10), 10);\n    }\n}\n\"}"
+   evidence="\"VaultBugTest::testDepositZero\": $zero, \"VaultBugTest::testShares\": $shares"
+   if [ "$agent" = 1 ]; then
+       files="$files, {\"path\": \"$dir/VaultLock.t.sol\", \"content\": \"${head}contract VaultLockTest is Test {\n${setup}    function testZeroReverts() public {\n        vm.expectRevert(Vault.ZeroAmount.selector);\n        vault.deposit(0);\n    }\n}\n\"}"
+       evidence="$evidence, \"VaultLockTest::testZeroReverts\": $zero"
+   fi ;;
+*) files="{\"path\": \"$dir/VaultSpec.t.sol\", \"content\": \"${head}contract VaultSpecTest is Test {\n${setup}    function testDepositFive() public {\n        vault.deposit(5);\n    }\n}\n\"}"
+   evidence="" ;;
+esac
+cat > "$output" <<JSON
+{"schema": "foundry/properties-candidate-v1", "rationale": "vault", "files": [$files], "evidence": {$evidence}}
+JSON
+"#,
+    );
+    cmd.args(args).args(["--target", "src/Vault.sol"]).assert_success().stdout_eq(str![[r#"
+possible bug (documented, 2/5 agents): shares(assets) returns one share per asset.
+  agent 1: VaultBugTest::testShares ([..])
+    claim: shares(assets) returns one share per asset.
+    quote: "Returns one share per asset." (src/Vault.sol:15)
+    code path: src/Vault.sol:17 shares() halves the assets.
+    fails on every seed; candidate: cache/properties/agent-1/0x[..]
+  agent 2: VaultBugTest::testShares ([..])
+    claim: shares(assets) returns one share per asset.
+    quote: "Returns one share per asset." (src/Vault.sol:15)
+    code path: src/Vault.sol:17 shares() halves the assets.
+    fails on every seed; candidate: cache/properties/agent-2/0x[..]
+possible bug (documented, 2/5 agents, contradicts-existing-tests): deposit(amount) accepts a zero amount.
+  contradicting tests: VaultTest::testRejectsZero
+  agent 1: VaultBugTest::testDepositZero (seed 24301: ZeroAmount(); seed 12648430: ZeroAmount())
+    claim: deposit(amount) accepts a zero amount.
+    quote: "A zero amount is allowed." (src/Vault.sol:9)
+    code path: src/Vault.sol:11 deposit() reverts ZeroAmount.
+    fails on every seed; candidate: cache/properties/agent-1/0x[..]
+  agent 2: VaultBugTest::testDepositZero (seed 24301: ZeroAmount(); seed 12648430: ZeroAmount())
+    claim: deposit(amount) accepts a zero amount.
+    quote: "A zero amount is allowed." (src/Vault.sol:9)
+    code path: src/Vault.sol:11 deposit() reverts ZeroAmount.
+    fails on every seed; candidate: cache/properties/agent-2/0x[..]
+added 2 generated test file(s):
+  test/generated/agent-1/VaultLock.t.sol
+  test/generated/agent-3/VaultSpec.t.sol
+skipped 2 generated test file(s) that repeat a file of another agent
+possible lock-in: VaultLockTest::testZeroReverts passes, but its evidence reports it as a failing test
+
+"#]]);
+}
+
+// Forge runs journal failures again in a fresh copy of the project, because the generator can
+// write the journal, and it reports project files that change while the agents run.
+#[forgetest_init]
+fn properties_reruns_journal_failures_and_reports_changed_files(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let args = properties_args(
+        &prj,
+        r#"
+root=$(sed -n '/"--root",/{n;s/^ *"//;s/",*$//;p;}' "$prompt")
+cat > removed.json <<'JSON'
+{"schema": "foundry/properties-candidate-v1", "rationale": "cap", "files": [{"path": "test/generated/agent-1/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]}
+JSON
+check removed.json
+# A journal line that the generator wrote itself, for a test that passes.
+printf '%s\n' '{"test": "FeeFakeTest::testFake", "path": "test/generated/agent-1/FeeFake.t.sol", "reason": "made up", "source": "pragma solidity ^0.8.20;\ncontract FeeFakeTest {\n    function testFake() public pure {}\n}\n"}' >> "$root/cache/properties/agent-1/check-failures.jsonl"
+echo changed > "$root/notes.txt"
+cat > "$output" <<'JSON'
+{"schema": "foundry/properties-candidate-v1", "rationale": "small fees are 1%", "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]}
+JSON
+"#,
+    );
+    cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
+        str![[r#"
+possible bug (no evidence, 1/1 agents): FeeRemovedTest::testDocumentedCap
+  agent 1: FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    seen in a generator check, then removed; journal: cache/properties/agent-1/check-failures.jsonl
+1 check journal failure(s) did not fail again in a fresh copy: see cache/properties/report.json
+added 1 generated test file(s):
+  test/generated/agent-1/FeeSpec.t.sol
+
+"#]],
+    )
+    .stderr_eq(str![[r#"
+Warning: 1 project file(s) changed while the agents ran, so the run is tainted: see cache/properties/report.json
+
+"#]]);
+
+    let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
+    let report = serde_json::from_str::<serde_json::Value>(&report).unwrap();
+    assert_data_eq!(
+        format!("{} {}", report["unverified"][0]["test"], report["tainted"]),
+        str![[r#""FeeFakeTest::testFake" ["notes.txt"]"#]]
+    );
+}

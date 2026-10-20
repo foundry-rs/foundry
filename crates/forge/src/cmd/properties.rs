@@ -11,7 +11,7 @@ use crate::{
 use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
-use foundry_common::sh_println;
+use foundry_common::{sh_println, sh_warn};
 use foundry_compilers::{
     Graph,
     compilers::{
@@ -22,6 +22,7 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use foundry_evm::fuzz::CounterExample;
+use oracle::{CallClaim, CallKey, CallOutcome};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -35,8 +36,11 @@ use std::{
     process::{Command, Output},
     sync::LazyLock,
     thread,
+    time::SystemTime,
 };
 use tempfile::TempDir;
+
+mod oracle;
 
 const CANDIDATE_SCHEMA: &str = "foundry/properties-candidate-v1";
 const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v4";
@@ -69,6 +73,8 @@ const MAX_EXISTING_TESTS_PER_FUNCTION: usize = 5;
 const MAX_REPAIR_ROUNDS: usize = 1;
 /// Records every test that fails on every seed in a `--check` run, one JSON object per line.
 const CHECK_JOURNAL: &str = "check-failures.jsonl";
+/// Records the calls of the test contract in Forge's JSON output, for the oracle check.
+const CALL_TRACES: [&str; 3] = ["-vvvv", "--trace-depth", "1"];
 /// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
 /// contract or test name, and no project file is under `/forge-properties-none`.
 const SELECT_ALL_TESTS: [&str; 10] = [
@@ -358,6 +364,9 @@ struct ProjectContext {
     /// The existing tests of each function of the targets, by name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     existing_tests: BTreeMap<String, Vec<String>>,
+    /// The project's test files that import a target, for the oracle check.
+    #[serde(skip)]
+    test_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -467,6 +476,9 @@ struct AgentFailure {
     failure: CheckFailure,
     /// Where Forge saw the failure.
     note: String,
+    /// The call outcome that the failure disputes, for the oracle check.
+    #[serde(skip)]
+    dispute: Option<CallClaim>,
 }
 
 impl std::fmt::Display for AgentFailure {
@@ -484,6 +496,28 @@ impl std::fmt::Display for AgentFailure {
     }
 }
 
+/// The findings of one agent.
+#[derive(Default)]
+struct AgentFindings {
+    /// Tests that fail on every seed.
+    possible_bugs: Vec<AgentFailure>,
+    /// Failures from the check journal that do not fail on every seed when Forge runs them again.
+    unverified: Vec<AgentFailure>,
+    lock_ins: Vec<LockIn>,
+}
+
+/// A kept test that its agent reported as a bug. It passes, so it can assert the behavior that
+/// the agent flagged as wrong.
+#[derive(Debug, Serialize)]
+struct LockIn {
+    agent: usize,
+    /// `Contract::test`.
+    test: String,
+    path: PathBuf,
+    /// Where the agent reported the test as a bug.
+    reason: &'static str,
+}
+
 /// The failing tests of all agents that have one root cause.
 #[derive(Debug, Serialize)]
 struct BugGroup {
@@ -491,6 +525,9 @@ struct BugGroup {
     agents: Vec<usize>,
     /// The failing tests, by agent. The first test has the strongest evidence.
     failures: Vec<AgentFailure>,
+    /// The project tests that assert the call outcome that a failing test disputes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    contradicts_existing_tests: Vec<String>,
 }
 
 /// What two failing tests must share to have one root cause: the target file in the evidence, and
@@ -544,6 +581,8 @@ struct TestRun {
     passing: Vec<RerunFailure>,
     /// Files with a test that does not pass on every seed.
     failing_files: HashSet<PathBuf>,
+    /// The call outcome that each possible bug disputes, by `Contract::test`, on the first seed.
+    disputes: HashMap<String, CallClaim>,
 }
 
 impl PropertiesArgs {
@@ -612,6 +651,8 @@ struct Agent<'a> {
     current_tests: Vec<RerunFailure>,
     /// The rejected files of the latest round.
     rejected_sources: Vec<PromptSource>,
+    /// The call outcome that each possible bug of the rounds disputes, by `Contract::test`.
+    disputes: HashMap<String, CallClaim>,
 }
 
 impl Campaign<'_> {
@@ -651,8 +692,12 @@ impl Campaign<'_> {
                 current: None,
                 current_tests: vec![],
                 rejected_sources: vec![],
+                disputes: HashMap::new(),
             })
             .collect::<Vec<_>>();
+        // Agents work in copies of the project, but the copies link some project directories. A
+        // project file that changes while they run taints the run.
+        let fingerprint = project_fingerprint(self.config);
         // An agent error ends only that agent, and the run reports it after the other agents, so
         // their results are not lost.
         let errors = thread::scope(|scope| {
@@ -671,21 +716,45 @@ impl Campaign<'_> {
             .zip(&agents)
             .filter_map(|(result, agent)| Some(format!("agent {}: {:#}", agent.id, result.err()?)))
             .collect::<Vec<_>>();
-        self.report(&agents)?;
+        let after = project_fingerprint(self.config);
+        let tainted = after
+            .iter()
+            .filter(|(path, metadata)| fingerprint.get(*path) != Some(*metadata))
+            .map(|(path, _)| path)
+            .chain(fingerprint.keys().filter(|path| !after.contains_key(*path)))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.report(&agents, &inputs.project_context.test_files, &tainted)?;
         ensure!(errors.is_empty(), "{}", errors.join("\n"));
         Ok(())
     }
 
     /// Prints the possible bugs that reach the quorum and writes one copy of each kept file to the
     /// project.
-    fn report(&self, agents: &[Agent<'_>]) -> Result<()> {
+    fn report(
+        &self,
+        agents: &[Agent<'_>],
+        test_files: &[PathBuf],
+        tainted: &[PathBuf],
+    ) -> Result<()> {
         let mut failures = Vec::new();
+        let mut unverified = Vec::new();
+        let mut lock_ins = Vec::new();
         for agent in agents {
-            failures.extend(agent.possible_bugs()?);
+            let findings = agent.findings()?;
+            failures.extend(findings.possible_bugs);
+            unverified.extend(findings.unverified);
+            lock_ins.extend(findings.lock_ins);
         }
-        let (possible_bugs, below_quorum) = group_failures(failures)
+        let (mut possible_bugs, below_quorum) = group_failures(failures)
             .into_iter()
             .partition::<Vec<_>, _>(|group| group.agents.len() >= self.quorum);
+        let oracle_error = self
+            .check_existing_tests(&mut possible_bugs, test_files)
+            .err()
+            .map(|error| format!("{error:#}"));
+        // A possible bug that the project's own tests contradict is more likely a wrong claim.
+        possible_bugs.sort_by_key(|group| !group.contradicts_existing_tests.is_empty());
         for group in &possible_bugs {
             let lead = &group.failures[0].failure;
             let (basis, summary) = match &lead.evidence {
@@ -696,7 +765,14 @@ impl Campaign<'_> {
                 None => ("no evidence", lead.test.as_str()),
             };
             let agreement = format!("{}/{} agents", group.agents.len(), self.args.agents);
-            sh_println!("possible bug ({basis}, {agreement}): {summary}")?;
+            if group.contradicts_existing_tests.is_empty() {
+                sh_println!("possible bug ({basis}, {agreement}): {summary}")?;
+            } else {
+                sh_println!(
+                    "possible bug ({basis}, {agreement}, contradicts-existing-tests): {summary}\n  contradicting tests: {}",
+                    group.contradicts_existing_tests.join(", ")
+                )?;
+            }
             for failure in &group.failures {
                 sh_println!("{failure}")?;
             }
@@ -708,6 +784,23 @@ impl Campaign<'_> {
                 "{} possible bug(s) below the quorum of {}: see {}",
                 below_quorum.len(),
                 self.quorum,
+                report_display.display()
+            )?;
+        }
+        if !unverified.is_empty() {
+            sh_println!(
+                "{} check journal failure(s) did not fail again in a fresh copy: see {}",
+                unverified.len(),
+                report_display.display()
+            )?;
+        }
+        if let Some(error) = &oracle_error {
+            sh_warn!("could not check possible bugs against the project's tests: {error}")?;
+        }
+        if !tainted.is_empty() {
+            sh_warn!(
+                "{} project file(s) changed while the agents ran, so the run is tainted: see {}",
+                tainted.len(),
                 report_display.display()
             )?;
         }
@@ -762,12 +855,17 @@ impl Campaign<'_> {
                 }
             }
         }
+        lock_ins.retain(|lock_in| kept.iter().any(|file| file.path == lock_in.path));
         fs::create_dir_all(&self.cache_root)?;
         let report = serde_json::json!({
             "agents": self.args.agents,
             "quorum": self.quorum,
             "possible_bugs": possible_bugs,
             "below_quorum": below_quorum,
+            "lock_ins": lock_ins,
+            "unverified": unverified,
+            "oracle_error": oracle_error,
+            "tainted": tainted,
             "kept": kept.iter().map(|file| &file.path).collect::<Vec<_>>(),
             "duplicates": duplicates,
             "usage": usage,
@@ -798,6 +896,52 @@ impl Campaign<'_> {
                 "skipped {} generated test file(s) that repeat a file of another agent",
                 duplicates.len()
             )?;
+        }
+        for lock_in in &lock_ins {
+            sh_println!("possible lock-in: {} passes, but {}", lock_in.test, lock_in.reason)?;
+        }
+        Ok(())
+    }
+
+    /// Marks each possible bug whose failing test disputes a call outcome that a passing project
+    /// test asserts; see the `oracle` module for the exact rule. Runs the project's tests of the
+    /// targets once, on the first seed, and only if a possible bug disputes a call.
+    fn check_existing_tests(&self, groups: &mut [BugGroup], test_files: &[PathBuf]) -> Result<()> {
+        let disputes = groups.iter().flat_map(|group| &group.failures).any(|f| f.dispute.is_some());
+        if test_files.is_empty() || !disputes {
+            return Ok(());
+        }
+        let workspace = candidate_workspace(self.config, &[])?;
+        let paths = test_files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
+        let mut command = self.forge_command(workspace.path(), &self.args.seed[0]);
+        command.args(["test", "--json", "--match-path", &format!("{{{}}}", paths.join(","))]);
+        // Invariant campaigns are slow and assert no single call.
+        command.args(["--no-match-test", "^(invariant|statefulFuzz)"]);
+        command.args(CALL_TRACES);
+        let output = command.output().wrap_err("failed to run the project's tests")?;
+        ensure!(
+            output.status.success() || !output.stdout.is_empty(),
+            "the project's tests failed: {}",
+            stderr(&output)
+        );
+        let mut asserted = HashMap::<CallKey, Vec<(CallOutcome, String)>>::new();
+        for (contract, test, result) in suite_results(&output)? {
+            let name = test_display_name(&RerunFailure { contract, test });
+            for claim in oracle::asserted_calls(&result) {
+                asserted.entry(claim.key).or_default().push((claim.outcome, name.clone()));
+            }
+        }
+        for group in groups {
+            let mut tests = BTreeSet::new();
+            for dispute in group.failures.iter().filter_map(|failure| failure.dispute.as_ref()) {
+                let asserts = asserted.get(&dispute.key).into_iter().flatten();
+                tests.extend(
+                    asserts
+                        .filter(|(outcome, _)| *outcome == dispute.outcome)
+                        .map(|(_, test)| test.clone()),
+                );
+            }
+            group.contradicts_existing_tests = tests.into_iter().collect();
         }
         Ok(())
     }
@@ -855,10 +999,15 @@ impl Campaign<'_> {
         let mut reasons = Vec::new();
         // The passing seeds and the failures of each test.
         let mut outcomes = BTreeMap::<(String, String), (usize, Vec<String>)>::new();
-        for seed in &self.args.seed {
+        let mut disputes = HashMap::new();
+        for (index, seed) in self.args.seed.iter().enumerate() {
             let mut command = self.forge_command(workspace, seed);
             command.args(["test", "--json", "--match-path", &format!("{{{paths}}}")]);
             command.args(SELECT_ALL_TESTS);
+            // The traces of one seed are enough for the oracle check.
+            if index == 0 {
+                command.args(CALL_TRACES);
+            }
             let output = command.output().wrap_err("failed to run candidate tests")?;
             if !output.status.success() && output.stdout.is_empty() {
                 reasons.push(format!("candidate tests failed on seed {seed}: {}", stderr(&output)));
@@ -868,8 +1017,13 @@ impl Campaign<'_> {
             if results.is_empty() {
                 reasons.push(format!("candidate files contain no runnable tests on seed {seed}"));
             }
-            for (test, status, reason) in results {
+            for (test, status, reason, dispute) in results {
                 let name = test_display_name(&test);
+                if let Some(dispute) = dispute
+                    && index == 0
+                {
+                    disputes.insert(name.clone(), dispute);
+                }
                 let (passes, failures) = outcomes.entry((test.contract, test.test)).or_default();
                 match status {
                     TestStatus::Success => *passes += 1,
@@ -888,7 +1042,7 @@ impl Campaign<'_> {
             }
         }
         let seeds = self.args.seed.len();
-        let mut run = TestRun { reasons, ..Default::default() };
+        let mut run = TestRun { reasons, disputes, ..Default::default() };
         for ((contract, test), (passes, failures)) in outcomes {
             let test = RerunFailure { contract, test };
             if passes == seeds {
@@ -908,6 +1062,7 @@ impl Campaign<'_> {
             }
         }
         run.possible_bugs.sort_by(|a, b| a.report_key().cmp(&b.report_key()));
+        run.disputes.retain(|name, _| run.possible_bugs.iter().any(|bug| bug.test == *name));
         Ok(run)
     }
 
@@ -1101,6 +1256,7 @@ impl Agent<'_> {
 
         let workspace = candidate_workspace(config, &candidate.files)?;
         let run = self.campaign.run_tests(workspace.path(), &candidate)?;
+        self.disputes.extend(run.disputes);
         record.reasons = run.reasons;
         record.possible_bugs = run.possible_bugs;
         let passing_files = proposal
@@ -1144,42 +1300,125 @@ impl Agent<'_> {
     }
 
     /// Returns the tests of this agent that fail on every seed, from its rounds and its check
-    /// journal.
-    fn possible_bugs(&self) -> Result<Vec<AgentFailure>> {
+    /// journal, and the kept tests that lock in a reported bug.
+    fn findings(&self) -> Result<AgentFindings> {
         let config = self.campaign.config;
-        let mut failures = Vec::new();
+        let mut findings = AgentFindings::default();
         for round in &self.rounds {
             let digest = round.candidate_digest.as_deref().unwrap_or_default();
             let path = self.cache.join(digest);
             let path = path.strip_prefix(&config.root).unwrap_or(&path).display();
             let note = format!("fails on every seed; candidate: {path}");
-            failures.extend(round.possible_bugs.iter().map(|failure| AgentFailure {
+            findings.possible_bugs.extend(round.possible_bugs.iter().map(|failure| AgentFailure {
                 agent: self.id,
                 failure: failure.clone(),
                 note: note.clone(),
+                dispute: self.disputes.get(&failure.test).cloned(),
             }));
         }
-        // A generator can remove a failing test after a check. Report the failures that no round
-        // reported and that the kept files do not hold.
+
+        // A kept test passes on every seed. If the agent reported it as a bug, in its evidence,
+        // its hypotheses, or a check, the test can assert the behavior that the agent flagged.
         let journal = self.cache.join(CHECK_JOURNAL);
         let journal_failures = read_check_journal(&journal)?;
+        let kept = |test: &str, path: &Path| {
+            self.current_tests
+                .iter()
+                .any(|kept| test_display_name(kept) == test && test_path(kept) == path)
+        };
+        if let Some(current) = &self.current {
+            for test in &self.current_tests {
+                let name = test_display_name(test);
+                let function = name.rsplit_once("::").map_or(name.as_str(), |(_, name)| name);
+                let reason = if current.evidence.contains_key(&name) {
+                    "its evidence reports it as a failing test"
+                } else if current.hypotheses.iter().any(|hypothesis| {
+                    hypothesis.id == function && hypothesis.result == HypothesisResult::Finding
+                }) {
+                    "its hypothesis is a finding"
+                } else if journal_failures.iter().any(|failure| {
+                    failure.evidence.is_some()
+                        && failure.test == name
+                        && failure.path == test_path(test)
+                }) {
+                    "it failed with evidence in a generator check"
+                } else {
+                    continue;
+                };
+                findings.lock_ins.push(LockIn {
+                    agent: self.id,
+                    path: test_path(test),
+                    test: name,
+                    reason,
+                });
+            }
+        }
+
+        // A generator can remove a failing test after a check. The failures that no round
+        // reported and that the kept files do not hold are possible bugs. The generator can also
+        // write the journal, so Forge runs them again in a fresh copy of the project.
+        let journal_failures = journal_failures
+            .into_iter()
+            .filter(|failure| {
+                !findings.possible_bugs.iter().any(|reported| reported.failure.test == failure.test)
+                    && !kept(&failure.test, &failure.path)
+            })
+            .collect::<Vec<_>>();
+        let run = self.rerun_journal_failures(&journal_failures)?;
         let journal = journal.strip_prefix(&config.root).unwrap_or(&journal);
         let note =
             format!("seen in a generator check, then removed; journal: {}", journal.display());
         for failure in journal_failures {
-            let reported = failures.iter().any(|reported| reported.failure.test == failure.test);
-            let name =
-                failure.test.rsplit_once("::").map_or(failure.test.as_str(), |(_, name)| name);
-            let kept = self.current.as_ref().is_some_and(|current| {
-                current.files.iter().any(|file| {
-                    file.path == failure.path && file.content.contains(&format!("function {name}("))
-                })
-            });
-            if !reported && !kept {
-                failures.push(AgentFailure { agent: self.id, failure, note: note.clone() });
+            let verified = run
+                .possible_bugs
+                .iter()
+                .any(|bug| bug.test == failure.test && bug.path == failure.path);
+            let failure = AgentFailure {
+                agent: self.id,
+                dispute: run.disputes.get(&failure.test).filter(|_| verified).cloned(),
+                failure,
+                note: note.clone(),
+            };
+            if verified {
+                findings.possible_bugs.push(failure);
+            } else {
+                findings.unverified.push(failure);
             }
         }
-        Ok(failures)
+        Ok(findings)
+    }
+
+    /// Runs the tests of journal failures in a fresh copy of the project on every seed. The
+    /// workspace holds the latest journal source of each file and the kept files, which can hold
+    /// helpers that the journal files import.
+    fn rerun_journal_failures(&self, failures: &[CheckFailure]) -> Result<TestRun> {
+        let mut files = Vec::<CandidateFile>::new();
+        for failure in failures.iter().rev() {
+            if let Some(source) = &failure.source
+                && !files.iter().any(|file| file.path == failure.path)
+            {
+                files.push(CandidateFile { path: failure.path.clone(), content: source.clone() });
+            }
+        }
+        if files.is_empty() {
+            return Ok(TestRun::default());
+        }
+        for file in self.current.iter().flat_map(|current| &current.files) {
+            if !files.iter().any(|known| known.path == file.path) {
+                files.push(file.clone());
+            }
+        }
+        let candidate = Candidate {
+            schema: CANDIDATE_SCHEMA.to_string(),
+            rationale: String::new(),
+            generator: None,
+            files,
+            hypotheses: vec![],
+            evidence: BTreeMap::new(),
+            usage: None,
+        };
+        let workspace = candidate_workspace(self.campaign.config, &candidate.files)?;
+        self.campaign.run_tests(workspace.path(), &candidate)
     }
 }
 
@@ -1216,7 +1455,11 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
                 (no_evidence, basis, failure.agent, test.to_string())
             });
             let agents = failures.iter().map(|failure| failure.agent).collect::<BTreeSet<_>>();
-            BugGroup { agents: agents.into_iter().collect(), failures }
+            BugGroup {
+                agents: agents.into_iter().collect(),
+                failures,
+                contradicts_existing_tests: vec![],
+            }
         })
         .collect::<Vec<_>>();
     groups.sort_by(|a, b| {
@@ -1227,6 +1470,33 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
         key(a).cmp(&key(b))
     });
     groups
+}
+
+/// Returns the size and modification time of each project file, by path relative to the root.
+/// Hidden entries and the build and cache directories are skipped, and links are not followed.
+fn project_fingerprint(config: &Config) -> BTreeMap<PathBuf, (u64, Option<SystemTime>)> {
+    let mut files = BTreeMap::new();
+    let mut pending = vec![config.root.clone()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_name().to_string_lossy().starts_with('.')
+                || path == config.out
+                || path == config.cache_path
+            {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else { continue };
+            if metadata.is_dir() {
+                pending.push(path);
+            } else {
+                let path = workspace::relative_to_root(&config.root, &path);
+                files.insert(path, (metadata.len(), metadata.modified().ok()));
+            }
+        }
+    }
+    files
 }
 
 /// Copies the project for one agent and links the other top-level entries of the project, such as
@@ -1322,7 +1592,72 @@ fn required_candidate_files(
 
 /// Returns every test result in Forge's JSON output, with one result per invariant predicate of a
 /// merged invariant campaign.
-fn test_results(output: &Output) -> Result<Vec<(RerunFailure, TestStatus, Option<String>)>> {
+///
+/// A failing test that is not an invariant also has the call outcome that it disputes, if its
+/// traces show one.
+#[expect(clippy::type_complexity)]
+fn test_results(
+    output: &Output,
+) -> Result<Vec<(RerunFailure, TestStatus, Option<String>, Option<CallClaim>)>> {
+    let mut results = Vec::new();
+    for (contract, test, result) in suite_results(output)? {
+        let key = |name: &str| RerunFailure { contract: contract.clone(), test: name.into() };
+        // Handler assertion failures belong to the whole campaign, not to one predicate.
+        let handler_failures = result
+            .invariant_handler_failures
+            .iter()
+            .chain(result.invariant_failures.iter().filter(|f| f.predicate_name().is_none()))
+            .map(|failure| {
+                format!(
+                    "handler {}: {}",
+                    failure.name(),
+                    failure_reason(failure.reason(), failure.counterexample())
+                )
+            })
+            .collect::<Vec<_>>();
+        if result.invariant_predicate_results.is_empty() {
+            let reason = result.reason.clone().or_else(|| {
+                let reasons = result
+                    .invariant_failures
+                    .iter()
+                    .filter(|failure| failure.predicate_name().is_some())
+                    .map(|failure| failure_reason(failure.reason(), failure.counterexample()))
+                    .chain(handler_failures.iter().cloned())
+                    .collect::<Vec<_>>();
+                (!reasons.is_empty()).then(|| reasons.join("; "))
+            });
+            let reason = match (reason, result.counterexample.as_ref()) {
+                (Some(reason), counterexample) => Some(failure_reason(&reason, counterexample)),
+                (None, Some(counterexample)) => Some(failure_reason("", Some(counterexample))),
+                (None, None) => None,
+            };
+            let status =
+                if handler_failures.is_empty() { result.status } else { TestStatus::Failure };
+            results.push((key(&test), status, reason, oracle::disputed_call(&result)));
+            continue;
+        }
+        for predicate in &result.invariant_predicate_results {
+            let failure = result
+                .invariant_failures
+                .iter()
+                .find(|failure| failure.predicate_name() == Some(predicate.name.as_str()));
+            let reason = predicate.reason.as_deref().or(failure.map(|failure| failure.reason()));
+            let reason = reason.map(|reason| {
+                failure_reason(reason, failure.and_then(|failure| failure.counterexample()))
+            });
+            results.push((key(&predicate.name), predicate.status, reason, None));
+        }
+        // One campaign result per seed, so the count of failing seeds stays correct.
+        if !handler_failures.is_empty() {
+            let reason = Some(handler_failures.join("; "));
+            results.push((key(&test), TestStatus::Failure, reason, None));
+        }
+    }
+    Ok(results)
+}
+
+/// Returns every test result in Forge's JSON output with its contract and test name.
+fn suite_results(output: &Output) -> Result<Vec<(String, String, TestResult)>> {
     let suites = serde_json::from_slice::<serde_json::Value>(&output.stdout)
         .wrap_err_with(|| format!("invalid Forge JSON: {}", stderr(output)))?;
     let suites = suites.as_object().ok_or_else(|| eyre!("Forge JSON is not an object"))?;
@@ -1334,57 +1669,7 @@ fn test_results(output: &Output) -> Result<Vec<(RerunFailure, TestStatus, Option
         for (test, result) in tests {
             let result = TestResult::deserialize(result)
                 .wrap_err_with(|| format!("invalid result for {contract}::{test}"))?;
-            let key = |name: &str| RerunFailure { contract: contract.clone(), test: name.into() };
-            // Handler assertion failures belong to the whole campaign, not to one predicate.
-            let handler_failures = result
-                .invariant_handler_failures
-                .iter()
-                .chain(result.invariant_failures.iter().filter(|f| f.predicate_name().is_none()))
-                .map(|failure| {
-                    format!(
-                        "handler {}: {}",
-                        failure.name(),
-                        failure_reason(failure.reason(), failure.counterexample())
-                    )
-                })
-                .collect::<Vec<_>>();
-            if result.invariant_predicate_results.is_empty() {
-                let reason = result.reason.clone().or_else(|| {
-                    let reasons = result
-                        .invariant_failures
-                        .iter()
-                        .filter(|failure| failure.predicate_name().is_some())
-                        .map(|failure| failure_reason(failure.reason(), failure.counterexample()))
-                        .chain(handler_failures.iter().cloned())
-                        .collect::<Vec<_>>();
-                    (!reasons.is_empty()).then(|| reasons.join("; "))
-                });
-                let reason = match (reason, result.counterexample.as_ref()) {
-                    (Some(reason), counterexample) => Some(failure_reason(&reason, counterexample)),
-                    (None, Some(counterexample)) => Some(failure_reason("", Some(counterexample))),
-                    (None, None) => None,
-                };
-                let status =
-                    if handler_failures.is_empty() { result.status } else { TestStatus::Failure };
-                results.push((key(test), status, reason));
-                continue;
-            }
-            for predicate in &result.invariant_predicate_results {
-                let failure = result
-                    .invariant_failures
-                    .iter()
-                    .find(|failure| failure.predicate_name() == Some(predicate.name.as_str()));
-                let reason =
-                    predicate.reason.as_deref().or(failure.map(|failure| failure.reason()));
-                let reason = reason.map(|reason| {
-                    failure_reason(reason, failure.and_then(|failure| failure.counterexample()))
-                });
-                results.push((key(&predicate.name), predicate.status, reason));
-            }
-            // One campaign result per seed, so the count of failing seeds stays correct.
-            if !handler_failures.is_empty() {
-                results.push((key(test), TestStatus::Failure, Some(handler_failures.join("; "))));
-            }
+            results.push((contract.clone(), test.clone(), result));
         }
     }
     Ok(results)
@@ -1434,6 +1719,7 @@ fn project_context(config: &Config, targets: &[PathBuf]) -> ProjectContext {
         inherited_sources: vec![],
         test_sources: vec![],
         existing_tests: BTreeMap::new(),
+        test_files: vec![],
     };
     let Ok(graph) =
         Graph::<MultiCompilerParser>::resolve(&config.project_paths::<MultiCompilerLanguage>())
@@ -1474,6 +1760,7 @@ fn project_context(config: &Config, targets: &[PathBuf]) -> ProjectContext {
         tests.iter().take(MAX_PROMPT_TEST_FILES).map(|(_, path, source)| (path.as_path(), *source)),
         MAX_PROMPT_SOURCE_BYTES,
     );
+    context.test_files = tests.iter().map(|(_, path, _)| path.clone()).collect();
     context.existing_tests = existing_tests(
         target_sources.iter().map(|(_, source)| source.as_str()),
         tests.iter().map(|(_, _, source)| *source),
@@ -1798,4 +2085,90 @@ fn stderr(output: &Output) -> String {
     let head = stderr.chars().take(HALF).collect::<String>();
     let tail = stderr.chars().skip(chars - HALF).collect::<String>();
     format!("{head}\n[...]\n{tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failure(agent: usize, test: &str, claim: &str, code_path: &str) -> AgentFailure {
+        let evidence = (!claim.is_empty()).then(|| Evidence {
+            claim: claim.to_string(),
+            quote: String::new(),
+            source: "src/Fee.sol:3".to_string(),
+            basis: EvidenceBasis::Documented,
+            code_path: code_path.to_string(),
+        });
+        AgentFailure {
+            agent,
+            failure: CheckFailure {
+                test: test.to_string(),
+                path: PathBuf::from("test/generated/Fee.t.sol"),
+                reason: "revert".to_string(),
+                evidence,
+                source: None,
+            },
+            note: String::new(),
+            dispute: None,
+        }
+    }
+
+    fn cause(claim: &str, code_path: &str) -> RootCause {
+        RootCause::new(failure(1, "", claim, code_path).failure.evidence.as_ref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn root_causes_agree_on_file_and_function_or_claim_words() {
+        let cap = cause("The fee is capped at 100 ether.", "src/Fee.sol:7 fee() caps at 10 ether.");
+        assert!(
+            cap.agrees(&cause("Large amounts pay the maximum.", "src/Fee.sol:7 fee() is wrong"))
+        );
+        assert!(
+            cap.agrees(&cause("The fee is capped at 100 ether for large amounts.", "src/Fee.sol"))
+        );
+        assert!(!cap.agrees(&cause("The fee is capped at 100 ether.", "src/Other.sol:7 fee()")));
+        assert!(!cap.agrees(&cause("A zero amount is charged.", "src/Fee.sol:11 charges()")));
+    }
+
+    // Agreeing failures form one group with the set of their agents. Groups with documented
+    // evidence and more agents come first; a failure without evidence agrees with none.
+    #[test]
+    fn groups_link_agreeing_failures_by_agent() {
+        let groups = group_failures(vec![
+            failure(3, "C::zero", "A zero amount is charged.", "src/Fee.sol:11 charges()"),
+            failure(1, "A::cap", "The fee is capped at 100 ether.", "src/Fee.sol:7 fee()"),
+            failure(2, "B::cap", "Large amounts pay the maximum.", "src/Fee.sol:7 fee()"),
+            failure(2, "B::limit", "Large amounts pay the maximum fee.", "src/Fee.sol:8"),
+            failure(1, "D::none", "", ""),
+        ]);
+        let groups = groups
+            .iter()
+            .map(|group| {
+                let tests = group.failures.iter().map(|failure| failure.failure.test.as_str());
+                (group.agents.clone(), tests.collect::<Vec<_>>())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            groups,
+            [
+                (vec![1, 2], vec!["A::cap", "B::cap", "B::limit"]),
+                (vec![3], vec!["C::zero"]),
+                (vec![1], vec!["D::none"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn existing_tests_name_the_tests_that_call_each_function() {
+        let target = "library Fee {\n    function fee(uint256 a) internal pure returns (uint256) {}\n    function charges(uint256 a) internal pure returns (bool) {}\n    function cap() internal pure {}\n    function _round() private {}\n}\n";
+        let test = "contract FeeTest {\n    function setUp() public { Fee.cap(); }\n    function testFee() public { Fee.fee(1); }\n    // function testComment() public { Fee.cap(); }\n    function testCharges() public { if (Fee.charges(1)) { Fee.fee(2); } }\n    function testAbstract() public virtual;\n}\n";
+        let many =
+            (0..7).map(|i| format!("function testCharges{i}() public {{ Fee.charges({i}); }}"));
+        let many = format!("contract More {{ {} }}", many.collect::<String>());
+        let tests = existing_tests([target], [test, many.as_str()]);
+        assert_eq!(
+            serde_json::to_string(&tests).unwrap(),
+            r#"{"cap":[],"charges":["testCharges","testCharges0","testCharges1","testCharges2","testCharges3","+3 more"],"fee":["testCharges","testFee"]}"#
+        );
+    }
 }
