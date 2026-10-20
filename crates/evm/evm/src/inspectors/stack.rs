@@ -13,7 +13,7 @@ use evm2::{
     EvmFeatures, ExecutionError, Inspector,
     bytecode::Bytecode,
     ethereum::intrinsic_and_floor_gas,
-    evm::{DbResult, JournalEntry, PendingState, State},
+    evm::{DbResult, EmptyDB, JournalEntry, PendingState, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
 };
 use foundry_cheatcodes::{
@@ -26,10 +26,10 @@ use foundry_evm_core::{
     backend::{Backend, transaction_error},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
-        InterpreterFor, MessageFor, MessageResultFor, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, evm_env, merge_nested_changes, merge_pending_changes,
-        release_inspector,
+        BlockEnvFor, DetachedState, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor,
+        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores,
+        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env,
+        merge_nested_changes, merge_pending_changes, release_inspector,
     },
     precompiles::P256_VERIFY,
 };
@@ -37,6 +37,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use std::{
+    mem,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -495,6 +496,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // A `deployCode` create called from the test contract duplicates a top-level deployment,
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
+        let frames = cheats.snapshot_restores.depth();
         let mut frame = backend.backend().begin_frame_evm(evm);
         frame.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(cheats),
@@ -503,6 +505,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         });
         let result = Host::execute_message(&mut frame, tx_env, message);
         Backend::<FEN>::end_frame_evm(evm, frame);
+        if result.is_err() {
+            cheats.snapshot_restores.abandon(frames);
+        }
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -523,20 +528,22 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
+        // The nested transaction has its own journal.
+        let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
             backend: Some(&mut *backend),
         });
         let result = match child.transact(tx) {
-            Ok(executed) => {
-                // A failed transaction keeps its nonce increment.
-                merge_nested_changes(evm.state_mut(), &executed)?;
-                Ok(executed.result().clone())
-            }
+            // A failed transaction keeps its nonce increment.
+            Ok(executed) => merge_nested_changes(evm.state_mut(), &executed)
+                .map(|()| executed.result().clone())
+                .map_err(Into::into),
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        cheats.snapshot_restores = snapshot_restores;
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
         result
@@ -1178,6 +1185,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .inner
             .enter_inner_context(InnerRoot { depth: message.depth, caller: Some(message.caller) });
         let create2_redirects = self.inner.pending_create2_redirects.len();
+        // The nested transaction has its own journal.
+        let snapshot_restores =
+            self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
 
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
@@ -1189,6 +1199,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         self.inner.exit_inner_context(previous_inner);
         self.inner.pending_create2_redirects.truncate(create2_redirects);
+        // A snapshot restoration the nested transaction kept replaced its state wholesale.
+        let restored = self.cheatcodes.as_deref_mut().zip(snapshot_restores).is_some_and(
+            |(cheats, restores)| mem::replace(&mut cheats.snapshot_restores, restores).kept(),
+        );
         if let (Some(cheats), Some(previous)) = (self.cheatcodes.as_deref_mut(), previous_origin) {
             cheats.origin_override = previous;
             cheats.in_isolation_context = false;
@@ -1208,11 +1222,22 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .map(|change| change.address),
         );
 
-        let replaced = epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
-            || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
+        let switched =
+            self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
+        let replaced = restored
+            || switched
+            || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let merged = if replaced {
             child.commit_source(&executed.pending_state);
+            let displaced = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
             Backend::<FEN>::end_frame_evm(evm, child);
+            // The calling frame owns a restoration the isolated call kept, as if it made it.
+            if restored
+                && !switched
+                && let Some(restores) = self.snapshot_restores()
+            {
+                restores.capture(DetachedState::new(displaced));
+            }
             true
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
@@ -1264,6 +1289,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
+            cheatcodes.snapshot_restores = SnapshotRestores::default();
         }
     }
 
@@ -1477,10 +1503,36 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner.pending_create2_redirects.push(message.depth);
         true
     }
+
+    /// Returns the snapshot restorations of the running transaction, if cheatcodes are installed.
+    fn snapshot_restores(&mut self) -> Option<&mut SnapshotRestores> {
+        self.cheatcodes.as_deref_mut().map(|cheats| &mut cheats.snapshot_restores)
+    }
+
+    /// Closes the innermost frame for snapshot restorations, undoing the ones made inside it if it
+    /// failed.
+    fn end_snapshot_frame(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        result: &MessageResultFor<FEN>,
+    ) {
+        if let Some(restores) = self.snapshot_restores() {
+            let evm = interp.host();
+            let features = evm.version().features;
+            restores.frame_end(evm.state_mut(), !result.stop.is_success(), features);
+        }
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        let message = interp.message();
+        if matches!(message.kind, MessageKind::Create | MessageKind::Create2)
+            && let Some(restores) = self.snapshot_restores()
+        {
+            restores.init_code_start(interp.host().state(), !message.value.is_zero());
+        }
+
         let inner = &mut *self.inner;
         call_inspectors!([&mut inner.line_coverage, &mut inner.tracer], |inspector| {
             Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp)
@@ -1530,12 +1582,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
         if self.start_inner_root(interp, message) {
+            if let Some(restores) = self.snapshot_restores() {
+                restores.frame_start();
+                restores.set_call_checkpoint(interp.host().state());
+            }
             return None;
         }
 
         let depth = message.depth;
         if depth == 0 && !self.inner.in_inner_context {
             self.top_level_frame_start(interp);
+        }
+        if let Some(restores) = self.snapshot_restores() {
+            restores.frame_start();
         }
 
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
@@ -1589,6 +1648,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if storage_hook_callback {
             if let Some(pending) = self.inner.pending_call_traces.last_mut() {
                 pending.executed_address = Some(message.code_address);
+            }
+            if let Some(restores) = self.snapshot_restores() {
+                restores.set_call_checkpoint(interp.host().state());
             }
             return None;
         }
@@ -1655,6 +1717,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             }
         }
 
+        if let Some(restores) = self.snapshot_restores() {
+            restores.set_call_checkpoint(interp.host().state());
+        }
         None
     }
 
@@ -1664,6 +1729,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        self.end_snapshot_frame(interp, result);
+
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
         // surrounding transaction.
         if self.inner.is_inner_context_root(message.depth) {
@@ -1696,6 +1763,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
         if self.start_inner_root(interp, message) {
+            if let Some(restores) = self.snapshot_restores() {
+                restores.create_start(interp.host().state());
+            }
             return None;
         }
 
@@ -1707,6 +1777,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         let depth = message.depth;
         if depth == 0 && !self.inner.in_inner_context {
             self.top_level_frame_start(interp);
+        }
+        // A create that does not run never reaches its init code, so it gets no checkpoint.
+        if let Some(restores) = self.snapshot_restores() {
+            restores.create_start(interp.host().state());
         }
 
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
@@ -1778,6 +1852,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             self.finish_create2_redirect(message, result);
             return;
         }
+
+        self.end_snapshot_frame(interp, result);
 
         if self.inner.is_inner_context_root(message.depth) {
             return;

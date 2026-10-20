@@ -451,7 +451,11 @@ fn fork_op<FEN: FoundryEvmNetwork, T: SolValue>(
     f: impl FnOnce(&mut Backend<FEN>, &mut FoundryEvmFor<'_, FEN>) -> eyre::Result<T>,
 ) -> Result {
     let (evm, db) = ccx.evm_db_mut();
+    let generation = db.lifecycle().generation();
     let result = f(db, evm)?;
+    if db.lifecycle().generation() != generation {
+        ccx.state.snapshot_restores.journal_replaced(ccx.evm.state());
+    }
     ccx.state.state_epoch += 1;
     Ok(result.abi_encode())
 }

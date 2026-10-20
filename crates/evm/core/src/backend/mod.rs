@@ -25,10 +25,10 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
-        BackingDb, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutionLifecycle,
-        ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory,
-        FoundryEvmFor, FoundryEvmNetwork, NestedTx, Parked, SpecFor, TxFor, TxResultFor, TypesFor,
-        block_txs, evm_env,
+        BackingDb, DetachedState, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor,
+        ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, NestedTx, Parked, SpecFor, TxFor,
+        TxResultFor, TypesFor, block_txs, evm_env,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -1104,7 +1104,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id
     }
 
-    /// Restores snapshot `id`, or returns `None` if it does not exist.
+    /// Restores snapshot `id` and returns the running state it replaced, or returns `None` if it
+    /// does not exist.
     ///
     /// Logs emitted since the snapshot, persistent accounts and forks created after it survive.
     /// A test failure recorded in the reverted state sets [`Self::has_state_snapshot_failure`].
@@ -1114,7 +1115,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<EnvTransition> {
+    ) -> Option<(EnvTransition, DetachedState)> {
         trace!(?id, "revert snapshot");
         if !self.lifecycle.has_snapshot(id) {
             warn!(target: "backend", "No snapshot to revert for {}", id);
@@ -1130,7 +1131,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         {
             self.has_state_snapshot_failure = true;
         }
-        self.lifecycle.revert(evm, id, action, phase).map(|((), transition)| transition)
+        self.lifecycle
+            .revert(evm, id, action, phase)
+            .map(|((), transition, replaced)| (transition, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.

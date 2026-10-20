@@ -27,8 +27,8 @@
 //! enclosing call reverts.
 
 use super::{
-    AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt, FoundryEvmFactory,
-    LifecycleSnapshot, Parked, StoredExt, evm_env,
+    AcceptedView, BackingDb, DetachedState, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt,
+    FoundryEvmFactory, LifecycleSnapshot, Parked, StoredExt, evm_env,
 };
 use crate::{
     backend::{RevertStateSnapshotAction, transaction_error},
@@ -93,6 +93,8 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory, C = ()> {
     forks: ForkRegistry<F::Types>,
     snapshots: StateSnapshots<LifecycleSnapshot<F::Types, C>>,
     pending_env: Option<EvmEnv<F::Types>>,
+    /// Incremented whenever a context switch installs a new running state.
+    generation: u64,
 }
 
 impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
@@ -102,6 +104,7 @@ impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
             forks: self.forks.clone(),
             snapshots: self.snapshots.clone(),
             pending_env: self.pending_env,
+            generation: self.generation,
         }
     }
 }
@@ -121,6 +124,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             forks: ForkRegistry::new(Parked::new(Box::new(db), env, ext)),
             snapshots: StateSnapshots::default(),
             pending_env: None,
+            generation: 0,
         }
     }
 
@@ -170,6 +174,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             cache: context.cache.clone().unwrap_or_default(),
             backing: context.db.clone_backing(),
         }
+    }
+
+    /// Returns a counter of the running states installed by context switches, such as fork
+    /// selections and rolls of the active fork; it changes when an operation replaced the
+    /// running journal.
+    pub const fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Returns whether a snapshot exists.
@@ -398,22 +409,27 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         })
     }
 
-    /// Restores snapshot `id` and returns its `extra`, or `None` if it does not exist.
+    /// Restores snapshot `id` and returns its `extra` and the running state it replaced, or
+    /// `None` if it does not exist.
     ///
     /// Logs emitted since the snapshot are kept. Persistent accounts and forks created after the
     /// snapshot survive the revert; every fork that existed at the snapshot gets its state back.
+    ///
+    /// The replaced state is materialized before it is detached, so that a failing frame can
+    /// reinstate it with [`SnapshotRestores`].
     pub fn revert(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
         id: U256,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(C, EnvTransition)> {
+    ) -> Option<(C, EnvTransition, DetachedState)> {
         let snapshot = if action.is_keep() {
             self.snapshots.get(id).cloned()
         } else {
             self.snapshots.remove(id)
         }?;
+        self.materialize(evm);
         let LifecycleSnapshot { state, forks, env, ext, extra } = snapshot;
         let mut current = mem::replace(&mut self.forks, forks);
         self.forks.next_id = current.next_id;
@@ -422,14 +438,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             self.forks.forks.entry(id).or_insert(entry);
         }
         let db = self.forks.active_db();
-        let logs = mem::take(evm.state_mut().logs_mut());
         let mut state = state.into_state(db.clone_backing());
-        *state.logs_mut() = logs;
-        *evm.state_mut() = state;
+        *state.logs_mut() = evm.state().logs().to_vec();
+        let replaced = DetachedState::new(mem::replace(evm.state_mut(), state));
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
-        Some((extra, transition))
+        Some((extra, transition, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.
@@ -657,6 +672,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         *state.logs_mut() = logs;
         state.set_prewarm_set(prewarm);
         *evm.state_mut() = state;
+        self.generation += 1;
         evm.ext_mut().replace_while_executing(ext);
 
         let factory = self.factory.configure_for(&db, &env);

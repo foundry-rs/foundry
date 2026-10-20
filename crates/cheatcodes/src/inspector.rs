@@ -48,8 +48,8 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, SpecFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor,
-        TypesFor,
+        MessageFor, MessageResultFor, SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor,
+        TxFor, TxResultFor, TypesFor,
     },
 };
 use foundry_evm_traces::{
@@ -750,9 +750,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// its `LOG` instruction finishes.
     pending_emit_failure: Option<&'static str>,
 
-    /// Incremented whenever a cheatcode replaces the running state, such as a fork switch or a
-    /// state snapshot restoration, so nested executions know to adopt the replaced state.
+    /// Incremented whenever a cheatcode replaces the running state outside of a snapshot
+    /// restoration, such as a fork switch, so nested executions know to adopt the replaced state.
     pub state_epoch: u64,
+
+    /// Running states replaced by snapshot restorations in the open frames of the running
+    /// transaction, reinstated when the frame owning a restoration fails.
+    pub snapshot_restores: SnapshotRestores,
 
     /// Target of the root call of the running transaction, if it is a call.
     root_call_target: Option<Address>,
@@ -926,6 +930,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_gas_price: Default::default(),
             pending_emit_failure: Default::default(),
             state_epoch: Default::default(),
+            snapshot_restores: Default::default(),
             root_call_target: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
