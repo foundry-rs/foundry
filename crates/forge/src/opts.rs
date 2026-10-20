@@ -45,10 +45,11 @@ pub enum ForgeSubcommand {
     /// Run and manage Forge fuzzing corpora.
     Fuzz(FuzzArgs),
 
-    /// Write documented properties as tests and report failing ones as possible bugs
+    /// Run agents that prove bugs with failing tests and report the bugs that they agree on
     ///
     /// Examples:
-    /// - forge properties --target src/A.sol --brief b.md --generator ./gen.sh --seed 1 --seed 2
+    /// - forge properties --target src/A.sol --generator ./gen.sh --seed 1 --seed 2
+    /// - forge properties --context docs/spec.md --generator ./gen.sh --seed 1 --seed 2
     #[command(verbatim_doc_comment)]
     Properties(PropertiesArgs),
 
