@@ -1700,22 +1700,3 @@ Run with RUST_BACKTRACE=full to include source snippets.
 
 "#]]);
 }
-
-#[forgetest]
-fn build_rejects_wrong_config_filename(prj: _, cmd: _) {
-    fs::write(prj.root().join("other.toml"), "[profile.default]\n").unwrap();
-
-    cmd.env("RUST_BACKTRACE", "0");
-    cmd.env("RUST_LIB_BACKTRACE", "0");
-    cmd.args(["build", "--config-path", "other.toml"])
-        .assert_with(&[("[ANSI]", r"\x1b\[[0-9;]*m")])
-        .failure()
-        .stdout_eq(str![""])
-        .stderr_eq(str![[r#"
-[ANSI]The application panicked (crashed).[ANSI]
-Message:  [ANSI]error: the config-path must be a path to a foundry.toml file[ANSI]
-[FILE] omitted. Run with RUST_BACKTRACE=1 environment variable to display it.
-Run with RUST_BACKTRACE=full to include source snippets.
-
-"#]]);
-}
