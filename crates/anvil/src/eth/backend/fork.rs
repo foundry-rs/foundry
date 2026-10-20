@@ -692,7 +692,10 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned()
+        // Release the read guard before `convert_to_full_block` reacquires it. A writer queued
+        // between the two acquisitions would otherwise deadlock this thread.
+        let block = self.storage_read().blocks.get(&hash).cloned();
+        if let Some(block) = block
             && let Some(block) = self.convert_to_full_block(block)
         {
             return Ok(Some(block));
@@ -704,12 +707,13 @@ impl<N: Network> ClientFork<N> {
         &self,
         block_number: u64,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(mut block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .and_then(|hash| self.storage_read().blocks.get(hash).cloned())
-        {
+        // Read both maps through one guard. Reacquiring the read lock while holding it deadlocks
+        // when a writer queues in between.
+        let block = {
+            let storage = self.storage_read();
+            storage.hashes.get(&block_number).and_then(|hash| storage.blocks.get(hash).cloned())
+        };
+        if let Some(mut block) = block {
             block.transactions_mut().convert_to_hashes();
             return Ok(Some(block));
         }
@@ -725,12 +729,13 @@ impl<N: Network> ClientFork<N> {
         &self,
         block_number: u64,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .copied()
-            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+        // See `block_by_number`. The guard must also be released before `convert_to_full_block`
+        // reacquires it.
+        let block = {
+            let storage = self.storage_read();
+            storage.hashes.get(&block_number).and_then(|hash| storage.blocks.get(hash).cloned())
+        };
+        if let Some(block) = block
             && let Some(block) = self.convert_to_full_block(block)
         {
             return Ok(Some(block));
