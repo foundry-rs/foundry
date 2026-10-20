@@ -44,13 +44,13 @@ mod matcher;
 const CANDIDATE_SCHEMA: &str = "foundry/properties-candidate-v1";
 const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v5";
 /// On 12 held-out cases, four small-model agents with a quorum of two found bugs in as many cases
-/// as five (8.6 against 9.0 of 12, a tie in a bootstrap over cases) at four fifths of the cost. The
-/// quorum removed every report that reviewers labelled wrong, because wrong claims of independent
-/// agents rarely repeat.
+/// as five (8.6 against 9.0 of 12, a tie in a bootstrap over cases) at four fifths of the cost.
+/// With a quorum of two, they kept no report that reviewers labelled wrong, because wrong claims
+/// of independent agents rarely repeat.
 const DEFAULT_AGENTS: usize = 4;
 const DEFAULT_QUORUM: usize = 2;
-/// The instructions of every agent. On 26 held-out cases, five small-model agents with a plain
-/// audit prompt of about 1 KB found as many bugs as the same agents with longer guidance, audit
+/// The instructions of every agent. On 26 held-out cases, five plain small-model audits with a
+/// prompt of about 1 KB found as many bugs as five Forge agents with longer guidance, audit
 /// lenses, and the targets' sources in the prompt.
 const INSTRUCTIONS: &str = "Find bugs in the targets of this Foundry project and prove each one \
 with a Foundry test. The code under test can be wrong: the correct behavior is what its \
