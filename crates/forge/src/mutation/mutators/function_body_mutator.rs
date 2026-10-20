@@ -1,5 +1,8 @@
 use eyre::Result;
-use solar::ast::{ElementaryType, FunctionKind, StmtKind, TypeKind};
+use solar::ast::{
+    CallArgsKind, ElementaryType, Expr, ExprKind, FunctionKind, LitKind, StmtKind, TypeKind,
+    UnOpKind,
+};
 
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
@@ -33,19 +36,13 @@ impl Mutator for FunctionBodyMutator {
                 } else if let [stmt] = &body[..]
                     && let StmtKind::Return(Some(expr)) = &stmt.kind
                 {
-                    ctxt.source.and_then(|src| {
-                        src.get(expr.span.lo().0 as usize..expr.span.hi().0 as usize)
-                    })
+                    constant_return(expr)
                 } else {
                     None
                 };
                 values
                     .iter()
-                    .filter(|value| {
-                        !returned.is_some_and(|expr| {
-                            expr.chars().filter(|c| !c.is_whitespace()).eq(value.chars())
-                        })
-                    })
+                    .filter(|value| returned != Some(**value))
                     .map(|value| format!("{{ return {value}; }}"))
                     .collect()
             }
@@ -69,5 +66,47 @@ impl Mutator for FunctionBodyMutator {
         ctxt.function.is_some_and(|function| {
             function.kind == FunctionKind::Function && function.body.is_some()
         })
+    }
+}
+
+/// Recognizes alternate spellings of the constants emitted by this mutator.
+fn constant_return(expr: &Expr<'_>) -> Option<&'static str> {
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(lit, _) => match &lit.kind {
+            LitKind::Bool(true) => Some("true"),
+            LitKind::Bool(false) => Some("false"),
+            LitKind::Number(n) if n.is_zero() => Some("0"),
+            LitKind::Number(n) if *n == alloy_primitives::U256::from(1) => Some("1"),
+            _ => None,
+        },
+        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Neg => match constant_return(inner)? {
+            "0" => Some("0"),
+            "1" => Some("-1"),
+            "-1" => Some("1"),
+            _ => None,
+        },
+        ExprKind::Call(callee, args)
+            if let ExprKind::Type(ty) = &callee.peel_parens().kind
+                && let CallArgsKind::Unnamed(args) = &args.kind
+                && let [arg] = &args[..] =>
+        {
+            let value = constant_return(arg)?;
+            match (&ty.kind, value) {
+                (TypeKind::Elementary(ElementaryType::Bool), "true" | "false")
+                | (TypeKind::Elementary(ElementaryType::UInt(_)), "0" | "1")
+                | (TypeKind::Elementary(ElementaryType::Int(_)), "0" | "1" | "-1") => Some(value),
+                (TypeKind::Elementary(ElementaryType::Address(false)), "0" | "address(0)") => {
+                    Some("address(0)")
+                }
+                _ => None,
+            }
+        }
+        ExprKind::Payable(args)
+            if let CallArgsKind::Unnamed(args) = &args.kind
+                && let [arg] = &args[..] =>
+        {
+            (constant_return(arg)? == "address(0)").then_some("payable(address(0))")
+        }
+        _ => None,
     }
 }

@@ -610,4 +610,62 @@ contract Other { function ignored() public { revert(); } }
             );
         });
     }
+
+    #[test]
+    fn function_body_replacements_skip_equivalent_constants() {
+        for (ty, expression, expected) in [
+            ("bool", "(true)", vec!["false"]),
+            ("bool", "(/* Always on. */ true)", vec!["false"]),
+            ("bool", "bool((false))", vec!["true"]),
+            ("uint256", "0x0", vec!["1"]),
+            ("uint8", "uint8(0)", vec!["1"]),
+            ("uint256", "1_0e-1", vec!["0"]),
+            ("int256", "-(int8((0x1)))", vec!["0", "1"]),
+            ("int256", "int256(-1)", vec!["0", "1"]),
+            ("int256", "-(-1)", vec!["0", "-1"]),
+            ("int256", "-0", vec!["1", "-1"]),
+            ("address", "address(uint160(0x0))", vec![]),
+            ("address payable", "payable(address((0)))", vec![]),
+            // Keep replacements when evaluating the original can have side effects.
+            ("bool", "other()", vec!["true", "false"]),
+            ("uint8", "uint8(other())", vec!["0", "1"]),
+        ] {
+            let source = format!(
+                "contract Target {{ function target() public returns ({ty}) {{ return {expression}; }} }}"
+            );
+            let sess = Session::builder().with_silent_emitter(None).build();
+            sess.enter(|| {
+                let arena = Arena::new();
+                let mut parser = Parser::from_lazy_source_code(
+                    &sess,
+                    &arena,
+                    FileName::Real("target.sol".into()),
+                    || Ok(source.clone()),
+                )
+                .unwrap();
+                let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+                drop(parser);
+                let mut visitor = MutantVisitor::with_operators(
+                    "target.sol".into(),
+                    &[MutatorType::FunctionBody],
+                )
+                .with_source(&source);
+                let _ = visitor.visit_source_unit(&ast);
+                assert!(visitor.take_errors().is_empty());
+                let replacements = visitor
+                    .mutation_to_conduct
+                    .iter()
+                    .map(|mutant| mutant.mutation.to_string())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    replacements,
+                    expected
+                        .iter()
+                        .map(|value| format!("{{ return {value}; }}"))
+                        .collect::<Vec<_>>(),
+                    "{source}"
+                );
+            });
+        }
+    }
 }
