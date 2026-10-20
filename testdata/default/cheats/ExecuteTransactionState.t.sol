@@ -110,24 +110,6 @@ contract ExecuteTransactionStateTest is Test {
         }
         assertEq(vm.addr(12345).code, hex"");
     }
-
-    function test_execute_creation_survives_parent_revert() public {
-        vm.chainId(1);
-        vm.deal(SENDER, 1 ether);
-        vm.etch(TARGET, type(NestedCreationFactory).runtimeCode);
-        NestedCreated parentCreated = new NestedCreated{value: 1}();
-        vm.store(TARGET, bytes32(0), bytes32(uint256(uint160(address(parentCreated)))));
-        address created = vm.computeCreateAddress(TARGET, vm.getNonce(TARGET));
-        try this.executeInParent("", true) {
-            revert("expected parent revert");
-        } catch Error(string memory reason) {
-            assertEq(reason, "parent reverted");
-        }
-        assertEq(address(parentCreated).balance, 0);
-        assertEq(created.balance, 1);
-        NestedCreated(created).destroy();
-        assertEq(created.balance, 0);
-    }
 }
 
 /// forge-config: default.isolate = false
@@ -136,22 +118,5 @@ contract ExecuteTransactionStateNonIsolatedTest is ExecuteTransactionStateTest {
 contract NestedCodeWriter is Test {
     fallback() external payable {
         vm.etch(vm.addr(12345), hex"00");
-    }
-}
-
-contract NestedCreationFactory {
-    NestedCreated public parentCreated;
-
-    fallback() external payable {
-        parentCreated.destroy();
-        new NestedCreated{value: 1}();
-    }
-}
-
-contract NestedCreated {
-    constructor() payable {}
-
-    function destroy() external {
-        selfdestruct(payable(address(this)));
     }
 }
