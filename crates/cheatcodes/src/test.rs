@@ -1,6 +1,6 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Result, Vm::*};
 use alloy_chains::Chain as AlloyChain;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
@@ -28,14 +28,14 @@ impl Cheatcode for breakpoint_1Call {
 }
 
 impl Cheatcode for getFoundryVersionCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self {} = self;
         Ok(SEMVER_VERSION.abi_encode())
     }
 }
 
 impl Cheatcode for rpcUrlCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { rpcAlias } = self;
         let url = state.config.rpc_endpoint(rpcAlias)?.url()?.abi_encode();
         Ok(url)
@@ -43,21 +43,21 @@ impl Cheatcode for rpcUrlCall {
 }
 
 impl Cheatcode for rpcUrlsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
 impl Cheatcode for rpcUrlStructsCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
 impl Cheatcode for sleepCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { duration } = self;
         let sleep_duration = std::time::Duration::from_millis(duration.saturating_to());
         std::thread::sleep(sleep_duration);
@@ -80,14 +80,14 @@ impl Cheatcode for skip_1Call {
 }
 
 impl Cheatcode for getChain_0Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { chainAlias } = self;
         get_chain(state, chainAlias)
     }
 }
 
 impl Cheatcode for getChain_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { chainId } = self;
         // Convert the chainId to a string and use the existing get_chain function
         let chain_id_str = chainId.to_string();
@@ -136,7 +136,7 @@ fn breakpoint<FEN: FoundryEvmNetwork>(
 }
 
 /// Gets chain information for the given alias.
-fn get_chain<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>, chain_alias: &str) -> Result {
+fn get_chain(state: &mut CheatcodesCore, chain_alias: &str) -> Result {
     // Parse the chain alias - works for both chain names and IDs
     let alloy_chain = AlloyChain::from_str(chain_alias)
         .map_err(|_| fmt_err!("invalid chain alias: {chain_alias}"))?;

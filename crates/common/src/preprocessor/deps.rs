@@ -1,8 +1,9 @@
 use super::{
-    data::{ContractData, PreprocessorData, deploy_helper_path},
+    data::{ContractData, PreprocessorData, deploy_helper_path, reserved_identifiers},
     span_to_range,
 };
-use crate::fs::normalize_path;
+use crate::fs::{canonicalize_path, normalize_path};
+use alloy_primitives::keccak256;
 use foundry_compilers::{
     ProjectPathsConfig, Updates,
     artifacts::{SolcLanguage, remappings::Remapping},
@@ -38,7 +39,7 @@ pub(super) struct ConstructorContext {
 }
 
 impl ConstructorContext {
-    fn for_source(mut self, gcx: Gcx<'_>, source: SourceId) -> Self {
+    pub(super) fn for_source(mut self, gcx: Gcx<'_>, source: SourceId) -> Self {
         let ast = gcx
             .sources
             .get_file(&gcx.hir.source(source).file)
@@ -237,7 +238,7 @@ impl PreprocessorDependencies {
                     source_units,
                     remappings,
                     has_constructor_args,
-                    dependency_id,
+                    dependency.name.as_str(),
                 ) {
                     true
                 } else {
@@ -599,7 +600,7 @@ fn can_rewrite(
     source_units: &[PathBuf],
     remappings: &[Remapping],
     has_constructor_args: bool,
-    contract_id: ContractId,
+    contract_name: &str,
 ) -> bool {
     let generated_path = path.strip_prefix(root_dir).unwrap_or(path);
     if !source_units.iter().any(|source_unit| source_unit == generated_path)
@@ -620,7 +621,8 @@ fn can_rewrite(
         return true;
     }
 
-    let helper_path = deploy_helper_path(contract_id.index(), source_units);
+    let identifier = keccak256(format!("{}:{contract_name}", generated_path.to_slash_lossy()));
+    let helper_path = deploy_helper_path(&format!("{identifier:x}"), source_units);
     !remappings.iter().any(|remapping| {
         // The test imports the generated helper, which in turn imports the dependency.
         remapping_applies(remapping, &helper_path, source_path, root_dir)
@@ -633,8 +635,8 @@ fn is_path_in_dir(path: &Path, dir: &Path, root_dir: &Path) -> bool {
     let path = normalize_path(&root_dir.join(path));
     let dir = normalize_path(&root_dir.join(dir));
     path.starts_with(&dir)
-        || dunce::canonicalize(path)
-            .is_ok_and(|path| dunce::canonicalize(dir).is_ok_and(|dir| path.starts_with(dir)))
+        || canonicalize_path(path)
+            .is_ok_and(|path| canonicalize_path(dir).is_ok_and(|dir| path.starts_with(dir)))
 }
 
 /// Returns whether a generated import would be redirected by `remapping`.
@@ -863,14 +865,10 @@ pub(crate) fn remove_bytecode_dependencies(
     gcx: Gcx<'_>,
     deps: &PreprocessorDependencies,
     data: &PreprocessorData,
+    root_dir: &Path,
+    use_uint160_return: bool,
 ) -> Updates {
     let mut updates = Updates::default();
-    let reserved_identifiers = gcx
-        .hir
-        .source_ids()
-        .map(|source_id| gcx.hir.source(source_id).file.src.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
     for (contract_id, deps) in &deps.preprocessed_contracts {
         let contract = gcx.hir.contract(*contract_id);
         let source = gcx.hir.source(contract.source);
@@ -878,13 +876,17 @@ pub(crate) fn remove_bytecode_dependencies(
             continue;
         };
 
+        let reserved_identifiers = reserved_identifiers(gcx, contract.source);
+        let identifier = keccak256(format!(
+            "{}:{}",
+            path.strip_prefix(root_dir).unwrap_or(path).to_slash_lossy(),
+            contract.name,
+        ));
         let updates = updates.entry(path.clone()).or_default();
         let mut used_helpers = BTreeSet::new();
 
-        let vm_interface_name = unique_identifier(
-            &reserved_identifiers,
-            format!("VmContractHelper{}", contract_id.index()),
-        );
+        let vm_interface_name =
+            unique_identifier(&reserved_identifiers, format!("VmContractHelper{identifier:x}"));
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
         for dep in deps {
@@ -914,7 +916,10 @@ pub(crate) fn remove_bytecode_dependencies(
                     salt,
                 } => {
                     let mut update = format!("{name}(payable(");
-                    let closing_seq = "})))";
+                    if use_uint160_return {
+                        update.push_str("address(");
+                    }
+                    let closing_seq = if use_uint160_return { "}))))" } else { "})))" };
                     update.push_str(&format!("{vm}.deployCode({{"));
                     update.push_str(&format!("_artifact: \"{artifact}\""));
 
@@ -975,7 +980,9 @@ pub(crate) fn remove_bytecode_dependencies(
                 let helper_path = constructor.helper_path.to_slash_lossy();
                 format!("import {{{helper_import}, {encoder_import}}} from \"{helper_path}\";",)
             })
+            .sorted()
             .join("\n");
+        let deployment_return_type = if use_uint160_return { "uint160" } else { "address" };
         updates.insert((
             source.file.src.len(),
             source.file.src.len(),
@@ -984,14 +991,14 @@ pub(crate) fn remove_bytecode_dependencies(
 {helper_imports}
 
 interface {vm_interface_name} {{
-    function deployCode(string memory _artifact) external returns (address);
-    function deployCode(string memory _artifact, bytes32 _salt) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args, bytes32 _salt) external returns (address);
-    function deployCode(string memory _artifact, uint256 _value) external returns (address);
-    function deployCode(string memory _artifact, uint256 _value, bytes32 _salt) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args, uint256 _value) external returns (address);
-    function deployCode(string memory _artifact, bytes memory _args, uint256 _value, bytes32 _salt) external returns (address);
+    function deployCode(string memory _artifact) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes32 _salt) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args, bytes32 _salt) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, uint256 _value) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, uint256 _value, bytes32 _salt) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args, uint256 _value) external returns ({deployment_return_type});
+    function deployCode(string memory _artifact, bytes memory _args, uint256 _value, bytes32 _salt) external returns ({deployment_return_type});
     function getCode(string memory _artifact) external view returns (bytes memory);
 }}"#
             ),

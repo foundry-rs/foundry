@@ -5,7 +5,6 @@
 //! soldb's own tools read.
 
 use alloy_primitives::{Address, Bytes, U256, hex, map::HashSet};
-use dialoguer::{Select, console::Term};
 use eyre::{OptionExt, Result};
 use foundry_common::{
     ContractsByArtifact, Shell,
@@ -20,7 +19,6 @@ use foundry_evm_traces::{
     CallTraceArena, CallTraceNode, CallTraceStep, TraceMemberOrder,
     debug::{ArtifactData, ContractSources, SourceData},
 };
-use foundry_tui::tui_mode;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use serde_json::{Map, Value, json};
 use soldb_core::{
@@ -38,7 +36,10 @@ use std::{
     sync::Arc,
 };
 
-/// A soldb session over one recorded call trace.
+/// The steps that execute each breakpoint's code address and program counter.
+type BreakpointSteps = BTreeMap<(Address, usize), Vec<usize>>;
+
+/// A soldb session over the recorded call traces.
 #[derive(Debug)]
 pub(crate) struct SoldbDebugger {
     trace: TransactionTrace,
@@ -48,25 +49,25 @@ pub(crate) struct SoldbDebugger {
 }
 
 impl SoldbDebugger {
-    /// Converts `arena`, whose node contracts are identified by `contract_names`.
+    /// Converts `arenas`, whose node contracts are identified by `contract_names`.
     pub(crate) fn new(
-        mut arena: CallTraceArena,
-        contract_names: &[Option<String>],
+        mut arenas: Vec<CallTraceArena>,
+        contract_names: &[Vec<Option<String>>],
         sources: &ContractSources,
         known_contracts: &ContractsByArtifact,
         breakpoints: &Breakpoints,
-    ) -> Self {
-        let contracts = executed_programs(&arena, contract_names, sources, known_contracts)
+    ) -> Result<Self> {
+        let contracts = executed_programs(&arenas, contract_names, sources, known_contracts)
             .iter()
             .filter_map(contract_debug_info)
             .collect();
-        let (trace, breakpoints) = transaction_trace(&mut arena, breakpoints);
+        let (trace, breakpoints) = transaction_trace(&mut arenas, breakpoints)?;
         let breakpoints = breakpoints
             .into_iter()
             .filter(|(_, steps)| !steps.is_empty())
             .map(|((_, pc), steps)| (pc as u64, steps))
             .collect();
-        Self { trace, contracts, breakpoints }
+        Ok(Self { trace, contracts, breakpoints })
     }
 
     /// Runs the session.
@@ -75,7 +76,7 @@ impl SoldbDebugger {
     /// read from stdin, one per line, until `quit` or the end of the input.
     pub(crate) fn try_run(self) -> Result<()> {
         let mut state = DebuggerState::new();
-        state.load_trace(self.trace);
+        state.load_trace(self.trace)?;
         state.attach_debug_info(self.contracts);
         // soldb breakpoints match a program counter in any contract, so each one is limited to
         // the steps that run the `vm.breakpoint` location.
@@ -117,29 +118,6 @@ impl SoldbDebugger {
     }
 }
 
-/// Selects the call to debug, since soldb debugs one.
-///
-/// With several calls, asks on an interactive terminal and takes the last one otherwise. The last
-/// call is the test or script entry point; earlier ones are deployments and `setUp`.
-pub(crate) fn select_call(mut arenas: Vec<CallTraceArena>) -> Result<CallTraceArena> {
-    let last = arenas.len().checked_sub(1).ok_or_eyre("debug arena is empty")?;
-    let term = Term::stderr();
-    let selected = if last == 0 {
-        last
-    } else if tui_mode().is_interactive() && term.is_term() {
-        Select::new()
-            .with_prompt("Select a call to debug")
-            .items(arenas.iter().map(call_label))
-            .default(last)
-            .interact_on_opt(&term)?
-            .ok_or_eyre("debugger call selection cancelled")?
-    } else {
-        sh_warn!("soldb debugs one call; showing the last of {} calls", last + 1)?;
-        last
-    };
-    Ok(arenas.swap_remove(selected))
-}
-
 /// What the session asks the frontend to do after a command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flow {
@@ -175,23 +153,25 @@ fn open_tui(session: &mut Session) -> Result<Flow> {
     }
 }
 
-/// Converts `arena` into a soldb trace: its steps in execution order, with each call and
+/// Converts `arenas` into a soldb trace: their steps in execution order, with each call and
 /// creation recorded at the steps it spans.
 ///
-/// Also returns the steps that run each `breakpoints` location. The steps move out of `arena`, so
+/// Also returns the steps that run each `breakpoints` location. The steps move out of `arenas`, so
 /// each one is dropped once converted.
 fn transaction_trace(
-    arena: &mut CallTraceArena,
+    arenas: &mut [CallTraceArena],
     breakpoints: &Breakpoints,
-) -> (TransactionTrace, BTreeMap<(Address, usize), Vec<usize>>) {
+) -> Result<(TransactionTrace, BreakpointSteps)> {
     let mut builder = TraceBuilder {
         breakpoints: breakpoints.values().map(|location| (*location, Vec::new())).collect(),
         ..Default::default()
     };
-    builder.visit(arena.nodes_mut(), 0, None);
+    for arena in &mut *arenas {
+        builder.visit(arena.nodes_mut(), 0, None);
+    }
     let TraceBuilder { steps, calls, creations, breakpoints, .. } = builder;
 
-    let root = &arena.nodes()[0].trace;
+    let root = &arenas.first().ok_or_eyre("debug arena is empty")?.nodes()[0].trace;
     let create = root.kind.is_any_create();
     let trace = TransactionTrace {
         tx_hash: None,
@@ -199,10 +179,12 @@ fn transaction_trace(
         to_addr: (!create).then(|| hex::encode_prefixed(root.address)),
         value: quantity(root.value),
         input_data: hex::encode_prefixed(&root.data),
-        gas_used: root.gas_used,
+        gas_used: arenas
+            .iter()
+            .fold(0u64, |gas, arena| gas.saturating_add(arena.nodes()[0].trace.gas_used)),
         output: hex::encode_prefixed(&root.output),
-        success: root.success,
-        error: status_error(root.status),
+        success: arenas.iter().all(|arena| arena.nodes()[0].trace.success),
+        error: arenas.iter().find_map(|arena| status_error(arena.nodes()[0].trace.status)),
         debug_trace_available: true,
         contract_address: create.then(|| hex::encode_prefixed(root.address)),
         backend: Some("foundry".to_string()),
@@ -214,12 +196,14 @@ fn transaction_trace(
             storage_diff: true,
             call_trace: true,
             contract_creation: true,
+            transient_storage: true,
+            return_data: true,
             ..Default::default()
         },
         artifacts: TraceArtifacts { calls, creations, ..Default::default() },
         steps,
     };
-    (trace, breakpoints)
+    Ok((trace, breakpoints))
 }
 
 /// Collects the soldb steps, calls, and creations of a trace in execution order.
@@ -232,10 +216,12 @@ struct TraceBuilder {
     words: WordInterner,
     /// The last recorded memory and its hex encoding, shared by the steps that did not change it.
     memory: Option<(Bytes, Arc<str>)>,
+    /// The last return data buffer and its hex encoding, shared by unchanged steps.
+    return_data: Option<(Bytes, Arc<str>)>,
     /// The storage of the steps that touch no slot.
     no_storage: Arc<BTreeMap<String, String>>,
     /// The steps that run each `vm.breakpoint` location, as code address and program counter.
-    breakpoints: BTreeMap<(Address, usize), Vec<usize>>,
+    breakpoints: BreakpointSteps,
 }
 
 impl TraceBuilder {
@@ -367,11 +353,39 @@ impl TraceBuilder {
             None => (self.no_storage.clone(), BTreeMap::new()),
         };
 
+        let transient_storage = match step.op {
+            OpCode::TLOAD => stack
+                .last()
+                .copied()
+                .zip(next.and_then(|next| next.stack.as_deref()?.last().copied())),
+            OpCode::TSTORE => match stack {
+                [.., value, slot] => Some((*slot, *value)),
+                _ => None,
+            },
+            _ => None,
+        }
+        .map(|(slot, value)| (quantity(slot), quantity(value)))
+        .into_iter()
+        .collect();
+        let return_data = if step.returndata.is_empty() {
+            None
+        } else {
+            Some(match &self.return_data {
+                Some((last, hex)) if last == &step.returndata => hex.clone(),
+                _ => {
+                    let hex = Arc::<str>::from(hex::encode(&step.returndata));
+                    self.return_data = Some((step.returndata.clone(), hex.clone()));
+                    hex
+                }
+            })
+        };
         let snapshot = StepSnapshot {
             stack: stack.iter().map(|word| self.words.intern(&quantity(*word))).collect(),
             memory,
             storage,
             storage_diff,
+            transient_storage,
+            return_data,
         };
         self.steps.push(TraceStep::new(
             step.pc as u64,
@@ -405,16 +419,18 @@ struct ExecutedProgram<'a> {
     storage_layout: Option<Value>,
 }
 
-/// The programs `arena` runs that local artifacts describe, once per address and environment.
+/// The programs `arenas` run that local artifacts describe, once per address and environment.
 fn executed_programs<'a>(
-    arena: &'a CallTraceArena,
-    contract_names: &'a [Option<String>],
+    arenas: &'a [CallTraceArena],
+    contract_names: &'a [Vec<Option<String>>],
     sources: &'a ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Vec<ExecutedProgram<'a>> {
     let mut seen = HashSet::<(Address, bool)>::default();
     let mut programs = Vec::new();
-    for (node, name) in arena.nodes().iter().zip(contract_names) {
+    for (node, name) in
+        arenas.iter().zip(contract_names).flat_map(|(arena, names)| arena.nodes().iter().zip(names))
+    {
         let trace = &node.trace;
         let init = trace.kind.is_any_create();
         if let Some(name) = name
@@ -589,14 +605,14 @@ fn compilation(build_sources: &HashMap<u32, Arc<SourceData>>) -> Value {
 /// project paths, where soldb looks for them.
 pub(crate) fn write_bundle(
     dir: &Path,
-    mut arena: CallTraceArena,
-    contract_names: &[Option<String>],
+    mut arenas: Vec<CallTraceArena>,
+    contract_names: &[Vec<Option<String>>],
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
     let mut contracts = BTreeMap::<Address, CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();
-    for program in executed_programs(&arena, contract_names, sources, known_contracts) {
+    for program in executed_programs(&arenas, contract_names, sources, known_contracts) {
         // soldb reads legacy source maps by instruction counter, which Vyper's are not.
         if !program.solc {
             continue;
@@ -690,7 +706,7 @@ pub(crate) fn write_bundle(
         mapping.push(json!({ "address": address, "name": contract.name, "debug_dir": address }));
     }
     write_json_file(&dir.join("contracts.json"), &json!({ "contracts": mapping }))?;
-    let (trace, _) = transaction_trace(&mut arena, &Breakpoints::default());
+    let (trace, _) = transaction_trace(&mut arenas, &Breakpoints::default())?;
     write_json_file(&dir.join("trace.json"), &trace)?;
     Ok(())
 }
@@ -743,21 +759,6 @@ fn instruction_context(
     Value::Object(context)
 }
 
-/// The root call of `arena` as the selection list shows it, e.g. `CounterTest::test_increment()`.
-fn call_label(arena: &CallTraceArena) -> String {
-    let trace = &arena.nodes()[0].trace;
-    let decoded = trace.decoded.as_deref();
-    let contract = decoded
-        .and_then(|decoded| decoded.label.clone())
-        .unwrap_or_else(|| trace.address.to_string());
-    let function = match decoded.and_then(|decoded| decoded.call_data.as_ref()) {
-        Some(call_data) => call_data.signature.clone(),
-        None if trace.kind.is_any_create() => "constructor".to_string(),
-        None => hex::encode_prefixed(trace.data.get(..4).unwrap_or_default()),
-    };
-    format!("{contract}::{function}")
-}
-
 /// The error a failed step or call ended with.
 fn status_error(status: Option<InstructionResult>) -> Option<String> {
     status.filter(|status| !status.is_ok()).map(|status| format!("{status:?}"))
@@ -772,7 +773,7 @@ fn quantity(value: U256) -> String {
 mod tests {
     use super::*;
     use foundry_compilers::artifacts::sourcemap;
-    use foundry_evm_traces::{CallKind, CallTrace, DecodedCallData, DecodedCallTrace};
+    use foundry_evm_traces::{CallKind, CallTrace};
     use soldb_ethdebug::SourceMapEnvironment;
 
     /// A step as debug mode records it: the full stack, without pushes.
@@ -845,7 +846,7 @@ mod tests {
         });
 
         let breakpoints = Breakpoints::from_iter([('a', (proxy, 3)), ('b', (implementation, 9))]);
-        let (trace, breakpoints) = transaction_trace(&mut arena, &breakpoints);
+        let (trace, breakpoints) = transaction_trace(&mut [arena], &breakpoints).unwrap();
         assert_eq!(
             breakpoints,
             BTreeMap::from([((proxy, 3), vec![2]), ((implementation, 9), Vec::new())])
@@ -951,7 +952,9 @@ mod tests {
         let (sources, arena, names) = executed_c();
         let address = Address::repeat_byte(0xc);
 
-        let programs = executed_programs(&arena, &names, &sources, &Default::default());
+        let arenas = [arena];
+        let names = [names];
+        let programs = executed_programs(&arenas, &names, &sources, &Default::default());
         let contract = contract_debug_info(&programs[0]).unwrap();
 
         assert_eq!(contract.address, Some(hex::encode_prefixed(address)));
@@ -996,31 +999,56 @@ mod tests {
     }
 
     #[test]
-    fn selects_the_last_call_without_a_terminal() {
-        let call = |label: Option<&str>, signature: Option<&str>| {
-            let mut arena = CallTraceArena::default();
-            let root = &mut arena.nodes_mut()[0].trace;
-            root.address = Address::repeat_byte(0xa);
-            root.data = Bytes::from_static(&[0x12, 0x34, 0x56, 0x78, 0x9a]);
-            root.decoded = Some(Box::new(DecodedCallTrace {
-                label: label.map(str::to_string),
-                return_data: None,
-                call_data: signature.map(|signature| DecodedCallData {
-                    signature: signature.to_string(),
-                    args: vec![],
-                }),
-            }));
-            arena
-        };
-        let set_up = call(Some("CounterTest"), Some("setUp()"));
-        let unlabeled = format!("{}::0x12345678", Address::repeat_byte(0xa));
-        let test = call(None, None);
-        assert_eq!(call_label(&set_up), "CounterTest::setUp()");
-        assert_eq!(call_label(&test), unlabeled);
+    fn keeps_all_root_calls_and_breakpoints() {
+        let (_, mut deployment, _) = executed_c();
+        deployment.nodes_mut()[0].trace.kind = CallKind::Create;
+        deployment.nodes_mut()[0].trace.gas_used = 10;
+        deployment.nodes_mut()[0].trace.success = true;
+        let (_, mut set_up, _) = executed_c();
+        set_up.nodes_mut()[0].trace.gas_used = 20;
+        set_up.nodes_mut()[0].trace.success = true;
+        let (_, mut test, _) = executed_c();
+        test.nodes_mut()[0].trace.gas_used = 30;
+        test.nodes_mut()[0].trace.status = Some(InstructionResult::Revert);
+        let breakpoints = Breakpoints::from_iter([('a', (Address::repeat_byte(0xc), 2))]);
+        let (trace, hits) =
+            transaction_trace(&mut [deployment, set_up, test], &breakpoints).unwrap();
+        soldb_debugger::check_root_calls(&trace).unwrap();
+        assert_eq!(trace.gas_used, 60);
+        assert!(!trace.success);
+        assert_eq!(trace.error.as_deref(), Some("Revert"));
+        assert_eq!(trace.steps.len(), 6);
+        assert_eq!(trace.artifacts.creations[0].entry_step, Some(0));
+        assert_eq!(trace.artifacts.creations[0].exit_step, Some(2));
+        assert_eq!(trace.artifacts.calls[0].entry_step, Some(2));
+        assert_eq!(trace.artifacts.calls[1].entry_step, Some(4));
+        assert_eq!(trace.artifacts.calls[1].exit_step, Some(6));
+        assert!(trace.artifacts.calls.iter().all(|call| call.parent_id.is_none()));
+        assert_eq!(hits[&(Address::repeat_byte(0xc), 2)], [1, 3, 5]);
+        assert!(transaction_trace(&mut [], &Breakpoints::default()).is_err());
+    }
 
-        let selected = select_call(vec![set_up, test]).unwrap();
-        assert_eq!(call_label(&selected), unlabeled);
-        assert!(select_call(Vec::new()).is_err());
+    #[test]
+    fn records_transient_storage_and_return_data() {
+        let mut builder = TraceBuilder::default();
+        let store = step(0, OpCode::TSTORE, &[42, 7]);
+        let load = step(1, OpCode::TLOAD, &[7]);
+        let mut stop = step(2, OpCode::STOP, &[42]);
+        stop.returndata = Bytes::from_static(&[0xab, 0xcd]);
+        builder.push_step(&store, Some(&load), 1);
+        builder.push_step(&load, Some(&stop), 1);
+        builder.push_step(&stop, None, 1);
+        builder.push_step(&stop, None, 1);
+        let expected = BTreeMap::from([("0x7".to_string(), "0x2a".to_string())]);
+        assert_eq!(builder.steps[0].snapshot.transient_storage, expected);
+        assert_eq!(builder.steps[1].snapshot.transient_storage, expected);
+        assert!(builder.steps[2].snapshot.transient_storage.is_empty());
+        assert!(builder.steps[0].snapshot.return_data.is_none());
+        assert_eq!(builder.steps[2].snapshot.return_data.as_deref(), Some("abcd"));
+        assert!(Arc::ptr_eq(
+            builder.steps[2].snapshot.return_data.as_ref().unwrap(),
+            builder.steps[3].snapshot.return_data.as_ref().unwrap(),
+        ));
     }
 
     #[test]
@@ -1028,7 +1056,7 @@ mod tests {
         let (sources, arena, names) = executed_c();
         let dir = tempfile::tempdir().unwrap();
 
-        write_bundle(dir.path(), arena, &names, &sources, &Default::default()).unwrap();
+        write_bundle(dir.path(), vec![arena], &[names], &sources, &Default::default()).unwrap();
 
         let address = hex::encode_prefixed(Address::repeat_byte(0xc));
         let mapping = soldb_ethdebug::read_json_file(&dir.path().join("contracts.json")).unwrap();
@@ -1068,7 +1096,8 @@ mod tests {
         });
         sources.artifacts_by_name.get_mut("C").unwrap()[0].ethdebug_runtime = Some(program);
 
-        let programs = executed_programs(&arena, &names, &sources, &Default::default());
+        let (arenas, names) = (vec![arena], vec![names]);
+        let programs = executed_programs(&arenas, &names, &sources, &Default::default());
         let contract = contract_debug_info(&programs[0]).unwrap();
         assert_eq!(contract.code_generator, Some(CodeGenerator::ViaIr));
         let offsets = contract.info.instructions.iter().map(|i| i.offset).collect::<Vec<_>>();
@@ -1076,7 +1105,7 @@ mod tests {
         assert_eq!(contract.info.sources, BTreeMap::from([(0, "src/C.sol".to_string())]));
 
         let dir = tempfile::tempdir().unwrap();
-        write_bundle(dir.path(), arena, &names, &sources, &Default::default()).unwrap();
+        write_bundle(dir.path(), arenas, &names, &sources, &Default::default()).unwrap();
         let address = hex::encode_prefixed(Address::repeat_byte(0xc));
         let program = soldb_ethdebug::load_debug_program_with_sources(
             &dir.path().join(&address),

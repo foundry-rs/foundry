@@ -41,7 +41,9 @@ use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project_cached},
     external_compiler::is_external_artifact,
-    fs, sh_status, sh_warn, shell,
+    fs,
+    fs::canonicalize_path,
+    sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
@@ -64,7 +66,7 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::{Debugger, DebuggerFrontend, DebuggerLayout};
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
@@ -510,16 +512,6 @@ pub struct TestArgs {
     #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
-    /// Debugger layout to use.
-    #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    debug_layout: Option<DebuggerLayout>,
-
-    /// Debugger frontend to use.
-    ///
-    /// The `soldb` frontend needs forge built with the `soldb` feature.
-    #[arg(long, requires = "debug", value_enum)]
-    debugger: Option<DebuggerFrontend>,
-
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
@@ -567,9 +559,9 @@ pub struct TestArgs {
     #[command(flatten)]
     tracing: TracingArgs,
 
-    /// Dumps all debugger steps to file.
+    /// Writes a SolDB trace and source bundle to a directory.
     ///
-    /// With `--debugger soldb`, writes a directory that soldb's own tools read, e.g.
+    /// Read the bundle with SolDB tools, for example:
     /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
@@ -1240,9 +1232,7 @@ impl TestArgs {
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in test files.
             config.build_info = true;
-            if self.debugger.unwrap_or_default().reads_ethdebug() {
-                config.request_ethdebug();
-            }
+            config.request_ethdebug();
         }
     }
 
@@ -1985,30 +1975,10 @@ impl TestArgs {
                     )?;
                     sources.insert_compiled_sources(&build_info_dir)?;
 
-                    // Prefer execution traces for normal debug runs, but when execution never
-                    // starts (for example if `setUp()` reverts), fall back to available
-                    // setup/deployment traces.
-                    let mut traces = test_result
-                        .traces
-                        .iter()
-                        .filter(|(kind, _)| kind.is_execution())
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if traces.is_empty() {
-                        traces = test_result.traces.clone();
-                    }
-                    if let Some(decoder) = &outcome.last_run_decoder {
-                        for (_, arena) in &mut traces {
-                            decode_trace_arena(arena, decoder).await;
-                        }
-                    }
-
-                    let mut builder = Debugger::builder()
-                        .traces(traces)
+                    let mut builder = DebuggerBuilder::new()
+                        .traces(test_result.traces)
                         .sources(sources)
-                        .breakpoints(test_result.breakpoints)
-                        .layout(self.debug_layout.unwrap_or_default())
-                        .frontend(self.debugger.unwrap_or_default());
+                        .breakpoints(test_result.breakpoints);
                     if let Some(decoder) = &outcome.last_run_decoder {
                         builder = builder.decoder(decoder);
                     }
@@ -2538,7 +2508,7 @@ impl TestArgs {
             builder =
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
-        // The debugger resolves frame identities before decoding internal calls.
+        // SolDB decodes internal calls from compiler sources.
         if decode_internal && !self.debug {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
@@ -2987,7 +2957,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
     let root = &config.root;
     let canonicalize_through_existing_ancestor = |path: &Path| -> PathBuf {
         let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
-        if let Ok(canon) = dunce::canonicalize(&resolved) {
+        if let Ok(canon) = canonicalize_path(&resolved) {
             return canon;
         }
         let mut missing = Vec::new();
@@ -2998,7 +2968,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
             let Some(parent) = ancestor.parent() else { break };
             ancestor = parent;
         }
-        let mut canon = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.into());
+        let mut canon = canonicalize_path(ancestor).unwrap_or_else(|_| ancestor.into());
         canon.extend(missing.iter().rev());
         canon
     };

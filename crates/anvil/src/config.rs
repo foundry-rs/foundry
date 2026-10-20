@@ -11,6 +11,7 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
+        miner::INSTANT_COALESCE_WINDOW,
         pool::transactions::TransactionOrder,
     },
     mem::{self, in_memory_db::StateRootDb},
@@ -254,6 +255,8 @@ pub struct NodeConfig {
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` for instant/auto mining.
     pub block_time: Option<Duration>,
+    /// Window for grouping ready transactions in auto mining; zero disables coalescing.
+    pub transaction_coalescing_window: Duration,
     /// Disable auto and interval mining mode and use `MiningMode::None` instead.
     pub no_mining: bool,
     /// Enables auto and interval mining mode
@@ -470,18 +473,7 @@ Chain ID
             );
         }
 
-        if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
-            let _ = write!(
-                s,
-                r#"
-Gas Price
-==================
-
-{}
-"#,
-                self.get_gas_price().green()
-            );
-        } else {
+        if SpecId::from(self.get_hardfork()).is_enabled_in(SpecId::LONDON) {
             let _ = write!(
                 s,
                 r#"
@@ -491,6 +483,17 @@ Base Fee
 {}
 "#,
                 self.get_base_fee().green()
+            );
+        } else {
+            let _ = write!(
+                s,
+                r#"
+Gas Price
+==================
+
+{}
+"#,
+                self.get_gas_price().green()
             );
         }
 
@@ -658,6 +661,7 @@ impl Default for NodeConfig {
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
+            transaction_coalescing_window: INSTANT_COALESCE_WINDOW,
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
@@ -1046,6 +1050,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the auto-mining coalescing window. Zero disables the delay.
+    #[must_use]
+    pub const fn with_transaction_coalescing_window(mut self, window: Duration) -> Self {
+        self.transaction_coalescing_window = window;
+        self
+    }
+
     /// If set to `true` auto mining will be disabled
     #[must_use]
     pub const fn with_no_mining(mut self, no_mining: bool) -> Self {
@@ -1288,6 +1299,11 @@ impl NodeConfig {
         }
         if !self.silent {
             sh_println!("{}", self.as_string(fork))?;
+            if self.networks.is_celo() {
+                foundry_common::sh_warn!(
+                    "CIP-64 uses native fee accounting; feeCurrency is preserved but token fees are not charged"
+                )?;
+            }
         }
         Ok(())
     }
@@ -1456,8 +1472,8 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::default();
-        cfg.spec = self.get_hardfork().into();
+        let mut cfg = CfgEnv::new();
+        cfg.set_spec_and_mainnet_gas_params(self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -2230,22 +2246,26 @@ latest block number: {latest_block}"
             self.block_cache_path_for_rpc(source_chain_id, fork_block_number, &eth_rpc_url);
         let block_chain_db = BlockchainDb::new(meta, cache_path);
 
+        let fork_provider = || {
+            if self.fork_urls.len() <= 1 {
+                return self.fork_provider(&eth_rpc_url);
+            }
+            ProviderBuilder::new(&eth_rpc_url)
+                .timeout(self.fork_request_timeout)
+                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
+                .max_retry(self.fork_request_retries)
+                .headers(self.fork_headers.clone())
+                .build_fallback(self.fork_urls.clone())
+                .wrap_err("failed to establish round-robin provider to fork urls")
+        };
         // After bootstrap, rebuild the provider with round-robin if multiple URLs are
         // configured. This ensures bootstrap used only the primary endpoint for consistency,
         // while ongoing requests are distributed across all endpoints.
         let provider = if self.fork_urls.len() > 1 {
             let urls = self.fork_urls.iter().map(|url| redact_url(url)).collect::<Vec<_>>();
             debug!(target: "node", ?urls, "using multi-endpoint round-robin provider");
-            Arc::new(
-                ProviderBuilder::new(&eth_rpc_url)
-                    .timeout(self.fork_request_timeout)
-                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                    .compute_units_per_second(self.compute_units_per_second)
-                    .max_retry(self.fork_request_retries)
-                    .headers(self.fork_headers.clone())
-                    .build_fallback(self.fork_urls.clone())
-                    .wrap_err("failed to establish round-robin provider to fork urls")?,
-            )
+            Arc::new(fork_provider()?)
         } else {
             provider
         };
@@ -2257,14 +2277,16 @@ latest block number: {latest_block}"
             fork_block_number,
             block_hash,
         );
+        // Keep the worker's connections on its runtime, independent of foreground RPC requests.
+        let backend_provider = fork_provider()?;
         let (backend, handler) = if self.fork_state_by_number {
             SharedBackend::new_with_anchor_by_number(
-                Arc::clone(&provider),
+                backend_provider,
                 block_chain_db.clone(),
                 anchor,
             )?
         } else {
-            SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor)?
+            SharedBackend::new_with_anchor(backend_provider, block_chain_db.clone(), anchor)?
         };
         // The handler gets its own thread and runtime: `SharedBackend` reads block the calling
         // thread via `block_in_place`, so under enough concurrent reads they can occupy every

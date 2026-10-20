@@ -65,38 +65,117 @@ contract NoAssertionsRevertTest is Test {
 contract LegacyAssertionsTest {
     bool public failed;
 
+    function setFailed() external {
+        failed = true;
+    }
+
     function testFlagNotSetSuccess() public {}
 
     function testFlagSetFailure() public {
         failed = true;
     }
+
+    function testFlagSetInCallFailure() public {
+        this.setFailed();
+    }
 }
+
+/// forge-config: default.legacy_assertions = true
+/// forge-config: default.isolate = false
+contract LegacyAssertionsNonIsolatedTest is LegacyAssertionsTest {}
+
+// Non-view on purpose: calls into it must be CALLs, which run isolated.
+contract Asserter {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function fail() external {
+        vm.assertTrue(false);
+    }
+
+    function failThenRevert() external {
+        vm.assertTrue(false);
+        revert();
+    }
+}
+
+/// forge-config: default.assertions_revert = false
+contract NonRevertingAssertionsTest is Test {
+    Asserter asserter = new Asserter();
+
+    function testBodyFailure() public {
+        vm.assertTrue(false);
+    }
+
+    function testCallFailure() public {
+        asserter.fail();
+    }
+
+    function testRevertedCallFailureIsDropped() public {
+        try asserter.failThenRevert() {} catch {}
+    }
+}
+
+/// forge-config: default.assertions_revert = false
+/// forge-config: default.isolate = false
+contract NonRevertingAssertionsNonIsolatedTest is NonRevertingAssertionsTest {}
 "#,
     );
 
     cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/LegacyAssertions.t.sol:LegacyAssertionsTest
+Ran 3 tests for test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
 [PASS] testFlagNotSetSuccess() ([GAS])
 [FAIL] testFlagSetFailure() ([GAS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL] testFlagSetInCallFailure() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 3 tests for test/LegacyAssertions.t.sol:LegacyAssertionsTest
+[PASS] testFlagNotSetSuccess() ([GAS])
+[FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 2 test suites [ELAPSED]: 1 tests passed, 2 failed, 0 skipped (3 total tests)
+Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+[PASS] testRevertedCallFailureIsDropped() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+[PASS] testRevertedCallFailureIsDropped() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 5 test suites [ELAPSED]: 4 tests passed, 9 failed, 0 skipped (13 total tests)
 
 Failing tests:
-Encountered 1 failing test in test/LegacyAssertions.t.sol:LegacyAssertionsTest
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
 [FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
+
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsTest
+[FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
 
 Encountered 1 failing test in test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 
-Encountered a total of 2 failing tests, 1 tests succeeded
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
 
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+
+Encountered a total of 9 failing tests, 4 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 9 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);

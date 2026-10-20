@@ -6,13 +6,12 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_network::{AnyNetwork, Network, TransactionBuilder};
+use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
 };
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionInputKind;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
@@ -23,7 +22,7 @@ use foundry_common::{
 };
 use foundry_compilers::multi::MultiCompilerLanguage;
 use foundry_config::{Chain, NamedChain};
-use foundry_debugger::{Debugger, DebuggerBuilder};
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
@@ -332,19 +331,9 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     async fn prepare_simulation_inner(self, silent: bool) -> Result<PreSimulationState<FEN>> {
         let returns = self.get_returns()?;
 
-        let mut txs: BroadcastableTransactions<FEN::Network> =
-            self.execution_result.transactions.clone().unwrap_or_default();
-
-        // Ensure that unsigned transactions have both `data` and `input` populated to avoid
-        // issues with eth_estimateGas and eth_sendTransaction requests.
-        for tx in &mut txs {
-            if let Some(req) = tx.transaction.as_unsigned_mut()
-                && let Some(input) = req.input().cloned()
-            {
-                *req = req.clone().with_input_kind(input, TransactionInputKind::Both);
-            }
-        }
-        let mut rpc_data = RpcData::from_transactions(&txs);
+        let mut rpc_data = RpcData::from_transactions(
+            self.execution_result.transactions.as_ref().unwrap_or(&Default::default()),
+        );
         if let Some(identity) = &self.script_config.evm_opts.fork_endpoint
             && rpc_data.total_rpcs.contains(&identity.endpoint)
         {
@@ -622,19 +611,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         sources.insert_compiled_sources(
             &self.script_config.config.project_paths::<MultiCompilerLanguage>().build_infos,
         )?;
-        Ok(Debugger::builder()
-            .traces(
-                self.execution_result
-                    .traces
-                    .into_iter()
-                    .filter(|(t, _)| t.is_execution())
-                    .collect(),
-            )
+        Ok(DebuggerBuilder::new()
+            .traces(self.execution_result.traces)
             .decoder(&self.execution_artifacts.decoder)
             .known_contracts(&self.build_data.known_contracts)
             .sources(sources)
-            .breakpoints(self.execution_result.breakpoints)
-            .layout(self.args.debug_layout.unwrap_or_default())
-            .frontend(self.args.debugger.unwrap_or_default()))
+            .breakpoints(self.execution_result.breakpoints))
     }
 }

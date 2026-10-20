@@ -57,7 +57,10 @@ contract MultiNetworkTest {
     assert!(output.contains("[PASS] testTempo()"), "selected test did not run: {output}");
     assert!(!output.contains("[PASS] testDefault()"), "unselected test also ran: {output}");
     assert!(dump_path.exists(), "debugger dump was not created");
-    serde_json::from_slice::<serde_json::Value>(&std::fs::read(dump_path).unwrap()).unwrap();
+    serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_path.join("trace.json")).unwrap(),
+    )
+    .unwrap();
 }
 
 // Sets up a debuggable test case.
@@ -161,7 +164,6 @@ contract Script0 is Script, Test {
 // frames, and the `--dump` bundle. Dynamic test linking rewrites `new Counter()` in the test, so
 // the test file's lines come from the source the compiler saw.
 #[forgetest]
-#[cfg(feature = "soldb")]
 fn debugger_soldb_session(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
@@ -207,7 +209,7 @@ contract CounterTest {
 "#,
     );
 
-    cmd.args(["test", "--debug", "--debugger", "soldb", "--mt", "test_increment"])
+    cmd.args(["test", "--debug", "--mt", "test_increment"])
         .stdin("break src/Counter.sol:13\ncontinue\ncontinue\nvars\nbacktrace\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
@@ -220,25 +222,25 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-Loaded trace with 821 steps.
+Loaded trace with 1125 steps.
 Sources loaded for: CounterTest (0x7fa9385be102ac3eac297483dd6233d62b3e1496), Counter (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f)
-test/Counter.t.sol:10  (step 0/820, pc 0, PUSH1, gas 1073720760)
+test/Counter.t.sol:10  (step 0/1124, pc 0, PUSH1, gas 1073664214)
    10 | contract CounterTest {
 Breakpoint #2 set at src/Counter.sol:13
-Breakpoint #1 hit at step 406, PC 529 if step == 406
-test/Counter.t.sol:20 in test_increment  (step 406/820, pc 529, CALL, gas 1073668730)
+Breakpoint #1 hit at step 710, PC 529 if step == 710
+test/Counter.t.sol:20 in test_increment  (step 710/1124, pc 529, CALL, gas 1073668730)
    20 |         vm.breakpoint("a");
-Breakpoint #2 hit at step 564, src/Counter.sol:13
-src/Counter.sol:13 in increment  (step 564/820, pc 167, DUP1, gas 1056889650)
+Breakpoint #2 hit at step 868, src/Counter.sol:13
+src/Counter.sol:13 in increment  (step 868/1124, pc 167, DUP1, gas 1056889650)
    13 |         number = next;
 warning: local variables are inferred from the legacy source map and the stack layout of solc's legacy code generator, not from compiler-reported variable locations
 uint256 next = 42 [stack+2]
 State:
 uint256 number = 41 [slot 0x0]
-#0  increment at src/Counter.sol:13  step 564, PC 167
-#1  Counter at src/Counter.sol:4  step 495, PC 62
-#2  test_increment at test/Counter.t.sol:21  step 461, PC 652
-#3  CounterTest at test/Counter.t.sol:10  step 28, PC 51
+#0  increment at src/Counter.sol:13  step 868, PC 167
+#1  Counter at src/Counter.sol:4  step 799, PC 62
+#2  test_increment at test/Counter.t.sol:21  step 765, PC 652
+#3  CounterTest at test/Counter.t.sol:10  step 332, PC 51
 Exiting debugger.
 
 "#]]);
@@ -246,7 +248,7 @@ Exiting debugger.
     // `--dump` writes a bundle that soldb's own tools read instead.
     let dump_dir = prj.root().join("soldb");
     cmd.forge_fuse()
-        .args(["test", "--debug", "--debugger", "soldb", "--mt", "test_increment", "--dump"])
+        .args(["test", "--debug", "--mt", "test_increment", "--dump"])
         .arg(&dump_dir)
         .assert_success();
     let read_json = |path: &str| {
@@ -278,16 +280,86 @@ Exiting debugger.
         .map(|call| (call["call_type"].as_str().unwrap(), call["entry_step"].as_u64().unwrap()))
         .collect::<Vec<_>>();
     assert_eq!(trace["backend"], "foundry");
-    assert_eq!(trace["steps"].as_array().unwrap().len(), 821);
+    assert_eq!(trace["steps"].as_array().unwrap().len(), 1125);
     assert_eq!(
         calls,
-        [("CALL", 0), ("CALL", 165), ("CALL", 407), ("CALL", 462), ("STATICCALL", 620)]
+        [
+            ("CALL", 17),
+            ("CALL", 149),
+            ("CALL", 304),
+            ("CALL", 469),
+            ("CALL", 711),
+            ("CALL", 766),
+            ("STATICCALL", 924)
+        ]
     );
+}
+
+// Transient storage resets after setup, and the return buffer survives the following local steps.
+#[forgetest]
+fn debugger_soldb_transient_storage_and_return_data(prj: _, cmd: _) {
+    prj.add_test(
+        "TraceData.t.sol",
+        r#"
+contract TraceDataTest {
+    function setUp() public {
+        assembly { tstore(7, 99) }
+    }
+
+    function value() external pure returns (uint256) {
+        return 42;
+    }
+
+    function test_data() public {
+        uint256 result;
+        assembly { result := tload(7) }
+        require(result == 0);
+        result = this.value();
+        assembly { tstore(7, result) }
+        assembly { result := tload(7) }
+        require(result == 42);
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--debug", "--mt", "test_data"])
+        .stdin("break test/TraceData.t.sol:16\nbreak test/TraceData.t.sol:20\ncontinue\ntransient\ncontinue\ntransient\nreturndata\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TraceData.t.sol:TraceDataTest
+[PASS] test_data() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Loaded trace with 342 steps.
+Sources loaded for: TraceDataTest (0x7fa9385be102ac3eac297483dd6233d62b3e1496)
+test/TraceData.t.sol:4  (step 0/341, pc 0, PUSH1, gas 1073680956)
+    4 | contract TraceDataTest {
+Breakpoint #1 set at test/TraceData.t.sol:16
+Breakpoint #2 set at test/TraceData.t.sol:20
+Breakpoint #1 hit at step 96, test/TraceData.t.sol:16
+test/TraceData.t.sol:16 in test_data  (step 96/341, pc 139, PUSH0, gas 1073720494)
+   16 |         require(result == 0);
+Transient storage: of 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+  0x7 = 0x0
+Breakpoint #2 hit at step 332, test/TraceData.t.sol:20
+test/TraceData.t.sol:20 in test_data  (step 332/341, pc 270, PUSH1, gas 1073719426)
+   20 |         require(result == 42);
+Transient storage: of 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+  0x7 = 0x2a
+Return data: 32 bytes
+0x000000000000000000000000000000000000000000000000000000000000002a
+Exiting debugger.
+
+"#]]);
 }
 
 // Opens a script in soldb and checks a stop inside a contract the script creates.
 #[forgetest]
-#[cfg(feature = "soldb")]
 fn script_debugger_soldb_session(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
@@ -316,32 +388,32 @@ contract CounterScript {
 "#,
     );
 
-    cmd.args(["script", "script/Counter.s.sol", "--debug", "--debugger", "soldb"])
+    cmd.args(["script", "script/Counter.s.sol", "--debug"])
         .stdin("break src/Counter.sol:8\ncontinue\ncontinue\nvars\nbacktrace\nquit\n")
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-Loaded trace with 379 steps.
+Loaded trace with 396 steps.
 Sources loaded for: CounterScript (0x9f7cf1d1f558e57ef88a59ac3d47214ef25b6a06), Counter (0x5aadfb43ef8daf45dd80f4676345b7676f1d70e3)
-script/Counter.s.sol:6  (step 0/378, pc 0, PUSH1, gas 1073720760)
+script/Counter.s.sol:6  (step 0/395, pc 0, PUSH1, gas 1073678100)
     6 | contract CounterScript {
 Breakpoint #1 set at src/Counter.sol:8
-Breakpoint #1 hit at step 150, src/Counter.sol:8
-src/Counter.sol:8 in increment  (step 150/378, pc 92, PUSH1, gas 1056795911)
+Breakpoint #1 hit at step 167, src/Counter.sol:8
+src/Counter.sol:8 in increment  (step 167/395, pc 92, PUSH1, gas 1056795911)
     8 |         number = number + 1;
-Breakpoint #1 hit at step 297, src/Counter.sol:8
-src/Counter.sol:8 in increment  (step 297/378, pc 92, PUSH1, gas 1056752761)
+Breakpoint #1 hit at step 314, src/Counter.sol:8
+src/Counter.sol:8 in increment  (step 314/395, pc 92, PUSH1, gas 1056752761)
     8 |         number = number + 1;
 warning: local variables are inferred from the legacy source map and the stack layout of solc's legacy code generator, not from compiler-reported variable locations
 Variables: no variables in scope at PC 92
 State:
 uint256 number = 1 [slot 0x0]
-#0  increment at src/Counter.sol:8  step 297, PC 92
-#1  Counter at src/Counter.sol:4  step 291, PC 47
-#2  run at script/Counter.s.sol:10  step 262, PC 259
-#3  CounterScript at script/Counter.s.sol:6  step 23, PC 40
+#0  increment at src/Counter.sol:8  step 314, PC 92
+#1  Counter at src/Counter.sol:4  step 308, PC 47
+#2  run at script/Counter.s.sol:10  step 279, PC 259
+#3  CounterScript at script/Counter.s.sol:6  step 40, PC 40
 Exiting debugger.
 
 "#]]);
@@ -350,7 +422,6 @@ Exiting debugger.
 // Requests the compiler's ETHDebug programs for an unoptimized via-IR build, and writes them into
 // the soldb bundle, where soldb prefers them over source maps.
 #[forgetest]
-#[cfg(feature = "soldb")]
 fn debugger_soldb_ethdebug(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.via_ir = true;
@@ -383,7 +454,7 @@ contract CounterTest {
     );
 
     let dump_dir = prj.root().join("soldb");
-    cmd.args(["test", "--debug", "--debugger", "soldb", "--mt", "test_increment", "--dump"])
+    cmd.args(["test", "--debug", "--mt", "test_increment", "--dump"])
         .arg(&dump_dir)
         .assert_success();
     let program =

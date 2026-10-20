@@ -250,9 +250,10 @@ impl<FEN: FoundryEvmNetwork> DerefMut for TracingExecutor<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_evm::EvmEnv;
     use alloy_rpc_types::state::AccountOverride;
     use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
-    use revm::context::Transaction;
+    use revm::context::{Transaction, TxEnv};
 
     #[cfg(feature = "base")]
     use foundry_evm_core::evm::BaseEvmNetwork;
@@ -331,11 +332,11 @@ mod tests {
     #[test]
     fn state_override_nonce_does_not_modify_transaction_nonce() {
         let sender = Address::repeat_byte(0x11);
-        let mut tx_env = TxEnvFor::<EthEvmNetwork>::default();
+        let mut tx_env = TxEnv::default();
         tx_env.set_caller(sender);
         tx_env.set_nonce(7);
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut evm_env = EvmEnvFor::<EthEvmNetwork>::default();
+        let mut evm_env = EvmEnv::default();
         evm_env.cfg_env.disable_nonce_check = true;
         let mut executor =
             ExecutorBuilder::default().build(evm_env, tx_env, backend, NetworkConfigs::default());

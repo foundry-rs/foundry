@@ -22,7 +22,7 @@ use alloy_primitives::{
     utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
-use alloy_rlp::Decodable;
+use alloy_rlp::{decode_exact, encode};
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -254,9 +254,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Conversion(ConversionSubcommand::FromRlp { value, as_int }) => {
             let bytes = hex::decode(stdin::unwrap_line(value)?).wrap_err("Could not decode hex")?;
             let value = if as_int {
-                U256::decode(&mut &bytes[..])?.to_string()
+                decode_exact::<U256>(&bytes)?.to_string()
             } else {
-                crate::rlp_converter::Item::decode(&mut &bytes[..])
+                decode_exact::<crate::rlp_converter::Item>(&bytes)
                     .wrap_err("Could not decode rlp")?
                     .to_string()
             };
@@ -267,7 +267,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let val =
                 serde_json::from_str(&value).unwrap_or_else(|_| serde_json::Value::String(value));
             let item = crate::rlp_converter::Item::value_to_item(&val)?;
-            print_scalar(hex::encode_prefixed(alloy_rlp::encode(item)))?;
+            print_scalar(hex::encode_prefixed(encode(item)))?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToHex(ToBaseArgs { value, base_in })) => {
             let value = stdin::unwrap_line(value)?;
@@ -457,10 +457,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::DecodeString { data }) => {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
         }
-        CastSubcommand::Abi(AbiSubcommand::DecodeEvent { sig, data }) => {
+        CastSubcommand::Abi(AbiSubcommand::DecodeEvent { sig, data, topics }) => {
             let decoded_values = if let Some(event_sig) = sig {
                 let event = get_event(&event_sig)?;
-                abi_decode_event_data(&event, &hex::decode(data)?)?
+                let data = hex::decode(data)?;
+                if topics.is_empty() {
+                    abi_decode_event_data(&event, &data)?
+                } else {
+                    let decoded = event.decode_log_parts(topics, &data)?;
+                    let mut indexed = decoded.indexed.into_iter();
+                    let mut body = decoded.body.into_iter();
+                    event
+                        .inputs
+                        .iter()
+                        .map(|input| {
+                            if input.indexed { indexed.next() } else { body.next() }
+                                .expect("decoded event has a value for each input")
+                        })
+                        .collect()
+                }
             } else {
                 let data = strip_0x(&data);
                 let selector: B256 = data.get(..64).unwrap_or_default().parse()?;

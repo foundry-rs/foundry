@@ -186,7 +186,7 @@ pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState, SpecId);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
     pub fn new(inner: T, spec: SpecId) -> Self {
-        Self(CacheDB::new(inner), BalState::default(), spec)
+        Self(CacheDB::new(inner), BalState::new(), spec)
     }
 
     /// Enables EIP-7928 block access list recording.
@@ -314,12 +314,10 @@ impl<T: DatabaseRef> DatabaseRef for EmptyAsAbsentDb<T> {
 
 /// This bundles all required revm traits
 pub trait Db:
-    DatabaseRef<Error = DatabaseError>
-    + Database<Error = DatabaseError>
+    Database<Error = DatabaseError>
     + DatabaseCommit
     + MaybeFullDatabase
     + MaybeForkedDatabase
-    + fmt::Debug
     + Send
     + Sync
 {
@@ -378,10 +376,8 @@ pub trait Db:
     /// Deserialize and add all accounts to the backend storage.
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts {
-            let old_account_nonce = DatabaseRef::basic_ref(self, addr)
-                .ok()
-                .and_then(|acc| acc.map(|acc| acc.nonce))
-                .unwrap_or_default();
+            let old_account_nonce =
+                DatabaseRef::basic_ref(self, addr)?.map(|acc| acc.nonce).unwrap_or_default();
             // use max nonce in case account is imported multiple times with difference
             // nonces to prevent collisions
             let nonce = std::cmp::max(old_account_nonce, account.nonce);
@@ -518,7 +514,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
             let mut info = acc.info;
-            info.code = self.cache.contracts.remove(&info.code_hash);
+            info.code = self.cache.contracts.remove(&info.code_hash());
             accounts.insert(addr, info);
         }
         let block_hashes = std::mem::take(&mut self.cache.block_hashes);
@@ -532,7 +528,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, acc) in &self.cache.accounts {
             account_storage.insert(*addr, acc.storage.clone());
             let mut info = acc.info.clone();
-            info.code = self.cache.contracts.get(&info.code_hash).cloned();
+            info.code = self.cache.contracts.get(&info.code_hash()).cloned();
             accounts.insert(*addr, info);
         }
 
@@ -549,7 +545,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
-                self.cache.contracts.insert(acc.code_hash, code);
+                self.cache.contracts.insert(acc.code_hash(), code);
             }
             self.cache.accounts.insert(
                 addr,
@@ -986,7 +982,12 @@ impl IntoIterator for SerializableHistoricalStates {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::eth::backend::mem::fork_db::ForkedDatabase;
     use alloy_consensus::Header;
+    use alloy_network::AnyNetwork;
+    use alloy_provider::ProviderBuilder;
+    use alloy_transport::mock::Asserter;
+    use foundry_evm::backend::{BlockchainDbMeta, SharedBackend};
     use std::fs;
 
     #[test]
@@ -1136,5 +1137,47 @@ mod test {
         assert_eq!(withdrawals.len(), 1);
         assert_eq!(withdrawals[0].index, 42);
         assert_eq!(withdrawals[0].validator_index, 123);
+    }
+
+    #[test]
+    fn load_state_fork_read_error_allows_snapshot_rollback() {
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(Asserter::new());
+        let remote = BlockchainDb::new(
+            BlockchainDbMeta::new(BlockEnv::default(), "http://localhost".to_string()),
+            None,
+        );
+        let (backend, handler) = SharedBackend::new(provider, remote.clone(), None);
+        drop(handler);
+        let mut db = ForkedDatabase::new(backend, remote);
+        let cached = Address::with_last_byte(1);
+        let uncached = Address::with_last_byte(2);
+        let original = AccountInfo { nonce: 7, balance: U256::ONE, ..Default::default() };
+        db.insert_account(cached, original.clone());
+        let snapshot = db.snapshot_state();
+        let mut state = SerializableState::default();
+        for address in [cached, uncached] {
+            state.accounts.insert(
+                address,
+                SerializableAccountRecord {
+                    nonce: 3,
+                    balance: U256::from(10),
+                    code: Bytes::new(),
+                    storage: Default::default(),
+                },
+            );
+        }
+
+        // The cached account imports first; the next lookup reaches the closed fork backend.
+        assert!(matches!(db.load_state(state), Err(DatabaseError::Send(_))));
+        let imported = db.basic_ref(cached).unwrap().unwrap();
+        assert_eq!(imported.nonce, original.nonce);
+        assert_eq!(imported.balance, U256::from(10));
+        assert!(!db.database().cache.accounts.contains_key(&uncached));
+
+        // Mirror Backend::load_state's error path and restore the earlier partial import.
+        assert!(db.revert_state(snapshot, RevertStateSnapshotAction::RevertRemove));
+        assert_eq!(db.basic_ref(cached).unwrap().unwrap(), original);
+        assert!(!db.database().cache.accounts.contains_key(&uncached));
     }
 }

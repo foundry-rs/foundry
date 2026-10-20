@@ -5,10 +5,8 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::{
-    core::evm::{BaseEvmNetwork, TxEnvelopeFor},
-    hardforks::BaseUpgrade,
-};
+use base_common_consensus::BaseTxEnvelope;
+use foundry_evm::hardforks::BaseUpgrade;
 use foundry_test_utils::util::OutputExt;
 use serde_json::json;
 
@@ -207,13 +205,12 @@ fn base_execute_transaction_rejects_eip8130(prj: _, cmd: _) {
         },
         "senderAuth": "0x", "payerAuth": "0x"
     });
-    let unsigned =
-        serde_json::from_value::<TxEnvelopeFor<BaseEvmNetwork>>(envelope.clone()).unwrap();
+    let unsigned = serde_json::from_value::<BaseTxEnvelope>(envelope.clone()).unwrap();
     let signature = signer
         .sign_hash_sync(&unsigned.as_eip8130().unwrap().tx().sender_signature_hash())
         .unwrap();
     envelope["senderAuth"] = json!(Bytes::from(signature.as_bytes()));
-    let signed = serde_json::from_value::<TxEnvelopeFor<BaseEvmNetwork>>(envelope).unwrap();
+    let signed = serde_json::from_value::<BaseTxEnvelope>(envelope).unwrap();
     assert_eq!(signed.recover_signer().unwrap(), signer.address());
     let mut raw = Vec::new();
     signed.network_encode(&mut raw);

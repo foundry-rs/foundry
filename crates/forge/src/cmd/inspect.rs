@@ -1,3 +1,4 @@
+use self::ContractArtifactField as Caf;
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
 use comfy_table::{
@@ -18,8 +19,9 @@ use foundry_compilers::{
     artifacts::{
         StorageLayout,
         output_selection::{
-            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection, OutputSelection,
+            BytecodeOutputSelection, ContractOutputSelection, ContractOutputSelection as Cos,
+            DeployedBytecodeOutputSelection, EvmOutputSelection, EvmOutputSelection as Eos,
+            EwasmOutputSelection, OutputSelection,
         },
     },
     solc::{SolcCompiler, SolcLanguage},
@@ -711,7 +713,6 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
     type Error = eyre::Error;
 
     fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
-        type Caf = ContractArtifactField;
         match field {
             Caf::Artifact => Err(eyre!("Artifact is not supported for ContractOutputSelection")),
             Caf::Abi => Ok(Self::Abi),
@@ -748,8 +749,6 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
 
 impl PartialEq<ContractOutputSelection> for ContractArtifactField {
     fn eq(&self, other: &ContractOutputSelection) -> bool {
-        type Cos = ContractOutputSelection;
-        type Eos = EvmOutputSelection;
         matches!(
             (self, other),
             (Self::Abi | Self::Events | Self::Errors, Cos::Abi)

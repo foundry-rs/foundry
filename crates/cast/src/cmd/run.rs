@@ -47,7 +47,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerFrontend;
 use foundry_evm::{
     core::{
         FoundryBlock as _, FoundryTransaction as _,
@@ -73,7 +72,9 @@ use std::sync::Arc;
 use foundry_evm::core::evm::BaseEvmNetwork;
 
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
+use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
@@ -90,12 +91,6 @@ pub struct RunArgs {
     /// Opens the transaction in the debugger.
     #[arg(long, short)]
     debug: bool,
-
-    /// Debugger frontend to use.
-    ///
-    /// The `soldb` frontend needs cast built with the `soldb` feature.
-    #[arg(long, requires = "debug", value_enum)]
-    debugger: Option<DebuggerFrontend>,
 
     /// Print out opcode traces.
     #[arg(long, short)]
@@ -483,7 +478,7 @@ impl RunArgs {
             &contracts_bytecode,
             &tracing,
             with_local_artifacts,
-            None,
+            false,
         )
         .await
     }
@@ -841,7 +836,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             &contracts_bytecode,
             &self.tracing,
             self.args.with_local_artifacts,
-            self.args.debug.then(|| self.args.debugger.unwrap_or_default()),
+            self.args.debug,
         )
         .await?;
         self.warn_on_receipt_mismatch(success, gas_used)
@@ -924,14 +919,14 @@ impl PreparedRun<MonadEvmNetwork> {
         // Decode the target transaction before replaying the block: an envelope this build
         // can't decode should fail fast, not after paying for the entire prior-transaction
         // replay.
-        let target_tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(&self.tx)?;
+        let target_tx_env = TxEnv::from_any_rpc_transaction(&self.tx)?;
         let target_index = self.target_index()?;
         self.prepare_target();
 
         let mut replay = Vec::new();
         self.for_each_prefix_transaction(target_index, |index, tx| {
-            let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
-            let chain_context: ChainFor<MonadEvmNetwork> = block_context.transaction(index);
+            let tx_env = TxEnv::from_any_rpc_transaction(tx)?;
+            let chain_context = block_context.transaction(index);
             replay.push((tx.tx_hash(), tx_env, chain_context));
             Ok(())
         })?;

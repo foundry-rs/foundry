@@ -184,7 +184,7 @@ Executing previous transactions from the block.
 // tests cast can decode external libraries traces with project cached selectors
 #[forgetest_init]
 async fn flaky_decode_external_libraries_with_cached_selectors(prj: _, cmd: _) {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     prj.add_source(
         "ExternalLib",
@@ -238,19 +238,26 @@ contract CounterInExternalLibScript is Script {
     ])
     .assert_success();
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(1))
-        .await
+    // Automining may put the library and contract deployments in separate blocks.
+    let broadcast: serde_json::Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/CounterInExternalLibScript.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let tx_hash = broadcast["transactions"]
+        .as_array()
         .unwrap()
-        .unwrap()
-        .tx_hash();
+        .iter()
+        .find(|tx| tx["contractName"] == "CounterInExternalLib")
+        .expect("contract deployment transaction")["hash"]
+        .as_str()
+        .expect("contract deployment transaction hash");
 
     // Build and cache project selectors.
     cmd.forge_fuse().args(["build"]).assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
     // Assert cast with local artifacts can decode external lib signature.
     cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args(["run", tx_hash, "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -456,7 +463,7 @@ async fn cast_run_replays_elastic_chain_id_on_anvil(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
 
     cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()]).assert_success().stdout_eq(
@@ -482,7 +489,7 @@ async fn cast_run_rejects_elastic_chains(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -513,7 +520,7 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -662,7 +669,7 @@ async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
     let output = cmd
         .args([
             "run",
-            &receipt.transaction_hash().to_string(),
+            &receipt.tx_hash().to_string(),
             "--rpc-url",
             &handle.http_endpoint(),
             "--evm-version",
@@ -741,7 +748,6 @@ async fn cast_run_rejects_mismatched_transaction(cmd: _) {
 
 // Opens a replayed transaction in soldb and checks a source stop with its variables.
 #[forgetest]
-#[cfg(feature = "soldb")]
 async fn cast_run_debug_soldb(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
@@ -755,8 +761,6 @@ async fn cast_run_debug_soldb(prj: _, cmd: _) {
             "--rpc-url",
             &endpoint,
             "--debug",
-            "--debugger",
-            "soldb",
             "--with-local-artifacts",
         ])
         .stdin("break src/Counter.sol:8\ncontinue\nvars\nbacktrace\nquit\n")
@@ -782,4 +786,48 @@ uint256 number = <unknown: slot 0x0 has not been read or written yet> [slot 0x0]
 Exiting debugger.
 
 "#]]);
+}
+
+// A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
+// charges 21000 where EIP-2780 charges 15000.
+#[casttest]
+async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
+    for (hardfork, gas) in
+        [(EthereumHardfork::Cancun, 21_000), (EthereumHardfork::Amsterdam, 15_000)]
+    {
+        let (upstream_api, upstream) =
+            anvil::spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let mut accounts = upstream.dev_accounts();
+        let tx = TransactionRequest::default()
+            .with_from(accounts.next().unwrap())
+            .with_to(accounts.next().unwrap());
+        let receipt = upstream
+            .http_provider()
+            .send_transaction(tx.into())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.gas_used, gas);
+        // Fork after the transaction's block, so that the fork serves it as upstream history.
+        upstream_api.evm_mine(None).await.unwrap();
+
+        let (_, fork) = anvil::spawn(
+            NodeConfig::test()
+                .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+                .with_eth_rpc_url(Some(upstream.http_endpoint())),
+        )
+        .await;
+        cmd.cast_fuse()
+            .args([
+                "run",
+                &receipt.transaction_hash.to_string(),
+                "--rpc-url",
+                &fork.http_endpoint(),
+            ])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n"));
+    }
 }

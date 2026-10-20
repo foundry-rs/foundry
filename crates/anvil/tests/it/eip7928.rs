@@ -120,14 +120,14 @@ async fn locally_mined_transactions_use_ordered_bal_indices() {
 
     let bal =
         provider.get_block_access_list_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    let sender = bal.iter().find(|account| account.address == from).unwrap();
+    let sender = bal.iter().find(|account| account.address() == from).unwrap();
     let indices =
-        sender.nonce_changes.iter().map(|change| change.block_access_index).collect::<Vec<_>>();
+        sender.nonce_changes.iter().map(|change| change.block_access_index()).collect::<Vec<_>>();
     assert_eq!(indices, [BlockAccessIndex::new(1), BlockAccessIndex::new(2)]);
 }
 
 fn account(bal: &BlockAccessList, address: Address) -> &AccountChanges {
-    bal.iter().find(|account| account.address == address).unwrap_or_else(|| {
+    bal.iter().find(|account| account.address() == address).unwrap_or_else(|| {
         panic!("{address} is missing from the block access list");
     })
 }
@@ -182,7 +182,7 @@ async fn locally_mined_block_access_list_records_every_phase() {
         sender_changes
             .balance_changes
             .iter()
-            .map(|change| change.block_access_index)
+            .map(|change| change.block_access_index())
             .collect::<Vec<_>>(),
         [index(1), index(2)]
     );
@@ -191,7 +191,7 @@ async fn locally_mined_block_access_list_records_every_phase() {
         beneficiary
             .balance_changes
             .iter()
-            .map(|change| change.block_access_index)
+            .map(|change| change.block_access_index())
             .collect::<Vec<_>>(),
         [index(1), index(2)]
     );

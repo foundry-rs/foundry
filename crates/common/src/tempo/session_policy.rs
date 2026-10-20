@@ -179,7 +179,7 @@ fn session_scopes_to_entry(scope: &[CallScope]) -> Vec<SessionCallScope> {
     scope
         .iter()
         .map(|scope| SessionCallScope {
-            target: scope.target,
+            target: scope.target(),
             selector_rules: session_selector_rules_to_entry(&scope.selector_rules),
         })
         .collect()
@@ -189,7 +189,7 @@ fn session_selector_rules_to_entry(rules: &[SelectorRule]) -> Vec<SessionSelecto
     rules
         .iter()
         .map(|rule| SessionSelectorRule {
-            selector: rule.selector.into(),
+            selector: rule.selector().into(),
             recipients: rule.recipients.clone(),
         })
         .collect()
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(prepared.authorization.key_type, SignatureType::Secp256k1);
         assert_eq!(prepared.authorization.key_id, key);
         assert_eq!(prepared.authorization.expiry.map(NonZeroU64::get), Some(1_700_000_600));
-        assert_eq!(prepared.authorization.witness, Some(session_id));
+        assert_eq!(prepared.authorization.witness(), Some(session_id));
         assert_eq!(
             prepared.authorization.limits,
             Some(vec![TokenLimit { token, limit: U256::ZERO, period: 0 }])
