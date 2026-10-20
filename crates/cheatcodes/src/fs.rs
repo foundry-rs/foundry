@@ -1377,6 +1377,7 @@ mod tests {
                     object: BytecodeObject::Bytecode(bytecode),
                     source_map: None,
                     link_references: Default::default(),
+                    ethdebug: None,
                 }),
                 deployed_bytecode: None,
             },

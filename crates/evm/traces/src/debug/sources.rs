@@ -332,6 +332,10 @@ pub struct ArtifactData {
     pub file_id: u32,
     /// Whether the contract was compiled through the via-IR pipeline, if the metadata says.
     pub via_ir: Option<bool>,
+    /// The compiler's ETHDebug program for the creation code, when it was requested.
+    pub ethdebug: Option<serde_json::Value>,
+    /// The compiler's ETHDebug program for the runtime code, when it was requested.
+    pub ethdebug_runtime: Option<serde_json::Value>,
 }
 
 impl ArtifactData {
@@ -360,12 +364,13 @@ impl ArtifactData {
 
             source_map.map(|source_map| (source_map, pc_ic_map))
         };
-        let (source_map, pc_ic_map) = parse(&bytecode.bytecode, "creation")?;
-        let (source_map_runtime, pc_ic_map_runtime) = bytecode
-            .deployed_bytecode
-            .bytecode
-            .map(|b| parse(&b, "runtime"))
-            .unwrap_or_else(|| Ok((None, None)))?;
+        let ContractBytecodeSome { bytecode: mut creation, deployed_bytecode, .. } = bytecode;
+        let ethdebug = creation.ethdebug.take();
+        let (source_map, pc_ic_map) = parse(&creation, "creation")?;
+        let mut runtime = deployed_bytecode.bytecode;
+        let ethdebug_runtime = runtime.as_mut().and_then(|runtime| runtime.ethdebug.take());
+        let (source_map_runtime, pc_ic_map_runtime) =
+            runtime.map(|b| parse(&b, "runtime")).unwrap_or_else(|| Ok((None, None)))?;
 
         Ok(Self {
             source_map,
@@ -375,6 +380,8 @@ impl ArtifactData {
             build_id,
             file_id,
             via_ir,
+            ethdebug,
+            ethdebug_runtime,
         })
     }
 }

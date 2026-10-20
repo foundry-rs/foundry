@@ -76,6 +76,7 @@ pub(crate) async fn handle_traces(
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in tests and scripts.
             config.build_info = true;
+            config.request_ethdebug();
         }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
