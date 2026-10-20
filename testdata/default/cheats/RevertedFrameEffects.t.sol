@@ -32,6 +32,8 @@ contract RevertedFrameProbe {
     function sender() external view returns (address) {
         return msg.sender;
     }
+
+    function poke() external {}
 }
 
 error FrameEffectApplied();
@@ -94,6 +96,29 @@ contract RevertedFrameHelper is Test {
         }
         revert FrameEffectApplied();
     }
+
+    function dealAndHalt(address target) external {
+        vm.deal(target, 123);
+        assembly {
+            invalid()
+        }
+    }
+
+    function dealInSucceedingCallThenRevert(address target) external {
+        this.dealAndReturn(target);
+        revert FrameEffectApplied();
+    }
+
+    function dealAndReturn(address target) external {
+        vm.deal(target, 123);
+    }
+
+    function broadcastThenRevert(address broadcaster, RevertedFrameProbe probe) external {
+        vm.startBroadcast(broadcaster);
+        probe.poke();
+        vm.stopBroadcast();
+        revert FrameEffectApplied();
+    }
 }
 
 contract RevertedFrameOuter {
@@ -128,6 +153,28 @@ contract RevertedFrameEffectsTest is Test {
         runAndCatch(FrameEffect.Deal, true);
         // Master behavior: persists.
         assertEq(target.balance, 123);
+    }
+
+    function test_deal_persists_halt() public {
+        (bool success,) = address(helper).call(abi.encodeCall(helper.dealAndHalt, (target)));
+        assertTrue(!success, "helper did not halt");
+        assertEq(target.balance, 123);
+    }
+
+    function test_deal_in_succeeding_call_persists_enclosing_revert() public {
+        (bool success, bytes memory result) =
+            address(helper).call(abi.encodeCall(helper.dealInSucceedingCallThenRevert, (target)));
+        assertTrue(!success, "helper did not revert");
+        assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector), "unexpected helper revert");
+        assertEq(target.balance, 123);
+    }
+
+    function test_broadcast_nonce_persists() public {
+        (bool success, bytes memory result) =
+            address(helper).call(abi.encodeCall(helper.broadcastThenRevert, (target, probe)));
+        assertTrue(!success, "helper did not revert");
+        assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector), "unexpected helper revert");
+        assertEq(vm.getNonce(target), 1);
     }
 
     function test_store_reverts_depth1() public {
