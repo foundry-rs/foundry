@@ -614,6 +614,9 @@ contract Other { function ignored() public { revert(); } }
                         "function payableAccount() public view returns (address payable)",
                         "{ return payable(address(0)); }"
                     ),
+                    ("function testSomething() public", "{}"),
+                    ("function invariantSomething() public", "{}"),
+                    ("function setUp() public", "{}"),
                     ("function constantBoolean() public pure returns (bool)", "{ return false; }"),
                     ("function constantSigned() public pure returns (int256)", "{ return 0; }"),
                     ("function constantSigned() public pure returns (int256)", "{ return 1; }"),

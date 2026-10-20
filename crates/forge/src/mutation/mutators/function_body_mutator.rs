@@ -1,5 +1,4 @@
 use eyre::Result;
-use foundry_common::TestFunctionExt;
 use solar::ast::{ElementaryType, FunctionKind, TypeKind};
 
 use super::{MutationContext, Mutator};
@@ -53,9 +52,7 @@ impl Mutator for FunctionBodyMutator {
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
         ctxt.function.is_some_and(|function| {
-            function.kind == FunctionKind::Function
-                && function.body.is_some()
-                && !function.header.name.is_some_and(|name| name.as_str().is_reserved())
+            function.kind == FunctionKind::Function && function.body.is_some()
         })
     }
 }
