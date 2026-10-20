@@ -1492,3 +1492,161 @@ Error: Binding name collision for `Foo`: contract `Foo` ([..]/Foo.sol/Foo.0.8.34
 
 "#]]);
 }
+
+#[forgetest]
+fn bind_rejects_generated_entrypoint_collisions(prj: _, cmd: _) {
+    prj.add_source("Names.sol", "contract Lib {} contract Mod {}");
+    cmd.arg("build").assert_success();
+
+    for (name, module, entrypoint) in [("Lib", false, "src/lib.rs"), ("Mod", true, "mod.rs")] {
+        let bindings = prj.root().join(format!("bindings-{name}"));
+        let selection = format!("^{name}$");
+        let mut args = vec!["bind", "--skip-build", "--select", &selection];
+        if module {
+            args.push("--module");
+        }
+
+        // Single-file output keeps the contract inside the entry point without overwriting it.
+        cmd.forge_fuse()
+            .args(&args)
+            .arg("--single-file")
+            .arg("--bindings-path")
+            .arg(&bindings)
+            .assert_success();
+        let output = bindings.join(entrypoint);
+        let before = fs::read_to_string(&output).unwrap();
+        assert_binding_bytecode(&before, &prj.artifacts().join(format!("Names.sol/{name}.json")));
+        if !module {
+            assert_bindings_compile(&bindings);
+        }
+
+        cmd.forge_fuse()
+            .args(&args)
+            .arg("--bindings-path")
+            .arg(&bindings)
+            .arg("--overwrite")
+            .assert_failure()
+            .stderr_eq(if module {
+                str![[r#"
+Error: Binding module name collision for `mod`: contract `Mod` ([..]/Names.sol/Mod.json) conflicts with generated entry point `mod.rs`
+
+"#]]
+            } else {
+                str![[r#"
+Error: Binding module name collision for `lib`: contract `Lib` ([..]/Names.sol/Lib.json) conflicts with generated entry point `lib.rs`
+
+"#]]
+            });
+        assert_eq!(fs::read_to_string(output).unwrap(), before);
+
+        // The same name is valid when the other output mode reserves a different entry point.
+        let bindings = prj.root().join(format!("{name}-other-mode"));
+        let mut args = vec!["bind", "--skip-build", "--select", &selection];
+        if !module {
+            args.push("--module");
+        }
+        cmd.forge_fuse().args(args).arg("--bindings-path").arg(&bindings).assert_success();
+        let output = bindings.join(if module { "src/mod.rs" } else { "lib.rs" });
+        assert_binding_bytecode(
+            &fs::read_to_string(output).unwrap(),
+            &prj.artifacts().join(format!("Names.sol/{name}.json")),
+        );
+        if module {
+            assert_bindings_compile(&bindings);
+        }
+    }
+}
+
+#[forgetest]
+fn bind_deduplicates_no_cache_compiler_variants(prj: _, cmd: _) {
+    prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    for version in ["0.8.20", "0.8.21"] {
+        cmd.forge_fuse()
+            .args(["build", "--use", version, "--evm-version", "paris"])
+            .assert_success();
+    }
+
+    // Consecutive builds place variants in different directories to avoid overwriting artifacts.
+    let artifacts =
+        [prj.artifacts().join("Foo.sol/Foo.json"), prj.artifacts().join("src/Foo.sol/Foo.json")];
+    let original = artifacts.each_ref().map(|path| fs::read(path).unwrap());
+    for path in &artifacts {
+        let mut artifact = read_json_file::<ConfigurableContractArtifact>(path).unwrap();
+        artifact.metadata = None;
+        artifact.raw_metadata = None;
+        fs::write(path, serde_json::to_vec(&artifact).unwrap()).unwrap();
+    }
+    let cache = fs::read(prj.cache()).unwrap();
+    let args = ["bind", "--skip-build", "--no-cache", "--select", "^Foo$", "--overwrite"];
+
+    // The cache can supply identity without controlling artifact selection or being rewritten.
+    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+    let binding = prj.artifacts().join("bindings/src/foo.rs");
+    assert_binding_bytecode(&fs::read_to_string(&binding).unwrap(), &artifacts[0]);
+
+    for (path, contents) in artifacts.iter().zip(&original) {
+        fs::write(path, contents).unwrap();
+    }
+    fs::remove_file(prj.cache()).unwrap();
+
+    // Embedded metadata preserves identity even without a compiler cache or source files.
+    fs::remove_file(prj.paths().sources.join("Foo.sol")).unwrap();
+    cmd.forge_fuse().env("RUST_LOG", "off");
+    cmd.args(args).assert_success().stderr_eq(str![[r#"
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+    assert_binding_bytecode(&fs::read_to_string(binding).unwrap(), &artifacts[0]);
+}
+
+#[forgetest]
+fn bind_deduplicates_artifact_metadata(prj: _, cmd: _) {
+    prj.add_source("Foo.sol", "contract Foo {}");
+    cmd.arg("build").assert_success();
+    fs::remove_file(prj.cache()).unwrap();
+    fs::remove_file(prj.paths().sources.join("Foo.sol")).unwrap();
+
+    let original = prj.artifacts().join("Foo.sol/Foo.json");
+    let other = prj.artifacts().join("other/Foo.sol/Foo.json");
+    fs::create_dir_all(other.parent().unwrap()).unwrap();
+    let mut artifact = read_json_file::<ConfigurableContractArtifact>(&original).unwrap();
+    let mut metadata = artifact.metadata.take().unwrap();
+    // Raw metadata and structured metadata identify the same source after path normalization.
+    metadata.settings.compilation_target =
+        [(prj.root().join("src/unused/../Foo.sol").display().to_string(), "Foo".to_owned())].into();
+    artifact.raw_metadata = Some(serde_json::to_string(&metadata).unwrap());
+    fs::write(&other, serde_json::to_vec(&artifact).unwrap()).unwrap();
+    let args = ["bind", "--skip-build", "--no-cache", "--select", "^Foo$", "--overwrite"];
+    cmd.forge_fuse().env("RUST_LOG", "off");
+    cmd.args(args).assert_success().stderr_eq(str![[r#"
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+    let binding = prj.artifacts().join("bindings/src/foo.rs");
+    let before = fs::read_to_string(&binding).unwrap();
+    assert_binding_bytecode(&before, &original);
+
+    // Different sources and untrustworthy targets must not silently merge distinct contracts.
+    for target in [
+        json!({ "src/Other.sol": "Foo" }),
+        json!({ "src/Foo.sol": "Other" }),
+        json!({ "src/Foo.sol": "Foo", "src/Other.sol": "Foo" }),
+    ] {
+        metadata.settings.compilation_target = serde_json::from_value(target).unwrap();
+        artifact.raw_metadata = Some(serde_json::to_string(&metadata).unwrap());
+        fs::write(&other, serde_json::to_vec(&artifact).unwrap()).unwrap();
+        cmd.forge_fuse().env("RUST_LOG", "off");
+        cmd.args(args).assert_failure().stderr_eq(str![[r#"
+Error: Binding name collision for `Foo`: contract `Foo` ([..]/Foo.sol/Foo.json) and contract `Foo` ([..]/other/Foo.sol/Foo.json)
+
+"#]]);
+        assert_eq!(fs::read_to_string(&binding).unwrap(), before);
+    }
+}

@@ -6,11 +6,11 @@ use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{
     compile::{ProjectCompiler, compile_abi_project},
-    fs::json_files,
+    fs::{json_files, normalize_path, read_json_file},
 };
 use foundry_compilers::{
     Graph, Project,
-    artifacts::{Contract, output_selection::OutputSelection},
+    artifacts::{ConfigurableContractArtifact, Contract, output_selection::OutputSelection},
     cache::CompilerCache,
     compilers::{Compiler, CompilerOutput, CompilerSettings, CompilerVersion},
     error::SolcError,
@@ -38,7 +38,7 @@ struct BindingFile {
     /// Original contract name, without compiler version or profile suffixes.
     name: String,
     path: PathBuf,
-    /// Compiler source identity, if available. Otherwise the artifact directory identifies it.
+    /// Source identity, if available. Otherwise the artifact directory identifies it.
     source: Option<PathBuf>,
 }
 
@@ -240,11 +240,27 @@ impl BindArgs {
             files.extend(json_files(&config.out.join(".external")).map(|path| (path, None)));
             files
         } else {
-            // Artifact-only directories have no compiler manifest to resolve version/profile
-            // identity.
+            // Without cache-based selection, include all artifacts on disk.
             json_files(&config.out).map(|path| (path, None)).collect()
         };
-        let files = self.filter_artifact_paths(files)?;
+        let mut files = self.filter_artifact_paths(files)?;
+        // Source identity is independent of cache-based selection: compiler variants can live in
+        // different artifact directories, even with --no-cache.
+        let sources = cache
+            .iter()
+            .flat_map(|cache| &cache.files)
+            .flat_map(|(source, entry)| {
+                entry.artifacts().map(move |artifact| (&artifact.path, source))
+            })
+            .collect::<HashMap<_, _>>();
+        for file in &mut files {
+            file.source = file
+                .source
+                .take()
+                .or_else(|| sources.get(&file.path).map(|source| (*source).clone()))
+                .or_else(|| artifact_source(&file.path, &file.name))
+                .map(|source| normalize_path(&config.root.join(source)));
+        }
         // Cache-based selection already guarantees membership for built-in artifacts.
         if let Some(cache) = cache.filter(|_| !config.cache)
             && !definitions.is_empty()
@@ -397,6 +413,13 @@ impl BindArgs {
             }
             if !self.single_file {
                 let module = name.to_snake_case();
+                let entrypoint = if self.module { "mod" } else { "lib" };
+                eyre::ensure!(
+                    module != entrypoint,
+                    "Binding module name collision for `{module}`: contract `{}` ({}) conflicts with generated entry point `{entrypoint}.rs`",
+                    file.name,
+                    file.path.display(),
+                );
                 if let Some(previous) = modules.insert(module.clone(), file) {
                     eyre::bail!(
                         "Binding module name collision for `{module}`: contract `{}` ({}) and contract `{}` ({})",
@@ -613,6 +636,20 @@ fn resolved_artifact_contexts<C: Compiler<CompilerContract = Contract>>(
 
 fn binding_name(name: &str) -> String {
     name.replace(char::is_whitespace, "").replace(['-', '$'], "_")
+}
+
+/// Recovers source identity only from an unambiguous metadata target matching the contract name.
+fn artifact_source(path: &Path, name: &str) -> Option<PathBuf> {
+    let artifact = read_json_file::<ConfigurableContractArtifact>(path).ok()?;
+    let metadata = artifact
+        .metadata
+        .or_else(|| serde_json::from_str(artifact.raw_metadata.as_deref()?).ok())?;
+    let targets = metadata.settings.compilation_target;
+    if targets.len() != 1 {
+        return None;
+    }
+    let (source, contract) = targets.into_iter().next()?;
+    (contract == name).then(|| source.into())
 }
 
 /// Provides compiler versions to the graph without installing or compiling anything.
