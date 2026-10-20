@@ -23,7 +23,9 @@ enum FrameEffect {
     StartPrank,
     MockCall,
     Record,
-    RecordLogs
+    RecordLogs,
+    TransferThenDeal,
+    CreateThenSetNonce
 }
 
 contract RevertedFrameProbe {
@@ -93,6 +95,13 @@ contract RevertedFrameHelper is Test {
         } else if (effect == FrameEffect.RecordLogs) {
             vm.recordLogs();
             emit Recorded(123);
+        } else if (effect == FrameEffect.TransferThenDeal) {
+            (bool success,) = target.call{value: 10}("");
+            require(success, "transfer failed");
+            vm.deal(target, 100);
+        } else if (effect == FrameEffect.CreateThenSetNonce) {
+            new RevertedFrameProbe();
+            vm.setNonce(address(this), 123);
         }
         revert FrameEffectApplied();
     }
@@ -118,6 +127,18 @@ contract RevertedFrameHelper is Test {
         probe.poke();
         vm.stopBroadcast();
         revert FrameEffectApplied();
+    }
+
+    function restoreThenWriteNonce(address target) external {
+        uint256 snapshot = vm.snapshotState();
+        vm.setNonce(target, 7);
+        require(vm.revertToState(snapshot));
+        vm.setNonce(target, 9);
+        revert FrameEffectApplied();
+    }
+
+    function restore(uint256 snapshot) external {
+        require(vm.revertToState(snapshot));
     }
 }
 
@@ -405,5 +426,48 @@ contract RevertedFrameEffectsTest is Test {
         }
         assertTrue(!success, "helper did not revert");
         assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector), "unexpected helper revert");
+    }
+
+    function test_deal_preserves_transfer_undo() public {
+        for (uint256 i; i < 2; i++) {
+            vm.deal(target, 50);
+            vm.deal(address(helper), 10);
+            runAndCatch(FrameEffect.TransferThenDeal, i == 1);
+            assertEq(target.balance, 90);
+            assertEq(address(helper).balance, 10);
+        }
+    }
+
+    function test_setNonce_preserves_create_undo() public {
+        for (uint256 i; i < 2; i++) {
+            runAndCatch(FrameEffect.CreateThenSetNonce, i == 1);
+            assertEq(vm.getNonce(address(helper)), 122);
+        }
+    }
+
+    function test_snapshot_displaces_later_nonce_writes() public {
+        vm.setNonce(target, 1);
+        (bool success, bytes memory result) =
+            address(helper).call(abi.encodeCall(helper.restoreThenWriteNonce, (target)));
+        assertTrue(!success);
+        assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector));
+        assertEq(vm.getNonce(target), 7);
+    }
+
+    /// forge-config: default.isolate = true
+    function test_isolated_restore_preserves_later_transfer_undo() public {
+        vm.deal(target, 50);
+        uint256 snapshot = vm.snapshotState();
+        for (uint256 i; i < 20; i++) {
+            vm.deal(target, 70 + i);
+        }
+        helper.restore(snapshot);
+        assertEq(target.balance, 50);
+        vm.etch(address(0x99999), hex"00");
+        (bool success, bytes memory result) =
+            address(helper).delegatecall(abi.encodeCall(helper.run, (FrameEffect.TransferThenDeal, target, probe)));
+        assertTrue(!success);
+        assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector));
+        assertEq(target.balance, 90);
     }
 }

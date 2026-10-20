@@ -6,12 +6,11 @@ use super::{
 use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
-    Address, B256, Bytes, KECCAK256_EMPTY, Log, TxKind, U256, keccak256,
+    Address, B256, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressSet},
 };
 use evm2::{
     EvmFeatures, ExecutionError, Inspector,
-    bytecode::Bytecode,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, JournalEntry, PendingState, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -28,7 +27,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
         InterpreterFor, MessageFor, MessageResultFor, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, evm_env, merge_nested_changes, merge_pending_changes,
+        TxResultFor, TypesFor, evm_env, mark_created, merge_nested_changes, merge_pending_changes,
         release_inspector,
     },
     precompiles::P256_VERIFY,
@@ -519,10 +518,17 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut child = backend.backend().nested_evm(evm, tx, env);
+        for address in &self.tx_created {
+            if evm.state_mut().account(address)?.is_created() {
+                mark_created(child.state_mut(), address)?;
+            }
+        }
         let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
+        let revert_effects = std::mem::take(&mut cheats.revert_effects);
+        let mut created = Vec::new();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
@@ -531,13 +537,24 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let result = match child.transact(tx) {
             Ok(executed) => {
                 // A failed transaction keeps its nonce increment.
-                merge_nested_changes(evm.state_mut(), &executed)?;
-                Ok(executed.result().clone())
+                merge_nested_changes(evm.state_mut(), &executed)
+                    .map(|()| {
+                        created.extend(
+                            executed
+                                .account_changes()
+                                .filter(|change| change.created && change.current.is_some())
+                                .map(|change| change.address),
+                        );
+                        executed.result().clone()
+                    })
+                    .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        cheats.revert_effects = revert_effects;
         cheats.origin_override = origin_override;
+        self.tx_created.extend(created);
         self.exit_inner_context(previous);
         result
     }
@@ -1157,9 +1174,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         *child.ext_mut() = evm.ext().clone();
         // Accounts the running transaction created stay created in the nested one, so that
         // EIP-6780 SELFDESTRUCT still deletes them.
-        let features = child.version().features;
         for address in &self.inner.tx_created {
-            if mark_created(child.state_mut(), address, features).is_err() {
+            if mark_created(child.state_mut(), address).is_err() {
                 return not_executed(Bytes::new());
             }
         }
@@ -1179,6 +1195,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .enter_inner_context(InnerRoot { depth: message.depth, caller: Some(message.caller) });
         let create2_redirects = self.inner.pending_create2_redirects.len();
 
+        let revert_effects =
+            self.cheatcodes.as_deref_mut().map(|cheats| std::mem::take(&mut cheats.revert_effects));
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
@@ -1187,6 +1205,22 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let executed = child.transact(&tx).ok().map(|executed| executed.detach());
         let mut child = release_inspector(child);
 
+        let restored_snapshot = self
+            .cheatcodes
+            .as_deref()
+            .is_some_and(|cheats| cheats.revert_effects.restored_snapshot);
+        let replaced_journal =
+            self.cheatcodes.as_deref().is_some_and(|cheats| cheats.revert_effects.replaced_journal);
+        let replaced_fork = self
+            .cheatcodes
+            .as_deref()
+            .is_some_and(|cheats| cheats.revert_effects.replaced_fork)
+            || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
+        if let (Some(cheats), Some(revert_effects)) =
+            (self.cheatcodes.as_deref_mut(), revert_effects)
+        {
+            cheats.revert_effects = revert_effects;
+        }
         self.inner.exit_inner_context(previous_inner);
         self.inner.pending_create2_redirects.truncate(create2_redirects);
         if let (Some(cheats), Some(previous)) = (self.cheatcodes.as_deref_mut(), previous_origin) {
@@ -1208,13 +1242,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .map(|change| change.address),
         );
 
-        let replaced = epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
-            || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
-        let merged = if replaced {
+        let replaced =
+            epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch) || replaced_fork;
+        // Reverted snapshot restores already reinstated the child's displaced transaction.
+        // Merge its surviving writes into the original parent journal, as for any failed call.
+        let adopt_state = replaced && (replaced_fork || !restored_snapshot || replaced_journal);
+        let journal_start = evm.state().journal().len();
+        let merged = if adopt_state {
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats
+                    .revert_effects
+                    .replace_after_isolation(evm.state(), restored_snapshot && !replaced_fork);
+            }
             child.commit_source(&executed.pending_state);
             Backend::<FEN>::end_frame_evm(evm, child);
             true
         } else {
+            if replaced {
+                evm.state_mut().overlay_db_mut().cache =
+                    std::mem::take(&mut child.state_mut().overlay_db_mut().cache);
+            }
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
                 && (!result.status
                     || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok());
@@ -1223,6 +1270,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             evm.ext_mut().replace_while_executing(child.ext().clone());
             merged
         };
+        if merged
+            && !adopt_state
+            && let Some(cheats) = self.cheatcodes.as_deref_mut()
+            && let Err(err) = cheats.record_surviving_changes(evm.state_mut(), journal_start)
+        {
+            return not_executed(err.to_string().into_bytes().into());
+        }
         let mut block = *evm.block();
         block.basefee = outer_basefee;
         evm.set_block(block);
@@ -1290,6 +1344,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         } else if let Some(cheatcodes) = self.cheatcodes.as_deref() {
             // Transaction messages use the original target, so resolve function mocks here too.
             apply_mocked_function(cheatcodes, interp, message);
+        }
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            let evm = interp.host();
+            cheats.revert_effects.start_frame(evm.state(), evm.version().features);
         }
         true
     }
@@ -1667,6 +1725,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
         // surrounding transaction.
         if self.inner.is_inner_context_root(message.depth) {
+            if let Some(cheats) = self.cheatcodes.as_deref_mut()
+                && let Err(err) = cheats
+                    .revert_effects
+                    .finish_frame(interp.host().state_mut(), result.is_success())
+            {
+                *result =
+                    message_result(message, InstrStop::Revert, err.to_string().into_bytes().into());
+            }
             return;
         }
 
@@ -1780,6 +1846,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         if self.inner.is_inner_context_root(message.depth) {
+            if let Some(cheats) = self.cheatcodes.as_deref_mut()
+                && let Err(err) = cheats
+                    .revert_effects
+                    .finish_frame(interp.host().state_mut(), result.is_success())
+            {
+                *result =
+                    message_result(message, InstrStop::Revert, err.to_string().into_bytes().into());
+            }
             return;
         }
 
@@ -1991,30 +2065,6 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
             message.code = code;
         }
     }
-}
-
-/// Marks the existing `address` as created in the running transaction of `state`, keeping its
-/// account fields.
-///
-/// evm2 only marks accounts created by `CREATE` and `CREATE2`, so this recreates the account
-/// over an empty one and restores its nonce and code.
-fn mark_created(state: &mut State<'_>, address: &Address, features: EvmFeatures) -> DbResult<()> {
-    let (nonce, code_hash, code) = {
-        let mut account = state.account(address)?;
-        if account.is_created() || !account.exists() {
-            return Ok(());
-        }
-        let (nonce, code_hash, code) = (account.nonce(), account.code_hash(), account.load_code()?);
-        account.set_nonce(0);
-        account.set_code(KECCAK256_EMPTY, Bytecode::default());
-        (nonce, code_hash, code)
-    };
-    // The account is empty and the endowment is zero, so the creation cannot fail.
-    let _ = state.create_account(address, address, &U256::ZERO, features)?;
-    let mut account = state.account(address)?;
-    account.set_nonce(nonce);
-    account.set_code(code_hash, code);
-    Ok(())
 }
 
 /// Warms in `state` the accounts a successful nested transaction loaded and the storage slots it
