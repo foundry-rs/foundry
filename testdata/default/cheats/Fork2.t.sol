@@ -55,6 +55,26 @@ contract ForkTest is Test {
         assertEq(mainnetFork, vm.activeFork());
     }
 
+    function dealThenNoopForkOpsThenRevert(address target, uint256 inactiveFork) external {
+        vm.deal(target, 123);
+        // Neither operation replaces the running state.
+        vm.selectFork(vm.activeFork());
+        vm.rollFork(inactiveFork, block.number - 1);
+        revert("reverted");
+    }
+
+    function testNoopForkOpsKeepCheatcodeWritesAcrossRevert() public {
+        vm.selectFork(mainnetFork);
+        address target = address(uint160(uint256(keccak256("noopForkOpsTarget"))));
+        uint256 inactiveFork = vm.createFork("mainnet");
+        try this.dealThenNoopForkOpsThenRevert(target, inactiveFork) {
+            revert("helper did not revert");
+        } catch Error(string memory reason) {
+            assertEq(reason, "reverted");
+        }
+        assertEq(target.balance, 123);
+    }
+
     function testCanCreateSelect() public {
         uint256 anotherFork = vm.createSelectFork("mainnet");
         assertEq(anotherFork, vm.activeFork());
