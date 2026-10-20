@@ -368,6 +368,12 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
         hardfork.into()
     }
 
+    fn apply_authority_overrides(tx: &mut tempo_evm::TempoTxEnv, overrides: &[(usize, Address)]) {
+        for &(index, authority) in overrides {
+            tx.override_authority(index, authority);
+        }
+    }
+
     fn apply_tempo_simulation(
         tx: tempo_evm::TempoTxEnv,
         simulation: &TempoSimulation,
