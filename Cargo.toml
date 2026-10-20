@@ -372,13 +372,13 @@ evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "59e9af8ab36978
 ] }
 # Tempo's evm2 integration (tempoxyz/tempo#7871). The `-evm2` aliases stay while the revm-based
 # Tempo crates of the same name are still wired.
-tempo-evm = { git = "https://github.com/mablr/tempo", rev = "f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c", default-features = false }
-tempo-hardfork = { git = "https://github.com/mablr/tempo", rev = "f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c", default-features = false, features = [
+tempo-evm = { git = "https://github.com/mablr/tempo", rev = "404f042f4e6e8ec957ad5c017b4d2d1c49666f91", default-features = false }
+tempo-hardfork = { git = "https://github.com/mablr/tempo", rev = "404f042f4e6e8ec957ad5c017b4d2d1c49666f91", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-primitives-evm2 = { package = "tempo-primitives", git = "https://github.com/mablr/tempo", rev = "f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c", default-features = false }
-tempo-precompiles-evm2 = { package = "tempo-precompiles", git = "https://github.com/mablr/tempo", rev = "f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c", default-features = false }
+tempo-primitives-evm2 = { package = "tempo-primitives", git = "https://github.com/mablr/tempo", rev = "404f042f4e6e8ec957ad5c017b4d2d1c49666f91", default-features = false }
+tempo-precompiles-evm2 = { package = "tempo-precompiles", git = "https://github.com/mablr/tempo", rev = "404f042f4e6e8ec957ad5c017b4d2d1c49666f91", default-features = false }
 # Op, Base and Monad evm2 type families.
 op-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "f8af7bb54a0060466f803a74dc21e773fa8509f9", default-features = false }
 base-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "f8af7bb54a0060466f803a74dc21e773fa8509f9", default-features = false }
@@ -645,10 +645,6 @@ alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "20
 tempo-primitives = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
 tempo-alloy = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
 tempo-contracts = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
-
-## tempo-nitro-attestation — see patches/tempo-nitro-attestation/Cargo.toml.
-[patch."https://github.com/mablr/tempo"]
-tempo-nitro-attestation = { path = "patches/tempo-nitro-attestation" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]

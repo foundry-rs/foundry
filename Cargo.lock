@@ -1350,7 +1350,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -3374,7 +3374,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tokio",
  "tower",
@@ -5818,7 +5818,7 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -6262,9 +6262,9 @@ dependencies = [
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-precompiles",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -6330,7 +6330,7 @@ dependencies = [
  "monad-evm2",
  "op-evm2",
  "serde",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
@@ -12856,7 +12856,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -12871,8 +12871,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-dkg-onchain-artifacts",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
@@ -12895,7 +12895,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-contract",
  "alloy-network",
@@ -12906,13 +12906,13 @@ dependencies = [
  "alloy-transport",
  "k256 0.13.4",
  "serde",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12923,7 +12923,7 @@ dependencies = [
 [[package]]
 name = "tempo-evm"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -12945,11 +12945,11 @@ dependencies = [
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
  "reth-storage-api",
- "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-dkg-onchain-artifacts",
  "tempo-precompiles",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -12970,7 +12970,7 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-eips",
  "alloy-hardforks",
@@ -12982,7 +12982,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-nitro-attestation"
-version = "1.16.0"
+version = "1.16.1"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "arrayvec",
  "aws-lc-rs",
@@ -12997,7 +12998,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy",
  "alloy-json-abi",
@@ -13013,11 +13014,11 @@ dependencies = [
  "scoped-tls",
  "serde",
  "serde_json",
- "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-nitro-attestation",
  "tempo-precompiles-macros",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -13025,7 +13026,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -13061,7 +13062,7 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -13082,7 +13083,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
