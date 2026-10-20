@@ -2,10 +2,7 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesCore, CheatcodesExecutor,
-    CheatsCtxt, Error, Result,
-    Vm::*,
-    env::FORGE_CONTEXT,
-    inspector::{RecordDebugStepInfo, SurvivingWrite},
+    CheatsCtxt, Error, Result, Vm::*, env::FORGE_CONTEXT, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_genesis::{Genesis, GenesisAccount};
@@ -790,10 +787,10 @@ impl Cheatcode for dealCall {
         let Self { account: address, newBalance: new_balance } = *self;
         let mut account = ccx.evm.state_mut().account(&address)?;
         let old_balance = account.balance();
-        account.set_balance(new_balance);
+        account.touch();
+        account.get_or_insert_untracked().balance = new_balance;
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
-        ccx.state.record_surviving_write(SurvivingWrite::Balance(address, new_balance));
         Ok(Default::default())
     }
 }
@@ -832,9 +829,9 @@ impl Cheatcode for resetNonceCall {
         let code_hash = account.code_hash();
         let empty = code_hash == KECCAK256_EMPTY || code_hash.is_zero();
         let nonce = if empty { 0 } else { 1 };
-        account.set_nonce(nonce);
+        account.touch();
+        account.get_or_insert_untracked().nonce = nonce;
         debug!(target: "cheatcodes", nonce, "reset");
-        ccx.state.record_surviving_write(SurvivingWrite::Nonce(self.account, nonce));
         Ok(Default::default())
     }
 }
@@ -850,8 +847,8 @@ impl Cheatcode for setNonceCall {
             "new nonce ({newNonce}) must be strictly equal to or higher than the \
              account's current nonce ({current})"
         );
-        account.set_nonce(newNonce);
-        ccx.state.record_surviving_write(SurvivingWrite::Nonce(self.account, newNonce));
+        account.touch();
+        account.get_or_insert_untracked().nonce = newNonce;
         Ok(Default::default())
     }
 }
@@ -859,8 +856,9 @@ impl Cheatcode for setNonceCall {
 impl Cheatcode for setNonceUnsafeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
-        ccx.evm.state_mut().account(&account)?.set_nonce(newNonce);
-        ccx.state.record_surviving_write(SurvivingWrite::Nonce(account, newNonce));
+        let mut account = ccx.evm.state_mut().account(&account)?;
+        account.touch();
+        account.get_or_insert_untracked().nonce = newNonce;
         Ok(Default::default())
     }
 }
@@ -1325,11 +1323,8 @@ impl Cheatcode for broadcastRawTransactionCall {
             }
             env
         });
-        let journal_start = ccx.evm.state().journal().len();
         let result =
             executor.transact_from_tx(ccx.backend, ccx.evm, ccx.depth as u16, &evm_tx, env)?;
-        // The transaction outlives reverts of the frames enclosing this call.
-        ccx.state.record_surviving_changes(ccx.evm.state_mut(), journal_start)?;
         // Cheatcodes do not run inside the transaction; let `expectEmit` and `recordLogs` see its
         // logs.
         for log in &result.logs {
@@ -1425,13 +1420,9 @@ impl Cheatcode for executeTransactionCall {
             ccx.state.record_created_account(fork_id, address);
         }
 
-        let journal_start = ccx.evm.state().journal().len();
         let res = executor
             .nested_transaction(ccx.state, ccx.backend, ccx.evm, ccx.depth as u16, &tx, Some(env))
             .map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
-        // The transaction, or the nonce increment of a failed one, outlives reverts of the frames
-        // enclosing this call.
-        ccx.state.record_surviving_changes(ccx.evm.state_mut(), journal_start)?;
 
         // Return output bytes.
         if !res.status {

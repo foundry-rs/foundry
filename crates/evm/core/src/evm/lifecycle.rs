@@ -42,9 +42,7 @@ use alloy_primitives::{
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
-    evm::{
-        AccountChanges, Cache, DbResult, EmptyDB, JournalEntry, PendingState, PrewarmSet, State,
-    },
+    evm::{AccountChanges, Cache, DbResult, EmptyDB, JournalEntry, PrewarmSet, State},
 };
 use std::{mem, sync::Arc};
 
@@ -422,10 +420,14 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             self.forks.forks.entry(id).or_insert(entry);
         }
         let db = self.forks.active_db();
-        let logs = mem::take(evm.state_mut().logs_mut());
         let mut state = state.into_state(db.clone_backing());
-        *state.logs_mut() = logs;
-        *evm.state_mut() = state;
+        match phase {
+            ExecutionPhase::Boundary => {
+                *state.logs_mut() = mem::take(evm.state_mut().logs_mut());
+                *evm.state_mut() = state;
+            }
+            ExecutionPhase::InFlight => evm.state_mut().replace_state(state),
+        }
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
@@ -445,8 +447,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Executes `tx` as a separate transaction over the running transaction's current state, such
     /// as for `vm.transact`, and merges its state changes into the running transaction.
     ///
-    /// The merged writes are journaled, so they revert with the enclosing call. A failed
-    /// transaction only keeps its nonce increment and fee payment.
+    /// The returned state is merged without new undo entries, like REVM's child-state merge.
+    /// Earlier ordinary writes retain their undo operations. A failed transaction only keeps
+    /// its nonce increment and fee payment.
     pub fn nested_transaction(
         &self,
         evm: &mut Evm<'_, F::Types>,
@@ -469,8 +472,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             executor.set_inspector(inspector);
         }
         let executed = executor.transact(tx).map_err(transaction_error)?;
-        merge_nested_changes(evm.state_mut(), &executed)?;
-        Ok(executed.result().clone())
+        Ok(merge_nested_changes(evm.state_mut(), executed))
     }
 
     /// Builds the EVM a nested transaction of the running one executes on: a copy of the running
@@ -490,8 +492,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.materialize(evm);
         let db = self.forks.active_db();
         let mut state = evm.state().snapshot().into_state(db.clone_backing());
+        let pending = state.prepare_isolated_state();
         state.commit_transaction();
         state.clear_transaction_state();
+        state.set_pending_state(pending);
         let ext = ext.unwrap_or_else(|| {
             let mut ext = evm.ext().clone();
             ext.for_transaction(tx);
@@ -749,19 +753,14 @@ pub fn nested_frame<T: EvmTypes, R, E>(
     result
 }
 
-/// Applies a nested transaction's changes to the running transaction's `state` as journaled
-/// writes, so they revert with the enclosing call.
+/// Merges a nested transaction without adding undo entries for its returned state.
 pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
-    executed: &ExecutedTx<'_, '_, T>,
-) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true)
-}
-
-/// Applies the changes of a nested transaction detached into `pending` to the running
-/// transaction's `state` as journaled writes, like [`merge_nested_changes`].
-pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
-    merge_changes(state, pending.account_changes(), |_| true)
+    executed: ExecutedTx<'_, '_, T>,
+) -> TxResult<T> {
+    let executed = executed.detach();
+    state.merge_isolated_state(executed.pending_state);
+    executed.result
 }
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as

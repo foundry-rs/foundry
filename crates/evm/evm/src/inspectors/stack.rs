@@ -28,8 +28,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
         InterpreterFor, MessageFor, MessageResultFor, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, evm_env, merge_nested_changes, merge_pending_changes,
-        release_inspector,
+        TxResultFor, TypesFor, evm_env, merge_nested_changes, release_inspector,
     },
     precompiles::P256_VERIFY,
 };
@@ -531,8 +530,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let result = match child.transact(tx) {
             Ok(executed) => {
                 // A failed transaction keeps its nonce increment.
-                merge_nested_changes(evm.state_mut(), &executed)?;
-                Ok(executed.result().clone())
+                Ok(merge_nested_changes(evm.state_mut(), executed))
             }
             Err(err) => Err(transaction_error(err)),
         };
@@ -1064,8 +1062,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// nested transaction, for precise gas accounting and transaction state changes.
     ///
     /// The nested transaction runs with a zero base fee and without fee charges, with the
-    /// message's gas plus the transaction's intrinsic gas. Its state changes are merged into the
-    /// running transaction as journaled writes, unless a cheatcode replaced the running state
+    /// message's gas plus the transaction's intrinsic gas. Its returned state is merged without
+    /// new undo entries, unless a cheatcode replaced the running state
     /// inside it, such as a state snapshot restoration or a fork switch, in which case the
     /// running transaction adopts the nested EVM's whole state.
     fn transact_inner(
@@ -1211,13 +1209,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let replaced = epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
             || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
         let merged = if replaced {
-            child.commit_source(&executed.pending_state);
+            child.state_mut().set_pending_state(executed.pending_state);
             Backend::<FEN>::end_frame_evm(evm, child);
             true
         } else {
-            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
-                && (!result.status
-                    || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok());
+            let merged =
+                !result.status || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok();
+            evm.state_mut().merge_isolated_state(executed.pending_state);
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             evm.ext_mut().replace_while_executing(child.ext().clone());

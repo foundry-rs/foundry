@@ -477,7 +477,6 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     ccx.state.fork_block_number_override = ccx.active_fork_block_number();
     if source_fork_id != target_fork_id {
         ccx.state.commit_created_account_changes(source_fork_id);
-        ccx.state.discard_surviving_writes();
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
@@ -502,7 +501,6 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
         ccx.state.fork_block_number_override = ccx.active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);
-        ccx.state.discard_surviving_writes();
     }
 }
 

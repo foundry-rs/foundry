@@ -151,8 +151,8 @@ where
     evm.state_mut().clear_transaction_state();
     assert_eq!(slot(&mut evm), U256::from(8));
 
-    // A nested transaction sees in-flight writes and merges its changes as journaled writes of
-    // the running transaction; a failed one only keeps its nonce increment and fee payment.
+    // A nested transaction sees in-flight writes and merges without new undo entries. Earlier
+    // ordinary writes still revert; a failed transaction keeps its nonce increment and fees.
     let checkpoint = evm.state().checkpoint();
     evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(50));
     let other = Address::with_last_byte(0xC1);
@@ -166,7 +166,7 @@ where
     assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(52), 2));
     let features = evm.version().features;
     evm.state_mut().rollback(checkpoint, features);
-    assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(8), 0));
+    assert_eq!((slot(&mut evm), nonce(&mut evm, other)), (U256::from(8), 2));
     evm.state_mut().clear_transaction_state();
 
     // Forks keep their own accepted state; persistent accounts follow every switch.

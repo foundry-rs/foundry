@@ -61,6 +61,35 @@ contract ExecuteTransactionStateTest is Test {
         assertEq(vm.load(TARGET, bytes32(0)), bytes32(success ? uint256(9) : 0));
         assertEq(parentValue, revertParent ? 0 : 7);
     }
+
+    function executeAfterOrdinaryWrites() external {
+        (bool success,) = TARGET.call{value: 10}(abi.encode(uint256(5)));
+        require(success, "ordinary call failed");
+        assertEq(vm.load(TARGET, bytes32(0)), bytes32(uint256(5)));
+        vm.executeTransaction(RAW_TX);
+        assertEq(vm.load(TARGET, bytes32(0)), bytes32(0));
+        revert("parent reverted");
+    }
+
+    function test_execute_preserves_overlapping_ordinary_undo() public {
+        vm.chainId(1);
+        vm.fee(1);
+        vm.deal(SENDER, 1 ether);
+        vm.deal(address(this), 10);
+        vm.deal(TARGET, 50);
+        // Store the first calldata word; the signed transaction has empty calldata.
+        vm.etch(TARGET, hex"60003560005500");
+        vm.store(TARGET, bytes32(0), bytes32(uint256(3)));
+        try this.executeAfterOrdinaryWrites() {
+            revert("expected parent revert");
+        } catch Error(string memory reason) {
+            assertEq(reason, "parent reverted");
+        }
+        assertEq(TARGET.balance, 67);
+        assertEq(address(this).balance, 10);
+        assertEq(vm.load(TARGET, bytes32(0)), bytes32(uint256(3)));
+        assertEq(vm.getNonce(SENDER), 1);
+    }
 }
 
 /// forge-config: default.isolate = false
