@@ -735,3 +735,88 @@ Warning: 1 project file(s) changed while the agents ran, so the run is tainted: 
         str![[r#""FeeFakeTest::testFake" ["notes.txt"]"#]]
     );
 }
+
+/// Writes a candidate with one test file at `test/generated/Stub.t.sol` and returns its path.
+fn write_stub_candidate(prj: &TestProject, name: &str, content: &str) -> String {
+    let candidate = serde_json::json!({
+        "schema": "foundry/properties-candidate-v1",
+        "rationale": "stub",
+        "files": [{"path": "test/generated/Stub.t.sol", "content": content}]
+    });
+    fs::write(prj.root().join(name), candidate.to_string()).unwrap();
+    name.to_string()
+}
+
+// A pnpm package is a link into `node_modules/.pnpm`, and it imports its own files by absolute
+// paths such as `src/lib/Init.sol`. The workspace must resolve them as the project does.
+#[forgetest_init]
+fn properties_check_resolves_pnpm_package_imports(prj: _, cmd: _) {
+    let package = prj.root().join("node_modules/.pnpm/pkg@1.0.0/node_modules/pkg");
+    fs::create_dir_all(package.join("src/lib")).unwrap();
+    fs::create_dir_all(package.join("src/utils")).unwrap();
+    fs::write(
+        package.join("src/lib/Init.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Init {\n    function value() internal pure returns (uint256) {\n        return 7;\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/utils/Proxy.sol"),
+        "pragma solidity ^0.8.20;\nimport {Init} from \"src/lib/Init.sol\";\ncontract Proxy {\n    function value() external pure returns (uint256) {\n        return Init.value();\n    }\n}\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        ".pnpm/pkg@1.0.0/node_modules/pkg",
+        prj.root().join("node_modules/pkg"),
+    )
+    .unwrap();
+    prj.update_config(|config| {
+        config.libs.push("node_modules".into());
+        config.remappings = vec![Remapping::from_str("pkg/=node_modules/pkg/src/").unwrap().into()];
+    });
+    let candidate = write_stub_candidate(
+        &prj,
+        "candidate.json",
+        "pragma solidity ^0.8.20;\nimport {Proxy} from \"pkg/utils/Proxy.sol\";\ncontract StubTest {\n    function testValue() public {\n        require(new Proxy().value() == 7);\n    }\n}\n",
+    );
+    cmd.args(["properties", "--check", &candidate, "--seed", "1", "--seed", "2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "passed": true,
+  "reasons": [],
+  "possible_bugs": []
+}
+
+"#]]);
+}
+
+// A project test imports a file from a directory that is not a source, test, script, or library
+// directory. The workspace must still have it.
+#[forgetest_init]
+fn properties_check_copies_other_project_directories(prj: _, cmd: _) {
+    fs::create_dir_all(prj.root().join("deployments/genesis")).unwrap();
+    fs::write(
+        prj.root().join("deployments/genesis/Genesis.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Genesis {\n    function chainId() internal pure returns (uint256) {\n        return 2017;\n    }\n}\n",
+    )
+    .unwrap();
+    prj.add_test(
+        "utils/Helper.sol",
+        "pragma solidity ^0.8.20;\nimport {Genesis} from \"deployments/genesis/Genesis.sol\";\nlibrary Helper {\n    function chainId() internal pure returns (uint256) {\n        return Genesis.chainId();\n    }\n}\n",
+    );
+    let candidate = write_stub_candidate(
+        &prj,
+        "candidate.json",
+        "pragma solidity ^0.8.20;\nimport {Helper} from \"../utils/Helper.sol\";\ncontract StubTest {\n    function testChainId() public pure {\n        require(Helper.chainId() == 2017);\n    }\n}\n",
+    );
+    cmd.args(["properties", "--check", &candidate, "--seed", "1", "--seed", "2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "passed": true,
+  "reasons": [],
+  "possible_bugs": []
+}
+
+"#]]);
+}

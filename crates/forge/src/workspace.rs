@@ -812,7 +812,7 @@ fn copy_unshared_dir(
 }
 
 /// Creates a symlink at `dst`, preserving the original type even if the target is missing.
-fn symlink_entry(target: &Path, dst: &Path, _file_type: fs::FileType) -> Result<()> {
+pub(crate) fn symlink_entry(target: &Path, dst: &Path, _file_type: fs::FileType) -> Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, dst)?;
     #[cfg(windows)]

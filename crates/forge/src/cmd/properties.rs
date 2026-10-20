@@ -1099,7 +1099,7 @@ impl Agent<'_> {
         {
             return Err(error).wrap_err("failed to reset the check journal");
         }
-        let workspace = agent_workspace(campaign.config)?;
+        let workspace = candidate_workspace(campaign.config, &[])?;
         let check_command = [campaign.forge.as_os_str(), "properties".as_ref(), "--root".as_ref()]
             .into_iter()
             .chain([
@@ -1499,34 +1499,17 @@ fn project_fingerprint(config: &Config) -> BTreeMap<PathBuf, (u64, Option<System
     files
 }
 
-/// Copies the project for one agent and links the other top-level entries of the project, such as
-/// the README and docs, so the agent can read them.
-fn agent_workspace(config: &Config) -> Result<TempDir> {
-    let workspace = candidate_workspace(config, &[])?;
-    for entry in fs::read_dir(&config.root)? {
-        let path = entry?.path();
-        let Some(name) = path.file_name() else { continue };
-        let target = workspace.path().join(name);
-        if target.exists()
-            || name.to_string_lossy().starts_with('.')
-            || path == config.out
-            || path == config.cache_path
-        {
-            continue;
-        }
-        if !path.is_dir() {
-            fs::copy(&path, &target)?;
-        } else if workspace::symlink_dir(&path, &target).is_err() {
-            workspace::copy_dir_recursive(&path, &target)?;
-        }
-    }
-    Ok(workspace)
-}
-
 /// Copies the project into a temporary workspace and adds the files.
 fn candidate_workspace(config: &Config, files: &[CandidateFile]) -> Result<TempDir> {
     let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
-    workspace::copy_project(config, workspace.path())?;
+    let dependencies = config
+        .libs
+        .iter()
+        .map(|lib| lib.as_path())
+        .chain(["node_modules".as_ref(), "dependencies".as_ref()])
+        .map(|path| config.root.join(path))
+        .collect::<Vec<_>>();
+    copy_project_tree(config, workspace.path(), Path::new(""), &dependencies)?;
     // Internal runs see the project's resolved config, including inherited `extends` values,
     // absolute paths, and environment overrides, without reading files outside the workspace.
     let mut rebased = workspace::rebase_config_paths(config, workspace.path());
@@ -1544,10 +1527,73 @@ fn candidate_workspace(config: &Config, files: &[CandidateFile]) -> Result<TempD
     }
     for file in files {
         let path = workspace.path().join(&file.path);
+        // A linked directory on the path must not lead outside the workspace.
+        if let Some(existing) = path.ancestors().find(|ancestor| ancestor.exists()) {
+            workspace::ensure_within_root(
+                workspace.path(),
+                existing,
+                "generated test",
+                &file.path,
+            )?;
+        }
         fs::create_dir_all(path.parent().expect("candidate path has a parent"))?;
         fs::write(path, &file.content)?;
     }
     Ok(workspace)
+}
+
+/// Copies a project directory into a workspace, without Git data, build output, and, at the
+/// project root, hidden entries such as `.env`.
+///
+/// A dependency directory becomes a real directory whose entries link to the project's entries.
+/// A linked dependency directory would resolve outside the workspace, and the compiler then
+/// cannot resolve a dependency's own absolute imports, such as `src/lib/X.sol` in a pnpm package.
+/// A link to a path in the project leads to that path in the workspace, so it stays inside it.
+fn copy_project_tree(
+    config: &Config,
+    copy: &Path,
+    dir: &Path,
+    dependencies: &[PathBuf],
+) -> Result<()> {
+    fs::create_dir_all(copy.join(dir))?;
+    for entry in fs::read_dir(config.root.join(dir))? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let rel = dir.join(&name);
+        let target = copy.join(&rel);
+        if name == ".git"
+            || (dir.as_os_str().is_empty() && name.to_string_lossy().starts_with('.'))
+            || path == config.out
+            || path == config.cache_path
+        {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        if dependencies.contains(&path) && path.is_dir() {
+            fs::create_dir_all(&target)?;
+            for dependency in fs::read_dir(&path)? {
+                let dependency = dependency?;
+                let link = target.join(dependency.file_name());
+                workspace::symlink_entry(&dependency.path(), &link, dependency.file_type()?)?;
+            }
+        } else if file_type.is_symlink() {
+            let link = match path.canonicalize() {
+                Ok(resolved) => match resolved.strip_prefix(&config.root) {
+                    Ok(resolved) => copy.join(resolved),
+                    Err(_) => resolved,
+                },
+                // A dangling link stays as it is.
+                Err(_) => fs::read_link(&path)?,
+            };
+            workspace::symlink_entry(&link, &target, file_type)?;
+        } else if file_type.is_dir() {
+            copy_project_tree(config, copy, &rel, dependencies)?;
+        } else {
+            fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
 }
 
 /// Keeps the imported candidate files needed by passing tests.
