@@ -646,9 +646,5 @@ tempo-primitives = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267
 tempo-alloy = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
 tempo-contracts = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
 
-## tempo-nitro-attestation — see patches/tempo-nitro-attestation/Cargo.toml.
-[patch."https://github.com/mablr/tempo"]
-tempo-nitro-attestation = { path = "patches/tempo-nitro-attestation" }
-
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
