@@ -32,6 +32,8 @@ pub struct IdentifiedAddress<'a> {
     pub constructor_args_offset: Option<usize>,
     /// The artifact ID of the contract, if any.
     pub artifact_id: Option<ArtifactId>,
+    /// Whether the code at this address is a Solidity library.
+    pub is_library: bool,
 }
 
 /// Trace identifiers figure out what ABIs and labels belong to all the addresses of the trace.

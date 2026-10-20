@@ -907,6 +907,7 @@ impl CallTraceDecoder {
             abi,
             constructor_args_offset,
             artifact_id: _,
+            is_library,
         } in addrs
         {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
@@ -921,6 +922,12 @@ impl CallTraceDecoder {
 
             if let Some(abi) = abi {
                 self.collect_abi(&abi, Some(address), global);
+            }
+
+            // Library ABIs omit external functions with storage parameters, so the selector set
+            // cannot tell if a call selects an unknown function.
+            if is_library {
+                self.non_fallback_contracts.remove(&address);
             }
 
             if let Some(offset) = constructor_args_offset {
@@ -3784,6 +3791,7 @@ mod tests {
                     abi: Some(Cow::Borrowed(&self.abi)),
                     constructor_args_offset: None,
                     artifact_id: None,
+                    is_library: false,
                 })
                 .collect()
         }

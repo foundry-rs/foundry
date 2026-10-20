@@ -4,6 +4,7 @@ use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_common::contracts::{ContractsByArtifact, bytecode_diff_score};
 use foundry_compilers::ArtifactId;
+use revm::bytecode::opcode::{ADDRESS, EQ, PUSH20};
 use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
 
@@ -181,6 +182,11 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                     self.identify_code(runtime_code, creation_code)?;
                 trace!(target: "evm::traces::local", id=%id.identifier(), "identified");
 
+                // Solidity libraries start with the call protection `PUSH20 <address> ADDRESS EQ`.
+                // See: <https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries>
+                let is_library = runtime_code.first() == Some(&PUSH20)
+                    && runtime_code.get(21..23) == Some(&[ADDRESS, EQ]);
+
                 Some(IdentifiedAddress {
                     address,
                     contract: Some(id.identifier()),
@@ -188,6 +194,7 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                     abi: Some(Cow::Borrowed(abi)),
                     constructor_args_offset,
                     artifact_id: Some(id.clone()),
+                    is_library,
                 })
             })
             .collect()

@@ -256,6 +256,7 @@ impl ExternalIdentifier {
             abi,
             constructor_args_offset: None,
             artifact_id: None,
+            is_library: false,
         }
     }
 
