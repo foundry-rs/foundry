@@ -1231,7 +1231,7 @@ impl TestArgs {
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in test files.
-            config.build_info = true;
+            config.enable_debug_build_info();
         }
     }
 

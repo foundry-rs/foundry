@@ -408,7 +408,7 @@ impl ScriptArgs {
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in scripts.
-            config.build_info = true;
+            config.enable_debug_build_info();
         }
 
         let script_config = ScriptConfig::new(

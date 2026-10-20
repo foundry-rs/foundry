@@ -560,6 +560,9 @@ pub struct Config {
     pub build_info: bool,
     /// The path to the `build-info` directory that contains the build info json files.
     pub build_info_path: Option<PathBuf>,
+    /// Whether build infos leave out the AST, set by [`Config::enable_debug_build_info`].
+    #[serde(skip)]
+    pub build_info_without_ast: bool,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
     /// Configuration for `forge lint`
@@ -2119,7 +2122,7 @@ impl Config {
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
         // We're keeping AST in `--build-info` for backwards compatibility with HardHat.
-        if self.ast || self.build_info {
+        if self.ast || (self.build_info && !self.build_info_without_ast) {
             settings = settings.with_ast();
         }
 
@@ -2127,6 +2130,15 @@ impl Config {
             CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
 
         Ok(SolcSettings { settings, cli_settings })
+    }
+
+    /// Enables build infos for a debug run, which reads the compiled sources from them. Unless
+    /// build infos were already enabled, they leave out the AST, which debug runs do not use.
+    pub const fn enable_debug_build_info(&mut self) {
+        if !self.build_info {
+            self.build_info = true;
+            self.build_info_without_ast = true;
+        }
     }
 
     /// Returns the configured [VyperSettings] that includes:
@@ -3156,6 +3168,7 @@ impl Default for Config {
             sparse_mode: false,
             build_info: false,
             build_info_path: None,
+            build_info_without_ast: false,
             fmt: Default::default(),
             lint: Default::default(),
             doc: Default::default(),
@@ -6112,6 +6125,24 @@ mod tests {
         let settings = config.solc_settings().unwrap();
         assert_eq!(settings.settings.via_ssa_cfg, Some(false));
         assert_eq!(settings.cli_settings.extra_args, vec!["--via-ssa-cfg".to_string()]);
+    }
+
+    #[test]
+    fn debug_build_info_leaves_out_the_ast_unless_build_info_is_on() {
+        let requests_ast = |config: &Config| {
+            config.solc_settings().unwrap().settings.output_selection.as_ref()["*"]
+                .get("")
+                .is_some_and(|outputs| outputs.contains(&"ast".to_string()))
+        };
+
+        let mut config = Config::default();
+        config.enable_debug_build_info();
+        assert!(config.build_info);
+        assert!(!requests_ast(&config));
+
+        let mut config = Config { build_info: true, ..Config::default() };
+        config.enable_debug_build_info();
+        assert!(requests_ast(&config));
     }
 
     #[test]
