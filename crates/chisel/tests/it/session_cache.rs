@@ -108,3 +108,21 @@ contract REPL {
     }
     assert_eq!(fs::read_dir(home.path().join(".svm")).unwrap().count(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_uses_startup_fork_chain() {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(137u64))).await;
+    let home = tempfile::tempdir().unwrap();
+    command(home.path())
+        .args(["--use", "0.8.29", "--fork-url", &handle.http_endpoint()])
+        .args(["eval", "!fe 0x0000000000000000000000000000000000000004 Token"])
+        .assert()
+        .failure()
+        .stderr_eq(str![[r#"
+Error: Failed to fetch ABI from Etherscan
+
+Context:
+- No Etherscan API key configured for chain polygon
+
+"#]]);
+}

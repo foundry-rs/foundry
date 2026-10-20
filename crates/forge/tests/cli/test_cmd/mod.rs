@@ -4307,6 +4307,75 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 }
 
+#[forgetest]
+async fn fork_setup_error_containing_skipped_fails(prj: _, cmd: _) {
+    let (_, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let router = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let upstream = upstream.clone();
+            let client = client.clone();
+            async move {
+                let error = match request["method"].as_str() {
+                    // Force the separate account requests even when Anvil supports account info.
+                    Some("eth_getAccountInfo") => Some((-32601, "method not found")),
+                    Some("eth_getBalance") => Some((-32603, "account lookup skipped by provider")),
+                    _ => None,
+                };
+                if let Some((code, message)) = error {
+                    return axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "error": { "code": code, "message": message },
+                    }));
+                }
+                let response = client.post(upstream).json(&request).send().await.unwrap();
+                axum::Json(response.json::<serde_json::Value>().await.unwrap())
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    prj.add_test(
+        "ForkSetup.t.sol",
+        r#"
+contract ForkSetup {
+    function test_shouldRun() public pure {}
+}
+"#,
+    );
+
+    cmd.env("RUST_LOG", "off");
+    cmd.args(["test", "--fork-url", &endpoint, "--no-storage-caching"])
+        .assert_failure()
+        .stderr_eq(str![""])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/16197>
 #[forgetest_init]
 fn skip_setup_after_caught_revert(prj: _, cmd: _) {

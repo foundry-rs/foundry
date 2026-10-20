@@ -184,7 +184,7 @@ Executing previous transactions from the block.
 // tests cast can decode external libraries traces with project cached selectors
 #[forgetest_init]
 async fn flaky_decode_external_libraries_with_cached_selectors(prj: _, cmd: _) {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     prj.add_source(
         "ExternalLib",
@@ -238,19 +238,26 @@ contract CounterInExternalLibScript is Script {
     ])
     .assert_success();
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(1))
-        .await
+    // Automining may put the library and contract deployments in separate blocks.
+    let broadcast: serde_json::Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/CounterInExternalLibScript.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let tx_hash = broadcast["transactions"]
+        .as_array()
         .unwrap()
-        .unwrap()
-        .tx_hash();
+        .iter()
+        .find(|tx| tx["contractName"] == "CounterInExternalLib")
+        .expect("contract deployment transaction")["hash"]
+        .as_str()
+        .expect("contract deployment transaction hash");
 
     // Build and cache project selectors.
     cmd.forge_fuse().args(["build"]).assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
     // Assert cast with local artifacts can decode external lib signature.
     cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args(["run", tx_hash, "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
