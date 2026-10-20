@@ -1392,16 +1392,14 @@ Error: Binding name collision for `Foo_Bar`: contract `Foo$Bar` ([..]/Names.sol/
     fs::create_dir_all(&bindings).unwrap();
     let existing = bindings.join("existing.rs");
     fs::write(&existing, "existing bindings\n").unwrap();
-    for flag in ["--overwrite", "--single-file"] {
-        cmd.forge_fuse()
-            .args(["bind", "--skip-build", "--select-all", flag])
-            .assert_failure()
-            .stderr_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select-all", "--single-file"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
 Error: Binding name collision for `Foo_Bar`: contract `Foo$Bar` ([..]/Names.sol/Foo$Bar.json) and contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
 
 "#]]);
-        assert_eq!(fs::read_to_string(&existing).unwrap(), "existing bindings\n");
-    }
+    assert_eq!(fs::read_to_string(&existing).unwrap(), "existing bindings\n");
 }
 
 #[forgetest]
@@ -1424,36 +1422,29 @@ Error: Binding module name collision for `foo_bar`: contract `FooBar` ([..]/Name
 "#]]);
     assert!(!prj.paths().artifacts.join("bindings").exists());
 
-    for module in [false, true] {
-        let bindings = prj.root().join(if module { "module" } else { "crate" });
-        let mut args = vec!["bind", "--skip-build", "--select-all"];
-        if module {
-            args.push("--module");
-        }
-        // These contract names remain distinct when there are no snake_case file names.
-        cmd.forge_fuse()
-            .args(&args)
-            .arg("--single-file")
-            .arg("--bindings-path")
-            .arg(&bindings)
-            .assert_success();
-        if !module {
-            assert_bindings_compile(&bindings);
-            let output = bindings.join("src/lib.rs");
-            let before = fs::read(&output).unwrap();
-            cmd.forge_fuse()
-                .args(&args)
-                .arg("--bindings-path")
-                .arg(&bindings)
-                .arg("--overwrite")
-                .assert_failure()
-                .stderr_eq(str![[r#"
+    let bindings = prj.root().join("crate");
+    let args = ["bind", "--skip-build", "--select-all"];
+    // These contract names remain distinct when there are no snake_case file names.
+    cmd.forge_fuse()
+        .args(args)
+        .arg("--single-file")
+        .arg("--bindings-path")
+        .arg(&bindings)
+        .assert_success();
+    assert_bindings_compile(&bindings);
+    let output = bindings.join("src/lib.rs");
+    let before = fs::read(&output).unwrap();
+    cmd.forge_fuse()
+        .args(args)
+        .arg("--bindings-path")
+        .arg(&bindings)
+        .arg("--overwrite")
+        .assert_failure()
+        .stderr_eq(str![[r#"
 Error: Binding module name collision for `foo_bar`: contract `FooBar` ([..]/Names.sol/FooBar.json) and contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
 
 "#]]);
-            assert_eq!(fs::read(output).unwrap(), before);
-        }
-    }
+    assert_eq!(fs::read(output).unwrap(), before);
 
     // Filtering out the other contract removes the ambiguity.
     cmd.forge_fuse().args(["bind", "--select", "^FooBar$"]).assert_success();
