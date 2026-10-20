@@ -1150,7 +1150,9 @@ Bindings have been generated to [..]
             &prj.artifacts().join(format!("{contract}.sol/{contract}.json")),
         );
     }
-    assert!(prj.artifacts().join("bindings/src/common.rs").is_file());
+    // The versioned 0.8.20 artifact sorts first and must remain the selected variant.
+    let binding = fs::read_to_string(prj.artifacts().join("bindings/src/common.rs")).unwrap();
+    assert_binding_bytecode(&binding, &prj.artifacts().join("Common.sol/Common.0.8.20.json"));
     cmd.forge_fuse()
         .args(["bind", "--overwrite", "--select", "^(A|B|Common)$"])
         .assert_success()
@@ -1473,9 +1475,17 @@ fn bind_deduplicates_artifact_only_versions_and_profiles(prj: _, cmd: _) {
     prj.add_source("Foo.sol", "contract Foo {}");
     cmd.arg("build").assert_success();
     let artifacts = prj.artifacts().join("Foo.sol");
-    for name in ["Foo.json", "Foo.0.8.34.json", "Foo.0.8.35.optimized.json"] {
+    for (name, bytecode) in [
+        ("Foo.json", "0x6000"),
+        ("Foo.0.8.34.json", "0x6001"),
+        ("Foo.0.8.35.optimized.json", "0x6002"),
+    ] {
         // Minimal artifacts need neither metadata nor a source file reference.
-        fs::write(artifacts.join(name), r#"{"abi":[]}"#).unwrap();
+        fs::write(
+            artifacts.join(name),
+            json!({ "abi": [], "bytecode": { "object": bytecode } }).to_string(),
+        )
+        .unwrap();
     }
     cmd.forge_fuse()
         .args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$"])
@@ -1485,6 +1495,10 @@ Generating bindings for 1 contracts
 Bindings have been generated to [..]
 
 "#]]);
+
+    // Same-contract variants retain the existing artifact-path precedence.
+    let binding = fs::read_to_string(prj.artifacts().join("bindings/src/foo.rs")).unwrap();
+    assert_binding_bytecode(&binding, &artifacts.join("Foo.0.8.34.json"));
 
     // Identical ABIs in a different full directory are still distinct contracts.
     let other = prj.artifacts().join("other/Foo.sol");
