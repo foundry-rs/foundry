@@ -117,7 +117,9 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.14"
+          # Vyper's `immutables` dependency has no 3.14 wheels, and source builds pull the newest
+          # setuptools, which Aegis blocks while recently published.
+          python-version: "3.13"
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
