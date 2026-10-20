@@ -116,20 +116,6 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>>;
 
-    /// Executes a signed transaction as a nested transaction, such as for
-    /// `broadcastRawTransaction`.
-    ///
-    /// Cheatcodes are not active in the executed transaction. It runs in `env`, or the running
-    /// environment for `None`, and its root frame duplicates the cheatcode call at `depth`.
-    fn transact_from_tx(
-        &mut self,
-        backend: &mut dyn CheatcodesBackend<FEN>,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        depth: u16,
-        tx: &Recovered<TxFor<FEN>>,
-        env: Option<EvmEnvFor<FEN>>,
-    ) -> eyre::Result<TxResultFor<FEN>>;
-
     /// Simulates `console.log` invocation.
     fn console_log(&mut self, msg: &str);
 
@@ -203,17 +189,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
         backend.backend_mut().transact(fork_id, transaction, evm, None)
-    }
-
-    fn transact_from_tx(
-        &mut self,
-        backend: &mut dyn CheatcodesBackend<FEN>,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        _depth: u16,
-        tx: &Recovered<TxFor<FEN>>,
-        env: Option<EvmEnvFor<FEN>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        backend.backend_mut().transact_from_tx(tx, evm, env, None)
     }
 
     fn console_log(&mut self, _msg: &str) {}

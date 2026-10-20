@@ -29,7 +29,7 @@ use foundry_evm_core::{
         BlockEnvFor, DetachedState, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor,
         FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores,
         TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env,
-        merge_nested_changes, merge_pending_changes, release_inspector,
+        merge_pending_changes, release_inspector,
     },
     precompiles::P256_VERIFY,
 };
@@ -535,18 +535,17 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             inner: &mut *self,
             backend: Some(&mut *backend),
         });
-        let result = match child.transact(tx) {
-            // A failed transaction keeps its nonce increment.
-            Ok(executed) => merge_nested_changes(evm.state_mut(), &executed)
-                .map(|()| executed.result().clone())
-                .map_err(Into::into),
-            Err(err) => Err(transaction_error(err)),
-        };
+        let result =
+            child.transact(tx).map(|executed| executed.detach()).map_err(transaction_error);
         drop(release_inspector(child));
-        cheats.snapshot_restores = snapshot_restores;
+        let restored = mem::replace(&mut cheats.snapshot_restores, snapshot_restores).kept();
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
-        result
+        let executed = result?;
+        // A restoration's unchanged slots can differ from the suspended parent's values.
+        // A failed transaction still keeps its nonce increment.
+        merge_pending_changes(evm.state_mut(), &executed.pending_state, restored)?;
+        Ok(executed.result)
     }
 
     fn transact(
@@ -562,22 +561,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
         let result =
             backend.backend_mut().transact(fork_id, transaction, evm, Some(&mut inspector));
-        self.exit_inner_context(previous);
-        result
-    }
-
-    fn transact_from_tx(
-        &mut self,
-        backend: &mut dyn CheatcodesBackend<FEN>,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        depth: u16,
-        tx: &Recovered<TxFor<FEN>>,
-        env: Option<EvmEnvFor<FEN>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
-        let mut inspector =
-            InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
-        let result = backend.backend_mut().transact_from_tx(tx, evm, env, Some(&mut inspector));
         self.exit_inner_context(previous);
         result
     }
@@ -1157,6 +1140,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return not_executed(Bytes::new());
         };
         let source_fork = backend.backend().active_fork_id();
+        let generation = backend.backend().lifecycle().generation();
         let epoch = self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let mut child = backend.backend().nested_evm(evm, &tx, Some(env));
         // The nested transaction continues the running one's network extension state, such as
@@ -1224,23 +1208,39 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let switched =
             self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
+        let journal_replaced = self
+            .backend
+            .as_deref()
+            .is_some_and(|b| b.backend().lifecycle().generation() != generation);
         let replaced = restored
             || switched
             || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let merged = if replaced {
-            child.commit_source(&executed.pending_state);
+            // A restoration back to the source belongs to the suspended parent. Otherwise a
+            // context switch accepted its earlier writes, but not the child's later writes.
+            let rebase = switched || (journal_replaced && !restored);
+            if !rebase {
+                child.commit_source(&executed.pending_state);
+            }
             let displaced = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
             Backend::<FEN>::end_frame_evm(evm, child);
-            // The calling frame owns a restoration the isolated call kept, as if it made it.
-            if restored
-                && !switched
-                && let Some(restores) = self.snapshot_restores()
-            {
-                restores.capture(DetachedState::new(displaced));
+            if let Some(restores) = self.snapshot_restores() {
+                if rebase {
+                    // A fork switch accepted the parent's earlier restorations too.
+                    restores.journal_replaced(evm.state());
+                } else if restored {
+                    // The calling frame owns a restoration the isolated call kept.
+                    restores.capture(DetachedState::new(displaced));
+                }
             }
-            true
+            !rebase
+                || (merge_pending_changes(evm.state_mut(), &executed.pending_state, restored)
+                    .is_ok()
+                    && (!result.status
+                        || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok()))
         } else {
-            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
+            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state, false)
+                .is_ok()
                 && (!result.status
                     || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok());
             // Keep cheatcode block changes and network extension state from the nested EVM.

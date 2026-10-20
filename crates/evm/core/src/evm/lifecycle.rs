@@ -416,7 +416,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// snapshot survive the revert; every fork that existed at the snapshot gets its state back.
     ///
     /// The replaced state is materialized before it is detached, so that a failing frame can
-    /// reinstate it with [`SnapshotRestores`].
+    /// reinstate it with [`SnapshotRestores`](super::SnapshotRestores).
     pub fn revert(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
@@ -600,7 +600,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         let executed = executor.transact(tx).map_err(transaction_error)?;
         let persistent = &self.forks.persistent;
-        merge_changes(evm.state_mut(), executed.account_changes(), |address| {
+        merge_changes(evm.state_mut(), executed.account_changes(), false, |address| {
             persistent.contains(address)
         })?;
         let result = executed.commit();
@@ -771,13 +771,19 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true)
+    merge_changes(state, executed.account_changes(), false, |_| true)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
 /// transaction's `state` as journaled writes, like [`merge_nested_changes`].
-pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
-    merge_changes(state, pending.account_changes(), |_| true)
+/// If the transaction kept a snapshot restoration, merge its loaded state too: unchanged values
+/// in the snapshot can differ from the suspended parent's values. Absent slots are not removed.
+pub fn merge_pending_changes(
+    state: &mut State<'_>,
+    pending: &PendingState,
+    restored: bool,
+) -> DbResult<()> {
+    merge_changes(state, pending.account_changes(), restored, |_| true)
 }
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
@@ -785,9 +791,10 @@ pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> D
 fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
+    restored: bool,
     filter: impl Fn(&Address) -> bool,
 ) -> DbResult<()> {
-    for change in changes.filter(|change| change.is_changed()) {
+    for change in changes.filter(|change| restored || change.is_changed()) {
         let address = change.address;
         if !filter(&address) {
             continue;
@@ -795,6 +802,7 @@ fn merge_changes<'c>(
         {
             let mut account = state.account(&address)?;
             match change.current {
+                Some(info) if restored => *account.get_or_insert() = info.clone(),
                 Some(info) => {
                     account.set_balance(info.balance);
                     account.set_nonce(info.nonce);
@@ -812,8 +820,14 @@ fn merge_changes<'c>(
         if change.current.is_none() || change.storage.wiped {
             state.storage(&address)?.wipe();
         }
-        for (key, slot) in change.storage.changed_slots() {
-            state.storage_slot(&address, *key)?.set(slot.current);
+        if restored {
+            for (key, slot) in &change.storage.slots {
+                state.storage_slot(&address, *key)?.set(slot.value.current);
+            }
+        } else {
+            for (key, slot) in change.storage.changed_slots() {
+                state.storage_slot(&address, *key)?.set(slot.current);
+            }
         }
     }
     Ok(())

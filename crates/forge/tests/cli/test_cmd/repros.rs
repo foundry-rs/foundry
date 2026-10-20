@@ -1,7 +1,21 @@
 //! Regression tests for specific GitHub issues
 
+use alloy_primitives::{Address, B256, U256, bytes, keccak256};
 use anvil::{NodeConfig, spawn};
+use evm2::{EvmFeatures, SpecId, bytecode::Bytecode};
+use foundry_common::fs::read_json_file;
+use foundry_compilers::artifacts::ConfigurableContractArtifact;
+use foundry_config::Config;
+use foundry_evm::{
+    backend::Backend,
+    constants::CALLER,
+    core::evm::{EthEvmNetwork, EvmEnv, EvmFactoryFor, FoundryEvmFactory},
+    executors::ExecutorBuilder,
+    inspectors::CheatsConfig,
+    opts::EvmOpts,
+};
 use foundry_test_utils::str;
+use std::sync::Arc;
 
 // https://github.com/foundry-rs/foundry/issues/3055
 #[forgetest_init]
@@ -1435,4 +1449,116 @@ Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
+}
+
+#[forgetest]
+async fn isolated_snapshot_fork_root_revert(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+    let probe = Address::from_word(U256::from(0x123456).into());
+    api.anvil_set_code(probe, bytes!("00")).await.unwrap();
+    api.anvil_set_storage_at(probe, U256::ZERO, B256::with_last_byte(22)).await.unwrap();
+    api.mine_one().await.unwrap();
+    prj.add_source(
+        "ForkRestore.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata) external returns (uint256);
+    function selectFork(uint256) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function store(address, bytes32, bytes32) external;
+}
+contract ForkRestore {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant PROBE = address(0x123456);
+    uint256 a;
+    uint256 b;
+    uint256 saved;
+
+    function setUp() external {
+        a = vm.createSelectFork("<rpc>");
+        vm.store(PROBE, 0, bytes32(uint256(11)));
+        b = vm.createSelectFork("<rpc>");
+        saved = vm.snapshotState();
+        vm.selectFork(a);
+    }
+
+    function run(uint256 mode, bool fail) external {
+        if (mode == 0) require(vm.revertToState(vm.snapshotState()));
+        if (mode == 2) vm.store(PROBE, 0, bytes32(uint256(33)));
+        this.child(mode);
+        if (fail) revert("root failed");
+    }
+
+    function child(uint256 mode) external {
+        uint256 id;
+        if (mode == 2) id = vm.snapshotState();
+        if (mode == 4) require(vm.revertToState(saved));
+        else vm.selectFork(b);
+        if (mode == 3) {
+            vm.store(PROBE, 0, bytes32(uint256(66)));
+            id = vm.snapshotState();
+        }
+        vm.store(PROBE, 0, bytes32(uint256(99)));
+        if (mode == 2 || mode == 3) require(vm.revertToState(id));
+    }
+}
+"#
+        .replace("<rpc>", &handle.http_endpoint()),
+    );
+    cmd.args(["build", "--evm-version=cancun"]).assert_success();
+    let artifact = read_json_file::<ConfigurableContractArtifact>(
+        &prj.artifacts().join("ForkRestore.sol/ForkRestore.json"),
+    )
+    .unwrap();
+    let code = artifact.deployed_bytecode.unwrap().bytecode.unwrap().object.into_bytes().unwrap();
+    let spec = SpecId::CANCUN;
+    let mut env = EvmEnv::new(
+        spec,
+        EvmFactoryFor::<EthEvmNetwork>::default().version(spec, 31337),
+        Default::default(),
+    );
+    env.set_feature(EvmFeatures::EIP3607, false);
+    let config = Config { isolate: true, ..Config::default() };
+    let cheats = Arc::new(CheatsConfig::new(&config, EvmOpts::default(), None, None, false));
+
+    // Both sides of the root boundary matter: writes must survive success, not failure.
+    for (mode, fork, success_value, reverted_value) in
+        [(0, 1, 99, 22), (1, 1, 99, 22), (2, 0, 33, 11), (3, 1, 66, 22), (4, 1, 99, 22)]
+    {
+        for fail in [false, true] {
+            let mut executor = ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(cheats.clone()).enable_isolation(true))
+                .gas_limit(30_000_000)
+                .build(
+                    env,
+                    Default::default(),
+                    Backend::spawn(None, env).unwrap(),
+                    Default::default(),
+                );
+            let target = Address::repeat_byte(0x44);
+            executor.set_code(target, Bytecode::new_raw(code.clone())).unwrap();
+            executor.backend_mut().add_persistent_account(target);
+            executor.backend_mut().allow_cheatcode_access(target);
+            let setup = executor
+                .transact_raw(CALLER, target, keccak256("setUp()")[..4].to_vec().into(), U256::ZERO)
+                .unwrap();
+            assert!(!setup.reverted);
+            let input = [
+                &keccak256("run(uint256,bool)")[..4],
+                &U256::from(mode).to_be_bytes::<32>(),
+                &U256::from(fail).to_be_bytes::<32>(),
+            ]
+            .concat();
+            // Commit even a reverted root, then inspect the selected fork and accepted state.
+            let result = executor.transact_raw(CALLER, target, input.into(), U256::ZERO).unwrap();
+            assert_eq!(result.reverted, fail, "mode {mode}");
+            assert_eq!(executor.backend().active_fork_id(), Some(U256::from(fork)));
+            assert_eq!(
+                executor.backend().storage(probe, U256::ZERO).unwrap(),
+                U256::from(if fail { reverted_value } else { success_value }),
+                "mode {mode}, fail {fail}",
+            );
+        }
+    }
 }
