@@ -745,10 +745,16 @@ contract StackTooDeepTest {
 #[forgetest_init]
 fn mutation_testing_uses_mutation_profile_for_initial_compile(prj: _, cmd: _) {
     // Only the assertion needs mutating to exercise the compiler profile. Mutating every
-    // arithmetic expression in the stack-depth fixture needlessly repeats the expensive IR build.
+    // arithmetic expression or the whole body of the stack-depth fixture needlessly repeats the
+    // expensive IR build.
     fs::write(
         prj.root().join("foundry.toml"),
-        "[profile.default]\nvia_ir = false\n\n[mutation]\nexclude_operators = [\"binary-op\"]\n",
+        r#"[profile.default]
+via_ir = false
+
+[mutation]
+exclude_operators = ["binary-op", "function-body"]
+"#,
     )
     .unwrap();
 
