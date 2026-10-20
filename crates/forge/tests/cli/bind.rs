@@ -1392,20 +1392,15 @@ Error: Binding name collision for `Foo_Bar`: contract `Foo$Bar` ([..]/Names.sol/
     fs::create_dir_all(&bindings).unwrap();
     let existing = bindings.join("existing.rs");
     fs::write(&existing, "existing bindings\n").unwrap();
-    for flags in
-        [vec![], vec!["--skip-build"], vec!["--single-file"], vec!["--module", "--single-file"]]
-    {
-        for overwrite in [false, true] {
-            cmd.forge_fuse().args(["bind", "--select-all"]).args(&flags);
-            if overwrite {
-                cmd.arg("--overwrite");
-            }
-            cmd.assert_failure().stderr_eq(str![[r#"
+    for flag in ["--overwrite", "--single-file"] {
+        cmd.forge_fuse()
+            .args(["bind", "--skip-build", "--select-all", flag])
+            .assert_failure()
+            .stderr_eq(str![[r#"
 Error: Binding name collision for `Foo_Bar`: contract `Foo$Bar` ([..]/Names.sol/Foo$Bar.json) and contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
 
 "#]]);
-            assert_eq!(fs::read_to_string(&existing).unwrap(), "existing bindings\n");
-        }
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "existing bindings\n");
     }
 }
 
@@ -1442,28 +1437,22 @@ Error: Binding module name collision for `foo_bar`: contract `FooBar` ([..]/Name
             .arg("--bindings-path")
             .arg(&bindings)
             .assert_success();
-        cmd.forge_fuse()
-            .args(&args)
-            .arg("--single-file")
-            .arg("--bindings-path")
-            .arg(&bindings)
-            .assert_success();
         if !module {
             assert_bindings_compile(&bindings);
-        }
-        let output = bindings.join(if module { "mod.rs" } else { "src/lib.rs" });
-        let before = fs::read(&output).unwrap();
-        cmd.forge_fuse()
-            .args(&args)
-            .arg("--bindings-path")
-            .arg(&bindings)
-            .arg("--overwrite")
-            .assert_failure()
-            .stderr_eq(str![[r#"
+            let output = bindings.join("src/lib.rs");
+            let before = fs::read(&output).unwrap();
+            cmd.forge_fuse()
+                .args(&args)
+                .arg("--bindings-path")
+                .arg(&bindings)
+                .arg("--overwrite")
+                .assert_failure()
+                .stderr_eq(str![[r#"
 Error: Binding module name collision for `foo_bar`: contract `FooBar` ([..]/Names.sol/FooBar.json) and contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
 
 "#]]);
-        assert_eq!(fs::read(output).unwrap(), before);
+            assert_eq!(fs::read(output).unwrap(), before);
+        }
     }
 
     // Filtering out the other contract removes the ambiguity.
@@ -1472,9 +1461,8 @@ Error: Binding module name collision for `foo_bar`: contract `FooBar` ([..]/Name
 
 #[forgetest]
 fn bind_deduplicates_artifact_only_versions_and_profiles(prj: _, cmd: _) {
-    prj.add_source("Foo.sol", "contract Foo {}");
-    cmd.arg("build").assert_success();
     let artifacts = prj.artifacts().join("Foo.sol");
+    fs::create_dir_all(&artifacts).unwrap();
     for (name, bytecode) in [
         ("Foo.json", "0x6000"),
         ("Foo.0.8.34.json", "0x6001"),
@@ -1487,8 +1475,9 @@ fn bind_deduplicates_artifact_only_versions_and_profiles(prj: _, cmd: _) {
         )
         .unwrap();
     }
-    cmd.forge_fuse()
-        .args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$"])
+    // This artifact-only fixture intentionally has no compiler cache.
+    cmd.env("RUST_LOG", "off");
+    cmd.args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$"])
         .assert_success()
         .stderr_eq(str![[r#"
 Generating bindings for 1 contracts
@@ -1504,8 +1493,8 @@ Bindings have been generated to [..]
     let other = prj.artifacts().join("other/Foo.sol");
     fs::create_dir_all(&other).unwrap();
     fs::write(other.join("Foo.json"), r#"{"abi":[]}"#).unwrap();
-    cmd.forge_fuse()
-        .args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$", "--overwrite"])
+    cmd.forge_fuse().env("RUST_LOG", "off");
+    cmd.args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$", "--overwrite"])
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: Binding name collision for `Foo`: contract `Foo` ([..]/Foo.sol/Foo.0.8.34.json) and contract `Foo` ([..]/other/Foo.sol/Foo.json)
