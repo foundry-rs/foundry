@@ -4,7 +4,10 @@
 //! maps into soldb debug info, then runs a soldb session over them or writes them as a bundle that
 //! soldb's own tools read.
 
-use alloy_primitives::{Address, Bytes, U256, hex, map::HashSet};
+use alloy_primitives::{
+    Address, Bytes, U256, hex,
+    map::{self, HashSet},
+};
 use eyre::{OptionExt, Result};
 use foundry_common::{
     ContractsByArtifact, Shell,
@@ -23,7 +26,7 @@ use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use serde_json::{Map, Value, json};
 use soldb_core::{
     ContractCreation, ExecutionCall, StepSnapshot, StorageChange, TraceArtifacts,
-    TraceCapabilities, TraceStep, TransactionTrace, WordInterner,
+    TraceCapabilities, TraceStep, TransactionTrace, Word,
 };
 use soldb_debugger::{CodeGenerator, ContractDebugInfo, StorageLayout};
 use soldb_ethdebug::{EthdebugInfo, Instruction};
@@ -162,7 +165,13 @@ fn transaction_trace(
     arenas: &mut [CallTraceArena],
     breakpoints: &Breakpoints,
 ) -> Result<(TransactionTrace, BreakpointSteps)> {
+    let nodes = arenas.iter().flat_map(|arena| arena.nodes());
+    let (steps, frames) =
+        nodes.fold((0, 0), |(steps, frames), node| (steps + node.trace.steps.len(), frames + 1));
     let mut builder = TraceBuilder {
+        steps: Vec::with_capacity(steps),
+        calls: Vec::with_capacity(frames),
+        creations: Vec::with_capacity(frames),
         breakpoints: breakpoints.values().map(|location| (*location, Vec::new())).collect(),
         ..Default::default()
     };
@@ -212,8 +221,10 @@ struct TraceBuilder {
     steps: Vec<TraceStep>,
     calls: Vec<ExecutionCall>,
     creations: Vec<ContractCreation>,
-    /// One shared copy of each distinct stack word and mnemonic.
-    words: WordInterner,
+    /// One shared copy of each distinct stack word, formatted once.
+    words: map::HashMap<U256, Word>,
+    /// One shared copy of each mnemonic, by opcode.
+    ops: Vec<Option<Word>>,
     /// The last recorded memory and its hex encoding, shared by the steps that did not change it.
     memory: Option<(Bytes, Arc<str>)>,
     /// The last return data buffer and its hex encoding, shared by unchanged steps.
@@ -221,20 +232,24 @@ struct TraceBuilder {
     /// The storage of the steps that touch no slot.
     no_storage: Arc<BTreeMap<String, String>>,
     /// The last recorded stack with its interned words, reused where the words did not change.
-    stack: Vec<(U256, Arc<str>)>,
+    stack: Vec<(U256, Word)>,
     /// The steps that run each `vm.breakpoint` location, as code address and program counter.
     breakpoints: BreakpointSteps,
 }
 
 impl TraceBuilder {
     /// Interns `stack`, formatting only the words that differ from the last recorded stack.
-    fn intern_stack(&mut self, stack: &[U256]) -> Vec<Arc<str>> {
+    fn intern_stack(&mut self, stack: &[U256]) -> Vec<Word> {
         self.stack.truncate(stack.len());
         for (i, word) in stack.iter().enumerate() {
-            match self.stack.get(i) {
-                Some((last, _)) if last == word => {}
-                Some(_) => self.stack[i] = (*word, self.words.intern(&quantity(*word))),
-                None => self.stack.push((*word, self.words.intern(&quantity(*word)))),
+            if self.stack.get(i).is_some_and(|(last, _)| last == word) {
+                continue;
+            }
+            let interned =
+                self.words.entry(*word).or_insert_with(|| quantity(*word).into()).clone();
+            match self.stack.get_mut(i) {
+                Some(slot) => *slot = (*word, interned),
+                None => self.stack.push((*word, interned)),
             }
         }
         self.stack.iter().map(|(_, word)| word.clone()).collect()
@@ -245,7 +260,7 @@ impl TraceBuilder {
         let node = &mut nodes[idx];
         let ordering = std::mem::take(&mut node.ordering);
         let children = std::mem::take(&mut node.children);
-        let steps = std::mem::take(&mut node.trace.steps);
+        let mut steps = std::mem::take(&mut node.trace.steps);
         let trace = &node.trace;
         let address = trace.address;
         let depth = trace.depth as u64 + 1;
@@ -296,15 +311,21 @@ impl TraceBuilder {
         }
 
         // The ordering lists the steps in recording order.
-        let mut steps = steps.into_iter().peekable();
+        let mut next_step = 0;
         for order in ordering {
             match order {
                 TraceMemberOrder::Step(_) => {
-                    if let Some(step) = steps.next() {
+                    if next_step < steps.len() {
+                        let (done, rest) = steps.split_at_mut(next_step + 1);
+                        let step = &mut done[next_step];
                         if let Some(hits) = self.breakpoints.get_mut(&(address, step.pc)) {
                             hits.push(self.steps.len());
                         }
-                        self.push_step(&step, steps.peek(), depth);
+                        self.push_step(step, rest.first(), depth);
+                        // Free the converted snapshots now, not when the frame ends.
+                        step.stack = None;
+                        step.memory = None;
+                        next_step += 1;
                     }
                 }
                 TraceMemberOrder::Call(child) => {
@@ -402,9 +423,14 @@ impl TraceBuilder {
             transient_storage,
             return_data,
         };
+        let op = usize::from(step.op.get());
+        if self.ops.len() <= op {
+            self.ops.resize(op + 1, None);
+        }
+        let mnemonic = self.ops[op].get_or_insert_with(|| step.op.as_str().into()).clone();
         self.steps.push(TraceStep::new(
             step.pc as u64,
-            self.words.intern(step.op.as_str()),
+            mnemonic,
             step.gas_remaining,
             step.gas_cost,
             depth,
