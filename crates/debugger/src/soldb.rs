@@ -220,11 +220,26 @@ struct TraceBuilder {
     return_data: Option<(Bytes, Arc<str>)>,
     /// The storage of the steps that touch no slot.
     no_storage: Arc<BTreeMap<String, String>>,
+    /// The last recorded stack with its interned words, reused where the words did not change.
+    stack: Vec<(U256, Arc<str>)>,
     /// The steps that run each `vm.breakpoint` location, as code address and program counter.
     breakpoints: BreakpointSteps,
 }
 
 impl TraceBuilder {
+    /// Interns `stack`, formatting only the words that differ from the last recorded stack.
+    fn intern_stack(&mut self, stack: &[U256]) -> Vec<Arc<str>> {
+        self.stack.truncate(stack.len());
+        for (i, word) in stack.iter().enumerate() {
+            match self.stack.get(i) {
+                Some((last, _)) if last == word => {}
+                Some(_) => self.stack[i] = (*word, self.words.intern(&quantity(*word))),
+                None => self.stack.push((*word, self.words.intern(&quantity(*word)))),
+            }
+        }
+        self.stack.iter().map(|(_, word)| word.clone()).collect()
+    }
+
     /// Records node `idx` and its subcalls. `parent` is the id of the enclosing call.
     fn visit(&mut self, nodes: &mut [CallTraceNode], idx: usize, parent: Option<usize>) {
         let node = &mut nodes[idx];
@@ -380,7 +395,7 @@ impl TraceBuilder {
             })
         };
         let snapshot = StepSnapshot {
-            stack: stack.iter().map(|word| self.words.intern(&quantity(*word))).collect(),
+            stack: self.intern_stack(stack),
             memory,
             storage,
             storage_diff,
