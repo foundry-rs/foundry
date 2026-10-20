@@ -39,10 +39,11 @@ use std::{
 use tempfile::TempDir;
 
 const CANDIDATE_SCHEMA: &str = "foundry/properties-candidate-v1";
-const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v3";
-/// In an offline analysis of 12 held-out cases, three independent agents with a quorum of two
-/// kept 8 or 9 of 9 confirmed bugs and removed most wrong reports and duplicates.
-const DEFAULT_AGENTS: usize = 3;
+const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v4";
+/// On 12 held-out cases, five small-model agents with a quorum of two found bugs in 9 cases, one
+/// larger model in 8, at about the same cost. The quorum lost no confirmed bug and removed most
+/// wrong reports, because wrong claims of independent agents rarely repeat.
+const DEFAULT_AGENTS: usize = 5;
 const DEFAULT_QUORUM: usize = 2;
 /// Two claims agree when at least 3/10 of their combined words are shared, the threshold of the
 /// offline analysis.
@@ -60,6 +61,9 @@ const MAX_PROMPT_TARGET_BYTES: usize = 64 * 1024;
 const MAX_PROMPT_INHERITED_BYTES: usize = 32 * 1024;
 const MAX_PROMPT_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_PROMPT_TEST_FILES: usize = 2;
+/// The test names listed per target function in `existing_tests`. More are counted, not named, so
+/// the list stays small for large suites.
+const MAX_EXISTING_TESTS_PER_FUNCTION: usize = 5;
 /// Records every test that fails on every seed in a `--check` run, one JSON object per line.
 const CHECK_JOURNAL: &str = "check-failures.jsonl";
 /// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
@@ -97,6 +101,13 @@ static CAMEL_CASE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b_?[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b").unwrap());
 /// A lowercase word.
 static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-z0-9_]+").unwrap());
+/// A function declaration that is not internal by convention, and its name.
+static FUNCTION_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bfunction\s+([A-Za-z$][A-Za-z0-9_$]*)\s*\(").unwrap());
+/// A test or invariant function declaration and its name.
+static TEST_FUNCTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\bfunction\s+((?:test|invariant|statefulFuzz)[A-Za-z0-9_$]*)\s*\(").unwrap()
+});
 /// The path of an import directive.
 static IMPORT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\bimport\s+(?:[^;]*?\bfrom\s+)?["']([^"']+)["']"#).unwrap());
@@ -131,7 +142,13 @@ pub struct PropertiesArgs {
     #[arg(long, value_name = "PATH")]
     context: Vec<PathBuf>,
 
-    /// Executable that receives PROMPT_JSON and OUTPUT_JSON as its final arguments.
+    /// Executable that writes the tests of one agent, such as a wrapper around any coding agent.
+    ///
+    /// Forge runs `PATH [ARG...] PROMPT_JSON OUTPUT_JSON` once per agent and round, in the
+    /// agent's copy of the project. PROMPT_JSON holds the brief, the instructions, the sources,
+    /// and `output_contract`. The generator writes one candidate object with the schema of
+    /// `output_contract.example` to OUTPUT_JSON and exits with status 0; another status ends the
+    /// agent. It may run `output_contract.check_command` any number of times before it returns.
     #[arg(long, required_unless_present = "check", value_name = "PATH")]
     generator: Option<PathBuf>,
 
@@ -157,7 +174,8 @@ pub struct PropertiesArgs {
     rounds: usize,
 
     /// Number of generator agents. Each agent runs the generator independently and in parallel
-    /// in its own copy of the project.
+    /// in its own copy of the project, with its own seed and audit lens (spec, state, code, or
+    /// tests, in turn).
     #[arg(long, default_value_t = DEFAULT_AGENTS, value_name = "N")]
     agents: usize,
 
@@ -223,7 +241,7 @@ impl Add for Usage {
 struct Hypothesis {
     /// Short identifier that names the test which proves the hypothesis.
     id: String,
-    /// The audit lens that produced the hypothesis: `spec`, `state`, or `code`.
+    /// The audit lens that produced the hypothesis: `spec`, `state`, `code`, or `tests`.
     lens: String,
     /// The function under test.
     function: String,
@@ -295,7 +313,6 @@ struct GeneratorPrompt<'a> {
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     context: &'a [PromptSource],
     protocol: &'static [&'static str],
-    lenses: &'static [&'static str],
     guidance: &'static [&'static str],
     targets: &'a [PathBuf],
     seeds: &'a [U256],
@@ -315,8 +332,8 @@ struct AgentPrompt {
     id: usize,
     /// The number of agents in the run.
     count: usize,
-    /// The lens that the agent starts its audit with.
-    focus: &'static str,
+    /// The lens that the agent audits through first, named before its colon.
+    lens: &'static str,
     /// A seed of this agent, for example to vary sampling or the order of hypotheses.
     seed: U256,
 }
@@ -332,6 +349,9 @@ struct ProjectContext {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     inherited_sources: Vec<PromptSource>,
     test_sources: Vec<PromptSource>,
+    /// The existing tests of each function of the targets, by name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    existing_tests: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -931,7 +951,6 @@ impl Agent<'_> {
             .chain(["--agent".to_string(), self.id.to_string()])
             .collect::<Vec<_>>();
         let lens = LENSES[(self.id - 1) % LENSES.len()];
-        let focus = lens.split_once(':').map_or(lens, |(name, _)| name);
         let seed = keccak256(
             [args.seed[0].to_be_bytes::<32>(), U256::from(self.id).to_be_bytes()].concat(),
         )
@@ -948,12 +967,11 @@ impl Agent<'_> {
             let prompt = GeneratorPrompt {
                 schema: PROMPT_SCHEMA,
                 round,
-                agent: AgentPrompt { id: self.id, count: args.agents, focus, seed },
+                agent: AgentPrompt { id: self.id, count: args.agents, lens, seed },
                 project: workspace.path(),
                 brief: &inputs.brief,
                 context: &inputs.context,
                 protocol: &PROTOCOL,
-                lenses: &LENSES,
                 guidance: &GUIDANCE,
                 targets: &inputs.targets,
                 seeds: &args.seed,
@@ -967,7 +985,7 @@ impl Agent<'_> {
                     check_command: check_command.clone(),
                     example: Candidate {
                         schema: CANDIDATE_SCHEMA.to_string(),
-                        rationale: "One line per hypothesis: its id, result, and why.".to_string(),
+                        rationale: "One line per test: what it checks and why.".to_string(),
                         generator: Some(GeneratorMetadata {
                             agent: "generator name".to_string(),
                             model: "model name".to_string(),
@@ -978,14 +996,7 @@ impl Agent<'_> {
                                 "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testProperty() external {{}}\n}}\n"
                             ),
                         }],
-                        hypotheses: vec![Hypothesis {
-                            id: "testProperty".to_string(),
-                            lens: focus.to_string(),
-                            function: "Contract.function".to_string(),
-                            claim: "The documented behavior and its source.".to_string(),
-                            recipe: "The concrete setup, the call, and the documented result.".to_string(),
-                            result: HypothesisResult::Finding,
-                        }],
+                        hypotheses: vec![],
                         evidence: BTreeMap::from([(
                             format!("{example_contract}::testProperty"),
                             Evidence {
@@ -998,7 +1009,7 @@ impl Agent<'_> {
                         )]),
                         usage: Some(Usage::default()),
                     },
-                    note: "Return one JSON object with this shape and schema. Replace the example values; generator and usage are optional. Forge runs every test in the files on every seed, keeps a file only if all of its tests pass, and reports tests that fail on every seed as possible bugs. Use new file paths. List every hypothesis with its result, and add one evidence entry, keyed by Contract::test, for every failing test.",
+                    note: "Return one JSON object with this shape. Replace the example values; generator and usage are optional. Use new file paths.",
                 },
             };
             fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
@@ -1406,6 +1417,7 @@ fn project_context(config: &Config, targets: &[PathBuf]) -> ProjectContext {
         ),
         inherited_sources: vec![],
         test_sources: vec![],
+        existing_tests: BTreeMap::new(),
     };
     let Ok(graph) =
         Graph::<MultiCompilerParser>::resolve(&config.project_paths::<MultiCompilerLanguage>())
@@ -1431,18 +1443,11 @@ fn project_context(config: &Config, targets: &[PathBuf]) -> ProjectContext {
     );
     // Existing tests of the targets show the project's conventions. A test file named after a
     // target, such as `Math.t.sol` for `Math.sol`, usually holds its primary suite.
-    let generated_tests = config.test.join("generated");
     let target_stems = targets.iter().filter_map(|path| path.file_stem()).collect::<Vec<_>>();
-    let mut tests = graph
-        .nodes
-        .iter()
-        .filter(|node| {
-            node.path().starts_with(&config.test)
-                && !node.path().starts_with(&generated_tests)
-                && node.path().extension().is_some_and(|extension| extension == "sol")
-                && graph.imports(node.path()).iter().any(|import| target_files.contains(*import))
-        })
-        .map(|node| {
+    let mut tests = existing_test_files(config, &graph, &target_files)
+        .into_iter()
+        .map(|index| {
+            let node = graph.node(index);
             let stem = node.path().file_name().and_then(|name| name.to_str()?.split('.').next());
             let names_target = target_stems.iter().any(|target| target.to_str() == stem);
             (!names_target, workspace::relative_to_root(&config.root, node.path()), node.content())
@@ -1453,7 +1458,98 @@ fn project_context(config: &Config, targets: &[PathBuf]) -> ProjectContext {
         tests.iter().take(MAX_PROMPT_TEST_FILES).map(|(_, path, source)| (path.as_path(), *source)),
         MAX_PROMPT_SOURCE_BYTES,
     );
+    context.existing_tests = existing_tests(
+        target_sources.iter().map(|(_, source)| source.as_str()),
+        tests.iter().map(|(_, _, source)| *source),
+    );
     context
+}
+
+/// Returns the project's test files that import a target, directly or through other files. A test
+/// file is under the test directory, or ends in `.t.sol` outside the libraries. Generated tests
+/// are not project tests.
+fn existing_test_files(
+    config: &Config,
+    graph: &Graph<MultiCompilerParser>,
+    targets: &BTreeSet<PathBuf>,
+) -> Vec<usize> {
+    let generated_tests = config.test.join("generated");
+    (0..graph.nodes.len())
+        .filter(|&index| {
+            let path = graph.node(index).path();
+            let in_libs = config.libs.iter().any(|lib| path.starts_with(config.root.join(lib)));
+            let is_test = path.starts_with(&config.test)
+                || (!in_libs && path.to_string_lossy().ends_with(".t.sol"));
+            is_test
+                && !path.starts_with(&generated_tests)
+                && path.extension().is_some_and(|extension| extension == "sol")
+                && graph.imports(path).iter().any(|import| targets.contains(*import))
+        })
+        .collect()
+}
+
+/// Maps each function that the targets declare to the existing tests whose body calls it, by
+/// name. A function with no such test maps to an empty list.
+///
+/// The match is textual: a test that reaches a function only through a helper is not listed, and
+/// a call to another function with the same name is.
+fn existing_tests<'a>(
+    targets: impl IntoIterator<Item = &'a str>,
+    tests: impl IntoIterator<Item = &'a str>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut functions = BTreeMap::<String, BTreeSet<String>>::new();
+    for target in targets {
+        let target = COMMENT.replace_all(target, " ");
+        for function in FUNCTION_NAME.captures_iter(&target) {
+            functions.entry(function[1].to_string()).or_default();
+        }
+    }
+    for test in tests {
+        let test = COMMENT.replace_all(test, " ");
+        for function in TEST_FUNCTION.captures_iter(&test) {
+            let signature_end = function.get(0).expect("a match has group 0").end();
+            let Some(body) = function_body(&test[signature_end..]) else { continue };
+            for call in FUNCTION_CALL.find_iter(body) {
+                if let Some(tests) = functions.get_mut(call.as_str().trim_end_matches('(')) {
+                    tests.insert(function[1].to_string());
+                }
+            }
+        }
+    }
+    functions
+        .into_iter()
+        .map(|(function, tests)| {
+            let mut names =
+                tests.iter().take(MAX_EXISTING_TESTS_PER_FUNCTION).cloned().collect::<Vec<_>>();
+            if tests.len() > names.len() {
+                names.push(format!("+{} more", tests.len() - names.len()));
+            }
+            (function, names)
+        })
+        .collect()
+}
+
+/// Returns the body of the function whose signature starts the source, without its braces, or
+/// `None` if the function has no body.
+fn function_body(source: &str) -> Option<&str> {
+    let start = source.find(['{', ';'])?;
+    if source.as_bytes()[start] == b';' {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, character) in source[start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&source[start + 1..start + index]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Returns the bullets of one section of `guidance.md`.

@@ -78,7 +78,7 @@ fn properties_reports_bugs_that_agents_agree_on(prj: _, cmd: _) {
         r#"
 agent=$(sed -n 's/^    "id": \([0-9][0-9]*\),$/\1/p' "$prompt" | head -n 1)
 case "$agent" in 1) focus=spec ;; 2) focus=state ;; 3) focus=code ;; esac
-grep -q "\"focus\": \"$focus\"" "$prompt"
+grep -q "\"lens\": \"$focus: " "$prompt"
 grep -q '"count": 3' "$prompt"
 grep -q "\"allowed_path_prefix\": \"test/generated/agent-$agent\"" "$prompt"
 grep -q '"path": "src/Fee.sol"' "$prompt"
@@ -123,7 +123,7 @@ JSON
 esac
 "#,
     );
-    args.extend(["--context".to_string(), context.to_str().unwrap().to_string()]);
+    args.extend(["--context", context.to_str().unwrap(), "--agents", "3"].map(String::from));
     cmd.args(args).assert_success().stdout_eq(str![[r#"
 possible bug (documented, 2/3 agents): The fee is capped at 100 ether.
   agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
