@@ -349,7 +349,7 @@ impl TraceBuilder {
         let memory = step.memory.as_ref().map(|memory| {
             let memory = memory.as_bytes();
             match &self.memory {
-                Some((last, hex)) if last == memory => hex.clone(),
+                Some((last, hex)) if same_bytes(last, memory) => hex.clone(),
                 _ => {
                     let hex = Arc::<str>::from(hex::encode(memory));
                     self.memory = Some((memory.clone(), hex.clone()));
@@ -407,7 +407,7 @@ impl TraceBuilder {
             None
         } else {
             Some(match &self.return_data {
-                Some((last, hex)) if last == &step.returndata => hex.clone(),
+                Some((last, hex)) if same_bytes(last, &step.returndata) => hex.clone(),
                 _ => {
                     let hex = Arc::<str>::from(hex::encode(&step.returndata));
                     self.return_data = Some((step.returndata.clone(), hex.clone()));
@@ -438,6 +438,12 @@ impl TraceBuilder {
             snapshot,
         ));
     }
+}
+
+/// Whether `a` and `b` hold the same bytes. The tracer shares one buffer between steps that did
+/// not change it, so comparing the pointers first skips most full comparisons.
+fn same_bytes(a: &Bytes, b: &Bytes) -> bool {
+    (a.as_ptr() == b.as_ptr() && a.len() == b.len()) || a == b
 }
 
 /// A program the trace executes and the local artifact that describes it.
