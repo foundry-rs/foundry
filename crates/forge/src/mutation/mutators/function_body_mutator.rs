@@ -27,7 +27,7 @@ impl Mutator for FunctionBodyMutator {
                     TypeKind::Elementary(ElementaryType::Address(true)) => {
                         (&["payable(address(0))"][..], "payable(address(0))")
                     }
-                    _ => (&[][..], ""),
+                    _ => return Ok(Vec::new()),
                 };
                 // Skip the value the original body already returns: the default for an empty
                 // body, or the expression of a lone `return` statement.

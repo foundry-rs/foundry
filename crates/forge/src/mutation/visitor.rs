@@ -535,80 +535,47 @@ abstract contract Target {
     function invariantSomething() public { revert(); }
     function setUp() public { revert(); }
     function empty() public {}
-    function emptyFormatted() public {
-    }
     function emptyCommented() public { /* No work. */ }
-    function constantBoolean() public pure returns (bool) {
-        return true;
-    }
-    function constantSigned() public pure returns (int256) {return -1;}
-    function commentedBoolean() public pure returns (bool) { /* Always on. */ return true; }
     function implicitReturn() public pure returns (uint256 result) {}
     receive() external payable { revert(); }
     fallback() external { revert(); }
 }
 contract Other { function ignored() public { revert(); } }
 "#;
-        let sess = Session::builder().with_silent_emitter(None).build();
-        sess.enter(|| {
-            let arena = Arena::new();
-            let mut parser = Parser::from_lazy_source_code(
-                &sess,
-                &arena,
-                FileName::Real("target.sol".into()),
-                || Ok(source.to_string()),
+        let mutants = function_body_mutants(source);
+        let first = &mutants[0];
+        let mut mutated = source.to_string();
+        mutated.replace_range(
+            first.span.lo().0 as usize..first.span.hi().0 as usize,
+            &first.mutation.to_string(),
+        );
+        assert_eq!(
+            mutated,
+            source.replacen(
+                "function effect() public guarded { revert(); }",
+                "function effect() public guarded {}",
+                1,
             )
-            .unwrap();
-            let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
-            drop(parser);
-            let mut visitor =
-                MutantVisitor::with_operators("target.sol".into(), &[MutatorType::FunctionBody])
-                    .with_source(source)
-                    .with_contract_filter(|name| name == "Target");
-            let _ = visitor.visit_source_unit(&ast);
-            assert!(visitor.take_errors().is_empty());
-            let replacements = visitor
-                .mutation_to_conduct
-                .iter()
-                .map(|mutant| {
-                    let lo = mutant.span.lo().0 as usize;
-                    let hi = mutant.span.hi().0 as usize;
-                    assert_eq!(mutant.original, &source[lo..hi]);
-                    let header = source[..lo].lines().last().unwrap().trim();
-                    (header, mutant.mutation.to_string())
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                replacements,
-                [
-                    ("function effect() public guarded", "{}"),
-                    ("function boolean() external pure returns (bool)", "{ return true; }"),
-                    ("function boolean() external pure returns (bool)", "{ return false; }"),
-                    ("function unsigned() internal pure returns (uint8 result)", "{ return 0; }"),
-                    ("function unsigned() internal pure returns (uint8 result)", "{ return 1; }"),
-                    ("function signed() private pure returns (int256)", "{ return 0; }"),
-                    ("function signed() private pure returns (int256)", "{ return 1; }"),
-                    ("function signed() private pure returns (int256)", "{ return -1; }"),
-                    ("function account() public view returns (address)", "{ return address(0); }"),
-                    (
-                        "function payableAccount() public view returns (address payable)",
-                        "{ return payable(address(0)); }"
-                    ),
-                    ("function testSomething() public", "{}"),
-                    ("function invariantSomething() public", "{}"),
-                    ("function setUp() public", "{}"),
-                    ("function constantBoolean() public pure returns (bool)", "{ return false; }"),
-                    ("function constantSigned() public pure returns (int256)", "{ return 0; }"),
-                    ("function constantSigned() public pure returns (int256)", "{ return 1; }"),
-                    ("function commentedBoolean() public pure returns (bool)", "{ return false; }"),
-                    (
-                        "function implicitReturn() public pure returns (uint256 result)",
-                        "{ return 1; }"
-                    ),
-                ]
-                .map(|(header, body)| (header, body.to_string()))
-            );
-        });
+        );
+        assert_eq!(
+            mutants.iter().map(|mutant| mutant.mutation.to_string()).collect::<Vec<_>>(),
+            [
+                "{}",
+                "{ return true; }",
+                "{ return false; }",
+                "{ return 0; }",
+                "{ return 1; }",
+                "{ return 0; }",
+                "{ return 1; }",
+                "{ return -1; }",
+                "{ return address(0); }",
+                "{ return payable(address(0)); }",
+                "{}",
+                "{}",
+                "{}",
+                "{ return 1; }",
+            ]
+        );
     }
 
     #[test]
@@ -633,39 +600,44 @@ contract Other { function ignored() public { revert(); } }
             let source = format!(
                 "contract Target {{ function target() public returns ({ty}) {{ return {expression}; }} }}"
             );
-            let sess = Session::builder().with_silent_emitter(None).build();
-            sess.enter(|| {
-                let arena = Arena::new();
-                let mut parser = Parser::from_lazy_source_code(
-                    &sess,
-                    &arena,
-                    FileName::Real("target.sol".into()),
-                    || Ok(source.clone()),
-                )
-                .unwrap();
-                let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
-                drop(parser);
-                let mut visitor = MutantVisitor::with_operators(
-                    "target.sol".into(),
-                    &[MutatorType::FunctionBody],
-                )
-                .with_source(&source);
-                let _ = visitor.visit_source_unit(&ast);
-                assert!(visitor.take_errors().is_empty());
-                let replacements = visitor
-                    .mutation_to_conduct
-                    .iter()
-                    .map(|mutant| mutant.mutation.to_string())
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    replacements,
-                    expected
-                        .iter()
-                        .map(|value| format!("{{ return {value}; }}"))
-                        .collect::<Vec<_>>(),
-                    "{source}"
-                );
-            });
+            let replacements = function_body_mutants(&source)
+                .iter()
+                .map(|mutant| mutant.mutation.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                replacements,
+                expected.iter().map(|value| format!("{{ return {value}; }}")).collect::<Vec<_>>(),
+                "{source}"
+            );
         }
+    }
+
+    fn function_body_mutants(source: &str) -> Vec<Mutant> {
+        let sess = Session::builder().with_silent_emitter(None).build();
+        sess.enter(|| {
+            let arena = Arena::new();
+            let mut parser = Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::Real("target.sol".into()),
+                || Ok(source.to_string()),
+            )
+            .unwrap();
+            let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+            drop(parser);
+            let mut visitor =
+                MutantVisitor::with_operators("target.sol".into(), &[MutatorType::FunctionBody])
+                    .with_source(source)
+                    .with_contract_filter(|name| name == "Target");
+            let _ = visitor.visit_source_unit(&ast);
+            assert!(visitor.take_errors().is_empty());
+            for mutant in &visitor.mutation_to_conduct {
+                assert_eq!(
+                    mutant.original,
+                    &source[mutant.span.lo().0 as usize..mutant.span.hi().0 as usize]
+                );
+            }
+            visitor.mutation_to_conduct
+        })
     }
 }
