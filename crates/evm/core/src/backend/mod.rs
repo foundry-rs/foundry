@@ -925,10 +925,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Stores the outcome of a transaction prepared with [`Self::prepare_transact`] or
     /// [`Self::prepare_nested`].
-    pub fn store_executed(
-        &mut self,
-        executed: ExecutedNested<TypesFor<FEN>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
+    pub fn store_executed(&mut self, executed: ExecutedNested<TypesFor<FEN>>) -> TxResultFor<FEN> {
         self.lifecycle.store_executed(executed)
     }
 

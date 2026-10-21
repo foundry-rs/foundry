@@ -660,18 +660,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     }
 
     /// Stores the outcome of a [`PreparedTx`]: an inactive context's new accepted state.
-    pub fn store_executed(
-        &mut self,
-        executed: ExecutedNested<F::Types>,
-    ) -> eyre::Result<TxResult<F::Types>> {
+    pub fn store_executed(&mut self, executed: ExecutedNested<F::Types>) -> TxResult<F::Types> {
         let ExecutedNested { result, context } = executed;
         if let Some((id, cache)) = context {
-            let Some(context) = self.forks.context_mut(id) else {
-                eyre::bail!("fork {} does not exist", id.unwrap_or_default());
-            };
+            let context = self.forks.context_mut(id).expect("prepared context exists");
             context.cache = Some(Arc::new(cache));
         }
-        Ok(result)
+        result
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active

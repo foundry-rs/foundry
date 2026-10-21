@@ -355,8 +355,8 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
 struct InnerRoot {
     /// Depth of the surrounding frame.
     depth: u16,
-    /// Sender of the nested transaction, or `None` if not known in advance.
-    caller: Option<Address>,
+    /// Sender of the nested transaction.
+    caller: Address,
     /// Whether the root frame is a new call observed by the inspectors, such as a replayed
     /// transaction's, rather than a duplicate of the surrounding frame.
     observe: bool,
@@ -523,11 +523,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut child = backend.backend().nested_evm(evm, tx, env);
-        let previous = self.enter_inner_context(InnerRoot {
-            depth,
-            caller: Some(tx.signer()),
-            observe: false,
-        });
+        let previous =
+            self.enter_inner_context(InnerRoot { depth, caller: tx.signer(), observe: false });
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
@@ -563,7 +560,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             backend.backend().prepare_transact(fork_id, transaction, evm)?;
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared);
         drop(replay);
-        backend.backend_mut().store_executed(executed?)
+        Ok(backend.backend_mut().store_executed(executed?))
     }
 
     fn transact_from_tx(
@@ -578,7 +575,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, env);
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared);
         drop(replay);
-        backend.backend_mut().store_executed(executed?)
+        Ok(backend.backend_mut().store_executed(executed?))
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -1182,7 +1179,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         });
         let previous_inner = self.inner.enter_inner_context(InnerRoot {
             depth: message.depth,
-            caller: Some(message.caller),
+            caller: message.caller,
             observe: false,
         });
         let create2_redirects = self.inner.pending_create2_redirects.len();
@@ -1282,9 +1279,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> bool {
-        let Some(root) = self.inner.pending_inner_root.take_if(|root| {
-            message.depth == 0 && root.caller.is_none_or(|caller| caller == message.caller)
-        }) else {
+        let Some(root) = self
+            .inner
+            .pending_inner_root
+            .take_if(|root| message.depth == 0 && root.caller == message.caller)
+        else {
             return false;
         };
         message.depth = if root.observe { root.depth + 1 } else { root.depth };
@@ -1971,11 +1970,11 @@ impl InspectorStackInner {
         depth: u16,
         prepared: PreparedTx<TypesFor<FEN>>,
     ) -> eyre::Result<ExecutedNested<TypesFor<FEN>>> {
-        let caller = Some(prepared.tx().signer());
+        let caller = prepared.tx().signer();
         let previous = self.enter_inner_context(InnerRoot { depth, caller, observe: true });
-        // `ORIGIN` reads the replayed transaction's signer, not the origin of an isolated call
-        // the cheatcode runs in.
+        // The replay reads its own origin and gas price, not the surrounding execution's.
         let origin_override = cheats.origin_override.take();
+        let gas_price = cheats.gas_price.take();
         let mut inspector = InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
@@ -1983,6 +1982,7 @@ impl InspectorStackInner {
         };
         let executed = prepared.execute(evm, Some(&mut inspector));
         cheats.origin_override = origin_override;
+        cheats.gas_price = gas_price;
         self.exit_inner_context(previous);
         executed
     }

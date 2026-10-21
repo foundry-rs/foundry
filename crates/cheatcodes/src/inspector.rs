@@ -212,7 +212,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> eyre::Result<TxResultFor<FEN>> {
         let (prepared, _) = backend.backend().prepare_transact(fork_id, transaction, evm)?;
         let executed = prepared.execute(evm, None)?;
-        let result = backend.backend_mut().store_executed(executed)?;
+        let result = backend.backend_mut().store_executed(executed);
         result.logs.iter().for_each(|log| cheats.log_hook(log));
         Ok(result)
     }
