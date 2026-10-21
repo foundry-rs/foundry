@@ -281,10 +281,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         context.env = env;
         context.ext = StoredExt::new(&ext);
-        self.forks.local.loaded_storage.clear();
-        for entry in self.forks.forks.values_mut() {
-            entry.context.loaded_storage.clear();
-        }
+        // Like REVM's per-fork journals, inactive contexts keep what they loaded and created until
+        // they finish a transaction themselves, and the local context keeps seeding forks.
+        context.loaded.clear();
+        context.created.clear();
     }
 
     /// Parks accepted state, environment and extensions without committing pending writes.
@@ -326,12 +326,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         env: EvmEnv<F::Types>,
     ) -> U256 {
         let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
-        self.forks.insert(info, Parked::new(Box::new(db), env, ext))
+        let mut context = Parked::new(Box::new(db), env, ext);
+        context.inherit_local(&self.forks.local);
+        self.forks.insert(info, context)
     }
 
     /// Makes `id` the running context, or the local context for `None`.
     ///
-    /// Persistent accounts carry their accepted state into the target.
+    /// Persistent accounts carry their accepted state into the target. Leaving the local context
+    /// makes what the running transaction loaded and created there the initial state of every
+    /// fork, as REVM's initial fork journal did.
     pub fn select_fork(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
@@ -345,8 +349,14 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             return Ok(EnvTransition::Applied);
         }
         let suspended = self.suspend(evm);
+        if self.forks.active.is_none() {
+            let ForkRegistry { local, forks, .. } = &mut self.forks;
+            for entry in forks.values_mut() {
+                entry.context.inherit_local(local);
+            }
+        }
         self.forks.active = id;
-        Ok(self.resume(evm, suspended, phase))
+        Ok(self.resume(evm, suspended, false, phase))
     }
 
     /// Makes `id` the active context, or the local context for `None`, without suspending the
@@ -359,7 +369,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Moves fork `id`, or the running context for `None`, onto a new backing database and
     /// environment, such as a later block.
     ///
-    /// The fork's accepted state is discarded except for persistent accounts.
+    /// The fork starts over from the initial fork state, keeping persistent accounts and accounts
+    /// created on the fork. Rolling the running context also keeps other loaded accounts, but
+    /// reloads only their info from the new database, discarding their pre-roll storage slots.
     pub fn roll_fork(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
@@ -389,17 +401,24 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             return Ok(EnvTransition::Applied);
         }
         let ext = self.factory.configure_for(&db, &env).evm_ext(&env);
-        let suspended = self.suspend(evm);
-        let context = self.active_mut();
-        *context = Parked::new(Box::new(db), env, ext);
+        let mut suspended = self.suspend(evm);
+        for (address, slots) in &mut suspended.loaded {
+            if !suspended.created.contains(address) && !self.forks.is_persistent(address) {
+                slots.clear();
+            }
+        }
+        let mut context = Parked::new(Box::new(db), env, ext);
         context.cache = cache.map(Arc::new);
-        Ok(self.resume(evm, suspended, phase))
+        context.inherit_local(&self.forks.local);
+        *self.active_mut() = context;
+        Ok(self.resume(evm, suspended, true, phase))
     }
 
     /// Moves the inactive fork `id`, or the local context for `None`, onto a new backing database
     /// and environment, optionally with `cache` as its accepted state.
     ///
-    /// The fork's accepted state is discarded except for persistent accounts.
+    /// The fork's accepted state is discarded except for persistent accounts and accounts created
+    /// on it, and the fork starts over from the initial fork state, as in REVM.
     pub fn replace_inactive(
         &mut self,
         id: Option<U256>,
@@ -416,12 +435,21 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if let Some(mut cache) = cache {
             if let Some(previous_cache) = &previous.cache {
                 self.forks.merge_persistent(previous_cache, &mut cache);
-                self.forks.merge_persistent_loaded_storage(
-                    &previous.loaded_storage,
-                    &mut context.loaded_storage,
-                );
+                self.forks.merge_persistent_loaded(&previous.loaded, &mut context.loaded);
             }
             context.cache = Some(Arc::new(cache));
+        }
+        if id.is_some() {
+            context.inherit_local(&self.forks.local);
+        }
+        if let Some(previous_cache) = &previous.cache {
+            let loaded = previous
+                .loaded
+                .iter()
+                .filter(|(address, _)| previous.created.contains(*address))
+                .map(|(address, slots)| (*address, slots.clone()))
+                .collect();
+            context.inherit(&loaded, &previous.created, previous_cache);
         }
         *self.forks.context_mut(id).expect("context exists") = context;
         Ok(())
@@ -647,11 +675,15 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         });
         let factory = self.factory.configure_for(&db, &env);
         // A context that never ran gets its network genesis before the transaction.
+        let is_forked = db.is_forked_mode();
         let mut executor = match &context.cache {
             None => factory.create_evm(db, env),
             Some(cache) => {
                 let mut executor = factory.new_evm(db, env);
                 executor.state_mut().overlay_db_mut().cache = Cache::clone(cache);
+                if context.needs_init {
+                    factory.initialize_evm(&mut executor, is_forked);
+                }
                 executor
             }
         };
@@ -681,23 +713,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Accepts the running state and stores it, with the running environment, in the active
     /// context. Returns what the running transaction carries into the next context.
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
-        let state = evm.state();
-        let cached = state
-            .overlay_db()
-            .cache
-            .storage
-            .iter()
-            .flat_map(|(address, storage)| storage.slots.keys().map(move |key| (address, key)));
-        let journaled = state.journal().iter().filter_map(|entry| match entry {
-            JournalEntry::StorageChange { address, key, .. }
-            | JournalEntry::StorageWarmed { address, key } => Some((address, key)),
-            _ => None,
-        });
-        let loaded = &mut self.active_mut().loaded_storage;
-        for (address, key) in cached.chain(journaled) {
-            if state.get_storage(address, key).is_some() {
-                loaded.entry(*address).or_default().insert(*key);
+        let state = evm.state_mut();
+        let loaded = state
+            .loaded_accounts()
+            .map(|(address, slots)| (*address, slots.copied().collect::<HashSet<_>>()))
+            .collect::<Vec<_>>();
+        let context = self.active_mut();
+        for (address, slots) in loaded {
+            if state.account(&address).is_ok_and(|account| account.is_created()) {
+                context.created.insert(address);
             }
+            context.loaded.entry(address).or_default().extend(slots);
         }
         self.materialize(evm);
         let state = evm.state_mut();
@@ -711,29 +737,53 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         context.cache = Some(Arc::new(cache.clone()));
         context.env = env;
         context.ext = StoredExt::new(&ext);
-        Suspended { cache, loaded_storage: context.loaded_storage.clone(), logs, prewarm }
+        Suspended {
+            cache,
+            loaded: context.loaded.clone(),
+            created: context.created.clone(),
+            logs,
+            prewarm,
+        }
     }
 
     /// Installs the active context into `evm`, carrying persistent accounts, logs and base warmth
-    /// over from the suspended context.
+    /// over from the suspended context. With `carry`, the loaded and created accounts of the
+    /// suspended context are carried over as well.
     fn resume(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
         suspended: Suspended,
+        carry: bool,
         phase: ExecutionPhase,
     ) -> EnvTransition {
-        let Suspended { cache: source, loaded_storage: source_loaded, logs, prewarm } = suspended;
+        let Suspended {
+            cache: source,
+            loaded: source_loaded,
+            created: source_created,
+            logs,
+            prewarm,
+        } = suspended;
+        if carry {
+            self.active_mut().inherit(&source_loaded, &source_created, &source);
+        }
         let context = self.active_mut();
-        let fresh = context.cache.is_none();
+        let fresh = mem::take(&mut context.needs_init) || context.cache.is_none();
         // The running EVM owns the active context's accepted state.
         let mut cache = context.cache.take().map(Arc::unwrap_or_clone).unwrap_or_default();
-        let mut loaded_storage = mem::take(&mut context.loaded_storage);
+        let mut loaded = mem::take(&mut context.loaded);
         let db = context.db.clone_backing();
         let env = context.env;
         let ext = context.ext.get();
         self.forks.merge_persistent(&source, &mut cache);
-        self.forks.merge_persistent_loaded_storage(&source_loaded, &mut loaded_storage);
-        self.active_mut().loaded_storage = loaded_storage;
+        self.forks.merge_persistent_loaded(&source_loaded, &mut loaded);
+        let persistent_created = source_created
+            .into_iter()
+            .filter(|address| self.forks.is_persistent(address))
+            .collect::<Vec<_>>();
+        let context = self.active_mut();
+        context.loaded = loaded;
+        context.created.extend(persistent_created);
+        let created = context.created.clone();
 
         let mut state = State::new(db.clone_backing());
         state.overlay_db_mut().cache = cache;
@@ -751,6 +801,15 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         if fresh {
             factory.initialize_evm(evm, db.is_forked_mode());
+        }
+        // The new transaction overlay does not know which accounts the transaction created, which
+        // EIP-6780 `SELFDESTRUCT` depends on.
+        for address in &created {
+            if let Ok(mut account) = evm.state_mut().account(address)
+                && account.exists()
+            {
+                account.mark_created();
+            }
         }
         transition
     }
@@ -783,11 +842,25 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
     }
 
-    /// Returns known slots loaded in this transaction, including before fork switches.
+    /// Returns the accounts loaded in the running transaction, including accounts loaded as
+    /// absent and accounts loaded before fork switches, with their loaded slots.
+    ///
+    /// Accepted state the running transaction did not load is not included.
+    pub fn loaded_state(&self, state: &State<'_>) -> AddressMap<HashSet<U256>> {
+        let mut loaded = self.active().loaded.clone();
+        for (address, slots) in state.loaded_accounts() {
+            loaded.entry(*address).or_default().extend(slots);
+        }
+        loaded
+    }
+
+    /// Returns the slots of `address` loaded in the running transaction, including before fork
+    /// switches.
     pub fn loaded_storage(&self, state: &State<'_>, address: &Address) -> Vec<U256> {
-        let mut slots = loaded_slots(state, address);
-        if let Some(carried) = self.active().loaded_storage.get(address) {
-            slots.extend(carried);
+        let mut slots =
+            self.active().loaded.get(address).into_iter().flatten().copied().collect::<Vec<_>>();
+        if let Some((_, loaded)) = state.loaded_accounts().find(|(loaded, _)| *loaded == address) {
+            slots.extend(loaded);
         }
         slots.sort_unstable();
         slots.dedup();
@@ -797,10 +870,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
 
 /// What a running transaction carries from a suspended context into the next one.
 struct Suspended {
-    /// The suspended context's accepted state, the source of persistent accounts.
+    /// The suspended context's accepted state, the source of persistent and carried accounts.
     cache: Cache,
-    /// Slots loaded in the suspended context during the current transaction.
-    loaded_storage: AddressMap<HashSet<U256>>,
+    /// Accounts and slots loaded in the suspended context.
+    loaded: AddressMap<HashSet<U256>>,
+    /// Accounts created in the suspended context.
+    created: AddressSet,
     /// Logs of the running transaction.
     logs: Vec<Log>,
     /// Base warmth of the running transaction, such as its access list.
@@ -894,6 +969,9 @@ fn merge_changes<'c>(
                     account.set_code(code_hash, code);
                 }
             }
+            if change.created {
+                account.mark_created();
+            }
         }
         if change.current.is_none() || change.storage.wiped {
             let mut storage = state.storage(&address)?;
@@ -913,27 +991,4 @@ fn merge_changes<'c>(
         }
     }
     Ok(())
-}
-
-/// Returns known slots loaded by the live transaction state.
-fn loaded_slots(state: &State<'_>, address: &Address) -> Vec<U256> {
-    let mut slots = state
-        .overlay_db()
-        .cache
-        .storage
-        .get(address)
-        .map(|storage| storage.slots.keys().copied().collect::<Vec<_>>())
-        .unwrap_or_default();
-    slots.extend(state.journal().iter().filter_map(|entry| match entry {
-        JournalEntry::StorageChange { address: changed, key, .. }
-        | JournalEntry::StorageWarmed { address: changed, key }
-            if changed == address =>
-        {
-            Some(*key)
-        }
-        _ => None,
-    }));
-    // Exclude setup-only slots materialized by snapshots or fork switches.
-    slots.retain(|slot| state.get_storage(address, slot).is_some());
-    slots
 }
