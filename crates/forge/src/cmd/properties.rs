@@ -121,6 +121,13 @@ const SELECT_ALL_TESTS: [&str; 10] = [
     "/forge-properties-none/**",
 ];
 
+/// The errors of cheatcodes that Forge blocks in its workspaces: `vm.ffi` without `--allow-ffi`,
+/// network cheatcodes without `--allow-network`, and env cheatcodes, which see only a few
+/// variables.
+static BLOCKED_CHEATCODE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"FFI is disabled|network access is disabled|environment variable "[^"]*" not found|failed to resolve env var"#)
+        .unwrap()
+});
 /// Solidity line and block comments.
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)//[^\n]*|/\*.*?\*/").unwrap());
 /// The path of an import directive.
@@ -205,6 +212,13 @@ pub struct PropertiesArgs {
     /// Forge turns `ffi` off in its copies of the project by default.
     #[arg(long)]
     allow_ffi: bool,
+
+    /// Let generated tests open network connections, for example with `vm.createFork`.
+    ///
+    /// By default, cheatcodes that open a connection fail in Forge's copies of the project, and
+    /// the copies have no RPC or Etherscan settings.
+    #[arg(long)]
+    allow_network: bool,
 
     /// Agent whose check journal records a `--check` run. Forge sets it in the check command of
     /// each agent.
@@ -426,6 +440,15 @@ impl PropertiesArgs {
         // Every workspace writes this config, so no generated test can call `vm.ffi` without
         // `--allow-ffi`. Config ignores `FFI` environment variables.
         config.ffi &= self.allow_ffi;
+        // Generated tests could send data to any host, and the endpoints can hold API keys.
+        if !self.allow_network {
+            config.eth_rpc_url = None;
+            config.eth_rpc_jwt = None;
+            config.eth_rpc_headers = None;
+            config.etherscan_api_key = None;
+            config.etherscan = Default::default();
+            config.rpc_endpoints = Default::default();
+        }
         let generated_tests =
             workspace::relative_to_root(&config.root, &config.test).join("generated");
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
@@ -591,6 +614,10 @@ impl Campaign<'_> {
             failures.extend(findings.possible_bugs);
             unverified.extend(findings.unverified);
         }
+        // A test that fails only because Forge blocked a cheatcode is not evidence of a bug.
+        let (blocked, failures) = failures
+            .into_iter()
+            .partition::<Vec<_>, _>(|failure| BLOCKED_CHEATCODE.is_match(&failure.failure.reason));
         let (possible_bugs, below_quorum) = group_failures(failures)
             .into_iter()
             .partition::<Vec<_>, _>(|group| group.agents.len() >= self.quorum);
@@ -620,6 +647,13 @@ impl Campaign<'_> {
             sh_println!(
                 "{} check journal failure(s) did not fail again in a fresh copy: see {}",
                 unverified.len(),
+                report_display.display()
+            )?;
+        }
+        if !blocked.is_empty() {
+            sh_warn!(
+                "{} failing test(s) used a cheatcode that Forge blocks (ffi, environment, or network), so they are not possible bugs: see {}",
+                blocked.len(),
                 report_display.display()
             )?;
         }
@@ -681,6 +715,7 @@ impl Campaign<'_> {
             "possible_bugs": possible_bugs,
             "below_quorum": below_quorum,
             "unverified": unverified,
+            "blocked": blocked,
             "tainted": tainted,
             "kept": kept.iter().map(|file| &file.path).collect::<Vec<_>>(),
             "duplicates": duplicates,
@@ -816,6 +851,9 @@ impl Campaign<'_> {
             let mut command = self.forge_command(workspace, seed);
             command.args(["test", "--json", "--match-path", &format!("{{{paths}}}")]);
             command.args(SELECT_ALL_TESTS);
+            if !self.args.allow_network {
+                command.arg("--no-network");
+            }
             let output = command.output().wrap_err("failed to run candidate tests")?;
             if !output.status.success() && output.stdout.is_empty() {
                 reasons.push(format!("candidate tests failed on seed {seed}: {}", stderr(&output)));
@@ -916,6 +954,7 @@ impl Agent<'_> {
             .chain(args.seed.iter().flat_map(|seed| ["--seed".to_string(), format!("{seed:#x}")]))
             .chain(["--agent".to_string(), self.id.to_string()])
             .chain(args.allow_ffi.then(|| "--allow-ffi".to_string()))
+            .chain(args.allow_network.then(|| "--allow-network".to_string()))
             .chain(campaign.build_cache.iter().flat_map(|build| {
                 ["--build-cache".to_string(), build.to_string_lossy().into_owned()]
             }))
