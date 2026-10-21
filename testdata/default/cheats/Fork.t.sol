@@ -132,8 +132,54 @@ contract ForkTest is Test {
         assertEq(block.chainid, 1);
     }
 
+    // ensures a fork selected again after another fork gets its own chain id back.
+    function testForkSwitchBackResetsChainId() public {
+        vm.selectFork(forkA);
+        vm.chainId(1337);
+        vm.selectFork(forkA);
+        assertEq(block.chainid, 1337);
+        vm.selectFork(forkB);
+        assertEq(block.chainid, 1);
+        vm.selectFork(forkA);
+        assertEq(block.chainid, 1);
+    }
+
+    // ensures reverting a snapshot restores its chain id but not for later fork selections.
+    function testForkSwitchBackAfterSnapshotRevertResetsChainId() public {
+        vm.selectFork(forkA);
+        vm.chainId(1337);
+        uint256 snapshot = vm.snapshotState();
+        vm.selectFork(forkB);
+        vm.revertToState(snapshot);
+        assertEq(vm.activeFork(), forkA);
+        assertEq(block.chainid, 1337);
+        vm.selectFork(forkB);
+        vm.selectFork(forkA);
+        assertEq(block.chainid, 1);
+    }
+
     // ensures forks storage is cached at block
     function testStorageCaching() public {
         vm.createSelectFork("mainnet", 19800000);
+    }
+}
+
+contract ForkSetUpChainIdTest is Test {
+    uint256 forkA;
+    uint256 forkB;
+
+    function setUp() public {
+        forkA = vm.createSelectFork("mainnet");
+        forkB = vm.createFork("mainnet2");
+        vm.chainId(1337);
+    }
+
+    // ensures a chain id set in `setUp` reaches the test but not later fork selections.
+    function testForkSwitchBackResetsSetUpChainId() public {
+        assertEq(block.chainid, 1337);
+        vm.selectFork(forkB);
+        assertEq(block.chainid, 1);
+        vm.selectFork(forkA);
+        assertEq(block.chainid, 1);
     }
 }

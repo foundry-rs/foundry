@@ -340,6 +340,57 @@ fn spec_changes_keep_foundry_policy() {
 }
 
 #[test]
+fn forks_keep_their_own_chain_id() {
+    let factory = EthEvmFactory;
+    let env = |chain_id| {
+        EvmEnv::new(SpecId::PRAGUE, factory.version(SpecId::PRAGUE, chain_id), Default::default())
+    };
+    let (boundary, in_flight) = (ExecutionPhase::Boundary, ExecutionPhase::InFlight);
+    let mut lifecycle = ExecutionLifecycle::<_, ()>::new(factory, db_with(&[], 0), env(31337));
+    let info = |n: u64| ForkInfo::new(ForkId::new("http://fork", Some(n)), "http://fork", Some(n));
+    let fork_a = lifecycle.create_fork(info(1), db_with(&[], 0), env(10));
+    let fork_b = lifecycle.create_fork(info(2), db_with(&[], 0), env(20));
+    let stored = |lifecycle: &ExecutionLifecycle<EthEvmFactory, ()>, id| {
+        lifecycle.forks().context(id).unwrap().env.chain_id()
+    };
+
+    // The local context keeps the chain ID it ran with.
+    let mut evm = lifecycle.create_evm();
+    let _ = lifecycle.set_env(&mut evm, env(99), boundary);
+    lifecycle.park(evm);
+    assert_eq!(stored(&lifecycle, None), 99);
+
+    // A fork keeps its own chain ID when parked, ...
+    let mut evm = lifecycle.create_evm();
+    let transition = lifecycle.select_fork(&mut evm, Some(fork_a), boundary).unwrap();
+    assert_eq!(transition, EnvTransition::Applied);
+    let _ = lifecycle.set_env(&mut evm, env(1337), boundary);
+    lifecycle.park(evm);
+    assert_eq!(stored(&lifecycle, Some(fork_a)), 10);
+
+    // ... parked over its accepted state, ...
+    let mut evm = lifecycle.create_evm();
+    assert!(AcceptedView::is(evm.database()));
+    let _ = lifecycle.set_env(&mut evm, env(1337), boundary);
+    lifecycle.park_detached(evm);
+    assert_eq!(stored(&lifecycle, Some(fork_a)), 10);
+
+    // ... and switched away from in flight, so selecting it again restores its chain ID.
+    let mut evm = lifecycle.create_evm();
+    let _ = lifecycle.set_env(&mut evm, env(1337), boundary);
+    let transition = lifecycle.select_fork(&mut evm, Some(fork_b), in_flight).unwrap();
+    assert_eq!(transition, EnvTransition::Deferred);
+    assert_eq!(lifecycle.pending_env().unwrap().chain_id(), 20);
+    let transition = lifecycle.select_fork(&mut evm, Some(fork_a), in_flight).unwrap();
+    assert_eq!(transition, EnvTransition::Deferred);
+    assert_eq!(lifecycle.pending_env().unwrap().chain_id(), 10);
+    lifecycle.begin_transaction(&mut evm);
+    assert_eq!(evm.version().chain_id, 10);
+    lifecycle.park(evm);
+    assert_eq!((stored(&lifecycle, Some(fork_a)), stored(&lifecycle, Some(fork_b))), (10, 20));
+}
+
+#[test]
 fn tempo_factory_seeds_local_genesis() {
     let factory = tempo_evm::TempoEvmFactory::default();
     let spec = tempo_hardfork::TempoHardfork::default();

@@ -41,7 +41,8 @@ impl ForkInfo {
 pub struct Parked<T: EvmTypesHost> {
     /// Backing database.
     pub db: Box<dyn BackingDb>,
-    /// Environment to resume with.
+    /// Environment to resume with. A fork keeps the chain ID it was created or rolled with,
+    /// whatever chain ID it last ran with.
     pub env: EvmEnv<T>,
     /// Network extension state to resume with.
     pub ext: StoredExt<T::EvmExt>,

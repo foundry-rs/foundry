@@ -336,7 +336,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &self.lifecycle
     }
 
-    /// Returns the environment of the active context, as of the last park.
+    /// Returns the environment of the active context, as of the last park, with a fork's own chain
+    /// ID.
     pub fn evm_env(&self) -> EvmEnvFor<FEN> {
         self.lifecycle.active().env
     }
