@@ -899,16 +899,29 @@ impl Campaign<'_> {
         // a workspace compiles without it. It changes how tests deploy contracts, not what they
         // assert.
         rebased.dynamic_test_linking = false;
+        // Dependency entries link to the project's entries, and the compiler resolves links before
+        // it checks the allowed paths. A source that the compiler reads itself, such as an import
+        // that climbs above the root into a nested library, must stay readable.
+        rebased.allow_paths.extend(
+            dependencies
+                .iter()
+                .filter(|path| path.is_dir())
+                .filter_map(|path| canonicalize_path(path).ok()),
+        );
         let mut toml = rebased.to_string_pretty()?;
         // Inline config may name the project's other profiles, so they must still exist.
         for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
             toml.push_str(&format!("\n[profile.{profile}]\n"));
         }
         fs::write(workspace.path().join(Config::FILE_NAME), toml)?;
-        // Remappings are already resolved and rebased in the workspace config.
-        let remappings = workspace.path().join("remappings.txt");
-        if remappings.exists() {
-            fs::remove_file(remappings)?;
+        // Remappings are already resolved and rebased in the workspace config. The Soldeer lock
+        // goes too: `forge build` then hashes each Soldeer dependency to check it, and the hash
+        // panics when the dependency is a link, as in a workspace.
+        for file in ["remappings.txt", "soldeer.lock"] {
+            let path = workspace.path().join(file);
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
         }
         if let Some(build) = &self.build_cache {
             copy_build_output(config, build.path(), workspace.path())?;

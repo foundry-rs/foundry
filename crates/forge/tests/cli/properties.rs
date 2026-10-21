@@ -974,3 +974,85 @@ Warning: 1 project file(s) changed while the agents ran, so the run is tainted: 
 
     assert_eq!(report(&prj)["tainted"].to_string(), r#"["lib/forge-std/notes.txt"]"#);
 }
+
+// A Soldeer project has `soldeer.lock` and its dependencies under `dependencies/`, which the
+// workspace links. `forge build` checks the lock by hashing each dependency, and the hash panics on
+// a link, so the workspace drops the lock and the agent's tests still run.
+#[forgetest_init]
+fn properties_runs_tests_of_soldeer_projects(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    fs::create_dir_all(prj.root().join("dependencies/dep-1.0.0/src")).unwrap();
+    fs::write(
+        prj.root().join("dependencies/dep-1.0.0/src/Dep.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Dep {}\n",
+    )
+    .unwrap();
+    fs::write(
+        prj.root().join("soldeer.lock"),
+        r#"[[dependencies]]
+name = "dep"
+version = "1.0.0"
+url = "https://soldeer-revisions.s3.amazonaws.com/dep/1_0_0.zip"
+checksum = "0000000000000000000000000000000000000000000000000000000000000000"
+integrity = "0000000000000000000000000000000000000000000000000000000000000000"
+"#,
+    )
+    .unwrap();
+    prj.update_config(|config| config.libs.push("dependencies".into()));
+    let args = properties_args(
+        &prj,
+        r#"
+[ ! -e soldeer.lock ]
+cat > "$out/FeeCap.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+contract FeeCapTest {
+    function testDocumentedCap() public pure {
+        require(Fee.fee(1e30) == 100 ether);
+    }
+}
+SOL
+"#,
+    );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+possible bug (1/1 agents): FeeCapTest::testDocumentedCap
+  agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
+no generated test file was kept
+
+"#]]);
+}
+
+// A project test imports a nested library with a relative path that climbs above the root, so the
+// compiler reads the file itself, through the workspace's link to the library. The compiler
+// resolves the link before it checks the allowed paths, so the project's library directory must
+// be allowed.
+#[forgetest_init]
+fn properties_allows_nested_library_links(prj: _, cmd: _) {
+    fs::create_dir_all(prj.root().join("lib/common/lib/nested")).unwrap();
+    fs::write(
+        prj.root().join("lib/common/lib/nested/Nested.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Nested {\n    function value() internal pure returns (uint256) {\n        return 7;\n    }\n}\n",
+    )
+    .unwrap();
+    prj.add_test(
+        "unit/Nested.t.sol",
+        "pragma solidity ^0.8.20;\nimport {Nested} from \"../../../lib/common/lib/nested/Nested.sol\";\ncontract NestedTest {\n    function testValue() public pure {\n        require(Nested.value() == 7);\n    }\n}\n",
+    );
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$out/Stub.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract StubTest {
+    function testTrue() public pure {}
+}
+SOL
+"#,
+    );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+added 1 generated test file(s):
+  test/generated/agent-1/Stub.t.sol
+
+"#]]);
+}
