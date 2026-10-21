@@ -165,6 +165,11 @@ impl EnvOverrideState {
         mem::swap(&mut overrides.gas_price, gas_price);
         mem::swap(&mut overrides.blob_hashes, blob_hashes);
     }
+
+    /// Swaps a fork's current overrides without changing other forks or snapshot copies.
+    pub fn swap(&mut self, fork_id: Option<LocalForkId>, overrides: &mut EnvOverrides) {
+        mem::swap(self.by_fork.entry(fork_id).or_default(), overrides);
+    }
 }
 
 #[cfg(test)]

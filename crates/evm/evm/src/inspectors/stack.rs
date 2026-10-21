@@ -559,7 +559,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> eyre::Result<TxResultFor<FEN>> {
         let (prepared, mut replay) =
             backend.backend().prepare_transact(fork_id, transaction, evm)?;
+        let fork_id = replay.backend().active_fork_id();
+        let mut overrides = Default::default();
+        cheats.env_overrides.swap(fork_id, &mut overrides);
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared);
+        cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
         Ok(backend.backend_mut().store_executed(executed?))
     }
