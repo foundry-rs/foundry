@@ -274,7 +274,7 @@ pub fn set_execution_context(context: ForgeContext) {
 }
 
 fn env(key: &str, ty: &DynSolType) -> Result {
-    get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key, &val)))
+    get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key, [val.as_str()])))
 }
 
 fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
@@ -287,12 +287,13 @@ fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
     if val.is_empty() && !matches!(ty, DynSolType::String) {
         return Ok(default.abi_encode());
     }
-    string::parse(&val, ty).map_err(map_env_err(key, &val))
+    string::parse(&val, ty).map_err(map_env_err(key, [val.as_str()]))
 }
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
     get_env(key).and_then(|val| {
-        string::parse_array(val.split(delim).map(str::trim), ty).map_err(map_env_err(key, &val))
+        let values = || val.split(delim).map(str::trim);
+        string::parse_array(values(), ty).map_err(map_env_err(key, values()))
     })
 }
 
@@ -322,15 +323,23 @@ fn get_env(key: &str) -> Result<String> {
 
 /// Converts the error message of a failed parsing attempt to a more user-friendly message that
 /// doesn't leak the value.
-fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error + 'a {
+///
+/// The error names the value that failed to parse, which for arrays is a single element, so every
+/// element is redacted.
+fn map_env_err<'a, I>(key: &'a str, values: I) -> impl FnOnce(Error) -> Error + 'a
+where
+    I: IntoIterator<Item = &'a str> + 'a,
+{
     move |e| {
-        // failed parsing <value> as type `uint256`: parser error:
+        // failed parsing <value:?> as type `uint256`: parser error:
         // <value>
         //   ^
         //   expected at least one digit
         let mut e = e.to_string();
-        e = e.replacen(&format!("\"{value}\""), &format!("${key}"), 1);
-        e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
+        for value in values {
+            e = e.replacen(&format!("{value:?}"), &format!("${key}"), 1);
+            e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
+        }
         Error::from(e)
     }
 }
@@ -403,6 +412,35 @@ mod tests {
 
         let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
         assert_eq!(err.matches("$parse_env_uint").count(), 2, "{err:?}");
+        unsafe {
+            env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn parse_env_array_does_not_leak_element() {
+        let key = "parse_env_array_does_not_leak_element";
+        unsafe {
+            env::set_var(key, "1, secretvalue");
+        }
+
+        let err = env_array(key, ",", &DynSolType::Uint(256)).unwrap_err().to_string();
+        assert!(!err.contains("secretvalue"), "{err:?}");
+        assert_eq!(err.matches("$parse_env_array_does_not_leak_element").count(), 2, "{err:?}");
+        unsafe {
+            env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn parse_env_escaped_value_does_not_leak() {
+        let key = "parse_env_escaped_value_does_not_leak";
+        unsafe {
+            env::set_var(key, "secret\\value");
+        }
+
+        let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
+        assert!(!err.contains("secret"), "{err:?}");
         unsafe {
             env::remove_var(key);
         }
