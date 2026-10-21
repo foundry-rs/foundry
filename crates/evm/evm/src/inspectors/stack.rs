@@ -28,7 +28,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, ExecutedNested, FoundryEvmExt, FoundryEvmFor,
         FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PreparedTx,
-        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env,
+        SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env,
         merge_nested_changes, merge_pending_changes, release_inspector,
     },
     precompiles::P256_VERIFY,
@@ -37,6 +37,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use std::{
+    mem,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -528,6 +529,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
+        // The nested transaction has its own journal.
+        let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
@@ -542,6 +545,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        cheats.snapshot_restores = snapshot_restores;
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
         result
@@ -1183,6 +1187,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             observe: false,
         });
         let create2_redirects = self.inner.pending_create2_redirects.len();
+        // The nested transaction has its own journal.
+        let snapshot_restores =
+            self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
 
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
@@ -1194,6 +1201,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         self.inner.exit_inner_context(previous_inner);
         self.inner.pending_create2_redirects.truncate(create2_redirects);
+        // A snapshot restoration that survived the nested transaction replaced its state.
+        let restored = self.cheatcodes.as_deref_mut().zip(snapshot_restores).is_some_and(
+            |(cheats, restores)| mem::replace(&mut cheats.snapshot_restores, restores).kept(),
+        );
         if let (Some(cheats), Some(previous)) = (self.cheatcodes.as_deref_mut(), previous_origin) {
             cheats.origin_override = previous;
             cheats.in_isolation_context = false;
@@ -1213,7 +1224,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .map(|change| change.address),
         );
 
-        let replaced = epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
+        let replaced = restored
+            || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
             || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
         let merged = if replaced {
             child.commit_source(&executed.pending_state);
@@ -1269,6 +1281,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
+            cheatcodes.snapshot_restores = SnapshotRestores::default();
         }
     }
 
@@ -1487,10 +1500,33 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner.pending_create2_redirects.push(message.depth);
         true
     }
+
+    /// Closes the snapshot restoration frame `message` ran in, if any, undoing the restorations
+    /// made inside it if it failed.
+    fn end_snapshot_frame(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+        result: &MessageResultFor<FEN>,
+    ) {
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            let evm = interp.host();
+            let features = evm.version().features;
+            let failed = !result.stop.is_success();
+            cheats.snapshot_restores.frame_end(evm.state_mut(), message.depth, failed, features);
+        }
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
     fn initialize_interp(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        let depth = interp.message().depth;
+        if let Some(cheats) = self.cheatcodes.as_deref_mut()
+            && let Some(checkpoint) = interp.host().frame_checkpoint()
+        {
+            cheats.snapshot_restores.frame_start(depth, checkpoint.clone());
+        }
+
         let inner = &mut *self.inner;
         call_inspectors!([&mut inner.line_coverage, &mut inner.tracer], |inspector| {
             Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp)
@@ -1674,6 +1710,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        self.end_snapshot_frame(interp, message, result);
+
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
         // surrounding transaction.
         if self.inner.is_inner_context_root(message.depth) {
@@ -1787,6 +1825,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             self.finish_create2_redirect(message, result);
             return;
         }
+
+        self.end_snapshot_frame(interp, message, result);
 
         if self.inner.is_inner_context_root(message.depth) {
             return;
@@ -1975,12 +2015,15 @@ impl InspectorStackInner {
         // The replay reads its own origin and gas price, not the surrounding execution's.
         let origin_override = cheats.origin_override.take();
         let gas_price = cheats.gas_price.take();
+        // The replayed transaction has its own journal.
+        let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
         let mut inspector = InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
             backend: Some(backend),
         };
         let executed = prepared.execute(evm, Some(&mut inspector));
+        cheats.snapshot_restores = snapshot_restores;
         cheats.origin_override = origin_override;
         cheats.gas_price = gas_price;
         self.exit_inner_context(previous);

@@ -1267,6 +1267,71 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// A frame that fails after a callee restored a snapshot and selected another fork reinstates the
+// source fork's state the restoration replaced, while the other fork stays selected, as with REVM.
+#[forgetest]
+async fn snapshot_restore_unwinds_across_fork_switch(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    prj.add_test(
+        "RestoreForkSwitch.t.sol",
+        &r#"
+interface Vm {
+    function activeFork() external view returns (uint256);
+    function createFork(string calldata) external returns (uint256);
+    function deal(address, uint256) external;
+    function revertToState(uint256) external returns (bool);
+    function selectFork(uint256) external;
+    function snapshotState() external returns (uint256);
+}
+
+/// forge-config: default.isolate = false
+contract RestoreForkSwitchTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address payable constant TARGET = payable(address(0x777));
+
+    function testRestoreThenForkSwitchInRevertedCall() public {
+        uint256 source = vm.createFork("<rpc>");
+        uint256 other = vm.createFork("<rpc>");
+        vm.selectFork(other);
+        vm.deal(TARGET, 200);
+        vm.selectFork(source);
+        vm.deal(TARGET, 50);
+        vm.deal(address(this), 1000);
+        uint256 snapshotId = vm.snapshotState();
+
+        (bool ok,) = address(this).call(abi.encodeCall(this.run, (snapshotId, other)));
+        require(!ok, "runner succeeded");
+        require(vm.activeFork() == other, "selected fork changed");
+        require(TARGET.balance == 50, "restoration was not undone");
+    }
+
+    function run(uint256 snapshotId, uint256 fork) external {
+        this.restoreAndSwitch(snapshotId, fork);
+        revert("runner reverted");
+    }
+
+    function restoreAndSwitch(uint256 snapshotId, uint256 fork) external {
+        TARGET.transfer(10);
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.selectFork(fork);
+        TARGET.transfer(17);
+    }
+}
+
+/// forge-config: default.isolate = true
+contract RestoreForkSwitchIsolatedTest is RestoreForkSwitchTest {}
+"#
+        .replace("<rpc>", &handle.http_endpoint()),
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+}
+
 // Regression: `revertToState` / `revertToStateAndDelete` taken before any
 // `vm.blobhashes` override must exercise the `None` arm of
 // `sync_tx_after_env_override_restore` (pre_override_blob_hashes path).

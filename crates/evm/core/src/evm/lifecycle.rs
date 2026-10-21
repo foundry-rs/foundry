@@ -44,6 +44,7 @@ use evm2::{
     bytecode::Bytecode,
     evm::{
         AccountChanges, Cache, DbResult, EmptyDB, JournalEntry, PendingState, PrewarmSet, State,
+        StateSnapshot,
     },
 };
 use std::{mem, sync::Arc};
@@ -462,22 +463,26 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         })
     }
 
-    /// Restores snapshot `id` and returns its `extra`, or `None` if it does not exist.
+    /// Restores snapshot `id` and returns its `extra` and the running state it replaced, or `None`
+    /// if it does not exist.
     ///
     /// Logs emitted since the snapshot are kept. Persistent accounts and forks created after the
     /// snapshot survive the revert; every fork that existed at the snapshot gets its state back.
+    /// The replaced state is materialized, so that a failing frame can reinstate it over a backing
+    /// database with [`SnapshotRestores`](super::SnapshotRestores).
     pub fn revert(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
         id: U256,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(C, EnvTransition)> {
+    ) -> Option<(C, EnvTransition, StateSnapshot)> {
         let snapshot = if action.is_keep() {
             self.snapshots.get(id).cloned()
         } else {
             self.snapshots.remove(id)
         }?;
+        self.materialize(evm);
         let LifecycleSnapshot { state, forks, env, ext, extra } = snapshot;
         let mut current = mem::replace(&mut self.forks, forks);
         self.forks.next_id = current.next_id;
@@ -486,14 +491,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             self.forks.forks.entry(id).or_insert(entry);
         }
         let db = self.forks.active_db();
-        let logs = mem::take(evm.state_mut().logs_mut());
         let mut state = state.into_state(db.clone_backing());
-        *state.logs_mut() = logs;
-        *evm.state_mut() = state;
+        *state.logs_mut() = evm.state().logs().to_vec();
+        let replaced = mem::replace(evm.state_mut(), state).into_snapshot();
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
-        Some((extra, transition))
+        Some((extra, transition, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.

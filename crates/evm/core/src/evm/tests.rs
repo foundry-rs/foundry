@@ -127,10 +127,10 @@ where
     let keep = RevertStateSnapshotAction::RevertKeep;
     let remove = RevertStateSnapshotAction::RevertRemove;
     let phase = ExecutionPhase::Boundary;
-    let (extra, transition) = lifecycle.revert(&mut evm, first, keep, phase).unwrap();
+    let (extra, transition, _) = lifecycle.revert(&mut evm, first, keep, phase).unwrap();
     assert_eq!((extra, transition), ("first", EnvTransition::Applied));
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(8), 3));
-    let (extra, _) = lifecycle.revert(&mut evm, first, remove, phase).unwrap();
+    let (extra, ..) = lifecycle.revert(&mut evm, first, remove, phase).unwrap();
     assert_eq!(extra, "first");
     assert!(lifecycle.revert(&mut evm, first, remove, phase).is_none());
     assert!(lifecycle.revert(&mut evm, second, remove, phase).is_none(), "later snapshot dropped");

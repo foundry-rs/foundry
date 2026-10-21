@@ -132,12 +132,14 @@ where
     evm.state_mut().commit_transaction();
     let remove = RevertStateSnapshotAction::RevertRemove;
     assert_eq!(
-        backend.revert_state(snapshot, &mut evm, remove, boundary),
+        backend
+            .revert_state(snapshot, &mut evm, remove, boundary)
+            .map(|(transition, _)| transition),
         Some(EnvTransition::Applied)
     );
     assert_eq!((slot(&mut evm), nonce(&mut evm, caller)), (U256::from(7), 1));
     assert!(backend.has_state_snapshot_failure());
-    assert_eq!(backend.revert_state(snapshot, &mut evm, remove, boundary), None);
+    assert!(backend.revert_state(snapshot, &mut evm, remove, boundary).is_none());
 
     // Persistent accounts follow fork selection; everything else stays per fork.
     let fork = memory_fork(&mut backend, db_with(&[(caller, ETHER)], 100), env);

@@ -50,7 +50,7 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState,
+        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
 };
@@ -1136,7 +1136,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id
     }
 
-    /// Restores snapshot `id`, or returns `None` if it does not exist.
+    /// Restores snapshot `id` and returns the running state it replaced, or returns `None` if it
+    /// does not exist.
     ///
     /// Logs emitted since the snapshot, persistent accounts and forks created after it survive.
     /// A test failure recorded in the reverted state sets [`Self::has_state_snapshot_failure`].
@@ -1146,7 +1147,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<EnvTransition> {
+    ) -> Option<(EnvTransition, StateSnapshot)> {
         trace!(?id, "revert snapshot");
         if !self.lifecycle.has_snapshot(id) {
             warn!(target: "backend", "No snapshot to revert for {}", id);
@@ -1162,7 +1163,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         {
             self.has_state_snapshot_failure = true;
         }
-        self.lifecycle.revert(evm, id, action, phase).map(|((), transition)| transition)
+        self.lifecycle
+            .revert(evm, id, action, phase)
+            .map(|((), transition, replaced)| (transition, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.
