@@ -11,9 +11,10 @@ use crate::{
 use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
-use foundry_common::{sh_println, sh_warn};
+use foundry_common::{fs::canonicalize_path, sh_println, sh_warn};
 use foundry_compilers::{
     Graph,
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         Language,
         multi::{MultiCompilerLanguage, MultiCompilerParser},
@@ -161,6 +162,11 @@ pub struct PropertiesArgs {
     /// each agent.
     #[arg(long, hide = true, requires = "check", value_name = "ID")]
     agent: Option<usize>,
+
+    /// Workspace with the project's build output, which a `--check` workspace copies so that it
+    /// compiles only the files that changed. Forge sets it in the check command of each agent.
+    #[arg(long, hide = true, requires = "check", value_name = "PATH")]
+    build_cache: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -371,11 +377,22 @@ impl PropertiesArgs {
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
         let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
         let cache_root = config.cache_path.join("properties");
-        let campaign =
-            Campaign { args: &self, config: &config, forge, generated_tests, cache_root, quorum };
+        let mut campaign = Campaign {
+            args: &self,
+            config: &config,
+            forge,
+            generated_tests,
+            cache_root,
+            quorum,
+            build_cache: self.build_cache.clone(),
+        };
         if let Some(path) = &self.check {
             return campaign.check(path);
         }
+        // One build up front: every workspace starts from its output, so a check compiles only
+        // the files that it adds.
+        let build = campaign.build()?;
+        campaign.build_cache = build.as_ref().map(|build| build.path().to_path_buf());
         campaign.run()
     }
 }
@@ -388,6 +405,8 @@ struct Campaign<'a> {
     generated_tests: PathBuf,
     cache_root: PathBuf,
     quorum: usize,
+    /// The workspace whose build output every new workspace copies.
+    build_cache: Option<PathBuf>,
 }
 
 /// The inputs that every agent shares.
@@ -621,10 +640,27 @@ impl Campaign<'_> {
         Ok(())
     }
 
+    /// Builds the project once in a workspace whose build output the other workspaces copy. A
+    /// project that does not build gets no shared output, and each check builds it in full.
+    fn build(&self) -> Result<Option<TempDir>> {
+        let workspace = candidate_workspace(self.config, &[], None)?;
+        let output = self
+            .forge_command(workspace.path(), &self.args.seed[0])
+            .arg("build")
+            .output()
+            .wrap_err("failed to build the project")?;
+        if !output.status.success() {
+            sh_warn!("the project does not build, so every check builds it: {}", stderr(&output))?;
+            return Ok(None);
+        }
+        Ok(Some(workspace))
+    }
+
     /// Runs the `--check` command.
     fn check(&self, path: &Path) -> Result<()> {
         let candidate = read_candidate(path, &self.generated_tests)?;
-        let workspace = candidate_workspace(self.config, &candidate.files)?;
+        let workspace =
+            candidate_workspace(self.config, &candidate.files, self.build_cache.as_deref())?;
         let mut run = self.run_tests(workspace.path(), &candidate)?;
         let output = serde_json::to_string_pretty(&serde_json::json!({
             "passed": run.reasons.is_empty(),
@@ -765,7 +801,7 @@ impl Agent<'_> {
         {
             return Err(error).wrap_err("failed to reset the check journal");
         }
-        let workspace = candidate_workspace(campaign.config, &[])?;
+        let workspace = candidate_workspace(campaign.config, &[], campaign.build_cache.as_deref())?;
         let check_command = [campaign.forge.as_os_str(), "properties".as_ref(), "--root".as_ref()]
             .into_iter()
             .chain([
@@ -776,6 +812,9 @@ impl Agent<'_> {
             .map(|arg| arg.to_string_lossy().into_owned())
             .chain(args.seed.iter().flat_map(|seed| ["--seed".to_string(), format!("{seed:#x}")]))
             .chain(["--agent".to_string(), self.id.to_string()])
+            .chain(campaign.build_cache.iter().flat_map(|build| {
+                ["--build-cache".to_string(), build.to_string_lossy().into_owned()]
+            }))
             .collect::<Vec<_>>();
         // Distinct seeds are the only difference between agents.
         let seed = keccak256(
@@ -907,7 +946,8 @@ impl Agent<'_> {
         fs::write(cache.join("candidate.json"), serde_json::to_vec_pretty(&candidate)?)?;
         record.candidate_digest = Some(digest);
 
-        let workspace = candidate_workspace(config, &candidate.files)?;
+        let workspace =
+            candidate_workspace(config, &candidate.files, self.campaign.build_cache.as_deref())?;
         let run = self.campaign.run_tests(workspace.path(), &candidate)?;
         record.reasons = run.reasons;
         record.possible_bugs = run.possible_bugs;
@@ -1026,7 +1066,11 @@ impl Agent<'_> {
             evidence: BTreeMap::new(),
             usage: None,
         };
-        let workspace = candidate_workspace(self.campaign.config, &candidate.files)?;
+        let workspace = candidate_workspace(
+            self.campaign.config,
+            &candidate.files,
+            self.campaign.build_cache.as_deref(),
+        )?;
         self.campaign.run_tests(workspace.path(), &candidate)
     }
 }
@@ -1096,8 +1140,13 @@ fn project_fingerprint(config: &Config) -> BTreeMap<PathBuf, (u64, Option<System
     files
 }
 
-/// Copies the project into a temporary workspace and adds the files.
-fn candidate_workspace(config: &Config, files: &[CandidateFile]) -> Result<TempDir> {
+/// Copies the project and the build output of `build_cache` into a temporary workspace and adds
+/// the files.
+fn candidate_workspace(
+    config: &Config,
+    files: &[CandidateFile],
+    build_cache: Option<&Path>,
+) -> Result<TempDir> {
     let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
     let dependencies = config
         .libs
@@ -1121,6 +1170,9 @@ fn candidate_workspace(config: &Config, files: &[CandidateFile]) -> Result<TempD
     let remappings = workspace.path().join("remappings.txt");
     if remappings.exists() {
         fs::remove_file(remappings)?;
+    }
+    if let Some(build) = build_cache {
+        copy_build_output(config, build, workspace.path())?;
     }
     for file in files {
         let path = workspace.path().join(&file.path);
@@ -1190,6 +1242,35 @@ fn copy_project_tree(
             fs::copy(&path, &target)?;
         }
     }
+    Ok(())
+}
+
+/// Copies the build output and the compiler cache of a built workspace into another workspace.
+/// The copy clones files where the file system can (APFS, Btrfs, XFS).
+///
+/// The compiler cache keys sources by their path relative to the root, but it stores remappings
+/// with the absolute root, and other remappings invalidate it. Both workspaces have the same files
+/// at the same relative paths, so moving the remappings to the new root keeps the cache valid, and
+/// the compiler rebuilds only sources whose content changed.
+fn copy_build_output(config: &Config, build: &Path, workspace: &Path) -> Result<()> {
+    let out = workspace::relative_to_root(&config.root, &config.out);
+    let cache = workspace::relative_to_root(&config.root, &config.cache_path)
+        .join(SOLIDITY_FILES_CACHE_FILENAME);
+    // Shared output outside the project would mix the builds of all workspaces.
+    if out.is_absolute() || cache.is_absolute() || !build.join(&cache).exists() {
+        return Ok(());
+    }
+    workspace::copy_dir_recursive(&build.join(&out), &workspace.join(&out))?;
+    let mut text = fs::read_to_string(build.join(&cache))?;
+    // The compiler can see either spelling of a temporary path, such as `/private/var` on macOS.
+    for (from, to) in [
+        (canonicalize_path(build)?, canonicalize_path(workspace)?),
+        (build.to_path_buf(), workspace.to_path_buf()),
+    ] {
+        text = text.replace(&format!("{}/", from.display()), &format!("{}/", to.display()));
+    }
+    fs::create_dir_all(workspace.join(&cache).parent().expect("cache file has a parent"))?;
+    fs::write(workspace.join(&cache), text)?;
     Ok(())
 }
 

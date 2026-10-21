@@ -795,3 +795,33 @@ fn properties_check_reports_denied_warnings(prj: _, cmd: _) {
 
 "#]]);
 }
+
+// Forge builds the project once, and every workspace starts from that build output, so a build in
+// a workspace compiles only the files that it adds.
+#[forgetest_init]
+fn properties_workspaces_reuse_the_project_build(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let args = properties_args(
+        &prj,
+        r#"
+forge=$(sed -n '/"check_command": \[/{n;s/^ *"//;s/",*$//;p;}' "$prompt")
+"$forge" build > build.log 2>&1
+grep -q 'No files changed, compilation skipped' build.log
+dir=test/generated/agent-1
+mkdir -p "$dir"
+printf 'pragma solidity ^0.8.20;\nimport {Fee} from "../../../src/Fee.sol";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n' > "$dir/FeeSpec.t.sol"
+"$forge" test --match-path "$dir/FeeSpec.t.sol" > test.log 2>&1
+# The compiler gets the new test and the source that it imports, not the project's other files.
+grep -q 'Compiling 2 files' test.log
+rm "$dir/FeeSpec.t.sol"
+cat > "$output" <<'JSON'
+{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]}
+JSON
+"#,
+    );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+added 1 generated test file(s):
+  test/generated/agent-1/FeeSpec.t.sol
+
+"#]]);
+}
