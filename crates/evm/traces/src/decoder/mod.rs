@@ -1105,8 +1105,10 @@ impl CallTraceDecoder {
             let contract_functions = self.select_contract_function(functions, trace);
 
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
-            // non-fallback contract + no receive
-            if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address)
+            // non-fallback contract + no receive. Skip delegate calls: library ABIs omit external
+            // functions with storage parameters.
+            if !trace.kind.is_delegate()
+                && let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address)
                 && !contract_selectors.contains(&selector)
                 && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
             {
