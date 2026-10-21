@@ -3499,6 +3499,44 @@ contract FailureEventTest is Test {
 "#]]);
 }
 
+// An invariant that already fails in the initial state must emit its failure event when the
+// campaign starts, even if no other invariant breaks later.
+#[forgetest_init]
+fn failure_event_reports_initial_state_failure(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 5;
+    });
+    prj.add_test(
+        "InitialFailureTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Handler {
+    function noop() public {}
+}
+
+contract InitialFailureTest is Test {
+    function setUp() public {
+        targetContract(address(new Handler()));
+    }
+
+    function invariant_initial() public pure {
+        require(false, "initial broken");
+    }
+
+    function invariant_holds() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure().stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"failure","invariant":"invariant_initial","target":"test/InitialFailureTest.t.sol:InitialFailureTest","reason":"initial broken"}
+...
+"#]]);
+}
+
 // Persisted corpus entries must not replay calls the current invariant settings no longer allow.
 #[forgetest_init]
 fn invariant_corpus_respects_current_senders_and_selectors(prj: _, cmd: _) {

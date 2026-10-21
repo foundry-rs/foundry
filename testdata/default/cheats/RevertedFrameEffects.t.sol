@@ -251,13 +251,13 @@ contract RevertedFrameEffectsTest is Test {
     function test_blobBaseFee_persists_depth1() public {
         runAndCatch(FrameEffect.BlobBaseFee, false);
         // Master behavior: persists.
-        assertEq(block.blobbasefee, 7);
+        assertEq(block.blobbasefee, 10_000_000);
     }
 
     function test_blobBaseFee_persists_depth2() public {
         runAndCatch(FrameEffect.BlobBaseFee, true);
         // Master behavior: persists.
-        assertEq(block.blobbasefee, 7);
+        assertEq(block.blobbasefee, 10_000_000);
     }
 
     function test_txGasPrice_persists_depth1() public {

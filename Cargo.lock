@@ -1443,6 +1443,7 @@ dependencies = [
  "tower",
  "tower-http 0.7.1",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -7119,7 +7120,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -10102,7 +10103,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -11382,9 +11383,9 @@ checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -12148,7 +12149,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -12163,7 +12164,7 @@ dependencies = [
 [[package]]
 name = "solar-cli"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -12194,7 +12195,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "arrayvec",
@@ -12215,7 +12216,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
@@ -12233,7 +12234,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -12247,7 +12248,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "bumpalo",
  "diff",
@@ -12262,7 +12263,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -12289,7 +12290,7 @@ dependencies = [
 [[package]]
 name = "solar-lint"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "rayon",
  "solar-ast",
@@ -12300,7 +12301,7 @@ dependencies = [
 [[package]]
 name = "solar-lsp"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "arc-swap",
  "async-lsp",
@@ -12327,7 +12328,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12337,7 +12338,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.2",
@@ -12358,7 +12359,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=82e775553cd99b8e92d40c939caf6a8be2f0fd4c#82e775553cd99b8e92d40c939caf6a8be2f0fd4c"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -12389,8 +12390,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.12.0"
-source = "git+https://github.com/mario-eth/soldeer?rev=f070a2084cde8e54c952e7f7c5cf4638a808b7b0#f070a2084cde8e54c952e7f7c5cf4638a808b7b0"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87df5e663584879612c94cade5639d622e81c8867fabce161a7de3ffb401f8a8"
 dependencies = [
  "bon",
  "clap",
@@ -12406,8 +12408,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.12.0"
-source = "git+https://github.com/mario-eth/soldeer?rev=f070a2084cde8e54c952e7f7c5cf4638a808b7b0#f070a2084cde8e54c952e7f7c5cf4638a808b7b0"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fcc83a67cb03e2950606303043a62a0e65a149e644d8617b757dc80e2276e30"
 dependencies = [
  "bon",
  "chrono",
@@ -12805,7 +12808,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -13386,7 +13389,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -14274,9 +14277,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -14287,14 +14290,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
