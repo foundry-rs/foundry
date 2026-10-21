@@ -1068,11 +1068,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// running transaction as journaled writes, unless a cheatcode replaced the running state
     /// inside it, such as a state snapshot restoration or a fork switch, in which case the
     /// running transaction adopts the nested EVM's whole state.
+    ///
+    /// `precharged_state` is the account-creation state gas the CALL or CREATE opcode that created
+    /// `message` already charged. It is credited as far as the nested transaction charges it again
+    /// at its top level, which can differ when a prank or broadcast changed the destination.
     fn transact_inner(
         &mut self,
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &MessageFor<FEN>,
+        precharged_state: u64,
     ) -> MessageResultFor<FEN> {
+        let precharged_state = if precharged_state == 0 {
+            0
+        } else {
+            precharged_state.min(account_creation_state_gas::<FEN>(interp, message))
+        };
         let tx_origin = interp.tx_env().origin;
         let is_create = matches!(message.kind, MessageKind::Create | MessageKind::Create2);
         let kind = if is_create { TxKind::Create } else { TxKind::Call(message.destination) };
@@ -1099,17 +1109,23 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         );
 
         // Preserve the frame's regular gas and reservoir across the synthetic transaction
-        // boundary. evm2 rejects transactions whose gas limit is below the EIP-7623 calldata
-        // floor, so the limit is raised to the floor; the floor is charged to the frame below.
+        // boundary, funding the precharged state gas from the reservoir. Raising the limit to an
+        // EIP-7623 calldata floor above the frame's gas would give the frame more gas than it was
+        // forwarded, so the nested transaction skips the floor, and the floor is charged to the
+        // frame below.
         let mut env = evm_env(evm);
         let outer_env = env;
         let regular_limit = message.gas_limit.saturating_add(intrinsic);
         let mut gas_limit = regular_limit;
         if version.feature(EvmFeatures::EIP8037) {
             env.version.tx_gas_limit_cap = regular_limit;
-            gas_limit = gas_limit.saturating_add(message.reservoir);
+            gas_limit =
+                gas_limit.saturating_add(message.reservoir).saturating_add(precharged_state);
         }
-        gas_limit = gas_limit.max(floor);
+        let skip_floor = floor > regular_limit;
+        if skip_floor {
+            env.set_feature(EvmFeatures::EIP7623, false);
+        }
         if version.feature(EvmFeatures::BLOCK_GAS_LIMIT_CHECK) {
             gas_limit = gas_limit.min(env.block.gas_limit.saturating_to());
         }
@@ -1199,7 +1215,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             // Should we match, encode and propagate error as a revert reason?
             return not_executed(Bytes::new());
         };
-        let result = executed.result;
+        let mut result = executed.result;
+        if skip_floor {
+            result.floor_gas = floor;
+        }
         self.inner.tx_created.extend(
             executed
                 .pending_state
@@ -1227,8 +1246,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         block.basefee = outer_basefee;
         evm.set_block(block);
 
+        // A failed transaction refunds its account-creation state gas, as the outer opcode does.
+        let precharged_state = precharged_state.min(result.state_gas_spent());
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.gas_metering.set_isolated_snapshot_gas_used(result.tx_gas_used(), 0);
+            cheats
+                .gas_metering
+                .set_isolated_snapshot_gas_used(result.tx_gas_used(), precharged_state);
         }
 
         // The transaction also pays its intrinsic gas and calldata floor, which can exceed the
@@ -1236,7 +1259,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // exceptional halt.
         let mut gas =
             GasTracker::new_with_execution_gas_and_reservoir(message.gas_limit, message.reservoir);
-        if gas.spend_state(result.state_gas_spent()).is_err()
+        if gas.spend_state(result.state_gas_spent() - precharged_state).is_err()
             || gas.spend(result.execution_gas_spent()).is_err()
         {
             gas.spend_all();
@@ -1245,7 +1268,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if !merged {
             stop = InstrStop::Revert;
         } else if result.status {
-            gas.record_refund(result.refunded as i64);
+            gas.record_refund(result.final_refunded() as i64);
         }
 
         // Pre-computed address for `expectRevert` reverter checks on reverted creates.
@@ -1603,6 +1626,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             && !self.inner.in_inner_context
             && self.backend.is_some()
             && (depth == 1 || self.inner.synthetic_create_depth == Some(depth));
+        let precharged_state = if isolate && depth == 1 && message.kind == MessageKind::Call {
+            account_creation_state_gas::<FEN>(interp, message)
+        } else {
+            0
+        };
         let mut cheatcode_outcome = None;
         if let Some((cheats, backend, inner)) = self.cheats_and_backend() {
             apply_mocked_function(cheats, interp, message);
@@ -1647,7 +1675,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if isolate {
             match message.kind {
                 // Isolate CALLs.
-                MessageKind::Call => return Some(self.transact_inner(interp, message)),
+                MessageKind::Call => {
+                    return Some(self.transact_inner(interp, message, precharged_state));
+                }
                 // Mark accounts and storage cold before STATICCALLs.
                 MessageKind::StaticCall => self.cool_for_static_call(interp),
                 // Process other variants as usual.
@@ -1732,6 +1762,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let trace_idx = self.inner.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
+        // Pranks and broadcasts can change the creator and destination, so read the opcode's
+        // charge first. A synthetic `deployCode` create is not created by an opcode.
+        let precharged_state = if depth == 1
+            && message.kind == MessageKind::Create
+            && self.inner.enable_isolation
+            && !self.inner.in_inner_context
+        {
+            account_creation_state_gas::<FEN>(interp, message)
+        } else {
+            0
+        };
         let mut cheatcode_outcome = None;
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
             cheatcode_outcome = cheats.create_hook(interp, message, backend);
@@ -1759,7 +1800,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             && self.backend.is_some()
             && (depth == 1 || self.inner.synthetic_create_depth == Some(depth))
         {
-            return Some(self.transact_inner(interp, message));
+            return Some(self.transact_inner(interp, message, precharged_state));
         }
 
         None
@@ -2028,6 +2069,28 @@ fn warm_accessed(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> 
         }
     }
     Ok(())
+}
+
+/// Returns the EIP-8037 account-creation state gas charged before running `message`, by its CALL
+/// or CREATE opcode or at the top level of a transaction: a CREATE, or a value transfer, to an
+/// empty account.
+fn account_creation_state_gas<FEN: FoundryEvmNetwork>(
+    interp: &mut InterpreterFor<'_, '_, FEN>,
+    message: &MessageFor<FEN>,
+) -> u64 {
+    let evm = interp.host();
+    let features = evm.version().features;
+    let is_create = message.kind == MessageKind::Create;
+    if !features.contains(EvmFeatures::EIP8037)
+        || !(is_create || !message.value.is_zero())
+        || !evm
+            .target_is_empty_for_new_account_gas(&message.destination, features)
+            .unwrap_or_default()
+    {
+        return 0;
+    }
+    let gas_params = &evm.version().gas_params;
+    if is_create { gas_params.create_state_gas() } else { gas_params.new_account_state_gas() }
 }
 
 /// Warms Arbitrum's ArbSys like a precompile, as Nitro does, on Arbitrum chains.
