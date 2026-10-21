@@ -812,8 +812,8 @@ dir=test/generated/agent-1
 mkdir -p "$dir"
 printf 'pragma solidity ^0.8.20;\nimport {Fee} from "../../../src/Fee.sol";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n' > "$dir/FeeSpec.t.sol"
 "$forge" test --match-path "$dir/FeeSpec.t.sol" > test.log 2>&1
-# The compiler gets the new test and the source that it imports, not the project's other files.
-grep -q 'Compiling 2 files' test.log
+# The compiler builds only the new test, not the project's other files.
+grep -q 'Compiling 1 files' test.log
 rm "$dir/FeeSpec.t.sol"
 cat > "$output" <<'JSON'
 {"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]}

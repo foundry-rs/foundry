@@ -1189,6 +1189,9 @@ fn candidate_workspace(
     // Foundry turns the compiler cache off when it denies warnings, so a workspace builds with
     // `deny = "never"`, and `Campaign::denied_warnings` checks the warnings instead.
     rebased.deny = DenyLevel::Never;
+    // With dynamic test linking, every new source file makes the compiler rebuild all files, so a
+    // workspace compiles without it. It changes how tests deploy contracts, not what they assert.
+    rebased.dynamic_test_linking = false;
     let mut toml = rebased.to_string_pretty()?;
     // Inline config may name the project's other profiles, so they must still exist.
     for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
