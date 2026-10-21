@@ -25,10 +25,10 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
-        BackingDb, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutionLifecycle,
-        ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory,
-        FoundryEvmFor, FoundryEvmNetwork, NestedTx, Parked, SpecFor, TxFor, TxResultFor, TypesFor,
-        block_txs, evm_env,
+        BackingDb, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
+        ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, NestedTx, Parked, PreparedTx, SpecFor,
+        TxFor, TxResultFor, TypesFor, block_txs, evm_env,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -831,6 +831,18 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
+        let executed = self.prepare_transact(id, transaction, evm)?.execute(evm, inspector)?;
+        self.store_executed(executed)
+    }
+
+    /// Prepares [`Self::transact`] for an inspector that needs the backend while the transaction
+    /// runs. Store the outcome with [`Self::store_executed`].
+    pub fn prepare_transact(
+        &self,
+        id: Option<LocalForkId>,
+        transaction: B256,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+    ) -> eyre::Result<PreparedTx<TypesFor<FEN>>> {
         trace!(?id, ?transaction, "execute transaction");
         let id = self.ensure_fork(id)?;
         let info = self.fork_info(id)?;
@@ -876,11 +888,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         } else {
             None
         };
-        let nested = NestedTx { env: Some(env), ext, inspector };
         if active {
-            self.lifecycle.nested_transaction_with(evm, &tx, nested)
+            Ok(self.lifecycle.prepare_nested(evm, tx, Some(env), ext))
         } else {
-            self.lifecycle.transact_on_inactive(evm, Some(id), &tx, nested)
+            self.lifecycle.prepare_on_inactive(evm, Some(id), tx, Some(env), ext)
         }
     }
 
@@ -895,6 +906,27 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<TxResultFor<FEN>> {
         trace!("execute signed transaction");
         self.lifecycle.nested_transaction_with(evm, tx, NestedTx { env, ext: None, inspector })
+    }
+
+    /// Prepares [`Self::transact_from_tx`] for an inspector that needs the backend while the
+    /// transaction runs. Store the outcome with [`Self::store_executed`].
+    pub fn prepare_nested(
+        &self,
+        tx: Recovered<TxFor<FEN>>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        env: Option<EvmEnvFor<FEN>>,
+    ) -> PreparedTx<TypesFor<FEN>> {
+        trace!("execute signed transaction");
+        self.lifecycle.prepare_nested(evm, tx, env, None)
+    }
+
+    /// Stores the outcome of a transaction prepared with [`Self::prepare_transact`] or
+    /// [`Self::prepare_nested`].
+    pub fn store_executed(
+        &mut self,
+        executed: ExecutedNested<TypesFor<FEN>>,
+    ) -> eyre::Result<TxResultFor<FEN>> {
+        self.lifecycle.store_executed(executed)
     }
 
     /// Builds the EVM a nested transaction of the running one executes on, such as an isolated

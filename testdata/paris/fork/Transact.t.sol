@@ -17,11 +17,23 @@ contract CallerRecorder {
     }
 }
 
+contract CheatcodeCaller {
+    event CheatcodeResult(bytes reason);
+
+    fallback() external {
+        try Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).getNonce(address(this)) {}
+        catch (bytes memory reason) {
+            emit CheatcodeResult(reason);
+        }
+    }
+}
+
 contract TransactOnForkTest is Test {
     IERC20 constant USDT = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
     bytes constant ALWAYS_REVERT = hex"60006000fd";
 
     event Transfer(address indexed from, address indexed to, uint256 value);
+    event CheatcodeResult(bytes reason);
 
     function testTransact() public {
         // A random block https://etherscan.io/block/17134913
@@ -73,12 +85,8 @@ contract TransactOnForkTest is Test {
         uint256 expectedRecipientBalance = recipientBalance + transferAmount;
         uint256 expectedSenderBalance = senderBalance - transferAmount;
 
-        // expect a call to USDT's transfer
-        // With the current expect call behavior, in which we expect calls to be matched in the next call's subcalls,
-        // expecting calls on vm.transact is impossible. This is because transact essentially creates another call context
-        // that operates independently of the current one, meaning that depths won't match and will trigger a panic on REVM,
-        // as the transact storage is not persisted as well and can't be checked.
-        // vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount));
+        // expect exactly one call to USDT's transfer, the replayed transaction's root call
+        vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount), 1);
 
         // expect a Transfer event to be emitted
         vm.expectEmit(true, true, false, true, address(USDT));
@@ -193,5 +201,36 @@ contract TransactOnForkTest is Test {
         recorder.recordCaller();
 
         assertEq(recorder.caller(), alice);
+    }
+
+    function testTransactOnInactiveForkCooperatesWithCheatcodes() public {
+        vm.createSelectFork("mainnet", 16260608);
+        uint256 inactive = vm.createFork("mainnet", 16260609);
+        address sender = address(0x2e09BB78B3D64d98Da44D1C776fa77dcd133ED54);
+        address recipient = address(0x23a6B9711B711b1d404F2AA740bde350c67a6F06);
+        uint256 transferAmount = 14000000000;
+
+        vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount), 1);
+        vm.expectEmit(true, true, false, true, address(USDT));
+        emit Transfer(sender, recipient, transferAmount);
+        vm.recordLogs();
+
+        vm.transact(inactive, 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+
+        assertEq(vm.getRecordedLogs().length, 1);
+    }
+
+    function testTransactOnInactiveForkRejectsCheatcodes() public {
+        vm.createSelectFork("mainnet", 16260608);
+        uint256 inactive = vm.createFork("mainnet", 16260609);
+        vm.etch(address(USDT), address(new CheatcodeCaller()).code);
+        vm.makePersistent(address(USDT));
+        vm.allowCheatcodes(address(USDT));
+
+        vm.expectEmit(address(USDT));
+        emit CheatcodeResult(abi.encodeWithSignature(
+                "CheatcodeError(string)", "cheatcodes cannot be called in a transaction replayed on an inactive fork"
+            ));
+        vm.transact(inactive, 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
     }
 }

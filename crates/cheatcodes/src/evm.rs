@@ -1318,13 +1318,14 @@ impl Cheatcode for broadcastRawTransactionCall {
             }
             env
         });
-        let result =
-            executor.transact_from_tx(ccx.backend, ccx.evm, ccx.depth as u16, &evm_tx, env)?;
-        // Cheatcodes do not run inside the transaction; let `expectEmit` and `recordLogs` see its
-        // logs.
-        for log in &result.logs {
-            ccx.state.log_hook(log);
-        }
+        let _ = executor.transact_from_tx(
+            ccx.state,
+            ccx.backend,
+            ccx.evm,
+            ccx.depth as u16,
+            &evm_tx,
+            env,
+        )?;
         ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {

@@ -328,6 +328,103 @@ contract BroadcastRawTransactionTest is Test {
         assertEq(revertedMintToken.balanceOf(address(this)), nested && !revertParent ? 1 : 0);
     }
 
+    function test_signed_tx_calls_observed_once() public {
+        vm.fee(1);
+        vm.chainId(1);
+
+        address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+        address to = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+        vm.deal(from, 1 ether);
+        vm.etch(to, address(new RawTxRelay()).code);
+
+        // The transaction's root call and its subcall are each observed once.
+        vm.expectCall(to, 17, "", 1);
+        vm.expectCall(RELAY_TARGET, "", 1);
+        vm.recordLogs();
+
+        /*
+        Signed transaction:
+        TransactionRequest { from: Some(0x5316812db67073c4d4af8bb3000c5b86c2877e94), to: Some(Address(0x6fd0a0cff9a87adf51695b40b4fa267855a8f4c6)), gas: Some(200000), gas_price: Some(100), value: Some(17), data: None, nonce: Some(0), chain_id: Some(1) }
+        */
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].emitter, to);
+    }
+
+    function test_nested_signed_tx_calls_observed_once() public {
+        vm.chainId(1);
+        vm.deal(vm.addr(1), 1 ether);
+        vm.deal(vm.addr(2), 1 ether);
+        address relay = address(new RawTxRelay());
+        bytes memory inner = signCall(2, relay, "");
+        bytes memory outer = signCall(1, address(this), abi.encodeCall(this.broadcastRaw, (inner)));
+
+        // Every call of the transaction and of the transaction it broadcasts is observed once.
+        vm.expectCall(address(this), abi.encodeCall(this.broadcastRaw, (inner)), 1);
+        vm.expectCall(relay, "", 1);
+        vm.expectCall(RELAY_TARGET, "", 1);
+        vm.broadcastRawTransaction(outer);
+    }
+
+    function test_signed_create_tx_increments_nonce_once() public {
+        vm.chainId(1);
+        address signer = vm.addr(1);
+        vm.deal(signer, 1 ether);
+        address created = vm.computeCreateAddress(signer, 0);
+
+        vm.broadcastRawTransaction(signCall(1, address(0), type(RawTxRelay).creationCode));
+
+        assertEq(vm.getNonce(signer), 1);
+        assertGt(created.code.length, 0);
+    }
+
+    bytes rollForkReason;
+
+    function test_signed_tx_cannot_roll_forks() public {
+        vm.chainId(1);
+        vm.deal(vm.addr(1), 1 ether);
+
+        vm.broadcastRawTransaction(signCall(1, address(this), abi.encodeCall(this.tryRollFork, ())));
+
+        assertEq(
+            rollForkReason,
+            abi.encodeWithSignature(
+                "CheatcodeError(string)", "vm.rollFork: cannot select or roll forks in a replayed transaction"
+            )
+        );
+    }
+
+    function tryRollFork() external {
+        try vm.rollFork(1) {}
+        catch (bytes memory reason) {
+            rollForkReason = reason;
+        }
+    }
+
+    function broadcastRaw(bytes memory rawTx) external {
+        vm.broadcastRawTransaction(rawTx);
+    }
+
+    function signCall(uint256 key, address to, bytes memory data) internal view returns (bytes memory) {
+        bytes[] memory fields = new bytes[](9);
+        fields[0] = trimLeadingZeros(bytes32(uint256(vm.getNonce(vm.addr(key)))));
+        fields[1] = hex"01"; // Gas price.
+        fields[2] = hex"0f4240"; // Gas limit.
+        fields[3] = to == address(0) ? bytes("") : abi.encodePacked(to);
+        fields[5] = data;
+        fields[6] = hex"01"; // Chain ID.
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, keccak256(vm.toRlp(fields)));
+        fields[6] = abi.encodePacked(v + 10); // EIP-155 replay-protected v for chain ID 1.
+        fields[7] = trimLeadingZeros(r);
+        fields[8] = trimLeadingZeros(s);
+
+        return vm.toRlp(fields);
+    }
+
     function signTransfer(bytes memory nonce) internal pure returns (bytes memory) {
         bytes[] memory fields = new bytes[](9);
         fields[0] = nonce;
@@ -358,6 +455,19 @@ contract BroadcastRawTransactionTest is Test {
 
 /// forge-config: default.isolate = false
 contract BroadcastRawTransactionNonIsolatedTest is BroadcastRawTransactionTest {}
+
+address constant RELAY_TARGET = address(0x2222);
+
+/// Emits a log and calls `RELAY_TARGET` whenever it is called.
+contract RawTxRelay {
+    event Relayed();
+
+    fallback() external payable {
+        emit Relayed();
+        (bool success,) = RELAY_TARGET.call("");
+        require(success);
+    }
+}
 
 contract MyERC20 {
     mapping(address => uint256) private _balances;
