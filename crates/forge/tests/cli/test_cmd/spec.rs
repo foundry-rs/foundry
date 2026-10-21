@@ -269,6 +269,99 @@ Traces:
 "#]]);
 }
 
+// `vm.setEvmVersion` inside a test applies to the calls and creates started after it, while the
+// running frame keeps its version.
+#[forgetest_init]
+fn test_set_evm_version_applies_to_new_frames(prj: _, cmd: _) {
+    prj.add_test(
+        "EvmVersionFrames.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+EvmVm constant EVM = EvmVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+// Runtime code `PUSH0 PUSH0 RETURN`; PUSH0 is only valid from Shanghai.
+address constant PUSH0_TARGET = address(0xBEEF);
+// Returns the gas of one cold SLOAD without using PUSH0: 800 before Berlin, 2100 from Berlin.
+address constant SLOAD_PROBE = address(0xCAFE);
+
+contract Switcher {
+    function switchAndRevert(string calldata evm) external {
+        EVM.setEvmVersion(evm);
+        revert();
+    }
+}
+
+contract EvmVersionFramesTest is Test {
+    function setUp() public {
+        vm.etch(PUSH0_TARGET, hex"5f5ff3");
+        vm.etch(SLOAD_PROBE, hex"5a600754505a900360005260206000f3");
+    }
+
+    function push0Works() internal returns (bool ok) {
+        (ok,) = PUSH0_TARGET.call("");
+    }
+
+    function coldSloadGas() internal returns (uint256) {
+        (, bytes memory output) = SLOAD_PROBE.call("");
+        return abi.decode(output, (uint256));
+    }
+
+    function test_next_frames_use_new_version() public {
+        assertTrue(push0Works());
+        EVM.setEvmVersion("istanbul");
+        assertEq(EVM.getEvmVersion(), "istanbul");
+        assertFalse(push0Works(), "PUSH0 is not activated on istanbul");
+        assertLt(coldSloadGas(), 1000, "istanbul cold SLOAD costs 800");
+
+        bytes memory initcode = hex"5f5ff3";
+        address deployed;
+        assembly {
+            deployed := create(0, add(initcode, 32), mload(initcode))
+        }
+        assertEq(deployed, address(0), "istanbul initcode cannot use PUSH0");
+
+        EVM.setEvmVersion("shanghai");
+        assertTrue(push0Works());
+        assertGt(coldSloadGas(), 2000, "shanghai cold SLOAD costs 2100");
+        assembly {
+            deployed := create(0, add(initcode, 32), mload(initcode))
+        }
+        assertTrue(deployed != address(0));
+    }
+
+    function test_running_frame_keeps_version() public {
+        // This test is compiled with PUSH0, so it only continues if its frame keeps its version.
+        EVM.setEvmVersion("istanbul");
+        uint256[] memory values = new uint256[](1);
+        assertEq(values[0], 0);
+    }
+
+    function test_version_set_in_reverted_call_applies() public {
+        Switcher switcher = new Switcher();
+        try switcher.switchAndRevert("istanbul") {} catch {}
+        assertEq(EVM.getEvmVersion(), "istanbul");
+        assertFalse(push0Works(), "PUSH0 is not activated on istanbul");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "EvmVersionFramesTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+[PASS] test_next_frames_use_new_version() ([GAS])
+[PASS] test_running_frame_keeps_version() ([GAS])
+[PASS] test_version_set_in_reverted_call_applies() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[cfg(feature = "monad")]
 #[forgetest_init]
 fn test_set_evm_version_monad_hardfork(prj: _, cmd: _) {
@@ -2255,9 +2348,8 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 fn test_tempo_implicit_approval_t5(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
-        // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
-        // here is what activates the T5 precompiles and selectors. `vm.setEvmVersion` only
-        // flips the cheatcode-visible spec.
+        // Pinning T5 activates the T5 precompiles and selectors for the whole test;
+        // `vm.setEvmVersion` only applies to the calls started after it.
         config.hardfork = Some(FoundryHardfork::Tempo(TempoHardfork::T5));
     });
 
@@ -2277,6 +2369,65 @@ Ran 7 tests for test/TempoImplicitApproval.t.sol:TempoImplicitApprovalTest
 [PASS] test_non_implicit_spender_requires_approve_t5() ([GAS])
 [PASS] test_standard_approve_flow_unchanged_t5() ([GAS])
 Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// `vm.chainId` inside a test applies to the native precompiles of the calls started after it,
+// including after a call that sets the same chain ID again.
+#[forgetest_init]
+fn test_tempo_chain_id_applies_to_new_frames(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+    prj.add_test(
+        "TempoChainId.t.sol",
+        r#"
+pragma solidity >=0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+interface ITIP20 {
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+}
+
+contract ChainIdSetter {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function setChainId(uint256 chainId) external {
+        VM.chainId(chainId);
+    }
+}
+
+contract TempoChainIdTest is Test {
+    ITIP20 constant PATH_USD = ITIP20(0x20C0000000000000000000000000000000000000);
+
+    function test_domain_separator_follows_chain_id() public {
+        uint256 original = block.chainid;
+        bytes32 originalDomain = PATH_USD.DOMAIN_SEPARATOR();
+
+        vm.chainId(original + 1);
+        bytes32 newDomain = PATH_USD.DOMAIN_SEPARATOR();
+        assertTrue(newDomain != originalDomain, "TIP-20 domain uses the new chain ID");
+
+        new ChainIdSetter().setChainId(original + 1);
+        assertEq(PATH_USD.DOMAIN_SEPARATOR(), newDomain);
+
+        vm.chainId(original);
+        assertEq(PATH_USD.DOMAIN_SEPARATOR(), originalDomain);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoChainIdTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoChainId.t.sol:TempoChainIdTest
+[PASS] test_domain_separator_follows_chain_id() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

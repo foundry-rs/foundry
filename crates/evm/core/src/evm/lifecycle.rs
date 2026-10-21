@@ -21,7 +21,9 @@
 //! need a different spec or chain ID while a transaction is in flight apply everything else at
 //! once and report [`EnvTransition::Deferred`]; [`ExecutionLifecycle::begin_transaction`] then
 //! applies the deferred environment at the next transaction boundary. Callers must surface a
-//! deferred transition rather than ignore it.
+//! deferred transition rather than ignore it. Until then, the inspector stack runs frames started
+//! after the change on a frame EVM built with the deferred environment
+//! ([`ExecutionLifecycle::begin_frame_evm_with_env`]).
 //!
 //! Suspending a context accepts its in-flight writes, so a fork switch is not undone when an
 //! enclosing call reverts.
@@ -512,7 +514,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     ///
     /// [`Host::execute_message`]: evm2::interpreter::Host::execute_message
     pub fn begin_frame_evm<'a>(&self, evm: &mut Evm<'_, F::Types>) -> Evm<'a, F::Types> {
-        let env = evm_env(evm);
+        self.begin_frame_evm_with_env(evm, evm_env(evm))
+    }
+
+    /// Like [`Self::begin_frame_evm`], but the frame EVM executes with `env`, such as with the
+    /// spec requested by `vm.setEvmVersion` while a transaction is in flight.
+    pub fn begin_frame_evm_with_env<'a>(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        env: EvmEnv<F::Types>,
+    ) -> Evm<'a, F::Types> {
         let db = self.forks.active_db();
         let factory = self.factory.configure_for(&db, &env);
         let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
@@ -683,7 +694,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let current = evm_env(evm);
         if current.spec == env.spec && current.chain_id() == env.chain_id() {
             evm.set_block(env.block);
-            self.pending_env = None;
+            // `evm` can be a frame EVM that already runs the pending environment while the frames
+            // it suspended do not, so the request stays pending for them.
+            self.pending_env = match phase {
+                ExecutionPhase::InFlight if self.pending_env.is_some() => Some(env),
+                _ => None,
+            };
             return EnvTransition::Applied;
         }
         match phase {

@@ -140,8 +140,9 @@ identify a Tempo revision.
 
 `vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
 not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
-remain accepted. On Tempo, runtime changes do not rebuild instructions or precompiles; configure
-`hardfork = "tempo:T7"` (or the required revision) before execution to select a different revision.
+remain accepted. Calls and creates started after a runtime change run with the selected version's
+instructions, gas schedule and precompiles, while the running frame keeps its own; configure
+`hardfork = "tempo:T7"` (or the required revision) to select a revision for whole transactions.
 
 Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
 to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
