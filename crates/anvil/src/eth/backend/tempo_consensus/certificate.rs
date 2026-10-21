@@ -1,0 +1,226 @@
+//! The private wire adapter for Tempo's Simplex finalization certificates.
+//!
+//! The pinned format is `UInt(epoch) || UInt(view) || UInt(parent) || digest || vote || seed`,
+//! with two compressed 48-byte MinSig signatures. The vote signs the whole proposal, while the
+//! seed signs only its epoch and view. Integers use Commonware's unsigned varints, not fixed-width
+//! Ethereum quantities. Keep this adapter aligned with the pinned upstream definitions:
+//!
+//! - [Commonware 2026.9.0 `Proposal` and `Finalization`][proposal].
+//! - [Commonware 2026.9.0 threshold VRF signature pair][vrf] and [namespaces][namespaces].
+//! - [Tempo's pinned `TEMPO` namespace][tempo].
+//!
+//! [proposal]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/types.rs
+//! [vrf]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/scheme/bls12381_threshold/vrf.rs
+//! [namespaces]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/scheme/mod.rs
+//! [tempo]: https://github.com/tempoxyz/tempo/blob/2c25f7cd8267b205a6b95e08bbc73baf887bea88/crates/consensus/src/config.rs
+
+use alloy_primitives::{B256, Bytes};
+use commonware_codec::{Write, varint::UInt};
+use commonware_cryptography::{
+    bls12381::{
+        dkg::feldman_desmedt::Output,
+        primitives::{group::Share, ops::threshold, variant::MinSig},
+    },
+    ed25519::PublicKey,
+};
+use commonware_parallel::Sequential;
+
+/// Signs a proposal with the local 1-of-1 committee and encodes its finalization certificate.
+pub(super) fn encode(
+    epoch: u64,
+    view: u64,
+    parent_view: u64,
+    digest: B256,
+    output: &Output<MinSig, PublicKey>,
+    share: &Share,
+) -> Bytes {
+    let mut certificate = Vec::new();
+    UInt(epoch).write(&mut certificate);
+    UInt(view).write(&mut certificate);
+    let seed = threshold::sign_message::<MinSig>(share, b"TEMPO_SEED", &certificate);
+
+    UInt(parent_view).write(&mut certificate);
+    certificate.extend_from_slice(digest.as_slice());
+    let vote = threshold::sign_message::<MinSig>(share, b"TEMPO_FINALIZE", &certificate);
+    let (vote, seed) = threshold::recover_pair(output.public(), [&vote], [&seed], &Sequential)
+        .expect("the local committee has exactly one share and a threshold of one");
+    vote.write(&mut certificate);
+    seed.write(&mut certificate);
+    certificate.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commonware_codec::DecodeExt;
+    use commonware_cryptography::{
+        Signer,
+        bls12381::{
+            dkg::feldman_desmedt,
+            primitives::{group::G1, ops, sharing::Mode},
+        },
+        ed25519::PrivateKey,
+    };
+    use commonware_utils::{N3f1, TryFromIterator, ordered::Set};
+    use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};
+
+    #[test]
+    fn finalization_contains_verified_vote_and_seed() {
+        let (output, share) = committee(7);
+        let certificate = encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share);
+        assert_eq!(certificate.len(), 3 + 32 + 48 + 48);
+        assert_eq!(&certificate[..3], &[7, 9, 8]);
+        assert_eq!(&certificate[3..35], &[0x42; 32]);
+
+        let vote = G1::decode(&certificate[35..83]).unwrap();
+        let seed = G1::decode(&certificate[83..]).unwrap();
+        let public = output.public().public();
+        assert!(
+            ops::verify_message::<MinSig>(public, b"TEMPO_FINALIZE", &certificate[..35], &vote)
+                .is_ok()
+        );
+        assert!(ops::verify_message::<MinSig>(public, b"TEMPO_SEED", &[7, 9], &seed).is_ok());
+    }
+
+    #[test]
+    fn finalization_uses_variable_length_epoch_and_views() {
+        let (output, share) = committee(7);
+        // Literal protobuf varints independently specify the proposal's three integer fields.
+        let cases = [
+            (127, &[0x7f, 0x80, 0x01, 0x7f][..], 3),
+            (128, &[0x80, 0x01, 0x81, 0x01, 0x80, 0x01][..], 4),
+            (16_383, &[0xff, 0x7f, 0x80, 0x80, 0x01, 0xff, 0x7f][..], 5),
+            (16_384, &[0x80, 0x80, 0x01, 0x81, 0x80, 0x01, 0x80, 0x80, 0x01][..], 6),
+        ];
+        for (epoch, prefix, round_len) in cases {
+            let certificate = encode(epoch, epoch + 1, epoch, B256::ZERO, &output, &share);
+            let proposal_len = prefix.len() + 32;
+            assert_eq!(&certificate[..prefix.len()], prefix);
+            assert_eq!(&certificate[prefix.len()..proposal_len], &[0; 32]);
+            assert_eq!(certificate.len(), proposal_len + 96);
+
+            let vote = G1::decode(&certificate[proposal_len..proposal_len + 48]).unwrap();
+            let seed = G1::decode(&certificate[proposal_len + 48..]).unwrap();
+            let public = output.public().public();
+            assert!(
+                ops::verify_message::<MinSig>(
+                    public,
+                    b"TEMPO_FINALIZE",
+                    &certificate[..proposal_len],
+                    &vote,
+                )
+                .is_ok()
+            );
+            assert!(
+                ops::verify_message::<MinSig>(public, b"TEMPO_SEED", &prefix[..round_len], &seed,)
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn finalization_signatures_reject_wrong_key_and_domain() {
+        let (output, share) = committee(7);
+        let (other, _) = committee(8);
+        let certificate = encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share);
+        let vote = G1::decode(&certificate[35..83]).unwrap();
+        let seed = G1::decode(&certificate[83..]).unwrap();
+
+        for (signature, message, namespace) in [
+            (&vote, &certificate[..35], &b"TEMPO_FINALIZE"[..]),
+            (&seed, &certificate[..2], &b"TEMPO_SEED"[..]),
+        ] {
+            assert!(
+                ops::verify_message::<MinSig>(
+                    other.public().public(),
+                    namespace,
+                    message,
+                    signature,
+                )
+                .is_err()
+            );
+            for wrong_namespace in [b"TEMPO".as_slice(), b"TEMPO_NOTARIZE", b"OTHER_FINALIZE"] {
+                assert!(
+                    ops::verify_message::<MinSig>(
+                        output.public().public(),
+                        wrong_namespace,
+                        message,
+                        signature,
+                    )
+                    .is_err()
+                );
+            }
+        }
+        assert!(
+            ops::verify_message::<MinSig>(
+                output.public().public(),
+                b"TEMPO_FINALIZE",
+                &certificate[..35],
+                &seed,
+            )
+            .is_err()
+        );
+        assert!(
+            ops::verify_message::<MinSig>(
+                output.public().public(),
+                b"TEMPO_SEED",
+                &certificate[..2],
+                &vote,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn finalization_binds_every_proposal_field_and_both_signatures() {
+        let (output, share) = committee(7);
+        let certificate = encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share);
+        let vote = G1::decode(&certificate[35..83]).unwrap();
+        let seed = G1::decode(&certificate[83..]).unwrap();
+        let public = output.public().public();
+
+        for index in [0, 1, 2, 3, 34] {
+            let mut modified = certificate.to_vec();
+            modified[index] ^= 1;
+            assert!(
+                ops::verify_message::<MinSig>(public, b"TEMPO_FINALIZE", &modified[..35], &vote,)
+                    .is_err()
+            );
+            let seed_valid =
+                ops::verify_message::<MinSig>(public, b"TEMPO_SEED", &modified[..2], &seed).is_ok();
+            assert_eq!(seed_valid, index >= 2);
+        }
+
+        for (range, message, namespace) in [
+            (35..83, &certificate[..35], &b"TEMPO_FINALIZE"[..]),
+            (83..131, &certificate[..2], &b"TEMPO_SEED"[..]),
+        ] {
+            let mut modified = certificate[range].to_vec();
+            modified[47] ^= 1;
+            assert!(!G1::decode(modified.as_slice()).is_ok_and(|signature| {
+                ops::verify_message::<MinSig>(public, namespace, message, &signature).is_ok()
+            }));
+        }
+    }
+
+    #[test]
+    fn finalization_seed_depends_only_on_round() {
+        let (output, share) = committee(7);
+        let first = encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share);
+        let second = encode(7, 9, 6, B256::repeat_byte(0x24), &output, &share);
+        assert_ne!(&first[35..83], &second[35..83]);
+        assert_eq!(&first[83..], &second[83..]);
+        assert_eq!(first, encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share));
+    }
+
+    fn committee(seed: u8) -> (Output<MinSig, PublicKey>, Share) {
+        let proposer = PrivateKey::decode(&[seed; 32][..]).unwrap().public_key();
+        let (output, shares) = feldman_desmedt::deal::<MinSig, _, N3f1>(
+            ChaCha20Rng::from_seed([seed; 32]),
+            Mode::NonZeroCounter,
+            Set::try_from_iter([proposer]).unwrap(),
+        )
+        .unwrap();
+        (output, shares.into_iter().next().unwrap().1)
+    }
+}
