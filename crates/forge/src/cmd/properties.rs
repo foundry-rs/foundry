@@ -41,6 +41,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use tempfile::TempDir;
+use toml_edit::DocumentMut;
 
 #[cfg(unix)]
 use rustix::process::{Pid, Signal, kill_process_group};
@@ -915,12 +916,16 @@ impl Campaign<'_> {
                 .filter(|path| path.is_dir())
                 .filter_map(|path| canonicalize_path(path).ok()),
         );
-        let mut toml = rebased.to_string_pretty()?;
-        // Inline config may name the project's other profiles, so they must still exist.
+        let mut toml = rebased.to_string_pretty()?.parse::<DocumentMut>()?;
+        // Inline config may name the project's other profiles, so they must still exist. The TOML
+        // writer quotes names such as `""` or `a.b` that are not bare keys.
+        let profiles = toml[Config::PROFILE_SECTION]
+            .as_table_mut()
+            .expect("the resolved config has a profile table");
         for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
-            toml.push_str(&format!("\n[profile.{profile}]\n"));
+            profiles.entry(profile.as_str().as_str()).or_insert_with(toml_edit::table);
         }
-        fs::write(workspace.path().join(Config::FILE_NAME), toml)?;
+        fs::write(workspace.path().join(Config::FILE_NAME), toml.to_string())?;
         // Remappings are already resolved and rebased in the workspace config. The Soldeer lock
         // goes too: `forge build` then hashes each Soldeer dependency to check it, and the hash
         // panics when the dependency is a link, as in a workspace.

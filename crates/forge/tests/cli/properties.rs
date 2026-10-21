@@ -1108,3 +1108,23 @@ no generated test file was kept
 
 "#]]);
 }
+
+// The workspace config keeps the project's other profiles. Names that are not bare TOML keys, such
+// as an empty name, a name with a dot, or a name with a space, stay quoted.
+#[forgetest_init]
+fn properties_keeps_quoted_profile_names(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let foundry_toml = prj.root().join("foundry.toml");
+    let toml = fs::read_to_string(&foundry_toml).unwrap();
+    fs::write(
+        &foundry_toml,
+        toml + "\n[profile.\"\"]\n\n[profile.\"ci.fast\"]\n\n[profile.\"with space\"]\n",
+    )
+    .unwrap();
+    let args = properties_args(&prj, FEE_SPEC);
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+added 1 generated test file(s):
+  test/generated/agent-1/FeeSpec.t.sol
+
+"#]]);
+}
