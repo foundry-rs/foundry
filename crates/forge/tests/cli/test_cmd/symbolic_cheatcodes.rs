@@ -48,6 +48,50 @@ contract SymbolicAddressCheatcodes is Test {
         vm.etch(who, hex"00");
         assertEq(who.code.length, 1);
     }
+
+    function checkSymbolicResetDelegatedNonce(address who, address delegate) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.etch(who, abi.encodePacked(hex"ef0100", delegate));
+        vm.setNonceUnsafe(who, 5);
+        vm.resetNonce(who);
+        assertEq(vm.getNonce(who), 0);
+
+        vm.etch(who, abi.encodePacked(hex"600000", delegate));
+        vm.setNonceUnsafe(who, 5);
+        vm.resetNonce(who);
+        assertEq(vm.getNonce(who), 1);
+    }
+
+    function checkSymbolicResetNonceCodePrefix(address who, address delegate, bytes3 prefix)
+        public
+    {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.assume(bytes2(prefix) != hex"ef01");
+        vm.etch(who, abi.encodePacked(prefix, delegate));
+        vm.setNonceUnsafe(who, 5);
+        vm.resetNonce(who);
+        assertEq(vm.getNonce(who), 1);
+    }
+
+    function checkSymbolicResetNonceDelegationPrefix(address who, address delegate, bytes3 prefix)
+        public
+    {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.assume(prefix == hex"ef0100");
+        vm.etch(who, abi.encodePacked(prefix, delegate));
+        vm.setNonceUnsafe(who, 5);
+        vm.resetNonce(who);
+        assertEq(vm.getNonce(who), 0);
+    }
 }
 "#,
     );
@@ -61,10 +105,13 @@ contract SymbolicAddressCheatcodes is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicAddressCheatcodes.t.sol:SymbolicAddressCheatcodes
+Ran 5 tests for test/SymbolicAddressCheatcodes.t.sol:SymbolicAddressCheatcodes
 [PASS] checkSymbolicDealStoreLoadAndNonce(address,bytes32) ([METRICS])
 [PASS] checkSymbolicEtch(address) ([METRICS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkSymbolicResetDelegatedNonce(address,address) ([METRICS])
+[PASS] checkSymbolicResetNonceCodePrefix(address,address,bytes3) ([METRICS])
+[PASS] checkSymbolicResetNonceDelegationPrefix(address,address,bytes3) ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
