@@ -817,12 +817,13 @@ impl Cheatcode for resetNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account } = self;
         let mut account = ccx.evm.state_mut().account(account)?;
-        // Per EIP-161, EOA nonces start at 0, but contract nonces
-        // start at 1. Comparing by code_hash instead of code
-        // to avoid hitting the case where account's code is None.
+        // Per EIP-161, contract nonces start at 1. EOAs, including EIP-7702 delegated ones, start
+        // at 0.
         let code_hash = account.code_hash();
-        let empty = code_hash == KECCAK256_EMPTY || code_hash.is_zero();
-        let nonce = if empty { 0 } else { 1 };
+        let is_eoa = code_hash == KECCAK256_EMPTY
+            || code_hash.is_zero()
+            || account.load_code()?.is_eip7702();
+        let nonce = if is_eoa { 0 } else { 1 };
         // Nonce cheatcodes survive reverts of the enclosing calls.
         account.touch();
         account.set_nonce_untracked(nonce);

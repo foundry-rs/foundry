@@ -35,7 +35,7 @@ use crate::{
     cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
-        mutant::{Mutant, MutationResult},
+        mutant::{Mutant, MutationResult, MutationType},
         runner::{MutationEvmConfig, run_mutations_parallel_with_progress},
         type_analysis::{collect_mutation_exclusions, normalize_path},
     },
@@ -333,7 +333,9 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
             match result.result {
                 MutationResult::Dead => handler.add_dead_mutant(result.mutant),
                 MutationResult::Alive => {
-                    handler.mark_span_survived(result.mutant.span);
+                    if !matches!(result.mutant.mutation, MutationType::FunctionBody(_)) {
+                        handler.mark_span_survived(result.mutant.span);
+                    }
                     handler.add_survived_mutant(result.mutant);
                 }
                 MutationResult::Invalid => handler.add_invalid_mutant(result.mutant),
@@ -637,7 +639,6 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    use crate::mutation::mutant::MutationType;
     use solar::{ast::Span, interface::BytePos};
 
     fn artifact(build_id: &str) -> ArtifactCacheFingerprint {
