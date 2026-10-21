@@ -43,8 +43,7 @@ use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, Cache, DbResult, EmptyDB, JournalEntry, PendingState, PrewarmSet, State,
-        StateSnapshot,
+        AccountChanges, Cache, DbResult, EmptyDB, PendingState, PrewarmSet, State, StateSnapshot,
     },
 };
 use std::{mem, sync::Arc};
@@ -780,8 +779,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             .into_iter()
             .filter(|address| self.forks.is_persistent(address))
             .collect::<Vec<_>>();
+        let persistent = self.forks.persistent().clone();
         let context = self.active_mut();
         context.loaded = loaded;
+        context.created.retain(|address| {
+            !persistent.contains(address) || !source.accounts.contains_key(address)
+        });
         context.created.extend(persistent_created);
         let created = context.created.clone();
 

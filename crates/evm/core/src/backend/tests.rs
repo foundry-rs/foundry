@@ -358,3 +358,42 @@ fn fork_inherits_initial_loaded_storage() {
         U256::from(23)
     );
 }
+
+#[test]
+fn persistent_account_replaces_created_status_on_fork_switch() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::CANCUN;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
+    let first = memory_fork(&mut backend, db_with(&[], 0), env);
+    let second = memory_fork(&mut backend, db_with(&[], 0), env);
+    let mut evm = backend.create_evm();
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    evm.state_mut().account(&STORE_ADDRESS).unwrap().mark_created();
+    let _ = backend.select_fork(second, &mut evm, ExecutionPhase::InFlight).unwrap();
+    let _ = evm.state_mut().account(&STORE_ADDRESS).unwrap();
+    backend.add_persistent_account(STORE_ADDRESS);
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    assert!(!evm.state_mut().account(&STORE_ADDRESS).unwrap().is_created());
+}
+
+#[test]
+fn persistent_account_keeps_created_status_without_source_state() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::CANCUN;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
+    let first = memory_fork(&mut backend, db_with(&[], 0), env);
+    let second = memory_fork(&mut backend, db_with(&[], 0), env);
+    let mut evm = backend.create_evm();
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    evm.state_mut().account(&STORE_ADDRESS).unwrap().mark_created();
+    let _ = backend.select_fork(second, &mut evm, ExecutionPhase::InFlight).unwrap();
+    backend.add_persistent_account(STORE_ADDRESS);
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    assert!(evm.state_mut().account(&STORE_ADDRESS).unwrap().is_created());
+}
