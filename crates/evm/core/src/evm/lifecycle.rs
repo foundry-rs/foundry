@@ -105,11 +105,6 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         &self.tx
     }
 
-    /// Whether the transaction executes on an inactive context.
-    pub const fn on_inactive(&self) -> bool {
-        self.inactive.is_some()
-    }
-
     /// Executes the transaction observed by `inspector` and merges its changes into the running
     /// transaction of `evm` as journaled writes: all of them on the running transaction's
     /// context, where a failed transaction only keeps its nonce increment and fee payment, and
@@ -346,6 +341,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let suspended = self.suspend(evm);
         self.forks.active = id;
         Ok(self.resume(evm, suspended, phase))
+    }
+
+    /// Makes `id` the active context, or the local context for `None`, without suspending the
+    /// running state: for a throwaway copy of the lifecycle whose transaction already runs over
+    /// `id`'s state, such as one prepared with [`Self::prepare_on_inactive`].
+    pub const fn activate_detached(&mut self, id: Option<U256>) {
+        self.forks.active = id;
     }
 
     /// Moves fork `id`, or the running context for `None`, onto a new backing database and

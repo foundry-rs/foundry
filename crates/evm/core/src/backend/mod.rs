@@ -818,31 +818,22 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(transition)
     }
 
-    /// Executes the mined `transaction` of fork `id`, or of the active fork for `None`, with its
-    /// block's environment, such as for `vm.transact`.
+    /// Prepares the mined `transaction` of fork `id`, or of the active fork for `None`, to execute
+    /// with its block's environment, such as for `vm.transact`, and returns it with the throwaway
+    /// backend it executes over. Store the outcome with [`Self::store_executed`].
     ///
     /// On the active fork the transaction runs as a nested transaction of the running one, whose
     /// writes are journaled; on another fork it is accepted there and its changes to persistent
     /// accounts are merged into the running transaction.
-    pub fn transact(
-        &mut self,
-        id: Option<LocalForkId>,
-        transaction: B256,
-        evm: &mut FoundryEvmFor<'_, FEN>,
-        inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
-        let executed = self.prepare_transact(id, transaction, evm)?.execute(evm, inspector)?;
-        self.store_executed(executed)
-    }
-
-    /// Prepares [`Self::transact`] for an inspector that needs the backend while the transaction
-    /// runs. Store the outcome with [`Self::store_executed`].
+    ///
+    /// Cheatcodes running in the transaction see the throwaway backend with the target fork active
+    /// at the transaction's block; their changes to it are discarded.
     pub fn prepare_transact(
         &self,
         id: Option<LocalForkId>,
         transaction: B256,
         evm: &mut FoundryEvmFor<'_, FEN>,
-    ) -> eyre::Result<PreparedTx<TypesFor<FEN>>> {
+    ) -> eyre::Result<(PreparedTx<TypesFor<FEN>>, CowBackend<'_, FEN>)> {
         trace!(?id, ?transaction, "execute transaction");
         let id = self.ensure_fork(id)?;
         let info = self.fork_info(id)?;
@@ -888,11 +879,19 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         } else {
             None
         };
-        if active {
-            Ok(self.lifecycle.prepare_nested(evm, tx, Some(env), ext))
+        let prepared = if active {
+            self.lifecycle.prepare_nested(evm, tx, Some(env), ext)
         } else {
-            self.lifecycle.prepare_on_inactive(evm, Some(id), tx, Some(env), ext)
+            self.lifecycle.prepare_on_inactive(evm, Some(id), tx, Some(env), ext)?
+        };
+
+        let mut backend = CowBackend::new_borrowed(self);
+        if !active {
+            // The prepared transaction already runs over the target fork's state.
+            backend.lifecycle.activate_detached(Some(id));
         }
+        backend.fork_block_number_override = Some(target.block.header.number());
+        Ok((prepared, backend))
     }
 
     /// Executes `tx` as a nested transaction of the running one, in `env` or the running
@@ -908,16 +907,20 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.lifecycle.nested_transaction_with(evm, tx, NestedTx { env, ext: None, inspector })
     }
 
-    /// Prepares [`Self::transact_from_tx`] for an inspector that needs the backend while the
-    /// transaction runs. Store the outcome with [`Self::store_executed`].
+    /// Prepares [`Self::transact_from_tx`], such as for `vm.broadcastRawTransaction`, and returns
+    /// it with the throwaway backend it executes over. Store the outcome with
+    /// [`Self::store_executed`].
+    ///
+    /// Cheatcodes running in the transaction see the throwaway backend, a copy-on-write view of
+    /// this one; their changes to it are discarded.
     pub fn prepare_nested(
         &self,
         tx: Recovered<TxFor<FEN>>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: Option<EvmEnvFor<FEN>>,
-    ) -> PreparedTx<TypesFor<FEN>> {
+    ) -> (PreparedTx<TypesFor<FEN>>, CowBackend<'_, FEN>) {
         trace!("execute signed transaction");
-        self.lifecycle.prepare_nested(evm, tx, env, None)
+        (self.lifecycle.prepare_nested(evm, tx, env, None), CowBackend::new_borrowed(self))
     }
 
     /// Stores the outcome of a transaction prepared with [`Self::prepare_transact`] or

@@ -17,7 +17,7 @@ use evm2::{
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
 };
 use foundry_cheatcodes::{
-    CheatcodeAnalysis, CheatcodesBackend, CheatcodesExecutor, ReplayFork, Wallets, message_result,
+    CheatcodeAnalysis, CheatcodesBackend, CheatcodesExecutor, Wallets, message_result,
 };
 use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
@@ -26,10 +26,10 @@ use foundry_evm_core::{
     backend::{Backend, transaction_error},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
-        InterpreterFor, MessageFor, MessageResultFor, PreparedTx, TransactionRequestFor, TxEnvFor,
-        TxFor, TxResultFor, TypesFor, evm_env, merge_nested_changes, merge_pending_changes,
-        release_inspector,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, ExecutedNested, FoundryEvmExt, FoundryEvmFor,
+        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PreparedTx,
+        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env,
+        merge_nested_changes, merge_pending_changes, release_inspector,
     },
     precompiles::P256_VERIFY,
 };
@@ -559,8 +559,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let prepared = backend.backend().prepare_transact(fork_id, transaction, evm)?;
-        self.replay(cheats, backend, evm, depth, prepared)
+        let (prepared, mut replay) =
+            backend.backend().prepare_transact(fork_id, transaction, evm)?;
+        let executed = self.replay(cheats, &mut replay, evm, depth, prepared);
+        drop(replay);
+        backend.backend_mut().store_executed(executed?)
     }
 
     fn transact_from_tx(
@@ -572,8 +575,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let prepared = backend.backend().prepare_nested(tx.clone(), evm, env);
-        self.replay(cheats, backend, evm, depth, prepared)
+        let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, env);
+        let executed = self.replay(cheats, &mut replay, evm, depth, prepared);
+        drop(replay);
+        backend.backend_mut().store_executed(executed?)
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -1956,8 +1961,8 @@ impl InspectorStackInner {
     }
 
     /// Executes a transaction replayed by the cheatcode call at `depth`, such as for
-    /// `vm.transact`, observed by the whole stack with `cheats` active. Its root frame is a call
-    /// below the cheatcode call.
+    /// `vm.transact`, observed by the whole stack with `cheats` active over the throwaway
+    /// `backend` it was prepared with. Its root frame is a call below the cheatcode call.
     fn replay<FEN: FoundryEvmNetwork>(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
@@ -1965,24 +1970,21 @@ impl InspectorStackInner {
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
         prepared: PreparedTx<TypesFor<FEN>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
+    ) -> eyre::Result<ExecutedNested<TypesFor<FEN>>> {
         let caller = Some(prepared.tx().signer());
         let previous = self.enter_inner_context(InnerRoot { depth, caller, observe: true });
         // `ORIGIN` reads the replayed transaction's signer, not the origin of an isolated call
         // the cheatcode runs in.
         let origin_override = cheats.origin_override.take();
-        let fork = if prepared.on_inactive() { ReplayFork::Inactive } else { ReplayFork::Active };
-        let replay = cheats.replay.replace(fork);
         let mut inspector = InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
-            backend: Some(&mut *backend),
+            backend: Some(backend),
         };
         let executed = prepared.execute(evm, Some(&mut inspector));
-        cheats.replay = replay;
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
-        backend.backend_mut().store_executed(executed?)
+        executed
     }
 }
 

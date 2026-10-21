@@ -105,8 +105,9 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
 
     /// Replays a mined transaction of fork `fork_id`, or of the active fork, for `vm.transact`.
     ///
-    /// The replayed transaction runs with `cheats` active. Its root frame is a call below the
-    /// cheatcode call at `depth`.
+    /// The replayed transaction runs with `cheats` active over a throwaway copy of `backend`, so
+    /// its cheatcodes cannot modify `backend`. Its root frame is a call below the cheatcode call
+    /// at `depth`.
     fn transact(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
@@ -120,8 +121,9 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     /// Executes a signed transaction as a nested transaction, such as for
     /// `broadcastRawTransaction`.
     ///
-    /// The transaction runs with `cheats` active, in `env` or the running environment for
-    /// `None`. Its root frame is a call below the cheatcode call at `depth`.
+    /// The transaction runs with `cheats` active over a throwaway copy of `backend`, in `env` or
+    /// the running environment for `None`. Its root frame is a call below the cheatcode call at
+    /// `depth`.
     fn transact_from_tx(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
@@ -208,7 +210,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let result = backend.backend_mut().transact(fork_id, transaction, evm, None)?;
+        let (prepared, _) = backend.backend().prepare_transact(fork_id, transaction, evm)?;
+        let executed = prepared.execute(evm, None)?;
+        let result = backend.backend_mut().store_executed(executed)?;
         result.logs.iter().for_each(|log| cheats.log_hook(log));
         Ok(result)
     }
@@ -694,15 +698,6 @@ struct CreatedAccountsSnapshot {
     bindings: AddressHashMap<usize>,
 }
 
-/// The fork a transaction replayed by `vm.transact` or `vm.broadcastRawTransaction` runs on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReplayFork {
-    /// The active fork, as a nested transaction of the running one.
-    Active,
-    /// An inactive fork, which accepts the transaction.
-    Inactive,
-}
-
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -916,14 +911,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// execute inside it start from this environment instead.
     pub isolation_env: Option<EvmEnvFor<FEN>>,
 
-    /// The fork of the transaction replayed by `vm.transact` or `vm.broadcastRawTransaction`,
-    /// while it runs.
-    ///
-    /// The replayed transaction runs on its own EVM and only merges its state changes back, so
-    /// fork operations that replace the running context fail inside it. A replay on an inactive
-    /// fork runs outside the running context, so every cheatcode call fails inside it.
-    pub replay: Option<ReplayFork>,
-
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
 }
@@ -999,7 +986,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fork_block_number_override_snapshots: Default::default(),
             in_isolation_context: false,
             isolation_env: None,
-            replay: None,
             deploy_code_depth: None,
         }
     }
@@ -1276,11 +1262,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
         backend.backend().ensure_cheatcode_access_forking_mode(&caller)?;
-
-        ensure!(
-            self.replay != Some(ReplayFork::Inactive),
-            "cheatcodes cannot be called in a transaction replayed on an inactive fork"
-        );
 
         let tx_env = interp.tx_env();
         apply_dispatch(

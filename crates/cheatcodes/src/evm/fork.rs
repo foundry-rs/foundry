@@ -450,7 +450,6 @@ fn fork_op<FEN: FoundryEvmNetwork, T: SolValue>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     f: impl FnOnce(&mut Backend<FEN>, &mut FoundryEvmFor<'_, FEN>) -> eyre::Result<T>,
 ) -> Result {
-    ensure!(ccx.state.replay.is_none(), "cannot select or roll forks in a replayed transaction");
     let (evm, db) = ccx.evm_db_mut();
     let result = f(db, evm)?;
     ccx.state.state_epoch += 1;
