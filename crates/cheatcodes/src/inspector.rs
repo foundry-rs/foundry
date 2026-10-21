@@ -915,6 +915,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// execute inside it start from this environment instead.
     pub isolation_env: Option<EvmEnvFor<FEN>>,
 
+    /// Whether a replay is running whose fork-context changes cannot be merged into its parent.
+    pub in_replay: bool,
+
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
 }
@@ -991,6 +994,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fork_block_number_override_snapshots: Default::default(),
             in_isolation_context: false,
             isolation_env: None,
+            in_replay: false,
             deploy_code_depth: None,
         }
     }

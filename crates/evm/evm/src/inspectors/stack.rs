@@ -2012,11 +2012,19 @@ impl InspectorStackInner {
     ) -> eyre::Result<ExecutedNested<TypesFor<FEN>>> {
         let caller = prepared.tx().signer();
         let previous = self.enter_inner_context(InnerRoot { depth, caller, observe: true });
-        // The replay reads its own origin and gas price, not the surrounding execution's.
+        // The replay reads its own transaction environment, not the surrounding execution's.
         let origin_override = cheats.origin_override.take();
         let gas_price = cheats.gas_price.take();
         // The replayed transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
+        let fork_id = backend.backend().active_fork_id();
+        let (mut gas_price_override, mut blob_hashes_override) = (None, None);
+        cheats.env_overrides.swap_transaction_overrides(
+            fork_id,
+            &mut gas_price_override,
+            &mut blob_hashes_override,
+        );
+        let in_replay = mem::replace(&mut cheats.in_replay, true);
         let mut inspector = InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
@@ -2024,6 +2032,12 @@ impl InspectorStackInner {
         };
         let executed = prepared.execute(evm, Some(&mut inspector));
         cheats.snapshot_restores = snapshot_restores;
+        cheats.in_replay = in_replay;
+        cheats.env_overrides.swap_transaction_overrides(
+            fork_id,
+            &mut gas_price_override,
+            &mut blob_hashes_override,
+        );
         cheats.origin_override = origin_override;
         cheats.gas_price = gas_price;
         self.exit_inner_context(previous);

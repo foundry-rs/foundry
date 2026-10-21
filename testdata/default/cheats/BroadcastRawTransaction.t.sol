@@ -331,6 +331,10 @@ contract BroadcastRawTransactionTest is Test {
     function test_signed_tx_calls_observed_once() public {
         vm.fee(1);
         vm.chainId(1);
+        vm.txGasPrice(7);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = bytes32(uint256(0xbeef));
+        vm.blobhashes(hashes);
 
         address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
         address to = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
@@ -353,6 +357,9 @@ contract BroadcastRawTransactionTest is Test {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1);
         assertEq(logs[0].emitter, to);
+        assertEq(logs[0].data, abi.encode(uint256(100), bytes32(0)));
+        assertEq(tx.gasprice, 7);
+        assertEq(blobhash(0), hashes[0]);
     }
 
     function signTransfer(bytes memory nonce) internal pure returns (bytes memory) {
@@ -390,10 +397,10 @@ address constant RELAY_TARGET = address(0x2222);
 
 /// Emits a log and calls `RELAY_TARGET` whenever it is called.
 contract RawTxRelay {
-    event Relayed();
+    event Relayed(uint256 gasPrice, bytes32 blobHash);
 
     fallback() external payable {
-        emit Relayed();
+        emit Relayed(tx.gasprice, blobhash(0));
         (bool success,) = RELAY_TARGET.call("");
         require(success);
     }
