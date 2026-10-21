@@ -120,6 +120,8 @@ jobs:
           # Vyper's `immutables` dependency has no 3.14 wheels, and source builds pull the newest
           # setuptools, which Aegis blocks while recently published.
           python-version: "3.13"
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip==26.2.2
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
