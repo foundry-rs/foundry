@@ -103,7 +103,9 @@ impl FuzzRunIdentifiedContracts {
         let mut targets_changed = false;
         for changes in state_changes {
             let address = changes.address;
-            if setup_contracts.contains_key(&address) || !changes.is_changed() {
+            // Like REVM's touched flag, an account a call touched without changing it counts.
+            if setup_contracts.contains_key(&address) || !(changes.is_changed() || changes.touched)
+            {
                 continue;
             }
             let Some((code_hash, code)) = changes.code.or_else(|| {
@@ -685,7 +687,7 @@ mod tests {
     use crate::CallDetails;
     use evm2::{
         bytecode::Bytecode,
-        evm::{AccountInfo, PendingState},
+        evm::{AccountInfo, PendingState, StorageOverlay},
     };
     use foundry_compilers::{
         ArtifactId,
@@ -849,6 +851,7 @@ mod tests {
         let created = Address::repeat_byte(0x43);
         let setup = Address::repeat_byte(0x44);
         let untouched = Address::repeat_byte(0x45);
+        let touched = Address::repeat_byte(0x46);
         let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
         let project_contracts = project_contracts_with_runtime_code_and_abi(
             "DynamicTarget",
@@ -856,7 +859,7 @@ mod tests {
             JsonAbi::new(),
         );
         let mut targets = TargetedContracts::new();
-        for address in [existing, setup, untouched] {
+        for address in [existing, setup, untouched, touched] {
             targets.inner.insert(
                 address,
                 TargetedContract::new("AlreadyTargeted".to_string(), JsonAbi::new()),
@@ -868,15 +871,26 @@ mod tests {
         insert_created_account(&mut state, existing, runtime_code.clone());
         insert_created_account(&mut state, setup, runtime_code.clone());
         let loaded = AccountInfo::default().with_code(Bytecode::new_raw(runtime_code.clone()));
-        state.insert_account(untouched, Some(loaded.clone()), Some(loaded));
+        state.insert_account(untouched, Some(loaded.clone()), Some(loaded.clone()));
         insert_created_account(&mut state, created, runtime_code);
+        let storage = StorageOverlay::default();
+        let touched_only = AccountChanges {
+            address: touched,
+            original: Some(&loaded),
+            current: Some(&loaded),
+            created: false,
+            selfdestructed: false,
+            touched: true,
+            code: None,
+            storage: &storage,
+        };
         let mut created_contracts = Vec::new();
         let setup_contracts =
             ContractsByAddress::from([(setup, ("Setup".to_string(), JsonAbi::new()))]);
 
         identified
             .collect_created_contracts(
-                state.account_changes(),
+                state.account_changes().chain([touched_only]),
                 &project_contracts,
                 &setup_contracts,
                 &ArtifactFilters::default(),
@@ -885,10 +899,11 @@ mod tests {
             .unwrap();
 
         created_contracts.sort_unstable();
-        assert_eq!(created_contracts, vec![existing, created]);
+        assert_eq!(created_contracts, vec![existing, created, touched]);
         let targets = identified.targets();
         assert_eq!(targets[&existing].identifier, "DynamicTarget");
         assert_eq!(targets[&created].identifier, "DynamicTarget");
+        assert_eq!(targets[&touched].identifier, "DynamicTarget");
         assert_eq!(targets[&setup].identifier, "AlreadyTargeted");
         assert_eq!(targets[&untouched].identifier, "AlreadyTargeted");
         drop(targets);
@@ -904,7 +919,7 @@ mod tests {
             .unwrap();
 
         created_contracts.sort_unstable();
-        assert_eq!(created_contracts, vec![existing, existing, created, created]);
+        assert_eq!(created_contracts, vec![existing, existing, created, created, touched]);
     }
 
     #[test]

@@ -19,6 +19,7 @@ use base64::prelude::*;
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::{Bytecode, JumpTable},
+    constants::EIP7702_BYTECODE_LEN,
     interpreter::{GasTracker, op as opcode},
     precompiles::{blake2, bn254, hash, identity, kzg_point_evaluation, modexp, secp256k1},
 };

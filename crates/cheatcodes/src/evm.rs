@@ -12,12 +12,7 @@ use alloy_primitives::{
 };
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use evm2::{
-    EvmFeatures, SpecId,
-    bytecode::Bytecode,
-    evm::{JournalEntry, State},
-    interpreter::Host,
-};
+use evm2::{EvmFeatures, SpecId, bytecode::Bytecode, evm::State, interpreter::Host};
 use foundry_common::{
     TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
@@ -28,7 +23,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    backend::{Backend, RevertStateSnapshotAction},
+    backend::RevertStateSnapshotAction,
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -369,7 +364,8 @@ impl Cheatcode for cloneAccountCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { source, target } = self;
 
-        let genesis = genesis_account(ccx.evm.state_mut(), ccx.backend.backend(), source)?;
+        let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), source);
+        let genesis = genesis_account(ccx.evm.state_mut(), source, slots)?;
         let (evm, db) = ccx.evm_db_mut();
         db.clone_account(&genesis, target, evm)?;
         // Cloned account should persist in forked envs.
@@ -399,18 +395,15 @@ impl Cheatcode for dumpStateCall {
                 || key == &ccx.state.core.config.evm_opts.sender
         };
 
-        // A fork switch accepts the running transaction's state, so keep the accounts it created
-        // before the switch as well.
-        let mut accounts = transaction_accounts(state);
-        accounts.extend(created_accounts.iter().copied());
+        let accounts = ccx.backend.backend().lifecycle().loaded_state(state);
         let mut alloc = BTreeMap::new();
-        for address in accounts {
+        for (address, slots) in accounts {
             if skip(&address)
                 || state.account_info_untracked(&address)?.is_none_or(|info| info.is_empty())
             {
                 continue;
             }
-            alloc.insert(address, genesis_account(state, ccx.backend.backend(), &address)?);
+            alloc.insert(address, genesis_account(state, &address, slots)?);
         }
 
         let mut ordered_alloc = Vec::with_capacity(alloc.len());
@@ -824,12 +817,13 @@ impl Cheatcode for resetNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account } = self;
         let mut account = ccx.evm.state_mut().account(account)?;
-        // Per EIP-161, EOA nonces start at 0, but contract nonces
-        // start at 1. Comparing by code_hash instead of code
-        // to avoid hitting the case where account's code is None.
+        // Per EIP-161, contract nonces start at 1. EOAs, including EIP-7702 delegated ones, start
+        // at 0.
         let code_hash = account.code_hash();
-        let empty = code_hash == KECCAK256_EMPTY || code_hash.is_zero();
-        let nonce = if empty { 0 } else { 1 };
+        let is_eoa = code_hash == KECCAK256_EMPTY
+            || code_hash.is_zero()
+            || account.load_code()?.is_eip7702();
+        let nonce = if is_eoa { 0 } else { 1 };
         // Nonce cheatcodes survive reverts of the enclosing calls.
         account.touch();
         account.set_nonce_untracked(nonce);
@@ -2045,28 +2039,12 @@ pub(crate) fn append_storage_access(
     }
 }
 
-/// Returns the addresses the running transaction changed or warmed, like the accounts REVM's
-/// journal had loaded.
-fn transaction_accounts(state: &State<'_>) -> AddressSet {
-    state
-        .journal()
-        .iter()
-        .filter_map(|entry| match entry {
-            JournalEntry::AccountChange { address, .. }
-            | JournalEntry::StorageChange { address, .. }
-            | JournalEntry::StorageWarmed { address, .. } => Some(*address),
-            _ => None,
-        })
-        .collect()
-}
-
 /// Creates a `GenesisAccount` from the account at `address` and its known storage.
-fn genesis_account<FEN: FoundryEvmNetwork>(
+fn genesis_account(
     state: &mut State<'_>,
-    backend: &Backend<FEN>,
     address: &Address,
+    slots: impl IntoIterator<Item = U256>,
 ) -> Result<GenesisAccount> {
-    let slots = backend.lifecycle().loaded_storage(state, address);
     let (nonce, balance, code) = {
         let mut account = state.account(address)?;
         (account.nonce(), account.balance(), account.load_code()?)

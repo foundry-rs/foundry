@@ -274,7 +274,126 @@ fn fork_loaded_storage_lifetime() {
     backend.park(evm);
     let mut evm = backend.create_evm();
     assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
+    // Like REVM's per-fork journals, an inactive fork keeps what it loaded until it finishes a
+    // transaction itself.
     let _ = backend.select_fork(second, &mut evm, phase).unwrap();
-    assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
+    assert_eq!(
+        backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS),
+        [U256::ZERO, U256::ONE]
+    );
     assert_eq!(slot(&mut evm), U256::from(97));
+
+    // An active roll keeps the loaded account, but not its pre-roll storage slots.
+    let _ = backend.lifecycle.roll_fork(&mut evm, None, db_with(&[], 123), env, phase).unwrap();
+    assert!(backend.lifecycle().loaded_state(evm.state())[&STORE_ADDRESS].is_empty());
+    assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
+    assert_eq!(slot(&mut evm), U256::from(123));
+}
+
+#[test]
+fn fork_inherits_initial_loaded_storage() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::PRAGUE;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 5), env);
+    // Accepted storage that the transaction never loads must not seed the forks.
+    backend.insert_account_storage(STORE_ADDRESS, U256::from(2), U256::from(41));
+    let fork_db = || {
+        let mut db = db_with(&[], 17);
+        db.insert_account_storage(&STORE_ADDRESS, &U256::from(2), &U256::from(53));
+        db.insert_account_storage(&STORE_ADDRESS, &U256::from(3), &U256::from(71));
+        db
+    };
+    let first = memory_fork(&mut backend, fork_db(), env);
+    let phase = ExecutionPhase::InFlight;
+    let mut evm = backend.create_evm();
+    assert_eq!(
+        evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().current(),
+        U256::from(5)
+    );
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ONE).unwrap().set(U256::from(23));
+    assert_eq!(
+        evm.state_mut().storage_slot(&STORE_ADDRESS, U256::from(3)).unwrap().current(),
+        U256::ZERO
+    );
+
+    // The initial journal preserves read-only slots, writes and loaded zeroes, but not setup-only
+    // storage, on the first selection and on forks created later.
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    assert_eq!(slot(&mut evm), U256::from(5));
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::ONE).unwrap(),
+        U256::from(23)
+    );
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::from(3)).unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::from(2)).unwrap(),
+        U256::from(53)
+    );
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ONE).unwrap().set(U256::from(29));
+    let second = memory_fork(&mut backend, fork_db(), env);
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert_eq!(slot(&mut evm), U256::from(5));
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::ONE).unwrap(),
+        U256::from(23)
+    );
+
+    // Active and inactive rolls start over from the same initial storage.
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ONE).unwrap().set(U256::from(31));
+    let _ = backend.lifecycle.roll_fork(&mut evm, None, fork_db(), env, phase).unwrap();
+    assert_eq!(slot(&mut evm), U256::from(5));
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::ONE).unwrap(),
+        U256::from(23)
+    );
+    let _ = backend.lifecycle.roll_fork(&mut evm, Some(first), fork_db(), env, phase).unwrap();
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    assert_eq!(slot(&mut evm), U256::from(5));
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&STORE_ADDRESS, &U256::ONE).unwrap(),
+        U256::from(23)
+    );
+}
+
+#[test]
+fn persistent_account_replaces_created_status_on_fork_switch() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::CANCUN;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
+    let first = memory_fork(&mut backend, db_with(&[], 0), env);
+    let second = memory_fork(&mut backend, db_with(&[], 0), env);
+    let mut evm = backend.create_evm();
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    evm.state_mut().account(&STORE_ADDRESS).unwrap().mark_created();
+    let _ = backend.select_fork(second, &mut evm, ExecutionPhase::InFlight).unwrap();
+    let _ = evm.state_mut().account(&STORE_ADDRESS).unwrap();
+    backend.add_persistent_account(STORE_ADDRESS);
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    assert!(!evm.state_mut().account(&STORE_ADDRESS).unwrap().is_created());
+}
+
+#[test]
+fn persistent_account_keeps_created_status_without_source_state() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::CANCUN;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let mut backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
+    let first = memory_fork(&mut backend, db_with(&[], 0), env);
+    let second = memory_fork(&mut backend, db_with(&[], 0), env);
+    let mut evm = backend.create_evm();
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    evm.state_mut().account(&STORE_ADDRESS).unwrap().mark_created();
+    let _ = backend.select_fork(second, &mut evm, ExecutionPhase::InFlight).unwrap();
+    backend.add_persistent_account(STORE_ADDRESS);
+
+    let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
+    assert!(evm.state_mut().account(&STORE_ADDRESS).unwrap().is_created());
 }
