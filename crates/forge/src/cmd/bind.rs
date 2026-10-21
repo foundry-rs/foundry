@@ -1,5 +1,5 @@
 use alloy_json_abi::ToSolConfig;
-use alloy_primitives::map::{HashMap, HashSet};
+use alloy_primitives::map::{HashMap, HashSet, hash_map::Entry};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
@@ -392,7 +392,7 @@ impl BindArgs {
 
     fn get_solmacrogen(&self, files: &[BindingFile]) -> Result<MultiSolMacroGen> {
         let mut identities = HashSet::<_>::default();
-        let mut names = HashMap::<_, _>::default();
+        let mut names = HashMap::<_, &BindingFile>::default();
         let mut modules = HashMap::<_, _>::default();
         let mut instances = Vec::new();
         for file in files {
@@ -402,14 +402,21 @@ impl BindArgs {
                 continue;
             }
             let name = binding_name(&file.name);
-            if let Some(previous) = names.insert(name.clone(), file) {
-                eyre::bail!(
-                    "Binding name collision for `{name}`: contract `{}` ({}) and contract `{}` ({})",
-                    previous.name,
-                    previous.path.display(),
-                    file.name,
-                    file.path.display(),
-                );
+            match names.entry(name.clone()) {
+                Entry::Occupied(entry) => {
+                    let previous = entry.get();
+                    sh_warn!(
+                        "Binding name collision for `{name}`: keeping contract `{}` ({}) and skipping contract `{}` ({})",
+                        previous.name,
+                        previous.path.display(),
+                        file.name,
+                        file.path.display(),
+                    )?;
+                    continue;
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(file);
+                }
             }
             if !self.single_file {
                 let module = name.to_snake_case();
