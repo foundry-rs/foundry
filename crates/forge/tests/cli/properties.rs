@@ -174,8 +174,9 @@ fn properties_keeps_imported_candidate_helpers(prj: _, cmd: _) {
     let args = properties_args(
         &prj,
         r#"
-# The check command keeps `--allow-ffi`.
+# The check command keeps the opt-ins.
 grep -q '"--allow-ffi"' "$prompt"
+grep -q '"--allow-network"' "$prompt"
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
@@ -189,7 +190,7 @@ JSON
 "#,
     );
     cmd.args(args)
-        .args(["--agents", "1", "--target", "src/Fee.sol", "--allow-ffi"])
+        .args(["--agents", "1", "--target", "src/Fee.sol", "--allow-ffi", "--allow-network"])
         .assert_success()
         .stdout_eq(str![[r#"
 added 2 generated test file(s):
@@ -293,6 +294,55 @@ fn properties_check_hides_the_environment(prj: _, cmd: _) {
 }
 
 "#]]);
+}
+
+// Generated tests cannot read Forge's environment or open network connections. Their failures
+// are not possible bugs, even when agents agree on them; Forge counts them in one warning.
+#[forgetest_init]
+fn properties_blocks_environment_and_network(prj: _, cmd: _) {
+    let args = properties_args(
+        &prj,
+        r#"
+agent=$(sed -n 's/^    "id": \([0-9][0-9]*\),$/\1/p' "$prompt" | head -n 1)
+dir="test/generated/agent-$agent"
+cat > "$output" <<JSON
+{
+  "schema": "foundry/properties-candidate-v1",
+  "files": [{"path": "$dir/Sandbox.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract SandboxTest is Test {\n    function testSecret() public view {\n        vm.envString(\"SECRET\");\n    }\n    function testFork() public {\n        vm.createFork(\"http://127.0.0.1:1\");\n    }\n}\n"}],
+  "evidence": {
+    "SandboxTest::testSecret": {"claim": "The secret is set.", "source": "README.md:1", "code_path": "src/Secret.sol:1 secret() is missing."},
+    "SandboxTest::testFork": {"claim": "The fork opens.", "source": "README.md:2", "code_path": "src/Fork.sol:1 fork() is missing."}
+  }
+}
+JSON
+"#,
+    );
+    cmd.env("SECRET", "secret-marker");
+    cmd.args(args).args(["--agents", "2"]).assert_success().stdout_eq(str![[r#"
+no generated test file was kept
+
+"#]]).stderr_eq(str![[r#"
+Warning: 4 failing test(s) used a cheatcode that Forge blocks (ffi, environment, or network), so they are not possible bugs: see cache/properties/report.json
+
+"#]]);
+
+    let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
+    let report = serde_json::from_str::<serde_json::Value>(&report).unwrap();
+    let blocked = report["blocked"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|failure| format!("{} {} {}", failure["agent"], failure["test"], failure["reason"]))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        blocked.join("\n"),
+        str![[r#"
+1 "SandboxTest::testFork" "seed 24301: vm.createFork: network access is disabled; seed 12648430: vm.createFork: network access is disabled"
+1 "SandboxTest::testSecret" "seed 24301: vm.envString: environment variable /"SECRET/" not found; seed 12648430: vm.envString: environment variable /"SECRET/" not found"
+2 "SandboxTest::testFork" "seed 24301: vm.createFork: network access is disabled; seed 12648430: vm.createFork: network access is disabled"
+2 "SandboxTest::testSecret" "seed 24301: vm.envString: environment variable /"SECRET/" not found; seed 12648430: vm.envString: environment variable /"SECRET/" not found"
+"#]]
+    );
 }
 
 // With `--no-focus`, the prompt has no focus.

@@ -207,7 +207,12 @@ impl CheatsConfig {
     ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
     ///    `ws` `scheme` and is not a path to an existing file
+    ///  - Returns an error if network access is disabled.
     pub fn rpc_endpoint(&self, url_or_alias: &str) -> Result<ResolvedRpcEndpoint> {
+        // Every cheatcode that opens a connection to a URL or alias resolves it here.
+        if self.evm_opts.no_network {
+            return Err(fmt_err!("network access is disabled"));
+        }
         if let Some(endpoint) = self.rpc_endpoints.get(url_or_alias) {
             Ok(endpoint.clone().try_resolve())
         } else if let Some(builtin_url) = foundry_config::builtin_rpc_url(url_or_alias) {
