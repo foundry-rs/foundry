@@ -811,7 +811,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]],
         );
 
-        // A raw transaction's frames nest below the cheatcode call, as for `executeTransaction`.
+        // A raw transaction's root call nests below the cheatcode call.
         cmd.forge_fuse();
         cmd.env("FOUNDRY_ISOLATE", isolate.to_string());
         cmd.args(["test", "--mt", "test_broadcast_raw_subcall", "-vvvv"])
@@ -826,7 +826,9 @@ Traces:
 ...
     ├─ [..] ExecuteTransactionTracingTest::broadcast([..])
     │   ├─ [..] VM::broadcastRawTransaction([..])
-    │   │   ├─ [..] ExecuteTransactionTracingTest::leaf()
+    │   │   ├─ [..] ExecuteTransactionTracingTest::subcall()
+    │   │   │   ├─ [..] ExecuteTransactionTracingTest::leaf()
+    │   │   │   │   └─ ← [Stop]
     │   │   │   └─ ← [Stop]
     │   │   └─ ← [Return]
     │   ├─ [..] ExecuteTransactionTracingTest::leaf()

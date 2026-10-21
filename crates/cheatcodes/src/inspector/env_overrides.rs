@@ -2,6 +2,7 @@
 
 use alloy_primitives::{B256, U256, map::HashMap};
 use foundry_evm_core::backend::LocalForkId;
+use std::mem;
 
 /// Env overrides keyed by fork ID (`None` is the local, non-forked state).
 type EnvOverridesByFork = HashMap<Option<LocalForkId>, EnvOverrides>;
@@ -151,6 +152,23 @@ impl EnvOverrideState {
     /// Deletes all saved copies.
     pub(crate) fn clear_snapshots(&mut self) {
         self.snapshots.clear();
+    }
+
+    /// Swaps transaction-specific opcode overrides without changing block overrides or snapshots.
+    pub fn swap_transaction_overrides(
+        &mut self,
+        fork_id: Option<LocalForkId>,
+        gas_price: &mut Option<u128>,
+        blob_hashes: &mut Option<Vec<B256>>,
+    ) {
+        let overrides = self.by_fork.entry(fork_id).or_default();
+        mem::swap(&mut overrides.gas_price, gas_price);
+        mem::swap(&mut overrides.blob_hashes, blob_hashes);
+    }
+
+    /// Swaps a fork's current overrides without changing other forks or snapshot copies.
+    pub fn swap(&mut self, fork_id: Option<LocalForkId>, overrides: &mut EnvOverrides) {
+        mem::swap(self.by_fork.entry(fork_id).or_default(), overrides);
     }
 }
 

@@ -1866,11 +1866,15 @@ mod tests {
     use super::*;
     use crate::inspectors::{EdgeCovHit, EdgeKey};
     use alloy_eips::eip4788::SYSTEM_ADDRESS;
+    use alloy_primitives::{address, bytes};
     use alloy_rpc_types::TransactionRequest;
     use evm2::SpecId;
     use foundry_cheatcodes::{
         CheatsConfig,
-        Vm::{loadCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall, storeCall},
+        Vm::{
+            broadcastRawTransactionCall, loadCall, mockCallRevert_1Call, revertToStateCall,
+            snapshotStateCall, storeCall,
+        },
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
@@ -2367,7 +2371,8 @@ mod tests {
 
     #[test]
     fn gas_price_opcode_reads_configured_gas_price() {
-        let env = default_env::<EthEvmNetwork>();
+        let mut env = default_env::<EthEvmNetwork>();
+        env.set_chain_id(1);
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config()))
             .gas_limit(1 << 20)
@@ -2387,6 +2392,25 @@ mod tests {
             .unwrap();
 
         // Executions are fee-less, but the opcode reads the configured price.
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.result, Bytes::from(B256::with_last_byte(7).0));
+
+        let sender = address!("5316812db67073c4d4af8bb3000c5b86c2877e94");
+        let replay_target = address!("6fd0a0cff9a87adf51695b40b4fa267855a8f4c6");
+        executor.set_balance(sender, U256::from(10u64.pow(18))).unwrap();
+        // GASPRICE; PUSH0; SSTORE; STOP.
+        executor.set_code(replay_target, Bytecode::new_raw(bytes!("3a5f5500"))).unwrap();
+        // The signed transaction pays 100 wei per gas, independently of the configured price.
+        let input = broadcastRawTransactionCall {
+            data: bytes!("f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"),
+        }
+        .abi_encode()
+        .into();
+        let result = executor.transact_raw(CALLER, CHEATCODE_ADDRESS, input, U256::ZERO).unwrap();
+        assert!(!result.reverted, "{result:?}");
+        assert_eq!(executor.backend().storage(replay_target, U256::ZERO).unwrap(), U256::from(100));
+
+        // The replay does not consume the outer transaction's configured price.
         let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(result.result, Bytes::from(B256::with_last_byte(7).0));
     }

@@ -34,10 +34,10 @@ use crate::{
     backend::{RevertStateSnapshotAction, transaction_error},
     state_snapshot::StateSnapshots,
 };
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::{Typed2718, transaction::Recovered};
 use alloy_primitives::{
     Address, KECCAK256_EMPTY, Log, U256,
-    map::{AddressMap, HashSet},
+    map::{AddressMap, AddressSet, HashSet},
 };
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
@@ -83,6 +83,68 @@ impl<T: EvmTypesHost> Default for NestedTx<'_, T> {
     fn default() -> Self {
         Self { env: None, ext: None, inspector: None }
     }
+}
+
+/// A transaction prepared to execute as a nested transaction of the running one, such as for
+/// `vm.transact`, whose inspector may hold the lifecycle's owner while it runs.
+///
+/// Build it with [`ExecutionLifecycle::prepare_nested`] or
+/// [`ExecutionLifecycle::prepare_on_inactive`], run it with [`Self::execute`] and store its
+/// outcome with [`ExecutionLifecycle::store_executed`].
+pub struct PreparedTx<T: EvmTypesHost> {
+    executor: Evm<'static, T>,
+    tx: Recovered<T::Tx>,
+    /// The inactive context the transaction executes on, with the persistent accounts whose
+    /// changes merge back into the running transaction.
+    inactive: Option<(Option<U256>, AddressSet)>,
+}
+
+impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
+    /// Returns the transaction.
+    pub const fn tx(&self) -> &Recovered<T::Tx> {
+        &self.tx
+    }
+
+    /// Executes the transaction observed by `inspector` and merges its changes into the running
+    /// transaction of `evm` as journaled writes: all of them on the running transaction's
+    /// context, where a failed transaction only keeps its nonce increment and fee payment, and
+    /// the changes to persistent accounts on an inactive context, which accepts the transaction.
+    /// With `untracked`, changes on the active context survive reverts of the enclosing calls.
+    pub fn execute(
+        self,
+        evm: &mut Evm<'_, T>,
+        inspector: Option<&mut dyn Inspector<T>>,
+        untracked: bool,
+    ) -> eyre::Result<ExecutedNested<T>> {
+        let Self { executor, tx, inactive } = self;
+        let mut executor: Evm<'_, T> = executor;
+        if let Some(inspector) = inspector {
+            executor.set_inspector(inspector);
+        }
+        let executed = executor.transact(&tx).map_err(transaction_error)?;
+        let Some((id, persistent)) = inactive else {
+            merge_changes(evm.state_mut(), executed.account_changes(), |_| true, untracked)?;
+            return Ok(ExecutedNested { result: executed.result().clone(), context: None });
+        };
+        merge_changes(
+            evm.state_mut(),
+            executed.account_changes(),
+            |address| persistent.contains(address),
+            false,
+        )?;
+        let result = executed.commit();
+        executor.clear_inspector();
+        let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
+        Ok(ExecutedNested { result, context: Some((id, cache)) })
+    }
+}
+
+/// The outcome of a [`PreparedTx`], to store with [`ExecutionLifecycle::store_executed`].
+#[must_use = "an inactive context's accepted state must be stored"]
+pub struct ExecutedNested<T: EvmTypesHost> {
+    result: TxResult<T>,
+    /// The inactive context the transaction was accepted on, with its new accepted state.
+    context: Option<(Option<U256>, Cache)>,
 }
 
 /// Fork, snapshot and nested-execution lifecycle for one EVM network family.
@@ -284,6 +346,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let suspended = self.suspend(evm);
         self.forks.active = id;
         Ok(self.resume(evm, suspended, phase))
+    }
+
+    /// Makes `id` the active context, or the local context for `None`, without suspending the
+    /// running state: for a throwaway copy of the lifecycle whose transaction already runs over
+    /// `id`'s state, such as one prepared with [`Self::prepare_on_inactive`].
+    pub const fn activate_detached(&mut self, id: Option<U256>) {
+        self.forks.active = id;
     }
 
     /// Moves fork `id`, or the running context for `None`, onto a new backing database and
@@ -535,28 +604,41 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm.set_block(*frame.block());
     }
 
-    /// Executes `tx` on the inactive fork `id`, or the local context for `None`, and accepts its
-    /// state there, such as for `vm.transact` on another fork.
+    /// Prepares `tx` to execute as a nested transaction of the running one on the EVM
+    /// [`Self::nested_evm`] builds.
+    pub fn prepare_nested(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        tx: Recovered<<F::Types as EvmTypesHost>::Tx>,
+        env: Option<EvmEnv<F::Types>>,
+        ext: Option<<F::Types as EvmTypesHost>::EvmExt>,
+    ) -> PreparedTx<F::Types> {
+        PreparedTx { executor: self.nested_evm(evm, &tx, env, ext), tx, inactive: None }
+    }
+
+    /// Prepares `tx` to execute on the inactive fork `id`, or the local context for `None`, and
+    /// be accepted there, such as for `vm.transact` on another fork.
     ///
     /// Persistent accounts carry the running transaction's state into the fork, and the
     /// transaction's changes to them are merged back into the running transaction as journaled
     /// writes.
-    pub fn transact_on_inactive(
-        &mut self,
+    pub fn prepare_on_inactive(
+        &self,
         evm: &mut Evm<'_, F::Types>,
         id: Option<U256>,
-        tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
-        nested: NestedTx<'_, F::Types>,
-    ) -> eyre::Result<TxResult<F::Types>> {
+        tx: Recovered<<F::Types as EvmTypesHost>::Tx>,
+        env: Option<EvmEnv<F::Types>>,
+        ext: Option<<F::Types as EvmTypesHost>::EvmExt>,
+    ) -> eyre::Result<PreparedTx<F::Types>> {
         eyre::ensure!(id != self.forks.active(), "fork {} is active", id.unwrap_or_default());
         let Some(context) = self.forks.context(id) else {
             eyre::bail!("fork {} does not exist", id.unwrap_or_default());
         };
         let db = context.db.clone_backing();
-        let env = nested.env.unwrap_or(context.env);
-        let ext = nested.ext.unwrap_or_else(|| {
+        let env = env.unwrap_or(context.env);
+        let ext = ext.unwrap_or_else(|| {
             let mut ext = context.ext.get();
-            ext.for_transaction(tx);
+            ext.for_transaction(&tx);
             ext
         });
         let factory = self.factory.configure_for(&db, &env);
@@ -579,23 +661,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             &running.overlay_db().cache,
             &mut executor.state_mut().overlay_db_mut().cache,
         );
+        Ok(PreparedTx { executor, tx, inactive: Some((id, self.forks.persistent.clone())) })
+    }
 
-        if let Some(inspector) = nested.inspector {
-            executor.set_inspector(inspector);
+    /// Stores the outcome of a [`PreparedTx`]: an inactive context's new accepted state.
+    pub fn store_executed(&mut self, executed: ExecutedNested<F::Types>) -> TxResult<F::Types> {
+        let ExecutedNested { result, context } = executed;
+        if let Some((id, cache)) = context {
+            let context = self.forks.context_mut(id).expect("prepared context exists");
+            context.cache = Some(Arc::new(cache));
         }
-        let executed = executor.transact(tx).map_err(transaction_error)?;
-        let persistent = &self.forks.persistent;
-        merge_changes(
-            evm.state_mut(),
-            executed.account_changes(),
-            |address| persistent.contains(address),
-            false,
-        )?;
-        let result = executed.commit();
-        executor.clear_inspector();
-        let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
-        self.forks.context_mut(id).expect("context exists").cache = Some(Arc::new(cache));
-        Ok(result)
+        result
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active

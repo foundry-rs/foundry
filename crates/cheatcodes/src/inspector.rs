@@ -106,10 +106,12 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
 
     /// Replays a mined transaction of fork `fork_id`, or of the active fork, for `vm.transact`.
     ///
-    /// Cheatcodes are not active in the replayed transaction. Its root frame duplicates the
-    /// cheatcode call at `depth`, like [`Self::nested_transaction`].
+    /// The replayed transaction runs with `cheats` active over a throwaway copy of `backend`, so
+    /// its cheatcodes cannot modify `backend`. Its root frame is a call below the cheatcode call
+    /// at `depth`.
     fn transact(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
@@ -120,10 +122,12 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     /// Executes a signed transaction as a nested transaction, such as for
     /// `broadcastRawTransaction`.
     ///
-    /// Cheatcodes are not active in the executed transaction. It runs in `env`, or the running
-    /// environment for `None`, and its root frame duplicates the cheatcode call at `depth`.
+    /// The transaction runs with `cheats` active over a throwaway copy of `backend`, in `env` or
+    /// the running environment for `None`. Its root frame is a call below the cheatcode call at
+    /// `depth`.
     fn transact_from_tx(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
@@ -195,26 +199,37 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         Ok(executed.result().clone())
     }
 
+    // Without the inspector stack's nested-root handling, replayed transactions run without
+    // cheatcodes, which would take their root frame for a top-level call; only their logs reach
+    // `expectEmit` and `recordLogs`.
     fn transact(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         _depth: u16,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        backend.backend_mut().transact(fork_id, transaction, evm, 0, None)
+        let (prepared, _) = backend.backend().prepare_transact(fork_id, transaction, evm, 0)?;
+        let executed = prepared.execute(evm, None, false)?;
+        let result = backend.backend_mut().store_executed(executed);
+        result.logs.iter().for_each(|log| cheats.log_hook(log));
+        Ok(result)
     }
 
     fn transact_from_tx(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         _depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        backend.backend_mut().transact_from_tx(tx, evm, env, None)
+        let result = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
+        result.logs.iter().for_each(|log| cheats.log_hook(log));
+        Ok(result)
     }
 
     fn console_log(&mut self, _msg: &str) {}
@@ -895,6 +910,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// execute inside it start from this environment instead.
     pub isolation_env: Option<EvmEnvFor<FEN>>,
 
+    /// Whether a replay is running whose fork-context changes cannot be merged into its parent.
+    pub in_replay: bool,
+
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
 }
@@ -970,6 +988,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fork_block_number_override_snapshots: Default::default(),
             in_isolation_context: false,
             isolation_env: None,
+            in_replay: false,
             deploy_code_depth: None,
         }
     }

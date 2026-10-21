@@ -73,12 +73,8 @@ contract TransactOnForkTest is Test {
         uint256 expectedRecipientBalance = recipientBalance + transferAmount;
         uint256 expectedSenderBalance = senderBalance - transferAmount;
 
-        // expect a call to USDT's transfer
-        // With the current expect call behavior, in which we expect calls to be matched in the next call's subcalls,
-        // expecting calls on vm.transact is impossible. This is because transact essentially creates another call context
-        // that operates independently of the current one, meaning that depths won't match and will trigger a panic on REVM,
-        // as the transact storage is not persisted as well and can't be checked.
-        // vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount));
+        // expect exactly one call to USDT's transfer, the replayed transaction's root call
+        vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount), 1);
 
         // expect a Transfer event to be emitted
         vm.expectEmit(true, true, false, true, address(USDT));

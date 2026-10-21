@@ -26,10 +26,10 @@ use foundry_evm_core::{
     backend::{Backend, transaction_error},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmExt, FoundryEvmFor, FoundryEvmNetwork,
-        InterpreterFor, MessageFor, MessageResultFor, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, evm_env, merge_pending_changes, merge_untracked_nested_changes,
-        release_inspector,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, ExecutedNested, FoundryEvmExt, FoundryEvmFor,
+        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PreparedTx,
+        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env,
+        merge_pending_changes, merge_untracked_nested_changes, release_inspector,
     },
     precompiles::P256_VERIFY,
 };
@@ -37,6 +37,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use std::{
+    mem,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -344,18 +345,22 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub reverter: Option<Address>,
 }
 
-/// The root frame of a nested transaction that duplicates a frame of the running transaction,
-/// such as an isolated call or the transaction of `vm.executeTransaction`.
+/// The root frame of a nested transaction that runs within a frame of the running transaction,
+/// such as an isolated call, the transaction of `vm.executeTransaction` or a transaction replayed
+/// by `vm.transact`.
 ///
-/// The duplicated frame already ran the inspectors' call hooks in the running transaction, so the
-/// root frame skips them. The nested transaction starts at the duplicated frame's depth, so the
-/// frames it starts keep their depth in the surrounding trace.
+/// A root frame that duplicates the surrounding frame skips the inspectors' call hooks, which the
+/// surrounding frame already ran, and starts at its depth, so the frames it starts keep their depth
+/// in the surrounding trace. An observed root frame is a new call one level below it.
 #[derive(Clone, Copy, Debug)]
 struct InnerRoot {
-    /// Depth of the duplicated frame.
+    /// Depth of the surrounding frame.
     depth: u16,
-    /// Sender of the nested transaction, or `None` if not known in advance.
-    caller: Option<Address>,
+    /// Sender of the nested transaction.
+    caller: Address,
+    /// Whether the root frame is a new call observed by the inspectors, such as a replayed
+    /// transaction's, rather than a duplicate of the surrounding frame.
+    observe: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -521,7 +526,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth;
         let mut child = backend.backend().nested_evm(evm, tx, Some(env));
-        let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
+        let previous =
+            self.enter_inner_context(InnerRoot { depth, caller: tx.signer(), observe: false });
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
@@ -546,23 +552,27 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
 
     fn transact(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let previous = self.enter_inner_context(InnerRoot { depth, caller: None });
-        let mut inspector =
-            InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
-        let result =
-            backend.backend_mut().transact(fork_id, transaction, evm, depth, Some(&mut inspector));
-        self.exit_inner_context(previous);
-        result
+        let (prepared, mut replay) =
+            backend.backend().prepare_transact(fork_id, transaction, evm, depth + 1)?;
+        let fork_id = replay.backend().active_fork_id();
+        let mut overrides = Default::default();
+        cheats.env_overrides.swap(fork_id, &mut overrides);
+        let executed = self.replay(cheats, &mut replay, evm, depth, prepared, false);
+        cheats.env_overrides.swap(fork_id, &mut overrides);
+        drop(replay);
+        Ok(backend.backend_mut().store_executed(executed?))
     }
 
     fn transact_from_tx(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
@@ -570,14 +580,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
-        env.version.initial_call_depth = depth;
-        let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
-        let mut inspector =
-            InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
-        let result =
-            backend.backend_mut().transact_from_tx(tx, evm, Some(env), Some(&mut inspector));
-        self.exit_inner_context(previous);
-        result
+        env.version.initial_call_depth = depth + 1;
+        let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
+        let executed = self.replay(cheats, &mut replay, evm, depth, prepared, true);
+        drop(replay);
+        Ok(backend.backend_mut().store_executed(executed?))
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -1205,9 +1212,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheats.isolation_env = Some(outer_env);
             previous
         });
-        let previous_inner = self
-            .inner
-            .enter_inner_context(InnerRoot { depth: message.depth, caller: Some(message.caller) });
+        let previous_inner = self.inner.enter_inner_context(InnerRoot {
+            depth: message.depth,
+            caller: message.caller,
+            observe: false,
+        });
         let create2_redirects = self.inner.pending_create2_redirects.len();
 
         child.set_inspector(InspectorStackRefMut {
@@ -1305,31 +1314,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
-    /// Handles the root frame of a nested transaction, returning whether `message` is one.
+    /// Handles the root frame of a nested transaction, returning whether `message` is one that
+    /// skips the inspectors' hooks.
     fn start_inner_root(
         &mut self,
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> bool {
-        if self
-            .inner
-            .pending_inner_root
-            .take_if(|root| {
-                message.depth == root.depth
-                    && root.caller.is_none_or(|caller| caller == message.caller)
-            })
-            .is_none()
-        {
+        let Some(root) = self.inner.pending_inner_root.take_if(|root| {
+            message.depth == root.depth + u16::from(root.observe) && root.caller == message.caller
+        }) else {
             return false;
-        }
+        };
         warm_arbitrum_system_contract::<FEN>(interp);
-        if !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
+        if !root.observe
+            && !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
             && let Some(cheatcodes) = self.cheatcodes.as_deref()
         {
             // Transaction messages use the original target, so resolve function mocks here too.
             apply_mocked_function(cheatcodes, interp, message);
         }
-        true
+        !root.observe
     }
 
     // We take extra care in optimizing `step` and `step_end`, as they're are likely the most
@@ -2003,6 +2008,49 @@ impl InspectorStackInner {
     /// Restores the context saved by [`Self::enter_inner_context`].
     const fn exit_inner_context(&mut self, previous: (bool, Option<u16>, Option<InnerRoot>)) {
         (self.in_inner_context, self.inner_root_depth, self.pending_inner_root) = previous;
+    }
+
+    /// Executes a transaction replayed by the cheatcode call at `depth`, such as for
+    /// `vm.transact`, observed by the whole stack with `cheats` active over the throwaway
+    /// `backend` it was prepared with. Its root frame is a call below the cheatcode call.
+    fn replay<FEN: FoundryEvmNetwork>(
+        &mut self,
+        cheats: &mut Cheatcodes<FEN>,
+        backend: &mut dyn CheatcodesBackend<FEN>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
+        prepared: PreparedTx<TypesFor<FEN>>,
+        untracked: bool,
+    ) -> eyre::Result<ExecutedNested<TypesFor<FEN>>> {
+        let caller = prepared.tx().signer();
+        let previous = self.enter_inner_context(InnerRoot { depth, caller, observe: true });
+        // The replay reads its own transaction environment, not the surrounding execution's.
+        let origin_override = cheats.origin_override.take();
+        let gas_price = cheats.gas_price.take();
+        let fork_id = backend.backend().active_fork_id();
+        let (mut gas_price_override, mut blob_hashes_override) = (None, None);
+        cheats.env_overrides.swap_transaction_overrides(
+            fork_id,
+            &mut gas_price_override,
+            &mut blob_hashes_override,
+        );
+        let in_replay = mem::replace(&mut cheats.in_replay, true);
+        let mut inspector = InspectorStackRefMut {
+            cheatcodes: Some(&mut *cheats),
+            inner: &mut *self,
+            backend: Some(backend),
+        };
+        let executed = prepared.execute(evm, Some(&mut inspector), untracked);
+        cheats.in_replay = in_replay;
+        cheats.env_overrides.swap_transaction_overrides(
+            fork_id,
+            &mut gas_price_override,
+            &mut blob_hashes_override,
+        );
+        cheats.origin_override = origin_override;
+        cheats.gas_price = gas_price;
+        self.exit_inner_context(previous);
+        executed
     }
 }
 
