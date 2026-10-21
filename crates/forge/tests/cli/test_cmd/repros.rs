@@ -1530,6 +1530,8 @@ contract ReplayForkTarget {
     bytes operation;
     bytes expectedError;
     uint256 public observedBlock;
+    uint256 public observedChain;
+    uint256 public observedBasefee;
 
     function configure(bytes memory data, bytes memory reason) external {
         operation = data;
@@ -1542,6 +1544,8 @@ contract ReplayForkTarget {
         require(!ok, "fork operation succeeded in replay");
         require(keccak256(reason) == keccak256(expectedError), "unexpected cheatcode error");
         observedBlock = block.number;
+        observedChain = block.chainid;
+        observedBasefee = block.basefee;
     }
 }
 
@@ -1553,14 +1557,17 @@ contract ReplayForkTest is Test {
     function check(bool mined) internal {
         uint256 fork = vm.createFork("<rpc>", uint256(0));
         if (mined) vm.selectFork(fork);
-        vm.chainId(1);
-        vm.fee(1);
+        uint256 chain = mined ? 99 : 1;
+        uint256 fee = mined ? 123 : 23;
+        vm.chainId(chain);
+        vm.fee(fee);
         vm.roll(50);
         address sender = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
         address target = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
         vm.deal(sender, 1 ether);
         vm.etch(target, address(new ReplayForkTarget()).code);
         vm.allowCheatcodes(target);
+        uint256 snapshot = vm.snapshotState();
         bytes[] memory operations = new bytes[](3);
         operations[0] = abi.encodeWithSignature("selectFork(uint256)", fork);
         operations[1] = abi.encodeWithSignature("rollFork(uint256,uint256)", fork, 0);
@@ -1578,13 +1585,35 @@ contract ReplayForkTest is Test {
                 vm.broadcastRawTransaction(hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856");
             }
             assertEq(ReplayForkTarget(payable(target)).observedBlock(), mined ? 1 : 50);
+            assertEq(ReplayForkTarget(payable(target)).observedChain(), mined ? 1 : chain);
+            assertEq(ReplayForkTarget(payable(target)).observedBasefee(), mined ? 1 : fee);
             assertEq(block.number, 50);
+            assertEq(block.chainid, chain);
+            assertEq(block.basefee, fee);
             if (mined) assertEq(vm.activeFork(), fork);
             else {
                 (bool active,) = address(vm).call(abi.encodeWithSignature("activeFork()"));
                 require(!active, "replay selected an outer fork");
             }
         }
+        if (mined) {
+            vm.deal(sender, 0);
+            try vm.transact(<tx>) {
+                revert("replayed an unfunded transaction");
+            } catch (bytes memory reason) {
+                assertEq(reason, abi.encodeWithSignature(
+                    "CheatcodeError(string)",
+                    "vm.transact: transaction validation error: insufficient funds"
+                ));
+            }
+            assertEq(block.chainid, chain);
+            assertEq(block.basefee, fee);
+        }
+        vm.chainId(77);
+        vm.fee(29);
+        assertTrue(vm.revertToStateAndDelete(snapshot));
+        assertEq(block.chainid, chain);
+        assertEq(block.basefee, fee);
         vm.selectFork(fork);
     }
 }
