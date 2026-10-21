@@ -110,10 +110,12 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
     /// transaction of `evm` as journaled writes: all of them on the running transaction's
     /// context, where a failed transaction only keeps its nonce increment and fee payment, and
     /// the changes to persistent accounts on an inactive context, which accepts the transaction.
+    /// With `untracked`, changes on the active context survive reverts of the enclosing calls.
     pub fn execute(
         self,
         evm: &mut Evm<'_, T>,
         inspector: Option<&mut dyn Inspector<T>>,
+        untracked: bool,
     ) -> eyre::Result<ExecutedNested<T>> {
         let Self { executor, tx, inactive } = self;
         let mut executor: Evm<'_, T> = executor;
@@ -122,12 +124,15 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         }
         let executed = executor.transact(&tx).map_err(transaction_error)?;
         let Some((id, persistent)) = inactive else {
-            merge_nested_changes(evm.state_mut(), &executed)?;
+            merge_changes(evm.state_mut(), executed.account_changes(), |_| true, untracked)?;
             return Ok(ExecutedNested { result: executed.result().clone(), context: None });
         };
-        merge_changes(evm.state_mut(), executed.account_changes(), |address| {
-            persistent.contains(address)
-        })?;
+        merge_changes(
+            evm.state_mut(),
+            executed.account_changes(),
+            |address| persistent.contains(address),
+            false,
+        )?;
         let result = executed.commit();
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
@@ -833,21 +838,31 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true)
+    merge_changes(state, executed.account_changes(), |_| true, false)
+}
+
+/// Applies a nested transaction's changes to the running transaction's `state` so that they survive
+/// reverts of the enclosing calls, such as for `executeTransaction`.
+pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
+    state: &mut State<'_>,
+    executed: &ExecutedTx<'_, '_, T>,
+) -> DbResult<()> {
+    merge_changes(state, executed.account_changes(), |_| true, true)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
 /// transaction's `state` as journaled writes, like [`merge_nested_changes`].
 pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
-    merge_changes(state, pending.account_changes(), |_| true)
+    merge_changes(state, pending.account_changes(), |_| true, false)
 }
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
-/// journaled writes.
+/// journaled writes, or so that they survive reverts of the enclosing calls if `untracked`.
 fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
     filter: impl Fn(&Address) -> bool,
+    untracked: bool,
 ) -> DbResult<()> {
     for change in changes.filter(|change| change.is_changed()) {
         let address = change.address;
@@ -856,26 +871,45 @@ fn merge_changes<'c>(
         }
         {
             let mut account = state.account(&address)?;
-            match change.current {
-                Some(info) => {
-                    account.set_balance(info.balance);
-                    account.set_nonce(info.nonce);
-                    if let Some((code_hash, code)) = change.code {
-                        account.set_code(code_hash, code.clone());
-                    }
-                }
-                None => {
-                    account.set_balance(U256::ZERO);
-                    account.set_nonce(0);
-                    account.set_code(KECCAK256_EMPTY, Bytecode::default());
+            let (balance, nonce) =
+                change.current.map_or((U256::ZERO, 0), |info| (info.balance, info.nonce));
+            if untracked {
+                account.touch();
+                account.set_balance_untracked(balance);
+                account.set_nonce_untracked(nonce);
+            } else {
+                account.set_balance(balance);
+                account.set_nonce(nonce);
+            }
+            let code = match (change.current, change.code) {
+                (Some(_), Some((code_hash, code))) => Some((code_hash, code.clone())),
+                // Changes only carry non-empty code, so a different hash means cleared code.
+                (Some(info), None) if info.code_hash == account.code_hash() => None,
+                _ => Some((KECCAK256_EMPTY, Bytecode::default())),
+            };
+            if let Some((code_hash, code)) = code {
+                if untracked {
+                    account.override_code(code_hash, code);
+                } else {
+                    account.set_code(code_hash, code);
                 }
             }
         }
         if change.current.is_none() || change.storage.wiped {
-            state.storage(&address)?.wipe();
+            let mut storage = state.storage(&address)?;
+            if untracked {
+                storage.override_wipe();
+            } else {
+                storage.wipe();
+            }
         }
         for (key, slot) in change.storage.changed_slots() {
-            state.storage_slot(&address, *key)?.set(slot.current);
+            let mut storage = state.storage_slot(&address, *key)?;
+            if untracked {
+                storage.set_untracked(slot.current);
+            } else {
+                storage.set(slot.current);
+            }
         }
     }
     Ok(())

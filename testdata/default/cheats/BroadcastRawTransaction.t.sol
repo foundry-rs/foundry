@@ -242,6 +242,10 @@ contract BroadcastRawTransactionTest is Test {
         vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
         try this.mintThenSucceedSignedTxThenRevert() {} catch {}
 
+        assertEq(vm.getNonce(0x5316812db67073C4d4af8BB3000C5B86c2877e94), 1);
+        assertEq(0x5316812db67073C4d4af8BB3000C5B86c2877e94.balance, 1 ether - 21_000 * 100 - 17);
+        assertEq(0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6.balance, 17);
+
         // A successful signed tx reloads every journaled account from the backend.
         vm.deal(0x7ED31830602f9F7419307235c0610Fb262AA0375, 1 ether);
         vm.broadcastRawTransaction(
