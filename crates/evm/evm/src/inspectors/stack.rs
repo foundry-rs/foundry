@@ -24,7 +24,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryInspectorExt,
     backend::{Backend, transaction_error},
-    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmExt, FoundryEvmFactory,
         FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor,
@@ -1072,11 +1072,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// moves new frames onto a frame EVM built with it while the running frames keep theirs, as
     /// REVM applied such changes to the frames started after them. The message's hooks run on the
     /// frame EVM.
+    ///
+    /// Cheatcode calls run on the running EVM: they execute no code, and the cheatcodes that read
+    /// or change the environment act on the running EVM and the in-flight request.
     fn env_handoff(
         &mut self,
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
+        if message.destination == CHEATCODE_ADDRESS {
+            return None;
+        }
         let backend = self.backend.as_deref_mut()?;
         let pending =
             backend.backend().lifecycle().pending_env().map(|env| (env.spec, env.chain_id()));

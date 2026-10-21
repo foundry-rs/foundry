@@ -202,10 +202,16 @@ impl<'evm, FEN: FoundryEvmNetwork> CheatsCtxt<'_, 'evm, FEN> {
         self.depth
     }
 
-    /// Returns the active hardfork.
+    /// Returns the active hardfork: the one the calls and creates started next run with.
+    ///
+    /// Cheatcode calls run on the running EVM, which keeps its spec while a change requested by
+    /// `vm.setEvmVersion` or deferred by an in-flight operation applies to new frames.
     #[inline]
-    pub(crate) const fn spec(&self) -> SpecFor<FEN> {
-        self.evm.config_spec_id()
+    pub(crate) fn spec(&self) -> SpecFor<FEN> {
+        self.state
+            .execution_evm_version
+            .or_else(|| self.db().lifecycle().pending_env().map(|env| env.spec))
+            .unwrap_or_else(|| self.evm.config_spec_id())
     }
 
     /// Returns the chain ID.

@@ -199,7 +199,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
     }
 
-    /// Accepts `evm`'s state, environment and network extension state into the active context.
+    /// Accepts `evm`'s state, environment and network extension state into the active context. A
+    /// fork keeps its own chain ID.
     ///
     /// Call this between transactions, with an EVM created by [`Self::create_evm`] whose
     /// executions were committed. In-flight state that was not committed is discarded, and a
@@ -218,8 +219,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             (true, Some(accepted)) => Arc::make_mut(accepted).merge(local),
             _ => context.cache = Some(Arc::new(local)),
         }
-        context.env = env;
         context.ext = StoredExt::new(&ext);
+        self.store_env(env);
         self.forks.local.loaded_storage.clear();
         for entry in self.forks.forks.values_mut() {
             entry.context.loaded_storage.clear();
@@ -234,9 +235,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             return;
         }
         self.begin_transaction(&mut evm);
-        let context = self.active_mut();
-        context.env = evm_env(&evm);
-        context.ext = StoredExt::new(evm.ext());
+        self.active_mut().ext = StoredExt::new(evm.ext());
+        self.store_env(evm_env(&evm));
     }
 
     /// Materializes the accepted state `evm` reads through a shared view into its own overlay.
@@ -607,7 +607,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active
-    /// context. Returns what the running transaction carries into the next context.
+    /// context. A fork keeps its own chain ID. Returns what the running transaction carries into
+    /// the next context.
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
         let state = evm.state();
         let cached = state
@@ -633,11 +634,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let logs = mem::take(state.logs_mut());
         let prewarm = state.prewarm_set().clone();
         let cache = state.overlay_db().cache.clone();
-        let env = evm_env(evm);
+        self.store_env(evm_env(evm));
         let ext = evm.ext().clone();
         let context = self.active_mut();
         context.cache = Some(Arc::new(cache.clone()));
-        context.env = env;
         context.ext = StoredExt::new(&ext);
         Suspended { cache, loaded_storage: context.loaded_storage.clone(), logs, prewarm }
     }
@@ -714,6 +714,20 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
                 EnvTransition::Deferred
             }
         }
+    }
+
+    /// Stores `env` as the active context's environment.
+    ///
+    /// A fork keeps the chain ID it was created or rolled with, as REVM selected a fork with its
+    /// own chain ID: a running change such as `vm.chainId` does not follow the fork to its next
+    /// selection. The executor carries such a change to its next transaction instead.
+    fn store_env(&mut self, mut env: EvmEnv<F::Types>) {
+        let is_fork = self.forks.active().is_some();
+        let context = self.active_mut();
+        if is_fork {
+            env.set_chain_id(context.env.chain_id());
+        }
+        context.env = env;
     }
 
     /// Returns known slots loaded in this transaction, including before fork switches.

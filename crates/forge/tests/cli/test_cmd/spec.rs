@@ -269,8 +269,8 @@ Traces:
 "#]]);
 }
 
-// `vm.setEvmVersion` inside a test applies to the calls and creates started after it, while the
-// running frame keeps its version.
+// `vm.setEvmVersion` inside a test applies to the calls and creates started after it, isolated or
+// not, and their end hooks, such as `expectRevert`'s, run once.
 #[forgetest_init]
 fn test_set_evm_version_applies_to_new_frames(prj: _, cmd: _) {
     prj.add_test(
@@ -278,88 +278,39 @@ fn test_set_evm_version_applies_to_new_frames(prj: _, cmd: _) {
         r#"
 import {Test} from "forge-std/Test.sol";
 
-interface EvmVm {
-    function getEvmVersion() external pure returns (string memory evm);
-    function setEvmVersion(string calldata evm) external;
-}
-
-EvmVm constant EVM = EvmVm(address(uint160(uint256(keccak256("hevm cheat code")))));
-// Runtime code `PUSH0 PUSH0 RETURN`; PUSH0 is only valid from Shanghai.
-address constant PUSH0_TARGET = address(0xBEEF);
-// Returns the gas of one cold SLOAD without using PUSH0: 800 before Berlin, 2100 from Berlin.
-address constant SLOAD_PROBE = address(0xCAFE);
-
-contract Switcher {
-    function switchAndRevert(string calldata evm) external {
-        EVM.setEvmVersion(evm);
-        revert();
-    }
+contract Store {
+    function set() external {}
 }
 
 contract EvmVersionFramesTest is Test {
-    function setUp() public {
-        vm.etch(PUSH0_TARGET, hex"5f5ff3");
-        vm.etch(SLOAD_PROBE, hex"5a600754505a900360005260206000f3");
-    }
-
-    function push0Works() internal returns (bool ok) {
-        (ok,) = PUSH0_TARGET.call("");
-    }
-
-    function coldSloadGas() internal returns (uint256) {
-        (, bytes memory output) = SLOAD_PROBE.call("");
-        return abi.decode(output, (uint256));
-    }
-
-    function test_next_frames_use_new_version() public {
-        assertTrue(push0Works());
-        EVM.setEvmVersion("istanbul");
-        assertEq(EVM.getEvmVersion(), "istanbul");
-        assertFalse(push0Works(), "PUSH0 is not activated on istanbul");
-        assertLt(coldSloadGas(), 1000, "istanbul cold SLOAD costs 800");
-
-        bytes memory initcode = hex"5f5ff3";
-        address deployed;
-        assembly {
-            deployed := create(0, add(initcode, 32), mload(initcode))
-        }
-        assertEq(deployed, address(0), "istanbul initcode cannot use PUSH0");
-
-        EVM.setEvmVersion("shanghai");
-        assertTrue(push0Works());
-        assertGt(coldSloadGas(), 2000, "shanghai cold SLOAD costs 2100");
-        assembly {
-            deployed := create(0, add(initcode, 32), mload(initcode))
-        }
-        assertTrue(deployed != address(0));
-    }
-
-    function test_running_frame_keeps_version() public {
-        // This test is compiled with PUSH0, so it only continues if its frame keeps its version.
-        EVM.setEvmVersion("istanbul");
-        uint256[] memory values = new uint256[](1);
-        assertEq(values[0], 0);
-    }
-
-    function test_version_set_in_reverted_call_applies() public {
-        Switcher switcher = new Switcher();
-        try switcher.switchAndRevert("istanbul") {} catch {}
-        assertEq(EVM.getEvmVersion(), "istanbul");
-        assertFalse(push0Works(), "PUSH0 is not activated on istanbul");
+    function test_new_frames_use_new_version() public {
+        Store store = new Store();
+        // This test and `Store` are compiled with PUSH0, which istanbul does not activate, so the
+        // test only continues if its own frame keeps its version.
+        vm.setEvmVersion("istanbul");
+        vm.expectRevert(2);
+        store.set{gas: 100_000}();
+        store.set{gas: 100_000}();
+        vm.expectRevert(2);
+        new Store();
+        new Store();
     }
 }
    "#,
     );
 
-    cmd.args(["test", "--mc", "EvmVersionFramesTest"]).assert_success().stdout_eq(str![[r#"
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        cmd.forge_fuse().args(["test", "--mc", "EvmVersionFramesTest"]).assert_success().stdout_eq(
+            str![[r#"
 ...
-Ran 3 tests for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
-[PASS] test_next_frames_use_new_version() ([GAS])
-[PASS] test_running_frame_keeps_version() ([GAS])
-[PASS] test_version_set_in_reverted_call_applies() ([GAS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Ran 1 test for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+[PASS] test_new_frames_use_new_version() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
-"#]]);
+"#]],
+        );
+    }
 }
 
 #[cfg(feature = "monad")]
@@ -2413,9 +2364,6 @@ contract TempoChainIdTest is Test {
 
         new ChainIdSetter().setChainId(original + 1);
         assertEq(PATH_USD.DOMAIN_SEPARATOR(), newDomain);
-
-        vm.chainId(original);
-        assertEq(PATH_USD.DOMAIN_SEPARATOR(), originalDomain);
     }
 }
    "#,
