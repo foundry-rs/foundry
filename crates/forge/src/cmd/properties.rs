@@ -21,7 +21,7 @@ use foundry_compilers::{
     },
     utils::source_files_iter,
 };
-use foundry_config::Config;
+use foundry_config::{Config, DenyLevel};
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -649,11 +649,20 @@ impl Campaign<'_> {
             .arg("build")
             .output()
             .wrap_err("failed to build the project")?;
-        if !output.status.success() {
+        if !output.status.success() || self.denied_warnings(&output).is_some() {
             sh_warn!("the project does not build, so every check builds it: {}", stderr(&output))?;
             return Ok(None);
         }
         Ok(Some(workspace))
+    }
+
+    /// Returns the compiler warnings of a `forge build` in a workspace if the project denies
+    /// warnings. A workspace starts from a build without such warnings, so only the files that
+    /// this build compiles can warn.
+    fn denied_warnings(&self, output: &Output) -> Option<String> {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let start = stdout.find("Warning (").filter(|_| self.config.deny.warnings())?;
+        Some(shorten(&stdout[start..]))
     }
 
     /// Runs the `--check` command.
@@ -707,6 +716,23 @@ impl Campaign<'_> {
             .map(|file| file.path.display().to_string())
             .collect::<Vec<_>>()
             .join(",");
+        if self.config.deny.warnings() {
+            let output = self
+                .forge_command(workspace, &self.args.seed[0])
+                .arg("build")
+                .output()
+                .wrap_err("failed to build candidate tests")?;
+            let failure = if output.status.success() {
+                self.denied_warnings(&output)
+                    .map(|warnings| format!("the project denies compiler warnings: {warnings}"))
+            } else {
+                Some(stderr(&output))
+            };
+            if let Some(failure) = failure {
+                let reasons = vec![format!("candidate tests failed to build: {failure}")];
+                return Ok(TestRun { reasons, ..Default::default() });
+            }
+        }
         let mut reasons = Vec::new();
         // The passing seeds and the failures of each test.
         let mut outcomes = BTreeMap::<(String, String), (usize, Vec<String>)>::new();
@@ -1160,6 +1186,9 @@ fn candidate_workspace(
     // absolute paths, and environment overrides, without reading files outside the workspace.
     let mut rebased = workspace::rebase_config_paths(config, workspace.path());
     rebased.extends = None;
+    // Foundry turns the compiler cache off when it denies warnings, so a workspace builds with
+    // `deny = "never"`, and `Campaign::denied_warnings` checks the warnings instead.
+    rebased.deny = DenyLevel::Never;
     let mut toml = rebased.to_string_pretty()?;
     // Inline config may name the project's other profiles, so they must still exist.
     for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
@@ -1533,7 +1562,6 @@ fn seed_dir(config: &Config, workspace: &Path, seed: &U256) -> PathBuf {
 /// Warnings can fill the limit before the decisive error, and many tools print the error last.
 /// Without a compiler error, as with `deny = "warnings"`, the warnings are the errors and stay.
 fn stderr(output: &Output) -> String {
-    const HALF: usize = 1_000;
     let stderr = String::from_utf8_lossy(&output.stderr);
     let has_error = stderr.lines().any(|line| line.starts_with("Error ("));
     let mut in_warning = false;
@@ -1555,13 +1583,19 @@ fn stderr(output: &Output) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let stderr = stderr.trim();
-    let chars = stderr.chars().count();
+    shorten(&stderr)
+}
+
+/// Keeps both ends of a long tool output. Many tools print the decisive error last.
+fn shorten(text: &str) -> String {
+    const HALF: usize = 1_000;
+    let text = text.trim();
+    let chars = text.chars().count();
     if chars <= 2 * HALF {
-        return stderr.to_string();
+        return text.to_string();
     }
-    let head = stderr.chars().take(HALF).collect::<String>();
-    let tail = stderr.chars().skip(chars - HALF).collect::<String>();
+    let head = text.chars().take(HALF).collect::<String>();
+    let tail = text.chars().skip(chars - HALF).collect::<String>();
     format!("{head}\n[...]\n{tail}")
 }
 

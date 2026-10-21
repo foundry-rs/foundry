@@ -787,8 +787,7 @@ fn properties_check_reports_denied_warnings(prj: _, cmd: _) {
 {
   "passed": false,
   "reasons": [
-    "candidate tests failed on seed 1: Error: Compiler run failed:/nWarning (2072): Unused local variable./n [FILE]:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^",
-    "candidate tests failed on seed 2: Error: Compiler run failed:/nWarning (2072): Unused local variable./n [FILE]:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^"
+    "candidate tests failed to build: the project denies compiler warnings: Warning (2072): Unused local variable./n [FILE]:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^"
   ],
   "possible_bugs": []
 }
@@ -797,10 +796,12 @@ fn properties_check_reports_denied_warnings(prj: _, cmd: _) {
 }
 
 // Forge builds the project once, and every workspace starts from that build output, so a build in
-// a workspace compiles only the files that it adds.
+// a workspace compiles only the files that it adds. This holds also when the project denies
+// warnings, which turns Foundry's compiler cache off.
 #[forgetest_init]
 fn properties_workspaces_reuse_the_project_build(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
+    prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
     let args = properties_args(
         &prj,
         r#"
