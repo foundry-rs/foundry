@@ -25,6 +25,11 @@ use foundry_config::{Config, DenyLevel};
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use solar::parse::{
+    Parser as SolarParser,
+    ast::{Arena, ItemKind, StateMutability, Visibility, interface::source_map::FileName},
+    interface::Session,
+};
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -66,6 +71,9 @@ claim that the test asserts, the source that states the claim, and in code_path 
 the root cause and what the code does wrong. Report only bugs that a test proves. If \
 previous_feedback lists reasons, fix them first. Return one candidate object with the shape of \
 output_contract.example; usage is optional.";
+/// Follows `INSTRUCTIONS` when the agent has a focus.
+const FOCUS_INSTRUCTION: &str = "Start with the functions in agent.focus, then follow the code \
+wherever a bug leads; every target stays in scope.";
 /// Bounds the rejected files of the last round in the prompt.
 const MAX_PROMPT_SOURCE_BYTES: usize = 16 * 1024;
 /// Extra rounds for an agent whose last round left no kept file and no possible bug. In the swarm
@@ -129,7 +137,7 @@ pub struct PropertiesArgs {
 
     /// Compile and run the tests of a candidate JSON file on every seed and print the result as
     /// JSON. Generators use this to check a candidate before they return it.
-    #[arg(long, value_name = "CANDIDATE_JSON", conflicts_with_all = ["target", "context", "generator"])]
+    #[arg(long, value_name = "CANDIDATE_JSON", conflicts_with_all = ["target", "context", "generator", "no_focus"])]
     check: Option<PathBuf>,
 
     /// Deterministic seeds used to evaluate every candidate. Supply at least two.
@@ -157,6 +165,14 @@ pub struct PropertiesArgs {
     /// with a single agent.
     #[arg(long, value_name = "K")]
     quorum: Option<usize>,
+
+    /// Give every agent the same prompt, without a focus.
+    ///
+    /// By default, Forge deals the external and public state-changing functions of the target
+    /// contracts to the agents in turn. Each agent starts with its own functions, but sees all
+    /// targets.
+    #[arg(long)]
+    no_focus: bool,
 
     /// Agent whose check journal records a `--check` run. Forge sets it in the check command of
     /// each agent.
@@ -224,9 +240,9 @@ struct CandidateFile {
 #[derive(Debug, Serialize)]
 struct GeneratorPrompt<'a> {
     schema: &'static str,
-    instructions: &'static str,
+    instructions: &'a str,
     round: usize,
-    agent: AgentPrompt,
+    agent: AgentPrompt<'a>,
     project: &'a Path,
     targets: &'a [PathBuf],
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
@@ -241,13 +257,16 @@ struct GeneratorPrompt<'a> {
 
 /// Who the agent is in the run.
 #[derive(Debug, Serialize)]
-struct AgentPrompt {
+struct AgentPrompt<'a> {
     /// The agent's number, from 1.
     id: usize,
     /// The number of agents in the run.
     count: usize,
     /// A seed of this agent, for example to vary sampling or the order of its search.
     seed: U256,
+    /// The functions where this agent starts, as `Contract.function`.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    focus: &'a [String],
 }
 
 #[derive(Debug, Serialize)]
@@ -425,6 +444,8 @@ struct Agent<'a> {
     generated_tests: PathBuf,
     /// The directory of this agent's candidates, rounds, and check journal.
     cache: PathBuf,
+    /// The functions where this agent starts, as `Contract.function`.
+    focus: Vec<String>,
     rounds: Vec<Round>,
     /// The kept files.
     current: Option<Candidate>,
@@ -457,14 +478,24 @@ impl Campaign<'_> {
         } else {
             self.args.target.clone()
         };
+        // In one run, agents with the same prompt found the same bugs: on 26 held-out cases, 8
+        // agents found 29 distinct root causes, against 40 for 4 independent plain audits. A
+        // distinct starting point for each agent spreads the search.
+        let focus = if self.args.no_focus {
+            vec![vec![]; self.args.agents]
+        } else {
+            focus_slices(&target_functions(&self.config.root, &targets), self.args.agents)
+        };
         let inputs = AgentInputs { context, generator, targets };
 
         let mut agents = (1..=self.args.agents)
-            .map(|id| Agent {
+            .zip(focus)
+            .map(|(id, focus)| Agent {
                 campaign: self,
                 id,
                 generated_tests: self.generated_tests.join(format!("agent-{id}")),
                 cache: self.cache_root.join(format!("agent-{id}")),
+                focus,
                 rounds: vec![],
                 current: None,
                 current_tests: vec![],
@@ -842,11 +873,16 @@ impl Agent<'_> {
                 ["--build-cache".to_string(), build.to_string_lossy().into_owned()]
             }))
             .collect::<Vec<_>>();
-        // Distinct seeds are the only difference between agents.
+        // Agents differ by seed and by focus.
         let seed = keccak256(
             [args.seed[0].to_be_bytes::<32>(), U256::from(self.id).to_be_bytes()].concat(),
         )
         .into();
+        let instructions = if self.focus.is_empty() {
+            INSTRUCTIONS.to_string()
+        } else {
+            format!("{INSTRUCTIONS} {FOCUS_INSTRUCTION}")
+        };
 
         // An error ends the rounds after `rounds.json` is written, so the kept files are not lost.
         let mut error = None;
@@ -861,9 +897,9 @@ impl Agent<'_> {
             let example_contract = format!("GeneratedRound{round}Test");
             let prompt = GeneratorPrompt {
                 schema: PROMPT_SCHEMA,
-                instructions: INSTRUCTIONS,
+                instructions: &instructions,
                 round,
-                agent: AgentPrompt { id: self.id, count: args.agents, seed },
+                agent: AgentPrompt { id: self.id, count: args.agents, seed, focus: &self.focus },
                 project: workspace.path(),
                 targets: &inputs.targets,
                 context: &inputs.context,
@@ -1137,6 +1173,73 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
         key(a).cmp(&key(b))
     });
     groups
+}
+
+/// Returns the external and public state-changing functions of the contracts in the target files,
+/// as `Contract.function`, grouped by contract in name order and in source order within a
+/// contract. Interfaces and libraries add none, and a file that does not parse adds nothing.
+fn target_functions(root: &Path, targets: &[PathBuf]) -> Vec<String> {
+    let mut contracts = BTreeMap::<String, Vec<String>>::new();
+    let sess = Session::builder().with_silent_emitter(None).build();
+    sess.enter(|| {
+        for target in targets.iter().filter(|path| path.extension().is_some_and(|ext| ext == "sol"))
+        {
+            let path = root.join(target);
+            let arena = Arena::new();
+            let Ok(Ok(source)) = SolarParser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::from(path.clone()),
+                || fs::read_to_string(&path),
+            )
+            .map(|mut parser| parser.parse_file().map_err(|error| error.emit())) else {
+                continue;
+            };
+            for item in source.items.iter() {
+                if let ItemKind::Contract(contract) = &item.kind
+                    && !contract.kind.is_interface()
+                    && !contract.kind.is_library()
+                {
+                    let functions = contracts.entry(contract.name.to_string()).or_default();
+                    for item in contract.body.iter() {
+                        if let ItemKind::Function(function) = &item.kind
+                            && function.kind.is_function()
+                            && function.is_implemented()
+                            && let Some(name) = function.header.name
+                            && function.header.visibility().is_none_or(|v| v >= Visibility::Public)
+                            && !matches!(
+                                function.header.state_mutability(),
+                                StateMutability::Pure | StateMutability::View
+                            )
+                            && !functions.iter().any(|known| known == name.as_str())
+                        {
+                            functions.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    });
+    contracts
+        .into_iter()
+        .flat_map(|(contract, functions)| {
+            functions.into_iter().map(move |function| format!("{contract}.{function}"))
+        })
+        .collect()
+}
+
+/// Deals the functions to the agents in turn, so each agent gets a distinct slice, every function
+/// belongs to an agent, and each large contract reaches several agents. With fewer functions than
+/// agents, the slices repeat.
+fn focus_slices(functions: &[String], agents: usize) -> Vec<Vec<String>> {
+    (0..agents)
+        .map(|agent| {
+            if functions.is_empty() {
+                return vec![];
+            }
+            functions.iter().skip(agent % functions.len()).step_by(agents).cloned().collect()
+        })
+        .collect()
 }
 
 /// Returns the size and modification time of each project file, by path relative to the root.
@@ -1651,5 +1754,52 @@ mod tests {
                 (vec![1], vec!["D::none"]),
             ]
         );
+    }
+
+    // The focus holds the external and public state-changing functions that the target contracts
+    // implement, once per overload set. Interfaces, libraries, and files that do not parse add
+    // none.
+    #[test]
+    fn target_functions_lists_state_changing_entry_points() {
+        let root = tempfile::tempdir().unwrap();
+        let vault = r#"
+pragma solidity ^0.8.20;
+interface IVault { function deposit(uint256 amount) external; }
+library Math { function add(uint256 a, uint256 b) external returns (uint256) { return a + b; } }
+abstract contract Base {
+    function pause() public virtual {}
+    function hook() external virtual;
+}
+contract Vault is Base {
+    uint256 public total;
+    function deposit(uint256 amount) external payable { total += amount; }
+    function deposit(uint256 amount, address to) external { total += amount; to; }
+    function shares(uint256 assets) external pure returns (uint256) { return assets; }
+    function balance() public view returns (uint256) { return total; }
+    function _sync() internal { total = 0; }
+    function sync() public { _sync(); }
+    function hook() external override {}
+    receive() external payable {}
+}
+"#;
+        fs::write(root.path().join("Vault.sol"), vault).unwrap();
+        fs::write(root.path().join("Broken.sol"), "contract Broken { function f( }").unwrap();
+        fs::write(root.path().join("Token.vy"), "@external\ndef f(): pass\n").unwrap();
+        let targets = ["Vault.sol", "Broken.sol", "Token.vy"].map(PathBuf::from);
+        assert_eq!(
+            target_functions(root.path(), &targets),
+            ["Base.pause", "Vault.deposit", "Vault.sync", "Vault.hook"]
+        );
+    }
+
+    // Agents get every n-th function in turn, so the slices are distinct and cover all functions.
+    // With fewer functions than agents, the slices repeat.
+    #[test]
+    fn focus_deals_functions_to_agents_in_turn() {
+        let functions = ["A.a", "A.b", "A.c", "B.d", "B.e"].map(String::from);
+        assert_eq!(focus_slices(&functions, 2), [vec!["A.a", "A.c", "B.e"], vec!["A.b", "B.d"]]);
+        assert_eq!(focus_slices(&functions, 5), [["A.a"], ["A.b"], ["A.c"], ["B.d"], ["B.e"]]);
+        assert_eq!(focus_slices(&functions[..2], 3), [["A.a"], ["A.b"], ["A.a"]]);
+        assert_eq!(focus_slices(&[], 2), [Vec::<String>::new(), vec![]]);
     }
 }

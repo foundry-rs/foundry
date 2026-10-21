@@ -66,6 +66,7 @@ fn rounds(prj: &TestProject) -> serde_json::Value {
 #[forgetest_init]
 fn properties_reports_bugs_that_agents_agree_on(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
+    prj.add_source("Vault.sol", VAULT);
     fs::write(prj.root().join("README.md"), "readme-marker").unwrap();
     let context = prj.root().join("context.md");
     fs::write(&context, "context-marker: rounding notes").unwrap();
@@ -77,6 +78,11 @@ grep -q '"instructions": "Find bugs in the targets' "$prompt"
 grep -q '"count": 3' "$prompt"
 grep -q "\"allowed_path_prefix\": \"test/generated/agent-$agent\"" "$prompt"
 grep -q '"src/Fee.sol"' "$prompt"
+# Agents start with distinct functions of the target contracts, and libraries add none. With fewer
+# functions than agents, the slices repeat.
+case "$agent" in 2) focus=Vault.withdraw ;; *) focus=Vault.deposit ;; esac
+[ "$(sed -n '/"focus": \[/,/\]/p' "$prompt" | tr -d ' \n')" = "\"focus\":[\"$focus\"]" ]
+grep -q 'Start with the functions in agent.focus' "$prompt"
 # The context file reaches every agent verbatim.
 grep -q '"content": "context-marker: rounding notes"' "$prompt"
 # Each agent works in its own copy of the project, with the project's other files.
@@ -180,6 +186,28 @@ added 2 generated test file(s):
 
     assert!(!prj.root().join("test/generated/agent-1/Unused.sol").exists());
     cmd.forge_fuse().args(["test", "--match-contract", "PropertyTest"]).assert_success();
+}
+
+// With `--no-focus`, the prompt has no focus.
+#[forgetest_init]
+fn properties_no_focus_gives_agents_the_same_prompt(prj: _, cmd: _) {
+    prj.add_source("Vault.sol", VAULT);
+    let args = properties_args(
+        &prj,
+        r#"
+if grep -q -e '"focus"' -e 'agent.focus' "$prompt"; then
+    exit 1
+fi
+cat > "$output" <<'JSON'
+{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/VaultSpec.t.sol", "content": "pragma solidity ^0.8.20;\ncontract VaultSpecTest {\n    function testNothing() public pure {}\n}\n"}]}
+JSON
+"#,
+    );
+    cmd.args(args).args(["--agents", "1", "--no-focus"]).assert_success().stdout_eq(str![[r#"
+added 1 generated test file(s):
+  test/generated/agent-1/VaultSpec.t.sol
+
+"#]]);
 }
 
 // A failing test that a generator check saw and the generator then removed is still reported.
@@ -578,6 +606,10 @@ contract Vault {
     /// @notice Returns one share per asset.
     function shares(uint256 assets) external pure returns (uint256) {
         return assets / 2;
+    }
+
+    function withdraw(uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
     }
 }
 "#;
