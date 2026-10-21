@@ -264,6 +264,37 @@ Error: candidate test/generated/Ffi.t.sol sets fs_permissions in inline config
 "#]]);
 }
 
+// Builds and test runs of generated code see only a small allowlist of environment variables, so a
+// generated test cannot read the secrets of Forge's environment.
+#[forgetest_init]
+fn properties_check_hides_the_environment(prj: _, cmd: _) {
+    let candidate = serde_json::json!({
+        "schema": "foundry/properties-candidate-v1",
+        "files": [{"path": "test/generated/Env.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract EnvTest is Test {\n    function testSecret() public view {\n        vm.envString(\"SECRET\");\n    }\n}\n"}]
+    });
+    fs::write(prj.root().join("env.json"), candidate.to_string()).unwrap();
+    cmd.env("SECRET", "secret-marker");
+    cmd.args(["properties", "--check", "env.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{
+  "passed": false,
+  "reasons": [
+    "EnvTest::testSecret failed on seed 1: vm.envString: environment variable /"SECRET/" not found",
+    "EnvTest::testSecret failed on seed 2: vm.envString: environment variable /"SECRET/" not found"
+  ],
+  "possible_bugs": [
+    {
+      "test": "EnvTest::testSecret",
+      "path": "test/generated/Env.t.sol",
+      "reason": "seed 1: vm.envString: environment variable /"SECRET/" not found; seed 2: vm.envString: environment variable /"SECRET/" not found"
+    }
+  ]
+}
+
+"#]]);
+}
+
 // With `--no-focus`, the prompt has no focus.
 #[forgetest_init]
 fn properties_no_focus_gives_agents_the_same_prompt(prj: _, cmd: _) {
