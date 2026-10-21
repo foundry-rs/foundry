@@ -81,26 +81,6 @@ const MAX_PROMPT_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_REPAIR_ROUNDS: usize = 1;
 /// Records every test that fails on every seed in a `--check` run, one JSON object per line.
 const CHECK_JOURNAL: &str = "check-failures.jsonl";
-/// Agent settings and instruction files that a workspace leaves out at every level. Settings can
-/// hold hooks that run commands on the host. `CLAUDE.md` and `AGENTS.md` are project docs, but
-/// they steer the agents that work in the copy, so a user who wants them passes them with
-/// `--context`. Entries of dependency directories are links, so they keep their own files.
-const AGENT_CONFIG: [&str; 14] = [
-    ".agents",
-    ".claude",
-    ".clinerules",
-    ".codex",
-    ".cursor",
-    ".cursorrules",
-    ".gemini",
-    ".windsurf",
-    ".windsurfrules",
-    "AGENT.md",
-    "AGENTS.md",
-    "CLAUDE.local.md",
-    "CLAUDE.md",
-    "GEMINI.md",
-];
 /// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
 /// contract or test name, and no project file is under `/forge-properties-none`.
 const SELECT_ALL_TESTS: [&str; 10] = [
@@ -1357,8 +1337,8 @@ fn candidate_workspace(
     Ok(workspace)
 }
 
-/// Copies a project directory into a workspace, without Git data, build output, agent settings and
-/// instructions (`AGENT_CONFIG`), and, at the project root, hidden entries such as `.env`.
+/// Copies a project directory into a workspace, without Git data, build output, and, at the
+/// project root, hidden entries such as `.env`.
 ///
 /// A dependency directory becomes a real directory whose entries link to the project's entries.
 /// A linked dependency directory would resolve outside the workspace, and the compiler then
@@ -1378,7 +1358,6 @@ fn copy_project_tree(
         let rel = dir.join(&name);
         let target = copy.join(&rel);
         if name == ".git"
-            || AGENT_CONFIG.iter().any(|config| name == *config)
             || (dir.as_os_str().is_empty() && name.to_string_lossy().starts_with('.'))
             || path == config.out
             || path == config.cache_path
