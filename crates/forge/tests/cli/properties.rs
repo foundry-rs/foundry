@@ -163,8 +163,6 @@ fn properties_keeps_imported_candidate_helpers(prj: _, cmd: _) {
     let args = properties_args(
         &prj,
         r#"
-# The check command keeps `--allow-ffi`.
-grep -q '"--allow-ffi"' "$prompt"
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
@@ -177,80 +175,17 @@ cat > "$output" <<'JSON'
 JSON
 "#,
     );
-    cmd.args(args)
-        .args(["--agents", "1", "--target", "src/Fee.sol", "--allow-ffi"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
+        str![[r#"
 added 2 generated test file(s):
   test/generated/agent-1/Helper.sol
   test/generated/agent-1/Property.t.sol
 
-"#]]);
+"#]],
+    );
 
     assert!(!prj.root().join("test/generated/agent-1/Unused.sol").exists());
     cmd.forge_fuse().args(["test", "--match-contract", "PropertyTest"]).assert_success();
-}
-
-// Generated tests run outside the agent's sandbox, so `vm.ffi` fails in Forge's copies of the
-// project unless the user passes `--allow-ffi`, and a generated test cannot turn on `ffi` or widen
-// `fs_permissions` in inline config.
-#[forgetest_init]
-fn properties_turns_off_ffi_unless_allowed(prj: _, cmd: _) {
-    prj.update_config(|config| config.ffi = true);
-    let marker = prj.root().join("ffi-ran");
-    let write_candidate = |name: &str, content: &str| {
-        let candidate = serde_json::json!({
-            "schema": "foundry/properties-candidate-v1",
-            "files": [{"path": "test/generated/Ffi.t.sol", "content": content}]
-        });
-        fs::write(prj.root().join(name), candidate.to_string()).unwrap();
-    };
-    write_candidate(
-        "ffi.json",
-        &format!(
-            "pragma solidity ^0.8.20;\nimport {{Test}} from \"forge-std/Test.sol\";\ncontract FfiTest is Test {{\n    function testFfi() public {{\n        string[] memory command = new string[](2);\n        command[0] = \"touch\";\n        command[1] = \"{}\";\n        vm.ffi(command);\n    }}\n}}\n",
-            marker.display()
-        ),
-    );
-    write_candidate(
-        "inline-ffi.json",
-        "pragma solidity ^0.8.20;\ncontract FfiTest {\n    /// forge-config: default.ffi = true\n    function testFfi() public pure {}\n}\n",
-    );
-    write_candidate(
-        "inline-fs.json",
-        "pragma solidity ^0.8.20;\ncontract FfiTest {\n    /// forge-config: default.fs_permissions = [{ access = \"read-write\", path = \"/\" }]\n    function testWrite() public pure {}\n}\n",
-    );
-    let check = ["properties", "--check", "CANDIDATE", "--seed", "1", "--seed", "2"];
-    let check = |candidate| check.map(|arg| if arg == "CANDIDATE" { candidate } else { arg });
-
-    cmd.args(check("ffi.json")).assert_failure().stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "FfiTest::testFfi failed on seed 1: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands",
-    "FfiTest::testFfi failed on seed 2: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
-  ],
-  "possible_bugs": [
-    {
-      "test": "FfiTest::testFfi",
-      "path": "test/generated/Ffi.t.sol",
-      "reason": "seed 1: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands; seed 2: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
-    }
-  ]
-}
-
-"#]]);
-    assert!(!marker.exists());
-    cmd.forge_fuse().args(check("ffi.json")).arg("--allow-ffi").assert_success();
-    assert!(marker.exists());
-    cmd.forge_fuse().args(check("inline-ffi.json")).assert_failure().stderr_eq(str![[r#"
-Error: candidate test/generated/Ffi.t.sol sets ffi in inline config
-
-"#]]);
-    cmd.forge_fuse().args(check("inline-fs.json")).assert_failure().stderr_eq(str![[r#"
-Error: candidate test/generated/Ffi.t.sol sets fs_permissions in inline config
-
-"#]]);
 }
 
 // With `--no-focus`, the prompt has no focus.

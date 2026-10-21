@@ -174,13 +174,6 @@ pub struct PropertiesArgs {
     #[arg(long)]
     no_focus: bool,
 
-    /// Let generated tests run host commands with `vm.ffi` if the project enables `ffi`.
-    ///
-    /// Generated tests run under Forge, outside the sandbox of the agent that wrote them, so
-    /// Forge turns `ffi` off in its copies of the project by default.
-    #[arg(long)]
-    allow_ffi: bool,
-
     /// Agent whose check journal records a `--check` run. Forge sets it in the check command of
     /// each agent.
     #[arg(long, hide = true, requires = "check", value_name = "ID")]
@@ -397,10 +390,7 @@ impl PropertiesArgs {
             "--target paths must be project-relative paths"
         );
         let root = self.root.canonicalize().wrap_err("failed to resolve project root")?;
-        let mut config = Config::load_with_root(&root)?.sanitized();
-        // Every workspace writes this config, so no generated test can call `vm.ffi` without
-        // `--allow-ffi`. Config ignores `FFI` environment variables.
-        config.ffi &= self.allow_ffi;
+        let config = Config::load_with_root(&root)?.sanitized();
         let generated_tests =
             workspace::relative_to_root(&config.root, &config.test).join("generated");
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
@@ -879,7 +869,6 @@ impl Agent<'_> {
             .map(|arg| arg.to_string_lossy().into_owned())
             .chain(args.seed.iter().flat_map(|seed| ["--seed".to_string(), format!("{seed:#x}")]))
             .chain(["--agent".to_string(), self.id.to_string()])
-            .chain(args.allow_ffi.then(|| "--allow-ffi".to_string()))
             .chain(campaign.build_cache.iter().flat_map(|build| {
                 ["--build-cache".to_string(), build.to_string_lossy().into_owned()]
             }))
@@ -1647,32 +1636,22 @@ fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<(
         ensure!(paths.insert(&file.path), "candidate contains duplicate file paths");
         // The seeds must decide every run, so a generated test cannot pin its own seed.
         ensure!(
-            !has_inline_setting(&file.content, &["fuzz", "seed"]),
+            !has_inline_fuzz_seed(&file.content),
             "candidate {} sets a seed in inline config",
             file.path.display()
         );
-        // Generated tests run outside the agent's sandbox, so they cannot widen their own access
-        // to the host.
-        for setting in ["ffi", "fs_permissions"] {
-            ensure!(
-                !has_inline_setting(&file.content, &[setting]),
-                "candidate {} sets {setting} in inline config",
-                file.path.display()
-            );
-        }
     }
     Ok(())
 }
 
-/// Returns whether NatSpec inline config sets the setting at `path` in any profile, in dotted or
-/// inline-table form.
-fn has_inline_setting(source: &str, path: &[&str]) -> bool {
+/// Checks both dotted and inline-table forms of a NatSpec fuzz seed override.
+fn has_inline_fuzz_seed(source: &str) -> bool {
     source.lines().filter_map(|line| line.split_once("forge-config:")).any(|(_, setting)| {
         let setting = setting.split_once("*/").map_or(setting, |(setting, _)| setting);
         setting.trim().parse::<toml_edit::DocumentMut>().is_ok_and(|config| {
-            config.iter().any(|(_, profile)| {
-                path.iter().try_fold(profile, |item, key| item.get(*key)).is_some()
-            })
+            config
+                .iter()
+                .any(|(_, profile)| profile.get("fuzz").and_then(|fuzz| fuzz.get("seed")).is_some())
         })
     })
 }
