@@ -30,6 +30,9 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip==26.2.2
+
       - name: Install Vyper
         run: pip install git+https://github.com/vyperlang/vyper.git@v0.4.3
 
