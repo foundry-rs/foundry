@@ -237,13 +237,13 @@ impl BindArgs {
         let files = if let Some(cache) = cache.as_ref().filter(|_| config.cache) {
             let mut files = self.cached_artifact_paths(config, cache, graph)?;
             // External adapter artifacts are not part of the built-in compiler cache.
-            files.extend(json_files(&config.out.join(".external")).map(|path| (path, None)));
+            files.extend(json_files(&config.out.join(".external")));
             files
         } else {
             // Without cache-based selection, include all artifacts on disk.
-            json_files(&config.out).map(|path| (path, None)).collect()
+            json_files(&config.out).collect()
         };
-        let mut files = self.filter_artifact_paths(files)?;
+        let mut files = self.filter_artifact_paths(files.into_iter().map(|path| (path, None)))?;
         // Source identity is independent of cache-based selection: compiler variants can live in
         // different artifact directories, even with --no-cache.
         let sources = cache
@@ -254,28 +254,21 @@ impl BindArgs {
             })
             .collect::<HashMap<_, _>>();
         for file in &mut files {
-            file.source = file
-                .source
-                .take()
-                .or_else(|| sources.get(&file.path).map(|source| (*source).clone()))
+            file.source = sources
+                .get(&file.path)
+                .map(|source| (*source).clone())
                 .or_else(|| artifact_source(&file.path, &file.name))
                 .map(|source| normalize_path(&config.root.join(source)));
         }
         // Cache-based selection already guarantees membership for built-in artifacts.
-        if let Some(cache) = cache.filter(|_| !config.cache)
+        if !config.cache
             && !definitions.is_empty()
-        {
-            let cached_artifacts = cache
-                .entries()
-                .flat_map(|entry| entry.artifacts())
-                .map(|artifact| &artifact.path)
-                .collect::<HashSet<_>>();
-            if files.iter().any(|file| {
+            && files.iter().any(|file| {
                 !file.path.starts_with(config.out.join(".external"))
-                    && !cached_artifacts.contains(&file.path)
-            }) {
-                definitions.clear();
-            }
+                    && !sources.contains_key(&file.path)
+            })
+        {
+            definitions.clear();
         }
         Ok((files, definitions))
     }
@@ -286,7 +279,7 @@ impl BindArgs {
         config: &Config,
         cache: &CompilerCache<MultiCompilerSettings>,
         graph: Result<Graph<MultiCompilerParser>, SolcError>,
-    ) -> Result<Vec<(PathBuf, Option<PathBuf>)>> {
+    ) -> Result<Vec<PathBuf>> {
         let filter = self.get_filter()?;
         let selected = cache
             .files
@@ -356,7 +349,7 @@ impl BindArgs {
                             "Cached compiler settings for {}:{name} and profile `{profile}` do not match; run `forge build` first",
                             source.display(),
                         );
-                        files.push((artifact.path.clone(), Some(source.clone())));
+                        files.push(artifact.path.clone());
                     }
                 }
             }

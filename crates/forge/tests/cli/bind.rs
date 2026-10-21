@@ -860,28 +860,16 @@ contract User is DepOwnable {}
     cmd.forge_fuse().arg("build").assert_success();
 
     // Compiler and artifact-only discovery retain the first contract and report the skipped source.
-    for skip_build in [true, false] {
-        for no_cache in [false, true] {
-            for select in [false, true] {
-                let mut args = vec!["bind", "--overwrite"];
-                if select {
-                    args.extend(["--select", "^Ownable$"]);
-                }
-                if skip_build {
-                    args.push("--skip-build");
-                }
-                if no_cache {
-                    args.push("--no-cache");
-                }
-                cmd.forge_fuse().args(&args).assert_success().stderr_eq(if select {
-                    str![[r#"
-Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/Z.sol/Ownable.json)
-Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/src/Ownable.sol/Ownable.json)
-Generating bindings for 1 contracts
-Bindings have been generated to [..]
-
-"#]]
-                } else {
+    for build_args in [&["--skip-build"][..], &[]] {
+        for cache in [&[][..], &["--no-cache"]] {
+            for selection in [&[][..], &["--select", "^Ownable$"]] {
+                cmd.forge_fuse()
+                    .args(["bind", "--overwrite"])
+                    .args(build_args)
+                    .args(cache)
+                    .args(selection)
+                    .assert_success()
+                    .stderr_eq(if selection.is_empty() {
                     str![[r#"
 Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/Z.sol/Ownable.json)
 Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/src/Ownable.sol/Ownable.json)
@@ -889,15 +877,23 @@ Generating bindings for 2 contracts
 Bindings have been generated to [..]
 
 "#]]
+                } else {
+                    str![[r#"
+Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/Z.sol/Ownable.json)
+Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/src/Ownable.sol/Ownable.json)
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]
                 });
                 let binding = fs::read_to_string(&binding_path).unwrap();
-                if skip_build {
+                if build_args.is_empty() {
+                    assert_data_eq!(binding, expected.as_str().raw());
+                } else {
                     assert_binding_bytecode(
                         &binding,
                         &prj.artifacts().join("Ownable.sol/Ownable.json"),
                     );
-                } else {
-                    assert_data_eq!(binding, expected.as_str().raw());
                 }
             }
         }
@@ -933,12 +929,12 @@ fn bind_keeps_first_external_contract_name_collision(prj: _, cmd: _) {
     .unwrap();
 
     // Keep the synthetic external artifact without invoking an external compiler adapter.
-    for no_cache in [false, true] {
-        let mut args = vec!["bind", "--skip-build", "--select", "^Ownable$", "--overwrite"];
-        if no_cache {
-            args.push("--no-cache");
-        }
-        cmd.forge_fuse().args(&args).assert_success().stderr_eq(str![[r#"
+    for cache in [&[][..], &["--no-cache"]] {
+        cmd.forge_fuse()
+            .args(["bind", "--skip-build", "--select", "^Ownable$", "--overwrite"])
+            .args(cache)
+            .assert_success()
+            .stderr_eq(str![[r#"
 Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/.external/fixture/app/Ownable.json) and skipping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json)
 Generating bindings for 1 contracts
 Bindings have been generated to [..]
@@ -1444,15 +1440,13 @@ contract Foo_Bar {{
         ),
     );
 
-    for (single_file, expected, output) in
-        [(false, expected, "src/foo_bar.rs"), (true, expected_single_file, "src/lib.rs")]
-    {
-        let mut args = vec!["bind", "--select-all"];
-        if single_file {
-            args.push("--single-file");
-        }
+    for (mode, expected, output) in [
+        (&[][..], expected, "src/foo_bar.rs"),
+        (&["--single-file"][..], expected_single_file, "src/lib.rs"),
+    ] {
+        let args = ["bind", "--select-all"];
         // Skipped duplicate names must never reach the foo_bar.rs module collision check.
-        cmd.forge_fuse().args(&args).arg("--overwrite").assert_success().stderr_eq(str![[r#"
+        cmd.forge_fuse().args(args).args(mode).arg("--overwrite").assert_success().stderr_eq(str![[r#"
 Warning: Binding name collision for `Foo_Bar`: keeping contract `Foo$Bar` ([..]/Names.sol/Foo$Bar.json) and skipping contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
 Generating bindings for 1 contracts
 Bindings have been generated to [..]
@@ -1463,7 +1457,7 @@ Bindings have been generated to [..]
             expected.as_str().raw()
         );
 
-        cmd.forge_fuse().args(&args).arg("--skip-build").assert_success().stderr_eq(str![[r#"
+        cmd.forge_fuse().args(args).args(mode).arg("--skip-build").assert_success().stderr_eq(str![[r#"
 Warning: Binding name collision for `Foo_Bar`: keeping contract `Foo$Bar` ([..]/Names.sol/Foo$Bar.json) and skipping contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
 Bindings found. Checking for consistency.
 Checking bindings for 1 contracts
@@ -1575,35 +1569,35 @@ fn bind_rejects_generated_entrypoint_collisions(prj: _, cmd: _) {
     prj.add_source("Names.sol", "contract Lib {} contract Mod {}");
     cmd.arg("build").assert_success();
 
-    for (name, module, entrypoint) in [("Lib", false, "src/lib.rs"), ("Mod", true, "mod.rs")] {
-        let bindings = prj.root().join(format!("bindings-{name}"));
+    for (name, module, file, reserved) in [
+        ("Lib", false, "src/lib.rs", true),
+        ("Lib", true, "lib.rs", false),
+        ("Mod", false, "src/mod.rs", false),
+        ("Mod", true, "mod.rs", true),
+    ] {
+        let bindings = prj.root().join(format!("bindings-{name}-{module}"));
         let selection = format!("^{name}$");
         let mut args = vec!["bind", "--skip-build", "--select", &selection];
         if module {
             args.push("--module");
         }
+        args.extend(["--bindings-path", bindings.to_str().unwrap()]);
 
-        // Single-file output keeps the contract inside the entry point without overwriting it.
-        cmd.forge_fuse()
-            .args(&args)
-            .arg("--single-file")
-            .arg("--bindings-path")
-            .arg(&bindings)
-            .assert_success();
-        let output = bindings.join(entrypoint);
+        // Reserved names work in a single file; the other output mode permits separate files.
+        cmd.forge_fuse().args(&args);
+        if reserved {
+            cmd.arg("--single-file");
+        }
+        cmd.assert_success();
+        let output = bindings.join(file);
         let before = fs::read_to_string(&output).unwrap();
         assert_binding_bytecode(&before, &prj.artifacts().join(format!("Names.sol/{name}.json")));
         if !module {
             assert_bindings_compile(&bindings);
         }
 
-        cmd.forge_fuse()
-            .args(&args)
-            .arg("--bindings-path")
-            .arg(&bindings)
-            .arg("--overwrite")
-            .assert_failure()
-            .stderr_eq(if module {
+        if reserved {
+            cmd.forge_fuse().args(&args).arg("--overwrite").assert_failure().stderr_eq(if module {
                 str![[r#"
 Error: Binding module name collision for `mod`: contract `Mod` ([..]/Names.sol/Mod.json) conflicts with generated entry point `mod.rs`
 
@@ -1614,22 +1608,7 @@ Error: Binding module name collision for `lib`: contract `Lib` ([..]/Names.sol/L
 
 "#]]
             });
-        assert_eq!(fs::read_to_string(output).unwrap(), before);
-
-        // The same name is valid when the other output mode reserves a different entry point.
-        let bindings = prj.root().join(format!("{name}-other-mode"));
-        let mut args = vec!["bind", "--skip-build", "--select", &selection];
-        if !module {
-            args.push("--module");
-        }
-        cmd.forge_fuse().args(args).arg("--bindings-path").arg(&bindings).assert_success();
-        let output = bindings.join(if module { "src/mod.rs" } else { "lib.rs" });
-        assert_binding_bytecode(
-            &fs::read_to_string(output).unwrap(),
-            &prj.artifacts().join(format!("Names.sol/{name}.json")),
-        );
-        if module {
-            assert_bindings_compile(&bindings);
+            assert_eq!(fs::read_to_string(output).unwrap(), before);
         }
     }
 }
