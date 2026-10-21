@@ -843,3 +843,63 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
     }
 }
+
+// Library ABIs omit external functions with storage parameters. A revert in such a function must
+// not show as an unrecognized function selector.
+#[forgetest]
+fn library_storage_param_revert(prj: _, cmd: _) {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+library Lib {
+    struct S {
+        uint256 x;
+    }
+
+    uint256 public constant MAX = 10;
+
+    function check(S storage s, uint256 y) external view returns (uint256) {
+        if (s.x + y > MAX) {
+            assembly {
+                revert(0, 0)
+            }
+        }
+        return s.x + y;
+    }
+}
+
+contract Box {
+    Lib.S s;
+
+    function run(uint256 y) external view returns (uint256) {
+        return Lib.check(s, y);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Box.t.sol",
+        r#"
+import "../src/Lib.sol";
+
+contract BoxTest {
+    function test_run() public {
+        new Box().run(11);
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        cmd.forge_fuse().args(["test", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
+...
+    ├─ [..] Box::run(11) [staticcall]
+    │   ├─ [..] Lib::52f5004a([..]) [delegatecall]
+    │   │   └─ ← [Revert] EvmError: Revert
+    │   └─ ← [Revert] EvmError: Revert
+    └─ ← [Revert] EvmError: Revert
+...
+"#]]);
+    }
+}
