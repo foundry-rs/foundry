@@ -68,6 +68,13 @@ fn properties_reports_bugs_that_agents_agree_on(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
     prj.add_source("Vault.sol", VAULT);
     fs::write(prj.root().join("README.md"), "readme-marker").unwrap();
+    for path in
+        ["CLAUDE.md", "AGENTS.md", "src/CLAUDE.md", ".claude/settings.json", "src/.cursor/rules"]
+    {
+        let path = prj.root().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "agent-config").unwrap();
+    }
     let context = prj.root().join("context.md");
     fs::write(&context, "context-marker: rounding notes").unwrap();
     let mut args = properties_args(
@@ -87,6 +94,10 @@ grep -q 'Start with the functions in agent.focus' "$prompt"
 grep -q '"content": "context-marker: rounding notes"' "$prompt"
 # Each agent works in its own copy of the project, with the project's other files.
 grep -q readme-marker README.md
+# Agent settings and instructions stay out of the copy.
+for path in CLAUDE.md AGENTS.md src/CLAUDE.md .claude src/.cursor; do
+    [ ! -e "$path" ]
+done
 dir="test/generated/agent-$agent"
 spec='{"path": "'$dir'/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}'
 usage='"usage": {"input_tokens": 1000, "output_tokens": 200, "cost_usd": 0.01}'
