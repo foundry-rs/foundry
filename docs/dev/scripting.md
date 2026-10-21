@@ -143,8 +143,10 @@ existing attempt.
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
 from a multichain deployment are checked concurrently. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash and returns an error without appending
-the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction. If that endpoint
+the receipt, which can leave a receipt hole. The revert is not persisted, so a later `--resume`
+rediscovers it from the durable attempt and fails again. Receipt-watcher timeouts keep retrying
+without consuming the retry budget while the selected RPC still returns the transaction, so
+ordinary polling is unbounded; Tempo batches use `transaction_timeout`. If that endpoint
 returns no transaction, the durable attempt remains the source of identity: signed bytes may be
 replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
 while unknown outcomes remain blocked until explicitly resolved. Removing a hash from `pending`
@@ -153,10 +155,12 @@ An ordinary broadcast that otherwise succeeds while a submitted operation still 
 exits successfully, since a lagging or load-balanced endpoint can briefly return no transaction,
 but it replaces the success message with a warning on stderr that lists those operations.
 
-An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and can
-also remove the compatibility hash from `pending`. Neither that incomplete receipt nor one endpoint
+An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path. If its
+hash belongs to a durable attempt, reconciliation fails without removing it from `pending`;
+otherwise the compatibility hash can be removed. Neither that incomplete receipt nor one endpoint
 returning no transaction proves that a submission never reached the network, so neither condition
-permits the recovery store to infer a replacement attempt.
+permits replacing an existing durable attempt. Ordinary legacy imports have no durable attempt and
+can prepare a new submission.
 
 Hashes are polled in operation order, because `pending` follows submission-response order and a
 later nonce can remain visible indefinitely behind an earlier transaction that is gone. Polling
@@ -197,11 +201,18 @@ generation-tagged state fails closed. A generationless legacy public/sensitive p
 after its pair-consistency checks pass. Batch import additionally validates transaction-hash,
 pending, and receipt associations. Resume then:
 
-1. reuses available signers or re-executes only to collect missing script-provided signers;
-2. reconciles hashes currently listed in `pending`;
-3. derives remaining ordinary work by operation hash and batch work by a validated contiguous
-   prefix;
-4. prepares and submits that remaining work.
+1. stops, naming the attempt ID, while any delegated outcome remains unknown;
+2. outside `--batch`, reconciles pending hashes, known delegated hashes, and saved signed attempts
+   with mined receipts;
+3. acquires signers, or re-executes the script, only for remaining unsigned requests without a
+   saved signed payload or batch attempt;
+4. derives remaining ordinary work by operation hash and batch work by a validated contiguous
+   prefix, then prepares new attempts or replays saved signed bytes. `--batch` reconciles its saved
+   attempt here, inside `broadcast_batch`.
+
+A saved signed attempt that is visible but unmined and has no pending hash is not reconciled in
+step 2. It needs no signer, but signers for other operations can be requested before it is
+replayed.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
 endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.
@@ -234,15 +245,15 @@ completion permits skipping an operation on another.
 
 ## Known failure windows
 
-| Window                                                                    | Recovery behavior or remaining limitation                                  |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| A node accepts a transaction but its response is lost                     | A signed attempt is reconciled by hash; a delegated attempt fails closed   |
+| Window                                                                    | Recovery behavior or remaining limitation                                   |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| A node accepts a transaction but its response is lost                     | A signed attempt is reconciled by hash; a delegated attempt fails closed    |
 | The RPC returns a hash but the process exits before save                  | The pre-submission attempt remains durable and is reconciled conservatively |
 | A receipt is observed but the process exits before save                   | Resume sees old pending state and rediscovers the receipt                   |
-| A batch receipt hole precedes later confirmations                         | Batch resume advances only across a contiguous completed prefix            |
-| One RPC forgets a transaction or repeatedly returns an incomplete receipt | The attempt remains durable and replacement is not inferred                |
-| The process exits during a snapshot write                                 | Atomic replacement retains either the previous or new complete snapshot    |
-| Two processes resume the same sequence                                    | The recovery lock excludes a competing writer                              |
+| A batch receipt hole precedes later confirmations                         | Batch resume rejects a receipt after an incomplete operation                |
+| One RPC forgets a transaction or repeatedly returns an incomplete receipt | The attempt remains durable and replacement is not inferred                 |
+| The process exits during a snapshot write                                 | Atomic replacement retains either the previous or new complete snapshot     |
+| Two processes resume the same sequence                                    | The recovery lock excludes a competing writer                               |
 
 ## Recovery contract
 
@@ -254,14 +265,17 @@ implemented guarantee.
 ### Stable plan
 
 - Persist a versioned, immutable operation plan before the first submission.
-- Give every operation a stable ID independent of receipt order, container position changes, and
-  process lifetime. Scope identity by deployment and chain.
-- Admit resume only when the snapshot's immutable plan matches its ordered operations, including
-  chain, batch membership, transaction requests, and RPC assignment. Hashes, receipts, and pending
-  progress are mutable snapshot state and do not define plan identity. The initial implementation
-  does not separately persist build artifacts, signature arguments, or full execution
-  configuration: changes to those inputs are admitted only when they reconstruct the same immutable
-  operations.
+- Give every operation a stable `(sequence, operation)` ID within its recovery generation. IDs are
+  independent of receipt order and process lifetime; resume preserves the saved sequence and
+  operation order.
+- Admit resume only when the snapshot's immutable plan matches the ordered operations saved in the
+  same snapshot, including chain, batch membership, transaction fingerprints, RPC assignment, the
+  requested `--batch` mode, and the snapshot's single- or multichain shape. Hashes, receipts, and
+  pending progress are mutable snapshot state and do not define plan identity. The initial
+  implementation does not persist build artifacts, signature arguments, or full execution
+  configuration, and does not compare the plan with the current build: resume never rebuilds
+  operations from those inputs, so changing them does not change the saved plan, but the change is
+  not detected either.
 - Never silently rebuild, renumber, omit, or insert operations during resume.
 - Preserve batch membership and assign a stable batch ID when operations share one network
   transaction.
@@ -273,9 +287,10 @@ implemented guarantee.
 - For locally signed submissions, persist final encoded bytes and the derived hash before sending.
   A retry sends exactly those bytes.
 - For browser or unlocked signing, persist the delegation intent before invoking the external
-  signer or RPC. If control returns without a definitive hash, or the process exits before recording
-  one, preserve the intent as `outcome unknown` and stop; do not request another attempt
-  automatically.
+  signer or RPC. If submission returns an ambiguous error, or the process exits before recording a
+  definitive hash, preserve the intent and block automatic replacement; resume treats an
+  interrupted prepared intent as `outcome unknown`. A recognized definite non-submission error
+  instead clears the intent and fails the current run.
 - Preserve pre-signed envelopes without converting them back into requests.
 
 ### Durable state
@@ -298,14 +313,16 @@ implemented guarantee.
 
 ### Conservative reconciliation
 
-- Reconcile durable attempts before resolving signers or preparing new attempts.
-- Track outcome per operation or batch, not through receipt counts.
-- A known hash can become confirmed, reverted, still pending, explicitly replaced, or unresolved.
-  Absence from one RPC is not proof that it was never accepted.
-- An unknown outcome remains unresolved until an operator or supported chain query establishes its
-  result. Resume reports the attempt ID and conservatively blocks later submissions in saved
-  sequence and multichain-container order until the unresolved outcome is resolved. Operations in
-  the same batch remain ordered together. Once established, the operator targets that attempt with
+- Reconcile known submissions before resolving signers, with the exceptions described in
+  [Persistence and resume](#persistence-and-resume).
+- Track successful completion per operation or batch by hash, not through receipt counts. Reverted
+  outcomes are not persisted.
+- Absence from one RPC is not proof that a submission was never accepted. An invisible signed
+  submission stays replayable with identical bytes and the run continues with a warning; batch
+  disappearance and an invisible delegated submission with a known hash return an error.
+- An unknown delegated outcome remains unresolved until an operator or supported chain query
+  establishes its result. Resume names the attempt ID and refuses to reconcile or submit anything
+  while it is unresolved. Once established, the operator targets that attempt with
   `--resume-attempt <ID>` and records a discovered hash with `--resume-tx-hash <HASH>`, or explicitly
   permits a retry with `--resume-retry` only after proving non-submission.
 - Apply the configured confirmation count independently while reconciling each chain; this does not
@@ -329,9 +346,9 @@ fees or validity fields. Replacement workflows are deferred to deployment plans 
 ### Handoff and compatibility
 
 - Recovery state may contain public signed payloads and RPC information but never signer secrets.
-- Another operator provides a signer only for operations with no signed or submitted attempt.
-  Reconciliation and identical-byte rebroadcast do not need that signer, and an ambiguous delegated
-  attempt remains blocked.
+- Pre-signed envelopes, saved signed payloads, and saved batch attempts do not require a signer for
+  recovery. Other incomplete unsigned requests remain eligible for signer acquisition. Unknown
+  delegated outcomes block resume before signer acquisition.
 - The initial recovery implementation retains the saved endpoint. Validated endpoint rebinding is
   deferred to deployment plans and handoff.
 - Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
