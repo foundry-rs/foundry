@@ -364,21 +364,21 @@ svm = { package = "svm-rs", version = "0.5.30", default-features = false, featur
 
 ## evm2
 # Keep all migration satellites on the same engine fork.
-evm2 = { git = "https://github.com/mablr/evm2", rev = "a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84", default-features = false, features = [
+evm2 = { git = "https://github.com/mablr/evm2", rev = "64785b94b5697f6d4bb9f03d9884dd4cf0356cf2", default-features = false, features = [
     "std",
 ] }
-evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84", features = [
+evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "64785b94b5697f6d4bb9f03d9884dd4cf0356cf2", features = [
     "serde",
 ] }
 # Tempo's evm2 integration (tempoxyz/tempo#7871). The `-evm2` aliases stay while the revm-based
 # Tempo crates of the same name are still wired.
-tempo-evm = { git = "https://github.com/mablr/tempo", rev = "048b6f5fed72fca5c6f72712526a3ee08e2b4a3f", default-features = false }
+tempo-evm = { git = "https://github.com/mablr/tempo", rev = "158118b957dad5080a6d29d02d59a4783669276c", default-features = false }
 tempo-hardfork = { git = "https://github.com/mablr/tempo", rev = "048b6f5fed72fca5c6f72712526a3ee08e2b4a3f", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-primitives-evm2 = { package = "tempo-primitives", git = "https://github.com/mablr/tempo", rev = "048b6f5fed72fca5c6f72712526a3ee08e2b4a3f", default-features = false }
-tempo-precompiles-evm2 = { package = "tempo-precompiles", git = "https://github.com/mablr/tempo", rev = "048b6f5fed72fca5c6f72712526a3ee08e2b4a3f", default-features = false }
+tempo-primitives-evm2 = { package = "tempo-primitives", git = "https://github.com/mablr/tempo", rev = "158118b957dad5080a6d29d02d59a4783669276c", default-features = false }
+tempo-precompiles-evm2 = { package = "tempo-precompiles", git = "https://github.com/mablr/tempo", rev = "158118b957dad5080a6d29d02d59a4783669276c", default-features = false }
 # Op, Base and Monad evm2 type families.
 op-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "efe51d34832c8102f30730cabcd74d19a51adcee", default-features = false }
 base-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "efe51d34832c8102f30730cabcd74d19a51adcee", default-features = false }
