@@ -151,8 +151,9 @@ pub struct PropertiesArgs {
     /// copy. When it exits or reaches --timeout, Forge ends its process group and runs every
     /// `*.sol` file under FORGE_PROPERTIES_OUT in a fresh copy of the project on every seed. A
     /// test that fails on every seed is a possible bug. Its claim is the comment right above the
-    /// test function, else the test name. Forge keeps the files whose tests all pass. A nonzero
-    /// exit status is an error, but Forge still runs the agent's tests.
+    /// test function, `// @bug <Contract>.<function> <file>:<line> — <claim>`, else the test name.
+    /// Forge keeps the files whose tests all pass. A nonzero exit status is an error, but
+    /// Forge still runs the agent's tests.
     #[arg(long, required = true, value_name = "PATH", verbatim_doc_comment)]
     agent_command: PathBuf,
 
@@ -172,9 +173,10 @@ pub struct PropertiesArgs {
     /// Number of agents that must report the same root cause before Forge reports it as a
     /// possible bug.
     ///
-    /// Two failing tests have the same root cause when their claims name the same Solidity file
-    /// and share a function name or at least 30% of their words. Groups below the quorum are only
-    /// in `cache/properties/report.json`. Defaults to 2, or 1 with a single agent.
+    /// Two failing tests have the same root cause when their `@bug` tags name the same function
+    /// in the same Solidity file at near lines. Without both tags, their claims must name the same
+    /// Solidity file and share a function name or at least 30% of their words. Forge lists the
+    /// groups below the quorum after the possible bugs. Defaults to 2, or 1 with a single agent.
     #[arg(long, value_name = "K")]
     quorum: Option<usize>,
 
@@ -475,27 +477,32 @@ impl Campaign<'_> {
         let (possible_bugs, below_quorum) = group_failures(failures)
             .into_iter()
             .partition::<Vec<_>, _>(|group| group.agents.len() >= self.quorum);
-        for group in &possible_bugs {
+        let print_group = |label: &str, group: &BugGroup| -> Result<()> {
             let lead = &group.failures[0].failure;
             let summary = lead.claim.as_deref().unwrap_or(&lead.test);
-            sh_println!(
-                "possible bug ({}/{} agents): {summary}",
-                group.agents.len(),
-                self.args.agents
-            )?;
+            sh_println!("{label} ({}/{} agents): {summary}", group.agents.len(), self.args.agents)?;
             for failure in &group.failures {
                 sh_println!("{failure}")?;
             }
+            Ok(())
+        };
+        for group in &possible_bugs {
+            print_group("possible bug", group)?;
         }
         let report_path = self.cache_root.join("report.json");
         let report_display = report_path.strip_prefix(&self.config.root).unwrap_or(&report_path);
+        // The groups below the quorum hold most of the bugs that agents find, so they follow the
+        // possible bugs as a separate list.
         if !below_quorum.is_empty() {
             sh_println!(
-                "{} possible bug(s) below the quorum of {}: see {}",
+                "{} possible bug(s) below the quorum of {}:",
                 below_quorum.len(),
-                self.quorum,
-                report_display.display()
+                self.quorum
             )?;
+            for group in &below_quorum {
+                let label = if group.agents.len() == 1 { "single-agent" } else { "below quorum" };
+                print_group(label, group)?;
+            }
         }
         let rejected = sessions.iter().flat_map(|session| &session.rejected).collect::<Vec<_>>();
         if !rejected.is_empty() {
@@ -1012,8 +1019,12 @@ fn session_prompt(targets: &[PathBuf], context: &[PathBuf], out: &Path) -> Strin
         "\nProve each bug with a Foundry test in {} that fails because of the bug and encodes the \
          intended behavior. The code under test can be wrong: the intended behavior is what its \
          documentation, its interfaces, and the standards it claims state. Name each test after \
-         the bug and add a one-line comment above it with the claim and the file:line of the \
-         source line that breaks it. You may run `forge test` freely.\n",
+         the bug. Right above each test, write exactly one comment line in this form:\n\n\
+         // @bug <Contract>.<function> <file>:<line> — <claim>\n\n\
+         <Contract>.<function> is the target function that has the bug, <file>:<line> is the \
+         target source line that breaks the intended behavior, and <claim> is one sentence. Use \
+         `//`, not `///`: the compiler rejects `@bug` as a NatSpec tag. You may run `forge test` \
+         freely.\n",
         out.display()
     ));
     prompt
@@ -1090,10 +1101,15 @@ fn test_claim(source: &str, contract: &str, function: &str) -> Option<String> {
         })
         .filter(|line| !line.contains("forge-config:"))
         .map(|line| line.trim_start_matches(['/', '*']).trim_end_matches(['*', '/']).trim())
-        .map(|line| match line.strip_prefix('@') {
-            // A NatSpec tag such as `@notice` is not part of the claim.
-            Some(tagged) => tagged.split_once(char::is_whitespace).map_or("", |(_, text)| text),
-            None => line,
+        .map(|line| {
+            match line.strip_prefix('@').map(|tagged| tagged.split_once(char::is_whitespace)) {
+                // The `@bug` tag names the target, so it stays. A NatSpec tag such as `@notice` is
+                // not part of the claim. The compiler rejects `/// @bug`, so
+                // `@custom:bug` stays too.
+                Some(Some((tag, text))) if !matches!(tag, "bug" | "custom:bug") => text,
+                Some(None) => "",
+                _ => line,
+            }
         })
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
@@ -1495,7 +1511,8 @@ mod tests {
     }
 
     // The claim is the comment right above the test function of the named contract, without
-    // comment markers, NatSpec tags, or inline config. A test without such a comment has none.
+    // comment markers, NatSpec tags other than the bug tag, or inline config. A test without such a
+    // comment has none.
     #[test]
     fn test_claim_reads_the_comment_above_the_test() {
         let source = r#"
@@ -1510,6 +1527,12 @@ contract FeeTest {
     function testZero(uint256 amount) public {}
 
     function testBare() public {}
+
+    // @bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.
+    function testTagged() public {}
+
+    /// @custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.
+    function testCustomTag() public {}
 }
 contract OtherTest {
     /* Rounds down: src/Fee.sol:6 */
@@ -1525,6 +1548,14 @@ contract OtherTest {
             Some("A zero amount is charged, src/Fee.sol:11.")
         );
         assert_eq!(test_claim(source, "FeeTest", "testBare"), None);
+        assert_eq!(
+            test_claim(source, "FeeTest", "testTagged").as_deref(),
+            Some("@bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.")
+        );
+        assert_eq!(
+            test_claim(source, "FeeTest", "testCustomTag").as_deref(),
+            Some("@custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.")
+        );
         assert_eq!(
             test_claim(source, "OtherTest", "testCap").as_deref(),
             Some("Rounds down: src/Fee.sol:6")

@@ -1,6 +1,8 @@
 //! The root-cause matcher: decides which failing tests of different agents prove the same bug.
 //!
-//! [`root_cause_groups`] is the only entry point, so another matcher can replace this one.
+//! [`root_cause_groups`] is the only entry point, so another matcher can replace this one. A claim
+//! with a `@bug <Contract>.<function> <file>:<line>` tag names its target, and two tagged claims
+//! agree on the target. Other claims are free text, and the word matcher compares them.
 
 use regex::Regex;
 use std::{collections::HashSet, sync::LazyLock};
@@ -8,6 +10,10 @@ use std::{collections::HashSet, sync::LazyLock};
 /// Two claims agree when at least 3/10 of their combined words are shared, the threshold of the
 /// offline analysis.
 const CLAIM_OVERLAP: (usize, usize) = (3, 10);
+/// Two tagged claims about one function agree only when their lines are at most this far apart. A
+/// function rarely spans more lines, so the window keeps apart functions with one name in one file,
+/// such as overloads or functions of two contracts, but not two lines of one function.
+const LINE_WINDOW: u64 = 50;
 /// Words that do not tell two claims apart.
 const STOP_WORDS: [&str; 31] = [
     "the", "a", "an", "of", "to", "is", "in", "on", "and", "or", "must", "be", "it", "that",
@@ -15,6 +21,12 @@ const STOP_WORDS: [&str; 31] = [
     "so", "any", "if", "no",
 ];
 
+/// A `@bug <Contract>.<function> <file>:<line>` tag at the start of a claim, also as the NatSpec
+/// tag `@custom:bug`. The contract and an argument list after the function are optional.
+static BUG_TAG: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^@(?:custom:)?bug\s+(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)(?:\([^)]*\))?\s+([\w./-]+\.sol):(\d+)")
+        .unwrap()
+});
 /// A Solidity file path.
 static SOLIDITY_FILE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w./-]+\.sol").unwrap());
 /// A function name followed by its argument list.
@@ -26,8 +38,35 @@ static CAMEL_CASE: LazyLock<Regex> =
 /// A lowercase word.
 static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-z0-9_]+").unwrap());
 
-/// What two failing tests must share to have one root cause: the file that their claims name, and
-/// a function name or most of the claims' words.
+/// The target of a tagged claim: two tagged claims agree when they name the same function in the
+/// same file, at lines that are near.
+#[derive(Debug, PartialEq)]
+struct BugTag {
+    /// The file name of the path in the tag.
+    file: String,
+    function: String,
+    line: u64,
+}
+
+impl BugTag {
+    fn new(claim: &str) -> Option<Self> {
+        let captures = BUG_TAG.captures(claim)?;
+        Some(Self {
+            file: captures[2].rsplit('/').next()?.to_string(),
+            function: captures[1].to_string(),
+            line: captures[3].parse().ok()?,
+        })
+    }
+
+    fn agrees(&self, other: &Self) -> bool {
+        self.file == other.file
+            && self.function == other.function
+            && self.line.abs_diff(other.line) <= LINE_WINDOW
+    }
+}
+
+/// What two failing tests with free-text claims must share to have one root cause: the file that
+/// their claims name, and a function name or most of the claims' words.
 struct RootCause {
     /// The file name of the first Solidity path in the claim.
     file: String,
@@ -66,17 +105,21 @@ impl RootCause {
 }
 
 /// Returns a group number for the claim of each failing test: tests with the same number have one
-/// root cause. Groups use single linkage: a chain of agreeing pairs links two tests. A test without
-/// a claim, or whose claim names no Solidity file, agrees with no other test.
+/// root cause. Two tagged claims agree by their tags. Otherwise the word matcher compares the
+/// claims, also when only one of them has a tag. Groups use single linkage: a chain of agreeing
+/// pairs links two tests. A test without a claim, or whose claim names no Solidity file, agrees
+/// with no other test.
 pub(super) fn root_cause_groups(claims: &[Option<&str>]) -> Vec<usize> {
+    let tags = claims.iter().map(|claim| BugTag::new((*claim)?)).collect::<Vec<_>>();
     let causes = claims.iter().map(|claim| RootCause::new((*claim)?)).collect::<Vec<_>>();
     let mut group_of = (0..causes.len()).collect::<Vec<_>>();
-    for (i, a) in causes.iter().enumerate() {
-        for (j, b) in causes.iter().enumerate().skip(i + 1) {
-            if let (Some(a), Some(b)) = (a, b)
-                && a.agrees(b)
-                && group_of[i] != group_of[j]
-            {
+    for i in 0..causes.len() {
+        for j in i + 1..causes.len() {
+            let agree = match (&tags[i], &tags[j]) {
+                (Some(a), Some(b)) => a.agrees(b),
+                _ => matches!((&causes[i], &causes[j]), (Some(a), Some(b)) if a.agrees(b)),
+            };
+            if agree && group_of[i] != group_of[j] {
                 let (from, to) = (group_of[j], group_of[i]);
                 group_of.iter_mut().filter(|group| **group == from).for_each(|group| *group = to);
             }
@@ -106,5 +149,44 @@ mod tests {
         assert!(!cap.agrees(&cause("A zero amount is charged; src/Fee.sol:11 charges()")));
         assert!(!cause("Wrong result; src/Fee.sol:7").agrees(&cause("Bad output; src/Fee.sol:7")));
         assert!(RootCause::new("The fee is capped at 100 ether.").is_none());
+    }
+
+    // A tag names the function and the source line. The contract and an argument list are
+    // optional, and a claim without the tag at its start has none.
+    #[test]
+    fn bug_tags_parse_the_target() {
+        let tag = |function: &str, line| BugTag {
+            file: "Fee.sol".into(),
+            function: function.into(),
+            line,
+        };
+        assert_eq!(
+            BugTag::new("@bug Fee.fee src/Fee.sol:7 — the cap is 10 ether"),
+            Some(tag("fee", 7))
+        );
+        assert_eq!(
+            BugTag::new("@bug fee(uint256) contracts/Fee.sol:12 - wrong"),
+            Some(tag("fee", 12))
+        );
+        assert_eq!(BugTag::new("@custom:bug Fee.charges Fee.sol:11"), Some(tag("charges", 11)));
+        assert_eq!(BugTag::new("The fee is capped; @bug Fee.fee src/Fee.sol:7"), None);
+        assert_eq!(BugTag::new("@bug Fee.fee src/Fee.sol — no line"), None);
+    }
+
+    // Tagged claims group on the file and the function, whatever their words, and lines far apart
+    // split them. Free-text claims, and pairs with only one tag, fall back to the word matcher.
+    #[test]
+    fn tagged_claims_group_on_file_and_function() {
+        let groups = root_cause_groups(&[
+            Some("@bug Fee.fee src/Fee.sol:7 — the cap is 10 ether, not 100 ether"),
+            Some("@bug FeeLib.fee Fee.sol:8 — large amounts pay too little"),
+            Some("@bug Fee.fee src/Other.sol:7 — the cap is 10 ether, not 100 ether"),
+            Some("@bug Fee.charges src/Fee.sol:7 — charges() takes a fee on a zero amount"),
+            Some("@bug Fee.fee src/Fee.sol:90 — an overload rounds up"),
+            Some("A zero amount is charged; src/Fee.sol:11 charges() returns true"),
+            Some("The fee is capped at 100 ether; src/Fee.sol:7 fee() caps at 10 ether."),
+            None,
+        ]);
+        assert_eq!(groups, [0, 0, 2, 3, 4, 3, 0, 7]);
     }
 }

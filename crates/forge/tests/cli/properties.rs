@@ -183,7 +183,11 @@ possible bug (2/3 agents): The fee is capped at 100 ether; src/Fee.sol:7 fee() c
   agent 2: FeeLimitTest::testReachesCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     claim: fee(amount) reaches the documented cap for large amounts (src/Fee.sol:7).
     file: cache/properties/agent-2/tests/FeeLimit.t.sol
-1 possible bug(s) below the quorum of 2: see cache/properties/report.json
+1 possible bug(s) below the quorum of 2:
+single-agent (1/3 agents): A zero amount is charged; src/Fee.sol:11 charges() returns false below 100.
+  agent 3: FeeChargesTest::testChargesZero (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: A zero amount is charged; src/Fee.sol:11 charges() returns false below 100.
+    file: cache/properties/agent-3/tests/FeeCharges.t.sol
 agent usage: 3000 input tokens, 600 output tokens, 0.03 USD
 added 2 generated test file(s):
   test/generated/agent-1/FeeSpec.t.sol
@@ -929,7 +933,11 @@ possible bug (2/4 agents): shares(assets) returns one share per asset; src/Vault
   agent 2: VaultBugTest::testShares (seed 24301: assertion failed: 5 != 10; seed 12648430: assertion failed: 5 != 10)
     claim: shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
     file: cache/properties/agent-2/tests/VaultBug.t.sol
-1 possible bug(s) below the quorum of 2: see cache/properties/report.json
+1 possible bug(s) below the quorum of 2:
+single-agent (1/4 agents): deposit(amount) accepts a zero amount; src/Vault.sol:11 deposit() reverts ZeroAmount.
+  agent 1: VaultBugTest::testDepositZero (seed 24301: ZeroAmount(); seed 12648430: ZeroAmount())
+    claim: deposit(amount) accepts a zero amount; src/Vault.sol:11 deposit() reverts ZeroAmount.
+    file: cache/properties/agent-1/tests/VaultBug.t.sol
 added 1 generated test file(s):
   test/generated/agent-3/VaultSpec.t.sol
 skipped 1 generated test file(s) that repeat a file of another agent or the project
@@ -1053,6 +1061,50 @@ SOL
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 1 generated test file(s):
   test/generated/agent-1/Stub.t.sol
+
+"#]]);
+}
+
+// The prompt asks for a `@bug` tag, and Forge groups tagged tests on the target file and function,
+// whatever their words. Groups below the quorum follow the possible bugs as a single-agent list.
+#[forgetest_init]
+fn properties_groups_tagged_claims(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let args = properties_args(
+        &prj,
+        r#"
+grep -qxF '// @bug <Contract>.<function> <file>:<line> — <claim>' "$FORGE_PROPERTIES_PROMPT"
+case "$agent" in
+1) claim='Fee.fee src/Fee.sol:7 — the fee is capped at 10 ether, not 100 ether.' ;;
+2) claim='Fee.fee src/Fee.sol:8 — large amounts pay too little.' ;;
+*) claim='Fee.charges src/Fee.sol:11 — a zero amount is charged.' ;;
+esac
+cat > "$out/FeeBug.t.sol" <<SOL
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+contract FeeBugTest {
+    // @bug $claim
+    function testBug() public pure {
+        require(Fee.fee(1e30) == 100 ether);
+    }
+}
+SOL
+"#,
+    );
+    cmd.args(args).args(["--agents", "3"]).assert_success().stdout_eq(str![[r#"
+possible bug (2/3 agents): @bug Fee.fee src/Fee.sol:7 — the fee is capped at 10 ether, not 100 ether.
+  agent 1: FeeBugTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.fee src/Fee.sol:7 — the fee is capped at 10 ether, not 100 ether.
+    file: cache/properties/agent-1/tests/FeeBug.t.sol
+  agent 2: FeeBugTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.fee src/Fee.sol:8 — large amounts pay too little.
+    file: cache/properties/agent-2/tests/FeeBug.t.sol
+1 possible bug(s) below the quorum of 2:
+single-agent (1/3 agents): @bug Fee.charges src/Fee.sol:11 — a zero amount is charged.
+  agent 3: FeeBugTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.charges src/Fee.sol:11 — a zero amount is charged.
+    file: cache/properties/agent-3/tests/FeeBug.t.sol
+no generated test file was kept
 
 "#]]);
 }
