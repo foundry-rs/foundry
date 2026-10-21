@@ -116,6 +116,22 @@ contract ForkTest is Test {
         assertEq(block.chainid, 11155111);
     }
 
+    // ensures switching between two forks of the same chain keeps its chain id
+    function testSameChainForkSwitchKeepsChainId() public {
+        vm.selectFork(forkA);
+        assertEq(block.chainid, 1);
+        vm.selectFork(forkB);
+        assertEq(block.chainid, 1);
+    }
+
+    // ensures rolling a fork resets a chain id set with `vm.chainId`
+    function testRollForkResetsChainId() public {
+        vm.selectFork(forkA);
+        vm.chainId(1337);
+        vm.rollFork(mainblock + 1);
+        assertEq(block.chainid, 1);
+    }
+
     // ensures forks storage is cached at block
     function testStorageCaching() public {
         vm.createSelectFork("mainnet", 19800000);

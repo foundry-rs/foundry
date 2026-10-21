@@ -480,15 +480,7 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
-    // The switch defers the target's chain ID to the next transaction; `CHAINID` reads it at once,
-    // like after `vm.chainId`.
-    if let Some(chain_id) = ccx.db().lifecycle().pending_env().map(|env| env.chain_id())
-        && chain_id != ccx.evm.version().chain_id
-    {
-        ccx.state.env_overrides.update(target_fork_id, |o| {
-            o.chain_id.get_or_insert(chain_id);
-        });
-    }
+    sync_chain_id_override(ccx, target_fork_id);
 }
 
 fn record_fork_roll<FEN: FoundryEvmNetwork>(
@@ -501,7 +493,28 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
         ccx.state.fork_block_number_override = ccx.active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);
+        sync_chain_id_override(ccx, active_fork_id);
     }
+}
+
+/// Makes `CHAINID` on the fork `fork_id` just switched to or rolled read the fork's chain ID at
+/// once, as REVM did, replacing an earlier `vm.chainId`.
+///
+/// The switch or roll defers the chain ID to the next transaction, and `CHAINID` reads the
+/// transaction's until then. `ccx.evm` can be a frame EVM that already runs the pending chain ID,
+/// so the pending chain ID is recorded whenever there is one.
+fn sync_chain_id_override<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    fork_id: Option<LocalForkId>,
+) {
+    let pending = ccx.db().lifecycle().pending_env().map(|env| env.chain_id());
+    if pending.is_none()
+        && !ccx.state.env_overrides.get(fork_id).is_some_and(|o| o.chain_id.is_some())
+    {
+        return;
+    }
+    let chain_id = pending.unwrap_or_else(|| ccx.evm.version().chain_id);
+    ccx.state.env_overrides.update(fork_id, |o| o.chain_id = Some(chain_id));
 }
 
 fn check_broadcast<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>) -> Result<()> {
