@@ -27,7 +27,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
-    EvmFeatures, EvmTypesHost, ExecutionError,
+    EvmTypesHost, ExecutionError,
     evm::State,
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
@@ -195,20 +195,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut child = backend.backend().nested_evm(evm, tx, env);
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
-        let result =
-            child.transact(tx).map_err(|err| eyre::eyre!("{err:?}")).and_then(|executed| {
-                // A failed transaction keeps its nonce increment.
-                foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
-                Ok(executed.result().clone())
-            });
-        drop(release_inspector(child));
-        backend
-            .backend()
-            .lifecycle()
-            .forks()
-            .active_db()
-            .set_eip161(evm.version().feature(EvmFeatures::EIP161));
-        result
+        let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        // A failed transaction keeps its nonce increment.
+        foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        Ok(executed.result().clone())
     }
 
     // Without the inspector stack's nested-root handling, replayed transactions run without

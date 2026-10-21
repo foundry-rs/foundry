@@ -1065,7 +1065,6 @@ fn install_env<FEN: FoundryEvmNetwork>(
     evm: &mut FoundryEvmFor<'_, FEN>,
     env: EvmEnvFor<FEN>,
 ) {
-    backend.lifecycle().active().db.set_eip161(env.version.feature(evm2::EvmFeatures::EIP161));
     let current = evm_env(evm);
     let version = &env.version;
     let same_config = current.spec == env.spec
@@ -1077,6 +1076,7 @@ fn install_env<FEN: FoundryEvmNetwork>(
         && current.version.max_initcode_size == version.max_initcode_size;
     if same_config {
         evm.set_block(env.block);
+        backend.lifecycle().sync_database_policy(evm);
         return;
     }
     let factory = EvmFactoryFor::<FEN>::default();
@@ -1089,6 +1089,7 @@ fn install_env<FEN: FoundryEvmNetwork>(
         factory.tx_registry(spec),
         precompiles,
     );
+    backend.lifecycle().sync_database_policy(evm);
 }
 
 /// Prepares `evm`'s network extension state for `tx`, at its position in `context` if any.

@@ -554,12 +554,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
-        backend
-            .backend()
-            .lifecycle()
-            .forks()
-            .active_db()
-            .set_eip161(evm.version().feature(EvmFeatures::EIP161));
         cheats.snapshot_restores = snapshot_restores;
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);

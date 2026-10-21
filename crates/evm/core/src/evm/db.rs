@@ -109,23 +109,33 @@ impl FoundryDatabase for Box<dyn BackingDb> {
 ///
 /// The fork cache stores native evm2 accounts. This adapter supplies the source chain identity
 /// and the execution spec's empty-account policy.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ForkDb<D> {
     db: D,
     source_chain_id: u64,
-    /// Whether empty accounts do not exist (EIP-161), shared by every handle to the fork.
-    eip161: Arc<AtomicBool>,
+    /// Whether empty accounts do not exist (EIP-161), local to this execution's handle.
+    eip161: AtomicBool,
 }
 
 impl<D> ForkDb<D> {
     /// Wraps a fork cache whose remote state belongs to `source_chain_id`.
-    pub fn new(db: D, source_chain_id: u64) -> Self {
-        Self { db, source_chain_id, eip161: Arc::new(AtomicBool::new(true)) }
+    pub const fn new(db: D, source_chain_id: u64) -> Self {
+        Self { db, source_chain_id, eip161: AtomicBool::new(true) }
     }
 
     /// Returns the wrapped fork cache.
     pub const fn inner(&self) -> &D {
         &self.db
+    }
+}
+
+impl<D: Clone> Clone for ForkDb<D> {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            source_chain_id: self.source_chain_id,
+            eip161: AtomicBool::new(self.eip161.load(Ordering::Relaxed)),
+        }
     }
 }
 

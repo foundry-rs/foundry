@@ -231,10 +231,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// for reads between executions.
     pub fn accepted_db(&self) -> impl BackingDb + use<F, C> {
         let context = self.active();
-        AcceptedView {
-            cache: context.cache.clone().unwrap_or_default(),
-            backing: context.db.clone_backing(),
-        }
+        let backing = context.db.clone_backing();
+        backing.set_eip161(context.env.version.feature(EvmFeatures::EIP161));
+        AcceptedView { cache: context.cache.clone().unwrap_or_default(), backing }
     }
 
     /// Returns whether a snapshot exists.
@@ -318,6 +317,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         cache.merge(mem::take(&mut overlay.cache));
         overlay.cache = cache;
         overlay.db = Box::new(context.db.clone_backing());
+        self.sync_database_policy(evm);
     }
 
     /// Registers a fork without selecting it and returns its local fork ID.
@@ -442,6 +442,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             env.block = *evm.block();
             let db = self.forks.active_db();
             self.factory.configure_for(&db, &env).set_env(evm, env);
+            self.sync_database_policy(evm);
         }
     }
 
@@ -543,12 +544,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
         }
-        let result = executor.transact(tx).map_err(transaction_error).and_then(|executed| {
-            merge_nested_changes(evm.state_mut(), &executed)?;
-            Ok(executed.result().clone())
-        });
-        self.forks.active_db().set_eip161(evm.version().feature(EvmFeatures::EIP161));
-        result
+        let executed = executor.transact(tx).map_err(transaction_error)?;
+        merge_nested_changes(evm.state_mut(), &executed)?;
+        Ok(executed.result().clone())
     }
 
     /// Builds the EVM a nested transaction of the running one executes on: a copy of the running
@@ -579,6 +577,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let mut executor = self.factory.configure_for(&db, &env).new_evm(db, env);
         *executor.state_mut() = state;
         *executor.ext_mut() = ext;
+        self.sync_database_policy(&mut executor);
         executor
     }
 
@@ -595,14 +594,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         env: EvmEnv<F::Types>,
     ) -> Evm<'a, F::Types> {
         let db = self.forks.active_db();
-        // The moved state reads through the active backing database, not the frame's own.
-        db.set_eip161(env.version.feature(EvmFeatures::EIP161));
         let factory = self.factory.configure_for(&db, &env);
         let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
         let state = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
         // SAFETY: `State`'s lifetime only bounds its backing database, and every database the
         // lifecycle installs is owned (`'static`), so the state outlives both EVMs.
         *frame.state_mut() = unsafe { mem::transmute::<State<'_>, State<'a>>(state) };
+        self.sync_database_policy(&mut frame);
         frame
     }
 
@@ -611,13 +609,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// active backing database.
     pub fn end_frame_evm(&self, evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
         frame.clear_inspector();
-        self.forks.active_db().set_eip161(evm.version().feature(EvmFeatures::EIP161));
         let state = mem::replace(frame.state_mut(), State::new(EmptyDB::default()));
         // SAFETY: See `begin_frame_evm`; the frame only ever installs owned backing databases,
         // such as on a fork switch.
         *evm.state_mut() = unsafe { mem::transmute::<State<'_>, State<'_>>(state) };
         *evm.ext_mut() = frame.ext().clone();
         evm.set_block(*frame.block());
+        self.sync_database_policy(evm);
     }
 
     /// Prepares `tx` to execute as a nested transaction of the running one on the EVM
@@ -776,6 +774,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         phase: ExecutionPhase,
     ) -> EnvTransition {
         let current = evm_env(evm);
+        self.sync_database_policy(evm);
         if current.spec == env.spec && current.chain_id() == env.chain_id() {
             evm.set_block(env.block);
             // `evm` can be a frame EVM that already runs the pending environment while the frames
@@ -789,6 +788,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         match phase {
             ExecutionPhase::Boundary => {
                 factory.set_env(evm, env);
+                self.sync_database_policy(evm);
                 self.pending_env = None;
                 EnvTransition::Applied
             }
@@ -823,6 +823,22 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         slots.sort_unstable();
         slots.dedup();
         slots
+    }
+
+    /// Rebinds the running state's backing handle to its EVM's empty-account policy without
+    /// copying accepted state or changing another execution's policy.
+    pub fn sync_database_policy(&self, evm: &mut Evm<'_, F::Types>) {
+        let db = self.forks.active_db();
+        db.set_eip161(evm.version().feature(EvmFeatures::EIP161));
+        let overlay = evm.state_mut().overlay_db_mut();
+        overlay.db = if AcceptedView::is(&*overlay.db) {
+            Box::new(AcceptedView {
+                cache: Arc::clone(self.active().cache.as_ref().expect("accepted view has a cache")),
+                backing: db,
+            })
+        } else {
+            Box::new(db)
+        };
     }
 }
 
