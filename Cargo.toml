@@ -37,7 +37,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.8.5"
+version = "1.8.6"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Foundry Contributors"]
@@ -349,7 +349,7 @@ solar = { package = "solar-compiler", version = "=0.2.0", default-features = fal
 solar-cli = { version = "=0.2.0", default-features = false }
 solar-lsp = { version = "=0.2.0", default-features = false }
 solar-lint = { version = "=0.2.0", default-features = false }
-svm = { package = "svm-rs", version = "0.5.28", default-features = false, features = [
+svm = { package = "svm-rs", version = "0.5.30", default-features = false, features = [
     "rustls",
 ] }
 
@@ -481,14 +481,14 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 # https://github.com/rust-cli/rexpect/pull/106
 rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 ron = "0.12"
-rustls = "0.23.45"
+rustls = "0.23.46"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 shlex = "2"
 similar-asserts = "2.0"
-soldeer-commands = "=0.12.0"
-soldeer-core = { version = "=0.12.0", features = ["serde"] }
+soldeer-commands = "=0.12.1"
+soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
