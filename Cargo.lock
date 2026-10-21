@@ -1350,7 +1350,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -2662,7 +2662,7 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=f8af7bb54a0060466f803a74dc21e773fa8509f9#f8af7bb54a0060466f803a74dc21e773fa8509f9"
+source = "git+https://github.com/mablr/evm2-networks?rev=efe51d34832c8102f30730cabcd74d19a51adcee#efe51d34832c8102f30730cabcd74d19a51adcee"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3374,7 +3374,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tokio",
  "tower",
@@ -5176,7 +5176,7 @@ dependencies = [
 [[package]]
 name = "evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2?rev=59e9af8ab36978b90215e1619866b110d8692565#59e9af8ab36978b90215e1619866b110d8692565"
+source = "git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84#a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -5212,7 +5212,7 @@ dependencies = [
 [[package]]
 name = "evm2-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2?rev=59e9af8ab36978b90215e1619866b110d8692565#59e9af8ab36978b90215e1619866b110d8692565"
+source = "git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84#a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84"
 dependencies = [
  "alloy-consensus",
  "alloy-eip2930",
@@ -5234,7 +5234,7 @@ dependencies = [
 [[package]]
 name = "evm2-macros"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2?rev=59e9af8ab36978b90215e1619866b110d8692565#59e9af8ab36978b90215e1619866b110d8692565"
+source = "git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84#a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5755,7 +5755,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5818,7 +5818,7 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -6004,7 +6004,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6036,7 +6036,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -6045,7 +6045,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6065,7 +6065,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6078,7 +6078,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6262,9 +6262,9 @@ dependencies = [
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "tempo-precompiles",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -6330,7 +6330,7 @@ dependencies = [
  "monad-evm2",
  "op-evm2",
  "serde",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
 ]
 
 [[package]]
@@ -6426,7 +6426,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6541,7 +6541,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/mablr/foundry-core?rev=4522133c8a7d24eb9dff865334f30c830acb11c6#4522133c8a7d24eb9dff865334f30c830acb11c6"
+source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -8339,7 +8339,7 @@ dependencies = [
 [[package]]
 name = "monad-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=f8af7bb54a0060466f803a74dc21e773fa8509f9#f8af7bb54a0060466f803a74dc21e773fa8509f9"
+source = "git+https://github.com/mablr/evm2-networks?rev=efe51d34832c8102f30730cabcd74d19a51adcee#efe51d34832c8102f30730cabcd74d19a51adcee"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8834,7 +8834,7 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=f8af7bb54a0060466f803a74dc21e773fa8509f9#f8af7bb54a0060466f803a74dc21e773fa8509f9"
+source = "git+https://github.com/mablr/evm2-networks?rev=efe51d34832c8102f30730cabcd74d19a51adcee#efe51d34832c8102f30730cabcd74d19a51adcee"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10195,7 +10195,7 @@ dependencies = [
 [[package]]
 name = "reth-chainspec"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -10306,7 +10306,7 @@ dependencies = [
 [[package]]
 name = "reth-consensus"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -10320,7 +10320,7 @@ dependencies = [
 [[package]]
 name = "reth-consensus-common"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10333,7 +10333,7 @@ dependencies = [
 [[package]]
 name = "reth-db-api"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10347,7 +10347,7 @@ dependencies = [
  "proptest",
  "reth-codecs 0.8.2",
  "reth-db-models",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0)",
+ "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583)",
  "reth-primitives-traits 0.8.2",
  "reth-prune-types",
  "reth-stages-types",
@@ -10360,7 +10360,7 @@ dependencies = [
 [[package]]
 name = "reth-db-models"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -10375,7 +10375,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-consensus"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10391,7 +10391,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-forks"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-eip2124",
  "alloy-hardforks",
@@ -10417,7 +10417,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-primitives"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -10430,7 +10430,7 @@ dependencies = [
 [[package]]
 name = "reth-evm"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -10458,7 +10458,7 @@ dependencies = [
 [[package]]
 name = "reth-evm-ethereum"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -10470,7 +10470,7 @@ dependencies = [
  "evm2",
  "reth-chainspec",
  "reth-ethereum-forks",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0)",
+ "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583)",
  "reth-evm",
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
@@ -10481,7 +10481,7 @@ dependencies = [
 [[package]]
 name = "reth-execution-errors"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -10493,7 +10493,7 @@ dependencies = [
 [[package]]
 name = "reth-execution-types"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -10503,7 +10503,7 @@ dependencies = [
  "alloy-rlp",
  "derive_more",
  "evm2",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0)",
+ "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583)",
  "reth-primitives-traits 0.8.2",
  "reth-trie-common",
  "revm",
@@ -10514,7 +10514,7 @@ dependencies = [
 [[package]]
 name = "reth-network-peers"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -10611,7 +10611,7 @@ dependencies = [
 [[package]]
 name = "reth-prune-types"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-primitives",
  "arbitrary",
@@ -10627,7 +10627,7 @@ dependencies = [
 [[package]]
 name = "reth-revm"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -10655,7 +10655,7 @@ dependencies = [
 [[package]]
 name = "reth-stages-types"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-primitives",
  "arbitrary",
@@ -10670,7 +10670,7 @@ dependencies = [
 [[package]]
 name = "reth-static-file-types"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-primitives",
  "derive_more",
@@ -10684,7 +10684,7 @@ dependencies = [
 [[package]]
 name = "reth-storage-api"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -10694,7 +10694,7 @@ dependencies = [
  "auto_impl",
  "reth-chainspec",
  "reth-db-models",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0)",
+ "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583)",
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
  "reth-prune-types",
@@ -10708,7 +10708,7 @@ dependencies = [
 [[package]]
 name = "reth-storage-errors"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -10725,7 +10725,7 @@ dependencies = [
 [[package]]
 name = "reth-trie-common"
 version = "2.7.0"
-source = "git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0#e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0"
+source = "git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583#f73d9447e43767cfc1bc41f35f84f41e84a17583"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -12840,23 +12840,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88#2c25f7cd8267b205a6b95e08bbc73baf887bea88"
-dependencies = [
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "once_cell",
- "paste",
- "serde",
- "serde_json",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
-]
-
-[[package]]
-name = "tempo-chainspec"
-version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -12871,8 +12855,41 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-dkg-onchain-artifacts",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+]
+
+[[package]]
+name = "tempo-chainspec"
+version = "1.16.0"
+source = "git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88#2c25f7cd8267b205a6b95e08bbc73baf887bea88"
+dependencies = [
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "once_cell",
+ "paste",
+ "serde",
+ "serde_json",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
+]
+
+[[package]]
+name = "tempo-contracts"
+version = "1.16.0"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
+dependencies = [
+ "alloy-contract",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth",
+ "alloy-sol-types",
+ "alloy-transport",
+ "k256 0.13.4",
+ "serde",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
 ]
 
 [[package]]
@@ -12893,26 +12910,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "tempo-contracts"
-version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
-dependencies = [
- "alloy-contract",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-eth",
- "alloy-sol-types",
- "alloy-transport",
- "k256 0.13.4",
- "serde",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
-]
-
-[[package]]
 name = "tempo-dkg-onchain-artifacts"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12923,7 +12923,7 @@ dependencies = [
 [[package]]
 name = "tempo-evm"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -12945,13 +12945,26 @@ dependencies = [
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
  "reth-storage-api",
- "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "tempo-dkg-onchain-artifacts",
  "tempo-precompiles",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "tempo-hardfork"
+version = "1.16.0"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
+dependencies = [
+ "alloy-eips",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "evm2",
+ "paste",
+ "serde",
 ]
 
 [[package]]
@@ -12968,22 +12981,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "tempo-hardfork"
-version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
-dependencies = [
- "alloy-eips",
- "alloy-hardforks",
- "alloy-primitives",
- "evm2",
- "paste",
- "serde",
-]
-
-[[package]]
 name = "tempo-nitro-attestation"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
 dependencies = [
  "arrayvec",
  "aws-lc-rs",
@@ -12998,7 +12998,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
 dependencies = [
  "alloy",
  "alloy-json-abi",
@@ -13014,11 +13014,11 @@ dependencies = [
  "scoped-tls",
  "serde",
  "serde_json",
- "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "tempo-nitro-attestation",
  "tempo-precompiles-macros",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -13026,12 +13026,39 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
 dependencies = [
  "alloy",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tempo-primitives"
+version = "1.16.0"
+source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde",
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "commonware-cryptography",
+ "derive_more",
+ "evm2",
+ "once_cell",
+ "p256 0.13.2",
+ "reth-codecs 0.8.2",
+ "reth-db-api",
+ "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=f73d9447e43767cfc1bc41f35f84f41e84a17583)",
+ "reth-primitives-traits 0.8.2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
 ]
 
 [[package]]
@@ -13057,33 +13084,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
-]
-
-[[package]]
-name = "tempo-primitives"
-version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-serde",
- "aws-lc-rs",
- "base64 0.22.1",
- "commonware-cryptography",
- "derive_more",
- "evm2",
- "once_cell",
- "p256 0.13.2",
- "reth-codecs 0.8.2",
- "reth-db-api",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=e2d4c51a45f594d2f98e67e1d42c40efd8ee2fd0)",
- "reth-primitives-traits 0.8.2",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]

@@ -878,10 +878,11 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
         message: &Message<T>,
         gas: &mut GasTracker,
     ) -> Option<Result<PrecompileOutput, PrecompileError>> {
-        let address = match self.moved_to.get(&message.code_address) {
+        // evm2 dispatches native precompiles at the call target.
+        let address = match self.moved_to.get(&message.call_target) {
             Some(source) => *source,
-            None if self.moved_from.contains(&message.code_address) => return None,
-            None => message.code_address,
+            None if self.moved_from.contains(&message.call_target) => return None,
+            None => message.call_target,
         };
         if address == ECRECOVER_ADDRESS
             && let Some(cheats) = &self.cheats
@@ -892,10 +893,11 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
         if let Some(extra) = self.extra.get(&address).cloned() {
             return Some(execute_extra(&extra, evm, message, address, gas));
         }
-        if address == message.code_address {
+        if address == message.call_target {
             return self.inner.execute(evm, message, gas);
         }
         let mut moved = message.clone();
+        moved.call_target = address;
         moved.code_address = address;
         moved.destination = address;
         self.inner.execute(evm, &moved, gas)

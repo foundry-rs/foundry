@@ -1677,7 +1677,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             if trace.address == P256_VERIFY {
                 trace.maybe_precompile = Some(
                     pending.executed_address == Some(P256_VERIFY)
-                        && !message.disable_precompiles
                         && interp.host().precompiles().contains(&P256_VERIFY),
                 );
             }
