@@ -19,7 +19,11 @@ use parking_lot::Mutex;
 use revm::DatabaseRef;
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
 };
 
 /// Prefetch requests in flight at once. The fork backend sends its own cold reads without a limit;
@@ -39,30 +43,32 @@ enum Key {
 ///
 /// Each key is read through the backend like an EVM read, so the backend fetches and caches it with
 /// its own request path, and a key it already has costs no request.
-pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(fork: &Fork, backend: &SharedBackend<N, B>) {
+pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(
+    fork: &Fork,
+    backend: &SharedBackend<N, B>,
+) -> Option<Prefetch> {
     if !backend.data().accounts.read().is_empty() {
-        return;
+        return None;
     }
-    let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
-    let Some(path) = Config::foundry_chain_cache_dir(fork.context().source_chain_id)
-        .and_then(|dir| previous_cache_file(&dir, fork.number()))
-    else {
-        return;
-    };
-    let Ok(previous) = JsonBlockCacheDB::<B>::load(&path) else { return };
+    let runtime = tokio::runtime::Handle::try_current().ok()?;
+    let path = Config::foundry_chain_cache_dir(fork.context().source_chain_id)
+        .and_then(|dir| previous_cache_file(&dir, fork.number()))?;
+    let previous = JsonBlockCacheDB::<B>::load(&path).ok()?;
     let keys = keys(previous.db());
     debug!(target: "fork::prefetch", ?path, keys = keys.len(), "prefetching fork cache");
 
     // Workers read on blocking tasks, so they take the next key without a lock held during a read.
     let keys = Arc::new(Mutex::new(keys.into_iter()));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (done_tx, done) = mpsc::channel::<()>();
     for _ in 0..MAX_CONCURRENT_REQUESTS {
-        let keys = Arc::clone(&keys);
+        let (keys, stop, done_tx) = (Arc::clone(&keys), Arc::clone(&stop), done_tx.clone());
         let backend = backend.with_blocking_mode(BlockingMode::Block);
         runtime.spawn_blocking(move || {
             // A failed speculative read is not an error: the backend logs one per failure, and
             // every remaining read fails once the run ends, so keep these reads quiet.
             tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
-                loop {
+                while !stop.load(Ordering::Relaxed) {
                     let Some(key) = keys.lock().next() else { break };
                     let read = match key {
                         Key::Account(address) => backend.basic_ref(address).map(drop),
@@ -73,8 +79,28 @@ pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(fork: &Fork, backend: &SharedBa
                         break;
                     }
                 }
-            })
+            });
+            // The last backend clone flushes the disk cache, so drop it before reporting done.
+            drop(backend);
+            drop(done_tx);
         });
+    }
+    Some(Prefetch { stop, done })
+}
+
+/// Background prefetch workers of one fork backend.
+pub(crate) struct Prefetch {
+    stop: Arc<AtomicBool>,
+    done: mpsc::Receiver<()>,
+}
+
+impl Prefetch {
+    /// Stops the workers and waits until they exit, so a worker that holds the last backend clone
+    /// flushes the disk cache before shutdown completes.
+    pub(crate) fn stop(self) {
+        self.stop.store(true, Ordering::Relaxed);
+        // Returns once every worker has dropped its sender.
+        let _ = self.done.recv();
     }
 }
 
