@@ -1286,7 +1286,7 @@ impl SymbolicExecutor {
                     } else {
                         SymBoolExpr::constant(&mut self.cx, false)
                     };
-                    let invalid = valid.clone().not(&mut self.cx);
+                    let invalid = valid.not(&mut self.cx);
                     let malformed = SymBoolExpr::and(&mut self.cx, vec![delegation, invalid]);
                     let (_, malformed_sat) = self.constraints_with_condition(state, malformed)?;
                     if malformed_sat {
