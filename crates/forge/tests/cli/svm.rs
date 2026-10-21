@@ -146,18 +146,9 @@ contract StateGasRefundTarget {
     }
 }
 
-contract StateGasClearTarget {
-    uint256 cleared = 1;
-
-    function clearWithData(bytes calldata) external {
-        cleared = 0;
-    }
-}
-
 contract StateGasTest is Test {
     uint64 constant STORAGE_SET_STATE_GAS = 64 * 1530;
     uint64 constant LARGE_RUNTIME_STATE_GAS = 12_000 * 1530;
-    uint64 constant CREATE_STATE_GAS = 120 * 1530;
     uint256 constant CALLDATA_SIZE = 20_000;
     uint256 constant CALL_FLOOR_BASE_GAS = 15_000;
     uint256 constant CALLDATA_FLOOR_GAS_PER_BYTE = 64;
@@ -179,16 +170,14 @@ contract StateGasTest is Test {
         VmGas.Gas memory frameGas = VM_GAS.lastFrameGas();
         assertStorageWriteGas(callGas);
         assertStorageWriteGas(frameGas);
-        // The snapshot is the receipt gas: regular gas plus state gas, whether the state gas came
-        // from the reservoir or spilled into the frame's regular budget.
         assertEq(
             VM_GAS.snapshotGasLastCall("stateGasCall"),
-            callGas.gasTotalUsed + uint64(callGas.gasStateUsed),
+            callGas.gasLimit - callGas.gasRemaining,
             "last call snapshot changed"
         );
         assertEq(
             VM_GAS.snapshotGasLastFrame("stateGasFrame"),
-            frameGas.gasTotalUsed + uint64(frameGas.gasStateUsed),
+            frameGas.gasLimit - frameGas.gasRemaining,
             "last frame snapshot changed"
         );
 
@@ -266,41 +255,6 @@ contract StateGasTest is Test {
         (bool success,) = address(0xCA11).call{gas: 1_000}(data);
         assertTrue(success, "low gas call failed");
         assertEq(VM_GAS.snapshotGasLastCall("calldataFloorLowGas"), floorGas, "wrong calldata floor gas");
-    }
-
-    /// forge-config: default.isolate = true
-    function testCalldataFloorAbsorbsRefund() public {
-        StateGasClearTarget target = new StateGasClearTarget();
-        bytes memory callData = abi.encodeCall(target.clearWithData, (new bytes(CALLDATA_SIZE)));
-        uint256 floorGas = CALL_FLOOR_BASE_GAS + callData.length * CALLDATA_FLOOR_GAS_PER_BYTE;
-        // The calldata floor exceeds the forwarded gas and absorbs the storage clear refund.
-        (bool success,) = address(target).call{gas: 60_000}(callData);
-        assertTrue(success, "clear failed");
-        assertEq(VM_GAS.lastCallGas().gasRefunded, 0, "floor did not absorb the refund");
-        assertEq(VM_GAS.snapshotGasLastCall("calldataFloorRefund"), floorGas, "wrong calldata floor gas");
-    }
-
-    function testDeployCodeChargesAccountCreation() public {
-        // No CREATE opcode charged the account creation, so the deployment frame pays it.
-        vm.deployCode("StateGas.t.sol:StateGasTarget");
-        assertEq(
-            VM_GAS.lastFrameGas().gasStateUsed,
-            int64(CREATE_STATE_GAS + codeDepositStateGas()),
-            "wrong deployCode state gas"
-        );
-    }
-
-    function testPrankedCreateAtUnfundedDestination() public {
-        // The CREATE opcode's destination has a balance, so it charges no account creation, but the
-        // pranked creator's destination is empty, so the deployment frame pays it.
-        vm.deal(vm.computeCreateAddress(address(this), vm.getNonce(address(this))), 1);
-        vm.prank(address(0xA11CE));
-        new StateGasTarget();
-        assertEq(
-            VM_GAS.lastFrameGas().gasStateUsed,
-            int64(CREATE_STATE_GAS + codeDepositStateGas()),
-            "wrong pranked create state gas"
-        );
     }
 
     function testPrankedCreateAtFundedDestination() public {

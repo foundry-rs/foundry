@@ -1156,7 +1156,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let Some(access_list) = access_list {
             request.set_access_list(access_list);
         }
-        let not_executed = |output: Bytes| message_result(message, InstrStop::Revert, output);
+        // A transaction that did not execute leaves the frame's reservoir untouched.
+        let not_executed = |output: Bytes| {
+            let mut outcome = message_result(message, InstrStop::Revert, output);
+            outcome.gas = GasTracker::new_with_execution_gas_and_reservoir(
+                message.gas_limit,
+                message.reservoir,
+            );
+            outcome
+        };
         let tx = match FEN::tx_from_request(request) {
             Ok(tx) => tx,
             Err(err) => return not_executed(err.to_string().into_bytes().into()),
