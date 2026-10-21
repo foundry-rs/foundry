@@ -202,7 +202,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        backend.backend_mut().transact(fork_id, transaction, evm, None)
+        backend.backend_mut().transact(fork_id, transaction, evm, 0, None)
     }
 
     fn transact_from_tx(
@@ -301,18 +301,16 @@ macro_rules! try_or_return {
     };
 }
 
-/// Returns the result of a message that did not execute, keeping its whole gas budget.
+/// Returns the result of a message that did not execute, keeping its whole execution gas.
+///
+/// The result returns no state gas reservoir, which the caller adopts, as cheatcode results did
+/// with REVM.
 pub fn message_result<M, E: Default>(
     message: &MessageExt<M>,
     stop: InstrStop,
     output: Bytes,
 ) -> MessageResultExt<E> {
-    MessageResultExt {
-        stop,
-        gas: GasTracker::new_with_execution_gas_and_reservoir(message.gas_limit, message.reservoir),
-        output,
-        ..Default::default()
-    }
+    MessageResultExt { stop, gas: GasTracker::new(message.gas_limit), output, ..Default::default() }
 }
 
 /// Stops the running frame with a revert carrying `output`, before its current instruction runs

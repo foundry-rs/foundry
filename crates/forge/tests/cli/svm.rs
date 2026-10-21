@@ -257,6 +257,24 @@ contract StateGasTest is Test {
         assertEq(VM_GAS.snapshotGasLastCall("calldataFloorLowGas"), floorGas, "wrong calldata floor gas");
     }
 
+    function testPrankedCreateAtFundedDestination() public {
+        // The CREATE opcode charged the account creation, but the pranked creator's destination
+        // has a balance, so the deployment creates no account and the frame pays only the code.
+        address sender = address(0xB0B);
+        vm.deal(vm.computeCreateAddress(sender, vm.getNonce(sender)), 1);
+        vm.prank(sender);
+        new StateGasTarget();
+        assertEq(
+            VM_GAS.lastFrameGas().gasStateUsed,
+            int64(codeDepositStateGas()),
+            "wrong pranked create state gas"
+        );
+    }
+
+    function codeDepositStateGas() internal pure returns (uint64) {
+        return uint64(type(StateGasTarget).runtimeCode.length) * 1530;
+    }
+
     function snapshotValueTransfer(address to, uint256 gasLimit) internal returns (uint256 section) {
         VM_GAS.startSnapshotGas("valueTransferSection");
         (bool success,) = to.call{value: 1, gas: gasLimit}("");
