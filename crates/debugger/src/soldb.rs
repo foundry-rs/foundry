@@ -892,7 +892,6 @@ mod tests {
                 language: Default::default(),
                 path: PathBuf::from("src/C.sol"),
                 contract_definitions: Vec::new(),
-                debug_scopes: Vec::new(),
             }),
         );
         sources.artifacts_by_name.insert(
