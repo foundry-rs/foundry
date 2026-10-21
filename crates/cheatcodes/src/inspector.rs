@@ -27,7 +27,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
-    EvmTypesHost, ExecutionError,
+    EvmFeatures, EvmTypesHost, ExecutionError,
     evm::State,
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
@@ -49,7 +49,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, SpecFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor,
-        TypesFor, evm_env,
+        TypesFor, evm_env, release_inspector,
     },
 };
 use foundry_evm_traces::{
@@ -174,7 +174,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let mut frame = backend.backend().begin_frame_evm(evm, env);
         frame.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let result = Host::execute_message(&mut frame, tx_env, message);
-        foundry_evm_core::backend::Backend::<FEN>::end_frame_evm(evm, frame);
+        let frame = release_inspector(frame);
+        backend.backend().end_frame_evm(evm, frame);
         result
     }
 
@@ -189,10 +190,20 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut child = backend.backend().nested_evm(evm, tx, env);
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
-        let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
-        // A failed transaction keeps its nonce increment.
-        foundry_evm_core::evm::merge_nested_changes(evm.state_mut(), &executed)?;
-        Ok(executed.result().clone())
+        let result =
+            child.transact(tx).map_err(|err| eyre::eyre!("{err:?}")).and_then(|executed| {
+                // A failed transaction keeps its nonce increment.
+                foundry_evm_core::evm::merge_nested_changes(evm.state_mut(), &executed)?;
+                Ok(executed.result().clone())
+            });
+        drop(release_inspector(child));
+        backend
+            .backend()
+            .lifecycle()
+            .forks()
+            .active_db()
+            .set_eip161(evm.version().feature(EvmFeatures::EIP161));
+        result
     }
 
     fn transact(

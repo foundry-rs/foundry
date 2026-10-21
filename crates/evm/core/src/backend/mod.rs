@@ -921,8 +921,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].
-    pub fn end_frame_evm(evm: &mut FoundryEvmFor<'_, FEN>, frame: FoundryEvmFor<'_, FEN>) {
-        ExecutionLifecycle::<EvmFactoryFor<FEN>>::end_frame_evm(evm, frame);
+    pub fn end_frame_evm(&self, evm: &mut FoundryEvmFor<'_, FEN>, frame: FoundryEvmFor<'_, FEN>) {
+        self.lifecycle.end_frame_evm(evm, frame);
     }
 
     // ---- Running-state operations ----

@@ -2530,3 +2530,78 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 }
+
+// A frame that `vm.setEvmVersion` moves the running transaction onto reads the shared fork
+// database with its own empty-account policy, and the caller gets its policy back on return.
+#[forgetest]
+async fn fork_set_evm_version_frame_uses_its_empty_account_policy(prj: _, cmd: _) {
+    prj.add_test(
+        "EmptyAccountPolicy.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function setEvmVersion(string calldata evm) external;
+    function executeTransaction(bytes calldata raw) external returns (bytes memory);
+}
+
+contract EmptyAccountPolicyTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function noop() external {}
+
+    // Runs on Prague: a Homestead frame loads the empty account 0x55aa11 as existing.
+    function test_frame_policy() public {
+        // Homestead runtime returning the gas of a zero-value CALL to 0x55aa11.
+        vm.etch(address(0x777777), hex"5a6000600060006000600073000000000000000000000000000000000055aa116103e8f1505a900360005260206000f3");
+        vm.setEvmVersion("homestead");
+        bool success;
+        uint256 used;
+        assembly {
+            success := call(gas(), 0x777777, 0, 0, 0, 0, 32)
+            used := mload(0)
+        }
+        require(success && used > 0 && used < 25_000, "frame: empty account absent");
+    }
+
+    // Runs on Homestead: after a Prague frame or transaction, empty accounts still exist.
+    function test_caller_policy() public {
+        vm.setEvmVersion("prague");
+        for (uint256 i; i < 2; ++i) {
+            if (i == 0) this.noop();
+            else vm.executeTransaction(hex"f8528080830186a080808460015ff382f4f5a0163754a7df29423d6f8bd4bf6f01698dd1a105fa44d7e97b4b313bd0cfe7da28a02241492692e0f6986a25cb0d03286526b9f6fe9afa7449b8ce382b6a5e058952");
+            uint256 used;
+            assembly {
+                used := gas()
+                pop(call(1000, add(0x55aa22, i), 0, 0, 0, 0, 0))
+                used := sub(used, gas())
+            }
+            require(used < 25_000, "caller: empty account absent");
+        }
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    for (evm_version, test) in
+        [(EvmVersion::Prague, "test_frame_policy"), (EvmVersion::Homestead, "test_caller_policy")]
+    {
+        for isolate in [false, true] {
+            prj.update_config(|config| {
+                config.evm_version = evm_version;
+                config.isolate = isolate;
+            });
+            cmd.forge_fuse()
+                .args(["test", "--fork-url", &handle.http_endpoint(), "--mt", test])
+                .assert_success()
+                .stdout_eq(format!(
+                    r#"...
+Ran 1 test for test/EmptyAccountPolicy.t.sol:EmptyAccountPolicyTest
+[PASS] {test}() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+                ));
+        }
+    }
+}

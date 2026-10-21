@@ -23,7 +23,7 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryInspectorExt,
-    backend::{Backend, transaction_error},
+    backend::transaction_error,
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmExt, FoundryEvmFactory,
@@ -507,7 +507,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             backend: Some(&mut *backend),
         });
         let result = Host::execute_message(&mut frame, tx_env, message);
-        Backend::<FEN>::end_frame_evm(evm, frame);
+        let frame = release_inspector(frame);
+        backend.backend().end_frame_evm(evm, frame);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -536,12 +537,19 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let result = match child.transact(tx) {
             Ok(executed) => {
                 // A failed transaction keeps its nonce increment.
-                merge_nested_changes(evm.state_mut(), &executed)?;
-                Ok(executed.result().clone())
+                merge_nested_changes(evm.state_mut(), &executed)
+                    .map(|()| executed.result().clone())
+                    .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        backend
+            .backend()
+            .lifecycle()
+            .forks()
+            .active_db()
+            .set_eip161(evm.version().feature(EvmFeatures::EIP161));
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
         result
@@ -1110,7 +1118,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             backend: Some(&mut *backend),
         });
         let result = Host::execute_message(&mut frame, tx_env, message);
-        Backend::<FEN>::end_frame_evm(evm, frame);
+        let frame = release_inspector(frame);
+        backend.backend().end_frame_evm(evm, frame);
         match result {
             Ok(result) => {
                 // evm2 runs the end hooks right after this hook returns a result.
@@ -1273,10 +1282,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         );
 
         let replaced = epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
-            || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
+            || backend.backend().active_fork_id() != source_fork;
         let merged = if replaced {
             child.commit_source(&executed.pending_state);
-            Backend::<FEN>::end_frame_evm(evm, child);
+            backend.backend().end_frame_evm(evm, child);
             true
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()

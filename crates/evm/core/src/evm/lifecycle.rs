@@ -470,9 +470,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
         }
-        let executed = executor.transact(tx).map_err(transaction_error)?;
-        merge_nested_changes(evm.state_mut(), &executed)?;
-        Ok(executed.result().clone())
+        let result = executor.transact(tx).map_err(transaction_error).and_then(|executed| {
+            merge_nested_changes(evm.state_mut(), &executed)?;
+            Ok(executed.result().clone())
+        });
+        self.forks.active_db().set_eip161(evm.version().feature(EvmFeatures::EIP161));
+        result
     }
 
     /// Builds the EVM a nested transaction of the running one executes on: a copy of the running
@@ -519,6 +522,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         env: EvmEnv<F::Types>,
     ) -> Evm<'a, F::Types> {
         let db = self.forks.active_db();
+        // The moved state reads through the active backing database, not the frame's own.
+        db.set_eip161(env.version.feature(EvmFeatures::EIP161));
         let factory = self.factory.configure_for(&db, &env);
         let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
         let state = mem::replace(evm.state_mut(), State::new(EmptyDB::default()));
@@ -529,9 +534,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     }
 
     /// Hands the state, block and network extension state of a frame EVM created with
-    /// [`Self::begin_frame_evm`] back to `evm`.
-    pub fn end_frame_evm(evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
+    /// [`Self::begin_frame_evm`] back to `evm`, restoring `evm`'s empty-account policy on the
+    /// active backing database.
+    pub fn end_frame_evm(&self, evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
         frame.clear_inspector();
+        self.forks.active_db().set_eip161(evm.version().feature(EvmFeatures::EIP161));
         let state = mem::replace(frame.state_mut(), State::new(EmptyDB::default()));
         // SAFETY: See `begin_frame_evm`; the frame only ever installs owned backing databases,
         // such as on a fork switch.
