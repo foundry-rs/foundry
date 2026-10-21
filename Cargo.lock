@@ -1350,7 +1350,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -3374,7 +3374,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tokio",
  "tower",
@@ -5818,7 +5818,7 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -6262,9 +6262,9 @@ dependencies = [
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-precompiles",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -6330,7 +6330,7 @@ dependencies = [
  "monad-evm2",
  "op-evm2",
  "serde",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
@@ -7184,7 +7184,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -10143,7 +10143,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -11337,9 +11337,9 @@ checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -12137,7 +12137,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -12152,7 +12152,7 @@ dependencies = [
 [[package]]
 name = "solar-cli"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -12183,7 +12183,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "arrayvec",
@@ -12204,7 +12204,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
@@ -12222,7 +12222,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -12236,7 +12236,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "bumpalo",
  "diff",
@@ -12251,7 +12251,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -12278,7 +12278,7 @@ dependencies = [
 [[package]]
 name = "solar-lint"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "rayon",
  "solar-ast",
@@ -12289,7 +12289,7 @@ dependencies = [
 [[package]]
 name = "solar-lsp"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "arc-swap",
  "async-lsp",
@@ -12316,7 +12316,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12326,7 +12326,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.2",
@@ -12347,7 +12347,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=7560c87fcaa7630426636c075e7df8f15735da19#7560c87fcaa7630426636c075e7df8f15735da19"
+source = "git+https://github.com/paradigmxyz/solar?rev=e935d251ce5335ef07ad4f49176d3fb52d08d68d#e935d251ce5335ef07ad4f49176d3fb52d08d68d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -12856,7 +12856,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -12871,8 +12871,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-dkg-onchain-artifacts",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
@@ -12895,7 +12895,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-contract",
  "alloy-network",
@@ -12906,13 +12906,13 @@ dependencies = [
  "alloy-transport",
  "k256 0.13.4",
  "serde",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12923,7 +12923,7 @@ dependencies = [
 [[package]]
 name = "tempo-evm"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -12945,11 +12945,11 @@ dependencies = [
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
  "reth-storage-api",
- "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-dkg-onchain-artifacts",
  "tempo-precompiles",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -12970,7 +12970,7 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-eips",
  "alloy-hardforks",
@@ -12982,7 +12982,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-nitro-attestation"
-version = "1.16.0"
+version = "1.16.1"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "arrayvec",
  "aws-lc-rs",
@@ -12997,7 +12998,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy",
  "alloy-json-abi",
@@ -13013,11 +13014,11 @@ dependencies = [
  "scoped-tls",
  "serde",
  "serde_json",
- "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "tempo-nitro-attestation",
  "tempo-precompiles-macros",
- "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -13025,7 +13026,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.16.1"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -13061,7 +13062,7 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c#f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c"
+source = "git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91#404f042f4e6e8ec957ad5c017b4d2d1c49666f91"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -13082,7 +13083,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=f9bbf9f44e3203f83b2fe1f629c5af74a604ef4c)",
+ "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=404f042f4e6e8ec957ad5c017b4d2d1c49666f91)",
 ]
 
 [[package]]
@@ -13420,7 +13421,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -14302,9 +14303,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -14315,14 +14316,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]

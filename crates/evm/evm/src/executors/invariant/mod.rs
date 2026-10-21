@@ -1142,6 +1142,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         let mut runs = 0;
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
+        // Report invariants that already fail in the initial state. Later runs only report
+        // failures that they add.
+        record_new_invariant_failures(
+            campaign_state,
+            &invariant_contract,
+            &invariant_test.test_data.failures,
+        );
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();

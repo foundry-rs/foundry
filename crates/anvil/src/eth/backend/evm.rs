@@ -13,7 +13,7 @@ use crate::{
         backend::{
             cheats::CheatsManager,
             db::{DatabaseRef, EvmDb},
-            env::EvmEnv,
+            env::{EvmEnv, SpecId},
         },
         error::BlockchainError,
     },
@@ -368,6 +368,12 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
         hardfork.into()
     }
 
+    fn apply_authority_overrides(tx: &mut tempo_evm::TempoTxEnv, overrides: &[(usize, Address)]) {
+        for &(index, authority) in overrides {
+            tx.override_authority(index, authority);
+        }
+    }
+
     fn apply_tempo_simulation(
         tx: tempo_evm::TempoTxEnv,
         simulation: &TempoSimulation,
@@ -590,6 +596,11 @@ pub fn execute<N: AnvilEvmNetwork, I: Inspector<TypesFor<N>>>(
     context: &TxContext,
     inspector: &mut I,
 ) -> Result<Executed, BlockchainError> {
+    // Validate presence before converting to evm2's non-optional blob base fee. Fork setup has
+    // already normalized headers from chains that legitimately omit the blob fields.
+    if env.cfg_env.spec >= SpecId::CANCUN && env.block_env.blob_excess_gas_and_price.is_none() {
+        return Err(BlockchainError::ExcessBlobGasNotSet);
+    }
     let mut evm = build_evm::<N>(db, env, opts)?;
     evm.set_inspector(InspectorRef(inspector));
     transact::<N>(&mut evm, prepared, context, opts.cheats.as_ref())
