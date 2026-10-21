@@ -1,7 +1,8 @@
-//! The `forge properties` command: several external generator agents look for bugs in the targets
-//! independently and in parallel, and prove each one with a failing test. Forge runs every claimed
-//! failure again on every seed, reports a bug only when enough agents agree on its root cause, and
-//! keeps one copy of each passing test file.
+//! The `forge properties` command: several agents look for bugs in the targets independently and
+//! in parallel, each in one session in its own copy of the project, and prove each bug with a
+//! failing test. Forge runs the tests of every agent again in a fresh copy on every seed, reports a
+//! bug only when enough agents agree on its root cause, and keeps one copy of each passing test
+//! file.
 
 use crate::{
     cmd::test::RerunFailure,
@@ -26,11 +27,6 @@ use foundry_config::{Config, DenyLevel};
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use solar::parse::{
-    Parser as SolarParser,
-    ast::{Arena, ItemKind, StateMutability, Visibility, interface::source_map::FileName},
-    interface::Session,
-};
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -39,49 +35,29 @@ use std::{
     io::Write,
     ops::Add,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::LazyLock,
     thread,
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 use tempfile::TempDir;
 
+#[cfg(unix)]
+use rustix::process::{Pid, Signal, kill_process_group};
+#[cfg(unix)]
+use std::{os::unix::process::CommandExt, sync::Mutex};
+
 mod matcher;
 
-const CANDIDATE_SCHEMA: &str = "foundry/properties-candidate-v1";
-const PROMPT_SCHEMA: &str = "foundry/properties-prompt-v5";
 /// On 12 held-out cases, four small-model agents with a quorum of two found bugs in as many cases
 /// as five (8.6 against 9.0 of 12, a tie in a bootstrap over cases) at four fifths of the cost.
 /// With a quorum of two, they kept no report that reviewers labelled wrong, because wrong claims
 /// of independent agents rarely repeat.
 const DEFAULT_AGENTS: usize = 4;
 const DEFAULT_QUORUM: usize = 2;
-/// The instructions of every agent. On 26 held-out cases, five plain small-model audits with a
-/// prompt of about 1 KB found as many bugs as five Forge agents with longer guidance, audit
-/// lenses, and the targets' sources in the prompt.
-const INSTRUCTIONS: &str = "Find bugs in the targets of this Foundry project and prove each one \
-with a Foundry test. The code under test can be wrong: the correct behavior is what its \
-documentation, its interfaces, the standards it claims, and the context files state. A proving \
-test encodes that intended behavior: it fails on the current code because of the bug and passes \
-once the bug is fixed. Write the tests under output_contract.allowed_path_prefix and follow the \
-project's remappings and test conventions. Put failing and passing tests in separate files, because \
-Forge keeps a file only when all of its tests pass. To compile and run the tests of a candidate on \
-every seed, write the candidate JSON and run output_contract.check_command with CANDIDATE_JSON \
-replaced by its path. For each failing test, add an evidence entry keyed by Contract::test: the \
-claim that the test asserts, the source that states the claim, and in code_path the file:line of \
-the root cause and what the code does wrong. Report only bugs that a test proves. If \
-previous_feedback lists reasons, fix them first. Return one candidate object with the shape of \
-output_contract.example; usage is optional.";
-/// Follows `INSTRUCTIONS` when the agent has a focus.
-const FOCUS_INSTRUCTION: &str = "Start with the functions in agent.focus, then follow the code \
-wherever a bug leads; every target stays in scope.";
-/// Bounds the rejected files of the last round in the prompt.
-const MAX_PROMPT_SOURCE_BYTES: usize = 16 * 1024;
-/// Extra rounds for an agent whose last round left no kept file and no possible bug. In the swarm
-/// study, 8 small-model reports named a real root cause, but their tests did not compile or run.
-const MAX_REPAIR_ROUNDS: usize = 1;
-/// Records every test that fails on every seed in a `--check` run, one JSON object per line.
-const CHECK_JOURNAL: &str = "check-failures.jsonl";
+/// How often Forge checks whether an agent session with a timeout has exited. Sessions take
+/// minutes, so this adds no noticeable delay.
+const SESSION_POLL: Duration = Duration::from_millis(100);
 /// Agent settings and instruction files that a workspace leaves out at every level. Settings can
 /// hold hooks that run commands on the host. `CLAUDE.md` and `AGENTS.md` are project docs, but
 /// they steer the agents that work in the copy, so a user who wants them passes them with
@@ -130,9 +106,14 @@ static BLOCKED_CHEATCODE: LazyLock<Regex> = LazyLock::new(|| {
 });
 /// Solidity line and block comments.
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)//[^\n]*|/\*.*?\*/").unwrap());
+/// A contract declaration and its name.
+static CONTRACT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bcontract\s+(\w+)").unwrap());
 /// The path of an import directive.
 static IMPORT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\bimport\s+(?:[^;]*?\bfrom\s+)?["']([^"']+)["']"#).unwrap());
+/// The process groups of the running agent sessions, which Forge ends if it is interrupted.
+#[cfg(unix)]
+static SESSIONS: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
 
 /// Run agents that prove bugs with failing tests and report the bugs that they agree on.
 #[derive(Clone, Debug, Parser)]
@@ -149,62 +130,57 @@ pub struct PropertiesArgs {
 
     /// Reference material for the agents, such as docs, a specification, or a threat model.
     ///
-    /// Forge passes each file verbatim to every agent, with its path. Can be given more than once.
+    /// Forge gives every agent the absolute path of each file. Can be given more than once.
     #[arg(long, value_name = "PATH")]
     context: Vec<PathBuf>,
 
-    /// Executable that runs one agent, such as a wrapper around any coding agent.
+    /// Executable that runs one agent session, such as a wrapper around any coding agent.
     ///
-    /// Forge runs `PATH [ARG...] PROMPT_JSON OUTPUT_JSON` once per agent and round, in the
-    /// agent's copy of the project. PROMPT_JSON holds the instructions, the targets, the context
-    /// files, and `output_contract`. The generator writes one candidate object with the schema of
-    /// `output_contract.example` to OUTPUT_JSON and exits with status 0; another status ends the
-    /// agent. It may run `output_contract.check_command` any number of times before it returns.
-    #[arg(long, required_unless_present = "check", value_name = "PATH")]
-    generator: Option<PathBuf>,
+    /// Forge runs `PATH [ARG...]` once per agent, in parallel, each in its own copy of the
+    /// project, with these environment variables:
+    ///
+    /// FORGE_PROPERTIES_PROMPT   the task: targets, context files, and output directory
+    /// FORGE_PROPERTIES_TARGETS  target files, relative to the copy, one per line
+    /// FORGE_PROPERTIES_CONTEXT  absolute paths of the --context files, one per line
+    /// FORGE_PROPERTIES_OUT      absolute, empty directory for the agent's tests
+    /// FORGE_PROPERTIES_SEED     the agent's own seed, in hex
+    /// FORGE_PROPERTIES_USAGE    file where the agent can write its model usage as JSON:
+    ///                           {"input_tokens": N, "output_tokens": N, "cost_usd": X}
+    ///
+    /// The agent writes Solidity tests under FORGE_PROPERTIES_OUT and can run `forge test` in the
+    /// copy. When it exits or reaches --timeout, Forge ends its process group and runs every
+    /// `*.sol` file under FORGE_PROPERTIES_OUT in a fresh copy of the project on every seed. A
+    /// test that fails on every seed is a possible bug. Its claim is the comment right above the
+    /// test function, else the test name. Forge keeps the files whose tests all pass. A nonzero
+    /// exit status is an error, but Forge still runs the agent's tests.
+    #[arg(long, required = true, value_name = "PATH", verbatim_doc_comment)]
+    agent_command: PathBuf,
 
-    /// Argument passed to the generator before PROMPT_JSON and OUTPUT_JSON.
+    /// Argument passed to the agent command. Can be given more than once.
     #[arg(long, allow_hyphen_values = true, value_name = "ARG")]
-    generator_arg: Vec<OsString>,
+    agent_arg: Vec<OsString>,
 
-    /// Compile and run the tests of a candidate JSON file on every seed and print the result as
-    /// JSON. Generators use this to check a candidate before they return it.
-    #[arg(long, value_name = "CANDIDATE_JSON", conflicts_with_all = ["target", "context", "generator", "no_focus"])]
-    check: Option<PathBuf>,
-
-    /// Deterministic seeds used to evaluate every candidate. Supply at least two.
+    /// Deterministic seeds used to run the tests of every agent. Supply at least two.
     #[arg(long, required = true, action = clap::ArgAction::Append, value_name = "SEED")]
     seed: Vec<U256>,
 
-    /// Number of generator rounds of each agent.
-    ///
-    /// An agent whose last round leaves no kept file and no possible bug, for example because its
-    /// tests do not compile, gets one repair round with the errors in its feedback.
-    #[arg(long, default_value_t = 1, value_name = "N")]
-    rounds: usize,
-
-    /// Number of generator agents. Each agent runs the generator independently and in parallel
-    /// in its own copy of the project, with its own seed.
+    /// Number of agents. Each agent runs one session independently and in parallel in its own
+    /// copy of the project, with its own seed.
     #[arg(long, default_value_t = DEFAULT_AGENTS, value_name = "N")]
     agents: usize,
 
     /// Number of agents that must report the same root cause before Forge reports it as a
     /// possible bug.
     ///
-    /// Two failing tests have the same root cause when their evidence names the same target file
-    /// in `code_path` and they share a function name, or at least 30% of their claim words.
-    /// Groups below the quorum are only in `cache/properties/report.json`. Defaults to 2, or 1
-    /// with a single agent.
+    /// Two failing tests have the same root cause when their claims name the same Solidity file
+    /// and share a function name or at least 30% of their words. Groups below the quorum are only
+    /// in `cache/properties/report.json`. Defaults to 2, or 1 with a single agent.
     #[arg(long, value_name = "K")]
     quorum: Option<usize>,
 
-    /// Give every agent the same prompt, without a focus.
-    ///
-    /// By default, Forge deals the external and public state-changing functions of the target
-    /// contracts to the agents in turn. Each agent starts with its own functions, but sees all
-    /// targets.
-    #[arg(long)]
-    no_focus: bool,
+    /// Seconds after which Forge ends an agent session and runs the tests that it wrote.
+    #[arg(long, value_name = "SECS")]
+    timeout: Option<u64>,
 
     /// Let generated tests run host commands with `vm.ffi` if the project enables `ffi`.
     ///
@@ -219,31 +195,9 @@ pub struct PropertiesArgs {
     /// the copies have no RPC or Etherscan settings.
     #[arg(long)]
     allow_network: bool,
-
-    /// Agent whose check journal records a `--check` run. Forge sets it in the check command of
-    /// each agent.
-    #[arg(long, hide = true, requires = "check", value_name = "ID")]
-    agent: Option<usize>,
-
-    /// Workspace with the project's build output, which a `--check` workspace copies so that it
-    /// compiles only the files that changed. Forge sets it in the check command of each agent.
-    #[arg(long, hide = true, requires = "check", value_name = "PATH")]
-    build_cache: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct Candidate {
-    schema: String,
-    files: Vec<CandidateFile>,
-    /// Why each test that the generator expects to fail is a possible bug, by `Contract::test`.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    evidence: BTreeMap<String, Evidence>,
-    /// What the generator spent to write this candidate, if it reports it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    usage: Option<Usage>,
-}
-
-/// Model usage that a generator reports.
+/// Model usage that an agent reports.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 struct Usage {
     #[serde(default)]
@@ -266,102 +220,23 @@ impl Add for Usage {
     }
 }
 
-/// Why a test that the generator expects to fail is a bug.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct Evidence {
-    /// The intended behavior that the test asserts.
-    claim: String,
-    /// Where the claim is stated: `path:line`, or a standard and its clause.
-    source: String,
-    /// The root cause: `path:line` of the code and what it does wrong.
-    code_path: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct CandidateFile {
+/// A Solidity file that an agent wrote, by its path relative to the project root.
+#[derive(Clone, Debug)]
+struct TestFile {
     path: PathBuf,
     content: String,
 }
 
-#[derive(Debug, Serialize)]
-struct GeneratorPrompt<'a> {
-    schema: &'static str,
-    instructions: &'a str,
-    round: usize,
-    agent: AgentPrompt<'a>,
-    project: &'a Path,
-    targets: &'a [PathBuf],
-    #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    context: &'a [PromptSource],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    current_candidate: Option<&'a Candidate>,
-    #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    last_rejected_sources: &'a [PromptSource],
-    previous_feedback: &'a [Round],
-    output_contract: OutputContract,
-}
-
-/// Who the agent is in the run.
-#[derive(Debug, Serialize)]
-struct AgentPrompt<'a> {
-    /// The agent's number, from 1.
-    id: usize,
-    /// The number of agents in the run.
-    count: usize,
-    /// A seed of this agent, for example to vary sampling or the order of its search.
-    seed: U256,
-    /// The functions where this agent starts, as `Contract.function`.
-    #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    focus: &'a [String],
-}
-
-#[derive(Debug, Serialize)]
-struct PromptSource {
-    path: PathBuf,
-    content: String,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    truncated: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct OutputContract {
-    schema: &'static str,
-    allowed_path_prefix: PathBuf,
-    example: Candidate,
-    /// Command that compiles and runs the tests of a candidate file.
-    check_command: Vec<String>,
-}
-
-/// The result of one round, in `rounds.json` and in the feedback of later prompts.
-#[derive(Debug, Default, Serialize)]
-struct Round {
-    round: usize,
-    /// Digest of the evaluated candidate, which is in `<digest>/candidate.json`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    candidate_digest: Option<String>,
-    /// Proposed files that Forge kept.
-    kept: Vec<PathBuf>,
-    reasons: Vec<String>,
-    /// Tests that fail on every seed.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    possible_bugs: Vec<CheckFailure>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    usage: Option<Usage>,
-}
-
-/// A candidate test that fails on every seed.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct CheckFailure {
+/// A test that fails on every seed.
+#[derive(Clone, Debug, Serialize)]
+struct Failure {
     /// `Contract::test`.
     test: String,
     path: PathBuf,
     reason: String,
-    /// The generator's evidence that the failure is a bug.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    evidence: Option<Evidence>,
-    /// Source of the file that holds the test. Only `--check` records it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source: Option<String>,
+    /// The comment above the test.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim: Option<String>,
 }
 
 /// A test of one agent that fails on every seed.
@@ -369,33 +244,28 @@ struct CheckFailure {
 struct AgentFailure {
     agent: usize,
     #[serde(flatten)]
-    failure: CheckFailure,
-    /// Where Forge saw the failure.
-    note: String,
+    failure: Failure,
+    /// The copy of the test file for review, relative to the project root.
+    file: PathBuf,
 }
 
 impl std::fmt::Display for AgentFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let failure = &self.failure;
         write!(f, "  agent {}: {} ({})", self.agent, failure.test, failure.reason)?;
-        if let Some(evidence) = &failure.evidence {
-            write!(
-                f,
-                "\n    claim: {} ({})\n    code path: {}",
-                evidence.claim, evidence.source, evidence.code_path
-            )?;
+        if let Some(claim) = &failure.claim {
+            write!(f, "\n    claim: {claim}")?;
         }
-        write!(f, "\n    {}", self.note)
+        write!(f, "\n    file: {}", self.file.display())
     }
 }
 
-/// The findings of one agent.
-#[derive(Default)]
-struct AgentFindings {
-    /// Tests that fail on every seed.
-    possible_bugs: Vec<AgentFailure>,
-    /// Failures from the check journal that do not fail on every seed when Forge runs them again.
-    unverified: Vec<AgentFailure>,
+/// Files of an agent that Forge did not run.
+#[derive(Debug, Serialize)]
+struct Rejected {
+    agent: usize,
+    paths: Vec<PathBuf>,
+    reason: String,
 }
 
 /// The failing tests of all agents that have one root cause.
@@ -403,21 +273,34 @@ struct AgentFindings {
 struct BugGroup {
     /// The agents that report the root cause.
     agents: Vec<usize>,
-    /// The failing tests, by agent. The first test has evidence, if any test has.
+    /// The failing tests, by agent. The first test has a claim, if any test has.
     failures: Vec<AgentFailure>,
 }
 
-/// The tests of a candidate, run on every seed.
+/// The tests of some files, run on every seed.
 #[derive(Default)]
 struct TestRun {
-    /// Problems that the generator can fix, such as compile errors and failing tests.
-    reasons: Vec<String>,
     /// Tests that fail on every seed.
-    possible_bugs: Vec<CheckFailure>,
+    possible_bugs: Vec<Failure>,
     /// Tests that pass on every seed.
     passing: Vec<RerunFailure>,
     /// Files with a test that does not pass on every seed.
     failing_files: HashSet<PathBuf>,
+    /// Seeds on which Forge could not run the tests.
+    errors: Vec<String>,
+}
+
+/// What one agent session left.
+struct Session {
+    id: usize,
+    /// Why the agent command failed, if it did.
+    error: Option<String>,
+    timed_out: bool,
+    usage: Option<Usage>,
+    possible_bugs: Vec<AgentFailure>,
+    rejected: Vec<Rejected>,
+    /// The files whose tests pass on every seed, with the files that they import.
+    kept: Vec<TestFile>,
 }
 
 impl PropertiesArgs {
@@ -427,7 +310,6 @@ impl PropertiesArgs {
             self.seed.iter().collect::<HashSet<_>>().len() == self.seed.len(),
             "--seed values must be distinct"
         );
-        ensure!(self.rounds > 0, "--rounds must be greater than zero");
         ensure!(self.agents > 0, "--agents must be greater than zero");
         let quorum = self.quorum.unwrap_or(self.agents.min(DEFAULT_QUORUM));
         ensure!((1..=self.agents).contains(&quorum), "--quorum must be between 1 and --agents");
@@ -461,7 +343,7 @@ impl PropertiesArgs {
             generated_tests,
             cache_root,
             quorum,
-            build_cache: self.build_cache.clone(),
+            build_cache: None,
             home: tempfile::Builder::new().prefix("forge-properties-home-").tempdir()?,
         };
         if let Some(svm) = Solc::svm_home().filter(|svm| svm.is_dir()) {
@@ -471,13 +353,9 @@ impl PropertiesArgs {
                 fs::metadata(&svm)?.file_type(),
             )?;
         }
-        if let Some(path) = &self.check {
-            return campaign.check(path);
-        }
-        // One build up front: every workspace starts from its output, so a check compiles only
-        // the files that it adds.
-        let build = campaign.build()?;
-        campaign.build_cache = build.as_ref().map(|build| build.path().to_path_buf());
+        // One build up front: every workspace starts from its output, so a test run compiles
+        // only the files that it adds.
+        campaign.build_cache = campaign.build()?;
         campaign.run()
     }
 }
@@ -487,58 +365,39 @@ struct Campaign<'a> {
     args: &'a PropertiesArgs,
     config: &'a Config,
     forge: PathBuf,
+    /// The directory of generated tests, relative to the project root. Workspaces leave out the
+    /// project's copy of it, so every agent starts without earlier generated tests.
     generated_tests: PathBuf,
     cache_root: PathBuf,
     quorum: usize,
     /// The workspace whose build output every new workspace copies.
-    build_cache: Option<PathBuf>,
+    build_cache: Option<TempDir>,
     /// The home directory of builds and test runs, whose `.svm` links to the installed compilers.
     home: TempDir,
 }
 
 /// The inputs that every agent shares.
 struct AgentInputs {
-    context: Vec<PromptSource>,
-    generator: PathBuf,
+    agent_command: PathBuf,
     /// The target files, relative to the project root.
     targets: Vec<PathBuf>,
-}
-
-/// The state of one generator agent.
-struct Agent<'a> {
-    campaign: &'a Campaign<'a>,
-    id: usize,
-    /// The directory of this agent's generated files, relative to the project root.
-    generated_tests: PathBuf,
-    /// The directory of this agent's candidates, rounds, and check journal.
-    cache: PathBuf,
-    /// The functions where this agent starts, as `Contract.function`.
-    focus: Vec<String>,
-    rounds: Vec<Round>,
-    /// The kept files.
-    current: Option<Candidate>,
-    /// The tests in the kept files.
-    current_tests: Vec<RerunFailure>,
-    /// The rejected files of the latest round.
-    rejected_sources: Vec<PromptSource>,
+    /// The absolute paths of the context files.
+    context: Vec<PathBuf>,
 }
 
 impl Campaign<'_> {
     fn run(&self) -> Result<()> {
-        let Some(generator) = &self.args.generator else {
-            eyre::bail!("--generator is required");
-        };
+        let agent_command =
+            self.args.agent_command.canonicalize().wrap_err("failed to resolve agent command")?;
         let context = self
             .args
             .context
             .iter()
             .map(|path| {
-                let content = fs::read_to_string(path)
-                    .wrap_err_with(|| format!("failed to read context {}", path.display()))?;
-                Ok(PromptSource { path: path.clone(), content, truncated: false })
+                canonicalize_path(path)
+                    .wrap_err_with(|| format!("failed to resolve context {}", path.display()))
             })
             .collect::<Result<Vec<_>>>()?;
-        let generator = generator.canonicalize().wrap_err("failed to resolve generator")?;
         let targets = if self.args.target.is_empty() {
             source_files_iter(&self.config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                 .map(|path| workspace::relative_to_root(&self.config.root, &path))
@@ -546,51 +405,44 @@ impl Campaign<'_> {
         } else {
             self.args.target.clone()
         };
-        // In one run, agents with the same prompt found the same bugs: on 26 held-out cases, 8
-        // agents found 29 distinct root causes, against 40 for 4 independent plain audits. A
-        // distinct starting point for each agent spreads the search.
-        let focus = if self.args.no_focus {
-            vec![vec![]; self.args.agents]
-        } else {
-            focus_slices(&target_functions(&self.config.root, &targets), self.args.agents)
-        };
-        let inputs = AgentInputs { context, generator, targets };
+        let inputs = AgentInputs { agent_command, targets, context };
 
-        let mut agents = (1..=self.args.agents)
-            .zip(focus)
-            .map(|(id, focus)| Agent {
-                campaign: self,
-                id,
-                generated_tests: self.generated_tests.join(format!("agent-{id}")),
-                cache: self.cache_root.join(format!("agent-{id}")),
-                focus,
-                rounds: vec![],
-                current: None,
-                current_tests: vec![],
-                rejected_sources: vec![],
-            })
-            .collect::<Vec<_>>();
+        // Agent sessions run in their own process groups, so a terminal interrupt does not reach
+        // them. Forge ends them before it exits.
+        #[cfg(unix)]
+        ctrlc::set_handler(|| {
+            for group in SESSIONS.lock().unwrap().iter() {
+                let _ = kill_process_group(*group, Signal::KILL);
+            }
+            std::process::exit(130);
+        })?;
         // Agents work in copies of the project, but the copies link the entries of dependency
         // directories. A project file that changes while they run taints the run.
         let fingerprint = project_fingerprint(self.config);
         // An agent error ends only that agent, and the run reports it after the other agents, so
         // their results are not lost.
-        let errors = thread::scope(|scope| {
+        let results = thread::scope(|scope| {
             let inputs = &inputs;
-            let agents = agents
-                .iter_mut()
-                .map(|agent| scope.spawn(move || agent.run(inputs)))
+            let agents = (1..=self.args.agents)
+                .map(|id| scope.spawn(move || self.run_agent(id, inputs)))
                 .collect::<Vec<_>>();
             agents
                 .into_iter()
                 .map(|agent| agent.join().expect("agent thread panicked"))
                 .collect::<Vec<_>>()
         });
-        let errors = errors
-            .into_iter()
-            .zip(&agents)
-            .filter_map(|(result, agent)| Some(format!("agent {}: {:#}", agent.id, result.err()?)))
-            .collect::<Vec<_>>();
+        let mut sessions = Vec::new();
+        let mut errors = Vec::new();
+        for (id, result) in (1..).zip(results) {
+            match result {
+                Ok(session) => {
+                    errors
+                        .extend(session.error.as_ref().map(|error| format!("agent {id}: {error}")));
+                    sessions.push(session);
+                }
+                Err(error) => errors.push(format!("agent {id}: {error:#}")),
+            }
+        }
         let after = project_fingerprint(self.config);
         let tainted = after
             .iter()
@@ -599,21 +451,23 @@ impl Campaign<'_> {
             .chain(fingerprint.keys().filter(|path| !after.contains_key(*path)))
             .cloned()
             .collect::<Vec<_>>();
-        self.report(&agents, &tainted)?;
+        self.report(&sessions, &tainted)?;
         ensure!(errors.is_empty(), "{}", errors.join("\n"));
         Ok(())
     }
 
     /// Prints the possible bugs that reach the quorum and writes one copy of each kept file to the
     /// project.
-    fn report(&self, agents: &[Agent<'_>], tainted: &[PathBuf]) -> Result<()> {
-        let mut failures = Vec::new();
-        let mut unverified = Vec::new();
-        for agent in agents {
-            let findings = agent.findings()?;
-            failures.extend(findings.possible_bugs);
-            unverified.extend(findings.unverified);
-        }
+    fn report(&self, sessions: &[Session], tainted: &[PathBuf]) -> Result<()> {
+        let failures = sessions
+            .iter()
+            .flat_map(|session| &session.possible_bugs)
+            .map(|failure| AgentFailure {
+                agent: failure.agent,
+                failure: failure.failure.clone(),
+                file: failure.file.clone(),
+            })
+            .collect::<Vec<_>>();
         // A test that fails only because Forge blocked a cheatcode is not evidence of a bug.
         let (blocked, failures) = failures
             .into_iter()
@@ -623,7 +477,7 @@ impl Campaign<'_> {
             .partition::<Vec<_>, _>(|group| group.agents.len() >= self.quorum);
         for group in &possible_bugs {
             let lead = &group.failures[0].failure;
-            let summary = lead.evidence.as_ref().map_or(lead.test.as_str(), |e| e.claim.as_str());
+            let summary = lead.claim.as_deref().unwrap_or(&lead.test);
             sh_println!(
                 "possible bug ({}/{} agents): {summary}",
                 group.agents.len(),
@@ -643,10 +497,11 @@ impl Campaign<'_> {
                 report_display.display()
             )?;
         }
-        if !unverified.is_empty() {
+        let rejected = sessions.iter().flat_map(|session| &session.rejected).collect::<Vec<_>>();
+        if !rejected.is_empty() {
             sh_println!(
-                "{} check journal failure(s) did not fail again in a fresh copy: see {}",
-                unverified.len(),
+                "{} generated test file(s) did not compile or were not allowed: see {}",
+                rejected.iter().map(|rejected| rejected.paths.len()).sum::<usize>(),
                 report_display.display()
             )?;
         }
@@ -657,6 +512,17 @@ impl Campaign<'_> {
                 report_display.display()
             )?;
         }
+        let timed_out = sessions
+            .iter()
+            .filter(|session| session.timed_out)
+            .map(|session| session.id)
+            .collect::<Vec<_>>();
+        if !timed_out.is_empty() {
+            sh_warn!(
+                "{} agent(s) reached the timeout, so Forge ended them and ran the tests that they wrote",
+                timed_out.len()
+            )?;
+        }
         if !tainted.is_empty() {
             sh_warn!(
                 "{} project file(s) changed while the agents ran, so the run is tainted: see {}",
@@ -664,22 +530,16 @@ impl Campaign<'_> {
                 report_display.display()
             )?;
         }
-        let usage = agents
+        let usage = sessions
             .iter()
-            .filter_map(|agent| {
-                let usage =
-                    agent.rounds.iter().filter_map(|round| round.usage).reduce(Usage::add)?;
-                Some(serde_json::json!({ "agent": agent.id, "usage": usage }))
+            .filter_map(|session| {
+                Some(serde_json::json!({ "agent": session.id, "usage": session.usage? }))
             })
             .collect::<Vec<_>>();
-        if let Some(total) = agents
-            .iter()
-            .flat_map(|agent| &agent.rounds)
-            .filter_map(|round| round.usage)
-            .reduce(Usage::add)
+        if let Some(total) = sessions.iter().filter_map(|session| session.usage).reduce(Usage::add)
         {
             sh_println!(
-                "generator usage: {} input tokens, {} output tokens, {:.2} USD",
+                "agent usage: {} input tokens, {} output tokens, {:.2} USD",
                 total.input_tokens,
                 total.output_tokens,
                 total.cost_usd
@@ -687,21 +547,24 @@ impl Campaign<'_> {
         }
 
         // Keep one copy of each file. A file that another file of the same agent imports stays,
-        // so the imports still resolve.
+        // so the imports still resolve. A file that the project has already is not written.
         let mut seen = HashSet::new();
         let mut kept = Vec::new();
         let mut duplicates = Vec::new();
-        for current in agents.iter().filter_map(|agent| agent.current.as_ref()) {
-            for file in &current.files {
+        for files in sessions.iter().map(|session| &session.kept) {
+            for file in files {
                 let normalized =
                     COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
-                let imported = current.files.iter().any(|other| {
+                let imported = files.iter().any(|other| {
                     other.path != file.path
                         && IMPORT.captures_iter(&other.content).any(|import| {
                             Path::new(&import[1]).file_name() == file.path.file_name()
                         })
                 });
-                if seen.insert(normalized) || imported {
+                let path = self.config.root.join(&file.path);
+                // A linked directory on the path must not lead outside the project.
+                ensure_inside(&self.config.root, &path, &file.path)?;
+                if (seen.insert(normalized) || imported) && !path.exists() {
                     kept.push(file);
                 } else {
                     duplicates.push(&file.path);
@@ -714,8 +577,9 @@ impl Campaign<'_> {
             "quorum": self.quorum,
             "possible_bugs": possible_bugs,
             "below_quorum": below_quorum,
-            "unverified": unverified,
             "blocked": blocked,
+            "rejected": rejected,
+            "timed_out": timed_out,
             "tainted": tainted,
             "kept": kept.iter().map(|file| &file.path).collect::<Vec<_>>(),
             "duplicates": duplicates,
@@ -727,10 +591,9 @@ impl Campaign<'_> {
             sh_println!("no generated test file was kept")?;
             return Ok(());
         }
-        // Evaluation rejects paths that exist or leave the project, so this only adds files.
         for file in &kept {
             let path = self.config.root.join(&file.path);
-            fs::create_dir_all(path.parent().expect("candidate path has a parent"))?;
+            fs::create_dir_all(path.parent().expect("test path has a parent"))?;
             fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -744,7 +607,7 @@ impl Campaign<'_> {
         }
         if !duplicates.is_empty() {
             sh_println!(
-                "skipped {} generated test file(s) that repeat a file of another agent",
+                "skipped {} generated test file(s) that repeat a file of another agent or the project",
                 duplicates.len()
             )?;
         }
@@ -752,99 +615,202 @@ impl Campaign<'_> {
     }
 
     /// Builds the project once in a workspace whose build output the other workspaces copy. A
-    /// project that does not build gets no shared output, and each check builds it in full.
+    /// project that does not build gets no shared output, and each test run builds it in full.
     fn build(&self) -> Result<Option<TempDir>> {
-        let workspace = candidate_workspace(self.config, &[], None)?;
-        let output = self
-            .forge_command(workspace.path(), &self.args.seed[0])
-            .arg("build")
-            .output()
-            .wrap_err("failed to build the project")?;
-        if !output.status.success() || self.denied_warnings(&output).is_some() {
-            sh_warn!("the project does not build, so every check builds it: {}", stderr(&output))?;
+        let workspace = self.workspace(&[])?;
+        if let Some(errors) = self.build_errors(workspace.path())? {
+            sh_warn!("the project does not build, so every test run builds it: {errors}")?;
             return Ok(None);
         }
         Ok(Some(workspace))
     }
 
-    /// Returns the compiler warnings of a `forge build` in a workspace if the project denies
-    /// warnings. A workspace starts from a build without such warnings, so only the files that
-    /// this build compiles can warn.
-    fn denied_warnings(&self, output: &Output) -> Option<String> {
+    /// Builds a workspace and returns the compiler errors, if any. If the project denies
+    /// warnings, the warnings are errors. A workspace starts from a build without such warnings,
+    /// so only the files that this build compiles can warn.
+    fn build_errors(&self, workspace: &Path) -> Result<Option<String>> {
+        // The lint step can fail where the compiler succeeds, and it does not change the tests.
+        let output = self
+            .forge_command(workspace, &self.args.seed[0])
+            .args(["build", "--no-lint"])
+            .output()
+            .wrap_err("failed to build generated tests")?;
+        if !output.status.success() {
+            return Ok(Some(stderr(&output)));
+        }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let start = stdout.find("Warning (").filter(|_| self.config.deny.warnings())?;
-        Some(shorten(&stdout[start..]))
+        Ok(stdout.find("Warning (").filter(|_| self.config.deny.warnings()).map(|start| {
+            format!("the project denies compiler warnings: {}", shorten(&stdout[start..]))
+        }))
     }
 
-    /// Runs the `--check` command.
-    fn check(&self, path: &Path) -> Result<()> {
-        let candidate = read_candidate(path, &self.generated_tests)?;
-        let workspace =
-            candidate_workspace(self.config, &candidate.files, self.build_cache.as_deref())?;
-        let mut run = self.run_tests(workspace.path(), &candidate)?;
-        let output = serde_json::to_string_pretty(&serde_json::json!({
-            "passed": run.reasons.is_empty(),
-            "reasons": run.reasons,
-            "possible_bugs": run.possible_bugs,
-        }))?;
-        // Generators often remove a failing test before they return, so the report needs this
-        // record to show the possible bug.
-        if !run.possible_bugs.is_empty() {
-            let mut lines = Vec::new();
-            for failure in &mut run.possible_bugs {
-                failure.source = candidate
-                    .files
+    /// Runs one agent session in its own copy of the project, then runs the tests that it wrote.
+    fn run_agent(&self, id: usize, inputs: &AgentInputs) -> Result<Session> {
+        let args = self.args;
+        // The prompt, the log, the usage, and the copies of the tests of an earlier run go.
+        let cache = self.cache_root.join(format!("agent-{id}"));
+        if cache.exists() {
+            fs::remove_dir_all(&cache)?;
+        }
+        fs::create_dir_all(&cache)?;
+        let workspace = self.workspace(&[])?;
+        let out = self.generated_tests.join(format!("agent-{id}"));
+        let out_dir = workspace.path().join(&out);
+        ensure_inside(workspace.path(), &out_dir, &out)?;
+        fs::create_dir_all(&out_dir)?;
+        let prompt = cache.join("prompt.md");
+        fs::write(&prompt, session_prompt(&inputs.targets, &inputs.context, &out_dir))?;
+        let usage_path = cache.join("usage.json");
+        let log_path = cache.join("agent.log");
+        let log = fs::File::create(&log_path)?;
+        // Agents differ by seed.
+        let seed: U256 =
+            keccak256([args.seed[0].to_be_bytes::<32>(), U256::from(id).to_be_bytes()].concat())
+                .into();
+        let lines = |paths: &[PathBuf]| {
+            paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join("\n")
+        };
+
+        let mut command = Command::new(&inputs.agent_command);
+        command
+            .args(&args.agent_arg)
+            .current_dir(workspace.path())
+            .env("FORGE_PROPERTIES_PROMPT", &prompt)
+            .env("FORGE_PROPERTIES_TARGETS", lines(&inputs.targets))
+            .env("FORGE_PROPERTIES_CONTEXT", lines(&inputs.context))
+            .env("FORGE_PROPERTIES_OUT", &out_dir)
+            .env("FORGE_PROPERTIES_SEED", format!("{seed:#x}"))
+            .env("FORGE_PROPERTIES_USAGE", &usage_path)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log);
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command.spawn().wrap_err("failed to run agent command")?;
+        #[cfg(unix)]
+        let group = Pid::from_child(&child);
+        #[cfg(unix)]
+        SESSIONS.lock().unwrap().push(group);
+        let status = match args.timeout {
+            Some(timeout) => {
+                let deadline = Instant::now() + Duration::from_secs(timeout);
+                loop {
+                    match child.try_wait() {
+                        Ok(None) if Instant::now() < deadline => thread::sleep(SESSION_POLL),
+                        status => break status,
+                    }
+                }
+            }
+            None => child.wait().map(Some),
+        };
+        // The session ends with the agent command: no process that it started keeps running.
+        #[cfg(unix)]
+        {
+            let _ = kill_process_group(group, Signal::KILL);
+            SESSIONS.lock().unwrap().retain(|running| *running != group);
+        }
+        let status = match status? {
+            Some(status) => Some(status),
+            None => {
+                #[cfg(not(unix))]
+                let _ = child.kill();
+                child.wait()?;
+                None
+            }
+        };
+        let log_display = log_path.strip_prefix(&self.config.root).unwrap_or(&log_path);
+        let error = status.filter(|status| !status.success()).map(|status| {
+            format!("agent command failed ({status}): see {}", log_display.display())
+        });
+        let usage = match fs::read(&usage_path) {
+            Ok(usage) => serde_json::from_slice::<Usage>(&usage)
+                .inspect_err(|error| {
+                    let _ = sh_warn!("agent {id} wrote invalid usage JSON: {error}");
+                })
+                .ok(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error).wrap_err("failed to read agent usage"),
+        };
+        let mut session = Session {
+            id,
+            error,
+            timed_out: status.is_none(),
+            usage,
+            possible_bugs: vec![],
+            rejected: vec![],
+            kept: vec![],
+        };
+        let files = collect_tests(workspace.path(), &out, id, &mut session.rejected)?;
+        // Forge writes only passing files to the project, so the copies keep the failing tests.
+        let copy = |path: &Path| cache.join("tests").join(path.strip_prefix(&out).unwrap_or(path));
+        for file in &files {
+            let path = copy(&file.path);
+            fs::create_dir_all(path.parent().expect("test path has a parent"))?;
+            fs::write(&path, &file.content)?;
+        }
+        if files.is_empty() {
+            return Ok(session);
+        }
+
+        let workspace = self.workspace(&files)?;
+        let run = match self.build_errors(workspace.path())? {
+            None => self.run_tests(workspace.path(), &files)?,
+            // A file that does not compile, such as one that the agent was writing at the
+            // timeout, must not hide the other tests. Each file that no other file imports then
+            // runs on its own, with the files that it imports.
+            Some(_) => {
+                let imports = collected_imports(self.config, workspace.path(), &files)?;
+                let no_imports = BTreeSet::new();
+                let mut run = TestRun::default();
+                for root in files
                     .iter()
-                    .find(|file| file.path == failure.path)
-                    .map(|file| file.content.clone());
-                serde_json::to_writer(&mut lines, failure)?;
-                lines.push(b'\n');
+                    .filter(|file| !imports.values().any(|imported| imported.contains(&file.path)))
+                {
+                    let imported = imports.get(&root.path).unwrap_or(&no_imports);
+                    let group = files
+                        .iter()
+                        .filter(|file| file.path == root.path || imported.contains(&file.path))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let workspace = self.workspace(&group)?;
+                    if let Some(errors) = self.build_errors(workspace.path())? {
+                        let paths = group.into_iter().map(|file| file.path).collect();
+                        session.rejected.push(Rejected { agent: id, paths, reason: errors });
+                        continue;
+                    }
+                    let group_run = self.run_tests(workspace.path(), &group)?;
+                    run.possible_bugs.extend(group_run.possible_bugs);
+                    run.passing.extend(group_run.passing);
+                    run.failing_files.extend(group_run.failing_files);
+                    run.errors.extend(group_run.errors);
+                }
+                run
             }
-            // Each agent has its own journal.
-            let journal = match self.args.agent {
-                Some(id) => self.cache_root.join(format!("agent-{id}")),
-                None => self.cache_root.clone(),
-            };
-            fs::create_dir_all(&journal)?;
-            // One write per check keeps the lines of concurrent checks apart.
-            fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(journal.join(CHECK_JOURNAL))
-                .and_then(|mut file| file.write_all(&lines))
-                .wrap_err("failed to write the check journal")?;
+        };
+        if !run.errors.is_empty() {
+            let paths = files.iter().map(|file| file.path.clone()).collect();
+            session.rejected.push(Rejected { agent: id, paths, reason: run.errors.join("; ") });
         }
-        sh_println!("{output}")?;
-        ensure!(run.reasons.is_empty(), "candidate check failed");
-        Ok(())
+        let kept = kept_files(self.config, workspace.path(), &files, &run)?;
+        session.kept = files.into_iter().filter(|file| kept.contains(&file.path)).collect();
+        let root = &self.config.root;
+        session.possible_bugs = run
+            .possible_bugs
+            .into_iter()
+            .map(|failure| {
+                let file = copy(&failure.path);
+                let file = file.strip_prefix(root).map(Path::to_path_buf).unwrap_or(file);
+                AgentFailure { agent: id, failure, file }
+            })
+            .collect();
+        Ok(session)
     }
 
-    /// Runs every test in the candidate files on every seed.
-    fn run_tests(&self, workspace: &Path, candidate: &Candidate) -> Result<TestRun> {
-        let paths = candidate
-            .files
-            .iter()
-            .map(|file| file.path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        if self.config.deny.warnings() {
-            let output = self
-                .forge_command(workspace, &self.args.seed[0])
-                .arg("build")
-                .output()
-                .wrap_err("failed to build candidate tests")?;
-            let failure = if output.status.success() {
-                self.denied_warnings(&output)
-                    .map(|warnings| format!("the project denies compiler warnings: {warnings}"))
-            } else {
-                Some(stderr(&output))
-            };
-            if let Some(failure) = failure {
-                let reasons = vec![format!("candidate tests failed to build: {failure}")];
-                return Ok(TestRun { reasons, ..Default::default() });
-            }
-        }
-        let mut reasons = Vec::new();
+    /// Runs every test in the files on every seed.
+    fn run_tests(&self, workspace: &Path, files: &[TestFile]) -> Result<TestRun> {
+        let paths =
+            files.iter().map(|file| file.path.display().to_string()).collect::<Vec<_>>().join(",");
+        let mut run = TestRun::default();
         // The passing seeds and the failures of each test.
         let mut outcomes = BTreeMap::<(String, String), (usize, Vec<String>)>::new();
         for seed in &self.args.seed {
@@ -854,17 +820,12 @@ impl Campaign<'_> {
             if !self.args.allow_network {
                 command.arg("--no-network");
             }
-            let output = command.output().wrap_err("failed to run candidate tests")?;
+            let output = command.output().wrap_err("failed to run generated tests")?;
             if !output.status.success() && output.stdout.is_empty() {
-                reasons.push(format!("candidate tests failed on seed {seed}: {}", stderr(&output)));
+                run.errors.push(format!("tests failed on seed {seed}: {}", stderr(&output)));
                 continue;
             }
-            let results = test_results(&output)?;
-            if results.is_empty() {
-                reasons.push(format!("candidate files contain no runnable tests on seed {seed}"));
-            }
-            for (test, status, reason) in results {
-                let name = test_display_name(&test);
+            for (test, status, reason) in test_results(&output)? {
                 let (passes, failures) = outcomes.entry((test.contract, test.test)).or_default();
                 match status {
                     TestStatus::Success => *passes += 1,
@@ -872,40 +833,93 @@ impl Campaign<'_> {
                         let reason = reason
                             .filter(|reason| !reason.is_empty())
                             .unwrap_or_else(|| "the test failed without a reason".to_string());
-                        reasons.push(format!("{name} failed on seed {seed}: {reason}"));
                         failures.push(format!("seed {seed}: {reason}"));
                     }
-                    TestStatus::Skipped => reasons.push(format!(
-                        "{name} was skipped on seed {seed}: {}",
-                        reason.unwrap_or_else(|| "no reason reported".to_string())
-                    )),
+                    TestStatus::Skipped => {}
                 }
             }
         }
         let seeds = self.args.seed.len();
-        let mut run = TestRun { reasons, ..Default::default() };
         for ((contract, test), (passes, failures)) in outcomes {
             let test = RerunFailure { contract, test };
             if passes == seeds {
                 run.passing.push(test);
                 continue;
             }
-            run.failing_files.insert(test_path(&test));
+            let path = test_path(&test);
+            run.failing_files.insert(path.clone());
             if failures.len() == seeds {
-                let name = test_display_name(&test);
-                run.possible_bugs.push(CheckFailure {
-                    evidence: candidate.evidence.get(&name).cloned(),
-                    test: name,
-                    path: test_path(&test),
+                let contract = test.contract.rsplit_once(':').map_or("", |(_, name)| name);
+                let function =
+                    test.test.split_once('(').map_or(test.test.as_str(), |(name, _)| name);
+                let claim = files
+                    .iter()
+                    .find(|file| file.path == path)
+                    .and_then(|file| test_claim(&file.content, contract, function));
+                run.possible_bugs.push(Failure {
+                    test: test_display_name(&test),
+                    path,
                     reason: failures.join("; "),
-                    source: None,
+                    claim,
                 });
             }
         }
-        // Possible bugs with evidence first.
+        // Possible bugs with a claim first.
         run.possible_bugs
-            .sort_by(|a, b| (a.evidence.is_none(), &a.test).cmp(&(b.evidence.is_none(), &b.test)));
+            .sort_by(|a, b| (a.claim.is_none(), &a.test).cmp(&(b.claim.is_none(), &b.test)));
         Ok(run)
+    }
+
+    /// Copies the project and the shared build output into a temporary workspace and adds the
+    /// files. The workspace has no generated tests of the project.
+    fn workspace(&self, files: &[TestFile]) -> Result<TempDir> {
+        let config = self.config;
+        let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
+        let dependencies = config
+            .libs
+            .iter()
+            .map(|lib| lib.as_path())
+            .chain(["node_modules".as_ref(), "dependencies".as_ref()])
+            .map(|path| config.root.join(path))
+            .collect::<Vec<_>>();
+        let skipped = [
+            config.out.clone(),
+            config.cache_path.clone(),
+            config.root.join(&self.generated_tests),
+        ];
+        copy_project_tree(config, workspace.path(), Path::new(""), &dependencies, &skipped)?;
+        // Internal runs see the project's resolved config, including inherited `extends` values,
+        // absolute paths, and environment overrides, without reading files outside the workspace.
+        let mut rebased = workspace::rebase_config_paths(config, workspace.path());
+        rebased.extends = None;
+        // Foundry turns the compiler cache off when it denies warnings, so a workspace builds with
+        // `deny = "never"`, and `Campaign::build_errors` checks the warnings instead.
+        rebased.deny = DenyLevel::Never;
+        // With dynamic test linking, every new source file makes the compiler rebuild all files, so
+        // a workspace compiles without it. It changes how tests deploy contracts, not what they
+        // assert.
+        rebased.dynamic_test_linking = false;
+        let mut toml = rebased.to_string_pretty()?;
+        // Inline config may name the project's other profiles, so they must still exist.
+        for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
+            toml.push_str(&format!("\n[profile.{profile}]\n"));
+        }
+        fs::write(workspace.path().join(Config::FILE_NAME), toml)?;
+        // Remappings are already resolved and rebased in the workspace config.
+        let remappings = workspace.path().join("remappings.txt");
+        if remappings.exists() {
+            fs::remove_file(remappings)?;
+        }
+        if let Some(build) = &self.build_cache {
+            copy_build_output(config, build.path(), workspace.path())?;
+        }
+        for file in files {
+            let path = workspace.path().join(&file.path);
+            ensure_inside(workspace.path(), &path, &file.path)?;
+            fs::create_dir_all(path.parent().expect("test path has a parent"))?;
+            fs::write(path, &file.content)?;
+        }
+        Ok(workspace)
     }
 
     /// Returns a Forge command for one seed. Each seed persists fuzz and invariant failures in
@@ -930,305 +944,12 @@ impl Campaign<'_> {
     }
 }
 
-impl Agent<'_> {
-    /// Runs the generator rounds of this agent in its own copy of the project.
-    fn run(&mut self, inputs: &AgentInputs) -> Result<()> {
-        let campaign = self.campaign;
-        let args = campaign.args;
-        fs::create_dir_all(&self.cache)?;
-        // Generator checks of this run start a new journal.
-        if let Err(error) = fs::remove_file(self.cache.join(CHECK_JOURNAL))
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(error).wrap_err("failed to reset the check journal");
-        }
-        let workspace = candidate_workspace(campaign.config, &[], campaign.build_cache.as_deref())?;
-        let check_command = [campaign.forge.as_os_str(), "properties".as_ref(), "--root".as_ref()]
-            .into_iter()
-            .chain([
-                campaign.config.root.as_os_str(),
-                "--check".as_ref(),
-                "CANDIDATE_JSON".as_ref(),
-            ])
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .chain(args.seed.iter().flat_map(|seed| ["--seed".to_string(), format!("{seed:#x}")]))
-            .chain(["--agent".to_string(), self.id.to_string()])
-            .chain(args.allow_ffi.then(|| "--allow-ffi".to_string()))
-            .chain(args.allow_network.then(|| "--allow-network".to_string()))
-            .chain(campaign.build_cache.iter().flat_map(|build| {
-                ["--build-cache".to_string(), build.to_string_lossy().into_owned()]
-            }))
-            .collect::<Vec<_>>();
-        // Agents differ by seed and by focus.
-        let seed = keccak256(
-            [args.seed[0].to_be_bytes::<32>(), U256::from(self.id).to_be_bytes()].concat(),
-        )
-        .into();
-        let instructions = if self.focus.is_empty() {
-            INSTRUCTIONS.to_string()
-        } else {
-            format!("{INSTRUCTIONS} {FOCUS_INSTRUCTION}")
-        };
-
-        // An error ends the rounds after `rounds.json` is written, so the kept files are not lost.
-        let mut error = None;
-        // A last round that leaves no kept file and no possible bug, such as one whose tests do not
-        // compile, earns a repair round with its errors in the feedback.
-        let mut rounds = args.rounds;
-        while self.rounds.len() < rounds {
-            let round = self.rounds.len() + 1;
-            let round_dir = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
-            let prompt_path = round_dir.path().join("prompt.json");
-            let candidate_path = round_dir.path().join("candidate.json");
-            let example_contract = format!("GeneratedRound{round}Test");
-            let prompt = GeneratorPrompt {
-                schema: PROMPT_SCHEMA,
-                instructions: &instructions,
-                round,
-                agent: AgentPrompt { id: self.id, count: args.agents, seed, focus: &self.focus },
-                project: workspace.path(),
-                targets: &inputs.targets,
-                context: &inputs.context,
-                current_candidate: self.current.as_ref(),
-                last_rejected_sources: &self.rejected_sources,
-                previous_feedback: &self.rounds,
-                output_contract: OutputContract {
-                    schema: CANDIDATE_SCHEMA,
-                    allowed_path_prefix: self.generated_tests.clone(),
-                    check_command: check_command.clone(),
-                    example: Candidate {
-                        schema: CANDIDATE_SCHEMA.to_string(),
-                        files: vec![CandidateFile {
-                            path: self.generated_tests.join(format!("GeneratedRound{round}.t.sol")),
-                            content: format!(
-                                "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testBug() external {{}}\n}}\n"
-                            ),
-                        }],
-                        evidence: BTreeMap::from([(
-                            format!("{example_contract}::testBug"),
-                            Evidence {
-                                claim: "The intended behavior that the failing test asserts."
-                                    .to_string(),
-                                source: "src/Contract.sol:12, or the standard and its clause"
-                                    .to_string(),
-                                code_path: "src/Contract.sol:40 Contract.function() and what it does wrong."
-                                    .to_string(),
-                            },
-                        )]),
-                        usage: Some(Usage::default()),
-                    },
-                },
-            };
-            fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
-            self.rejected_sources.clear();
-
-            let output = Command::new(&inputs.generator)
-                .args(&args.generator_arg)
-                .arg(&prompt_path)
-                .arg(&candidate_path)
-                .current_dir(workspace.path())
-                .output()
-                .wrap_err("failed to invoke generator")?;
-            if !output.status.success() {
-                error = Some(eyre!(
-                    "generator failed in round {round} ({}): {}",
-                    output.status,
-                    stderr(&output)
-                ));
-                break;
-            }
-            let mut record = Round { round, ..Default::default() };
-            match read_candidate(&candidate_path, &self.generated_tests) {
-                Ok(proposal) => {
-                    record.usage = proposal.usage;
-                    if let Err(error) = self.evaluate(&proposal, &mut record) {
-                        record.reasons.push(error.to_string());
-                    }
-                    self.rejected_sources = prompt_sources(
-                        proposal
-                            .files
-                            .iter()
-                            .filter(|file| !record.kept.contains(&file.path))
-                            .map(|file| (file.path.as_path(), file.content.as_str())),
-                        MAX_PROMPT_SOURCE_BYTES,
-                    );
-                }
-                Err(error) => record.reasons.push(error.to_string()),
-            }
-            let repair = round == rounds
-                && rounds < args.rounds + MAX_REPAIR_ROUNDS
-                && record.kept.is_empty()
-                && record.possible_bugs.is_empty();
-            self.rounds.push(record);
-            if repair {
-                rounds += 1;
-            }
-        }
-        fs::write(self.cache.join("rounds.json"), serde_json::to_vec_pretty(&self.rounds)?)?;
-        error.map_or(Ok(()), Err)
-    }
-
-    /// Evaluates a proposal and keeps its files whose tests pass on every seed.
-    ///
-    /// Problems with the proposal are errors that become rejection reasons; failures of Forge
-    /// itself also stop only this round.
-    fn evaluate(&mut self, proposal: &Candidate, record: &mut Round) -> Result<()> {
-        let config = self.campaign.config;
-        let candidate = merge_candidate(self.current.as_ref(), proposal, &self.generated_tests)?;
-        for file in &proposal.files {
-            let path = config.root.join(&file.path);
-            ensure!(!path.exists(), "candidate would overwrite {}", file.path.display());
-            // A symlinked directory on the path must not lead outside the project.
-            if let Some(existing) = path.ancestors().find(|ancestor| ancestor.exists()) {
-                workspace::ensure_within_root(
-                    &config.root,
-                    existing,
-                    "generated test",
-                    &file.path,
-                )?;
-            }
-        }
-        let digest = keccak256(serde_json::to_vec(&candidate)?).to_string();
-        let cache = self.cache.join(&digest);
-        fs::create_dir_all(&cache)?;
-        fs::write(cache.join("candidate.json"), serde_json::to_vec_pretty(&candidate)?)?;
-        record.candidate_digest = Some(digest);
-
-        let workspace =
-            candidate_workspace(config, &candidate.files, self.campaign.build_cache.as_deref())?;
-        let run = self.campaign.run_tests(workspace.path(), &candidate)?;
-        record.reasons = run.reasons;
-        record.possible_bugs = run.possible_bugs;
-        let passing_files = proposal
-            .files
-            .iter()
-            .filter(|file| {
-                !run.failing_files.contains(&file.path)
-                    && run.passing.iter().any(|test| test_path(test) == file.path)
-            })
-            .map(|file| file.path.clone())
-            .collect::<HashSet<_>>();
-        let kept =
-            required_candidate_files(config, workspace.path(), &candidate.files, &passing_files)?;
-        ensure!(
-            kept.iter().all(|path| !run.failing_files.contains(path)),
-            "a passing test imports a candidate file with a failing test"
-        );
-        let tests = run
-            .passing
-            .into_iter()
-            .filter(|test| {
-                let path = test_path(test);
-                kept.contains(&path)
-                    || self.current_tests.iter().any(|current| test_path(current) == path)
-            })
-            .collect::<Vec<_>>();
-
-        if !kept.is_empty() {
-            let mut current = candidate;
-            current.files.retain(|file| {
-                kept.contains(&file.path)
-                    || self.current.as_ref().is_some_and(|current| {
-                        current.files.iter().any(|kept| kept.path == file.path)
-                    })
-            });
-            self.current = Some(current);
-            self.current_tests = tests;
-        }
-        record.kept = kept;
-        Ok(())
-    }
-
-    /// Returns the tests of this agent that fail on every seed, from its rounds and its check
-    /// journal.
-    fn findings(&self) -> Result<AgentFindings> {
-        let config = self.campaign.config;
-        let mut findings = AgentFindings::default();
-        for round in &self.rounds {
-            let digest = round.candidate_digest.as_deref().unwrap_or_default();
-            let path = self.cache.join(digest);
-            let path = path.strip_prefix(&config.root).unwrap_or(&path).display();
-            let note = format!("fails on every seed; candidate: {path}");
-            findings.possible_bugs.extend(round.possible_bugs.iter().map(|failure| AgentFailure {
-                agent: self.id,
-                failure: failure.clone(),
-                note: note.clone(),
-            }));
-        }
-
-        // A generator can remove a failing test after a check. The failures that no round
-        // reported and that the kept files do not hold are possible bugs. The generator can also
-        // write the journal, so Forge runs them again in a fresh copy of the project.
-        let journal = self.cache.join(CHECK_JOURNAL);
-        let journal_failures = read_check_journal(&journal)?
-            .into_iter()
-            .filter(|failure| {
-                !findings.possible_bugs.iter().any(|reported| reported.failure.test == failure.test)
-                    && !self.current_tests.iter().any(|kept| {
-                        test_display_name(kept) == failure.test && test_path(kept) == failure.path
-                    })
-            })
-            .collect::<Vec<_>>();
-        let run = self.rerun_journal_failures(&journal_failures)?;
-        let journal = journal.strip_prefix(&config.root).unwrap_or(&journal);
-        let note =
-            format!("seen in a generator check, then removed; journal: {}", journal.display());
-        for failure in journal_failures {
-            let verified = run
-                .possible_bugs
-                .iter()
-                .any(|bug| bug.test == failure.test && bug.path == failure.path);
-            let failure = AgentFailure { agent: self.id, failure, note: note.clone() };
-            if verified {
-                findings.possible_bugs.push(failure);
-            } else {
-                findings.unverified.push(failure);
-            }
-        }
-        Ok(findings)
-    }
-
-    /// Runs the tests of journal failures in a fresh copy of the project on every seed. The
-    /// workspace holds the latest journal source of each file and the kept files, which can hold
-    /// helpers that the journal files import.
-    fn rerun_journal_failures(&self, failures: &[CheckFailure]) -> Result<TestRun> {
-        let mut files = Vec::<CandidateFile>::new();
-        for failure in failures.iter().rev() {
-            if let Some(source) = &failure.source
-                && !files.iter().any(|file| file.path == failure.path)
-            {
-                files.push(CandidateFile { path: failure.path.clone(), content: source.clone() });
-            }
-        }
-        if files.is_empty() {
-            return Ok(TestRun::default());
-        }
-        for file in self.current.iter().flat_map(|current| &current.files) {
-            if !files.iter().any(|known| known.path == file.path) {
-                files.push(file.clone());
-            }
-        }
-        let candidate = Candidate {
-            schema: CANDIDATE_SCHEMA.to_string(),
-            files,
-            evidence: BTreeMap::new(),
-            usage: None,
-        };
-        let workspace = candidate_workspace(
-            self.campaign.config,
-            &candidate.files,
-            self.campaign.build_cache.as_deref(),
-        )?;
-        self.campaign.run_tests(workspace.path(), &candidate)
-    }
-}
-
-/// Groups the failing tests of all agents by root cause with the root-cause matcher. Groups with
-/// evidence come first, then groups with more agents.
+/// Groups the failing tests of all agents by root cause with the root-cause matcher. Groups with a
+/// claim come first, then groups with more agents.
 fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
-    let evidence =
-        failures.iter().map(|failure| failure.failure.evidence.as_ref()).collect::<Vec<_>>();
-    let group_of = matcher::root_cause_groups(&evidence);
+    let claims =
+        failures.iter().map(|failure| failure.failure.claim.as_deref()).collect::<Vec<_>>();
+    let group_of = matcher::root_cause_groups(&claims);
     let mut groups = BTreeMap::<usize, Vec<AgentFailure>>::new();
     for (failure, group) in failures.into_iter().zip(group_of) {
         groups.entry(group).or_default().push(failure);
@@ -1236,14 +957,10 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
     let mut groups = groups
         .into_values()
         .map(|mut failures| {
-            // A failure with evidence leads, then the failures by agent.
+            // A failure with a claim leads, then the failures by agent.
             failures.sort_by(|a, b| {
                 let key = |failure: &AgentFailure| {
-                    (
-                        failure.failure.evidence.is_none(),
-                        failure.agent,
-                        failure.failure.test.clone(),
-                    )
+                    (failure.failure.claim.is_none(), failure.agent, failure.failure.test.clone())
                 };
                 key(a).cmp(&key(b))
             });
@@ -1254,78 +971,192 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
     groups.sort_by(|a, b| {
         let key = |group: &BugGroup| {
             let lead = &group.failures[0].failure;
-            (lead.evidence.is_none(), Reverse(group.agents.len()), lead.test.clone())
+            (lead.claim.is_none(), Reverse(group.agents.len()), lead.test.clone())
         };
         key(a).cmp(&key(b))
     });
     groups
 }
 
-/// Returns the external and public state-changing functions of the contracts in the target files,
-/// as `Contract.function`, grouped by contract in name order and in source order within a
-/// contract. Interfaces and libraries add none, and a file that does not parse adds nothing.
-fn target_functions(root: &Path, targets: &[PathBuf]) -> Vec<String> {
-    let mut contracts = BTreeMap::<String, Vec<String>>::new();
-    let sess = Session::builder().with_silent_emitter(None).build();
-    sess.enter(|| {
-        for target in targets.iter().filter(|path| path.extension().is_some_and(|ext| ext == "sol"))
-        {
-            let path = root.join(target);
-            let arena = Arena::new();
-            let Ok(Ok(source)) = SolarParser::from_lazy_source_code(
-                &sess,
-                &arena,
-                FileName::from(path.clone()),
-                || fs::read_to_string(&path),
-            )
-            .map(|mut parser| parser.parse_file().map_err(|error| error.emit())) else {
-                continue;
-            };
-            for item in source.items.iter() {
-                if let ItemKind::Contract(contract) = &item.kind
-                    && !contract.kind.is_interface()
-                    && !contract.kind.is_library()
-                {
-                    let functions = contracts.entry(contract.name.to_string()).or_default();
-                    for item in contract.body.iter() {
-                        if let ItemKind::Function(function) = &item.kind
-                            && function.kind.is_function()
-                            && function.is_implemented()
-                            && let Some(name) = function.header.name
-                            && function.header.visibility().is_none_or(|v| v >= Visibility::Public)
-                            && !matches!(
-                                function.header.state_mutability(),
-                                StateMutability::Pure | StateMutability::View
-                            )
-                            && !functions.iter().any(|known| known == name.as_str())
-                        {
-                            functions.push(name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    });
-    contracts
-        .into_iter()
-        .flat_map(|(contract, functions)| {
-            functions.into_iter().map(move |function| format!("{contract}.{function}"))
-        })
-        .collect()
+/// Returns the task of an agent session. On 26 held-out cases, plain independent small-model
+/// audits with a task of this kind found 0.05 to 0.10 more planted bugs at every spend level than
+/// agents that returned candidate JSON in short rounds.
+fn session_prompt(targets: &[PathBuf], context: &[PathBuf], out: &Path) -> String {
+    let list = |paths: &[PathBuf]| {
+        paths.iter().map(|path| format!("- {}\n", path.display())).collect::<String>()
+    };
+    let mut prompt = format!(
+        "Find bugs in these targets of the Foundry project in the current directory:\n{}",
+        list(targets)
+    );
+    if !context.is_empty() {
+        prompt.push_str(&format!(
+            "\nThese context files state intended behavior:\n{}",
+            list(context)
+        ));
+    }
+    prompt.push_str(&format!(
+        "\nProve each bug with a Foundry test in {} that fails because of the bug and encodes the \
+         intended behavior. The code under test can be wrong: the intended behavior is what its \
+         documentation, its interfaces, and the standards it claims state. Name each test after \
+         the bug and add a one-line comment above it with the claim and the file:line of the \
+         source line that breaks it. You may run `forge test` freely.\n",
+        out.display()
+    ));
+    prompt
 }
 
-/// Deals the functions to the agents in turn, so each agent gets a distinct slice, every function
-/// belongs to an agent, and each large contract reaches several agents. With fewer functions than
-/// agents, the slices repeat.
-fn focus_slices(functions: &[String], agents: usize) -> Vec<Vec<String>> {
-    (0..agents)
-        .map(|agent| {
-            if functions.is_empty() {
-                return vec![];
+/// Returns the Solidity files under the output directory `out` of a workspace, by path relative
+/// to the workspace, in path order. Links are not followed. A file that sets a seed, `ffi`, or
+/// `fs_permissions` in inline config is rejected: the seeds must decide every run, and generated
+/// tests run outside the agent's sandbox, so they cannot widen their own access to the host.
+fn collect_tests(
+    workspace: &Path,
+    out: &Path,
+    agent: usize,
+    rejected: &mut Vec<Rejected>,
+) -> Result<Vec<TestFile>> {
+    let mut files = Vec::new();
+    let mut pending = vec![out.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(workspace.join(&dir))? {
+            let entry = entry?;
+            let path = dir.join(entry.file_name());
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                pending.push(path);
+                continue;
             }
-            functions.iter().skip(agent % functions.len()).step_by(agents).cloned().collect()
+            if !file_type.is_file() || path.extension().is_none_or(|extension| extension != "sol") {
+                continue;
+            }
+            let content = match fs::read_to_string(entry.path()) {
+                Ok(content) => content,
+                Err(error) => {
+                    let reason = error.to_string();
+                    rejected.push(Rejected { agent, paths: vec![path], reason });
+                    continue;
+                }
+            };
+            let setting = [
+                (&["fuzz", "seed"][..], "a seed"),
+                (&["ffi"][..], "ffi"),
+                (&["fs_permissions"][..], "fs_permissions"),
+            ]
+            .into_iter()
+            .find(|(path, _)| has_inline_setting(&content, path));
+            if let Some((_, setting)) = setting {
+                let reason = format!("sets {setting} in inline config");
+                rejected.push(Rejected { agent, paths: vec![path], reason });
+                continue;
+            }
+            files.push(TestFile { path, content });
+        }
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// Returns the comment right above a test function, without comment markers, as one line. The
+/// function is the first one with this name after the contract declaration and before the next
+/// one.
+fn test_claim(source: &str, contract: &str, function: &str) -> Option<String> {
+    let mut contracts = CONTRACT.captures_iter(source);
+    let start = contracts.find(|captures| &captures[1] == contract)?.get(0)?.end();
+    let end = contracts.next().map_or(source.len(), |captures| captures.get(0).unwrap().start());
+    let declaration = Regex::new(&format!(r"\bfunction\s+{}\s*\(", regex::escape(function)))
+        .ok()?
+        .find(&source[start..end])?;
+    let line_start = source[..start + declaration.start()].rfind('\n').map_or(0, |i| i + 1);
+    let mut lines = source[..line_start]
+        .lines()
+        .rev()
+        .map(str::trim)
+        .take_while(|line| {
+            line.starts_with("//") || line.starts_with('*') || line.starts_with("/*")
         })
-        .collect()
+        .filter(|line| !line.contains("forge-config:"))
+        .map(|line| line.trim_start_matches(['/', '*']).trim_end_matches(['*', '/']).trim())
+        .map(|line| match line.strip_prefix('@') {
+            // A NatSpec tag such as `@notice` is not part of the claim.
+            Some(tagged) => tagged.split_once(char::is_whitespace).map_or("", |(_, text)| text),
+            None => line,
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    lines.reverse();
+    (!lines.is_empty()).then(|| lines.join(" "))
+}
+
+/// Returns the collected files that each collected file imports, directly or not.
+fn collected_imports(
+    config: &Config,
+    workspace: &Path,
+    files: &[TestFile],
+) -> Result<BTreeMap<PathBuf, BTreeSet<PathBuf>>> {
+    let rebased = workspace::rebase_config_paths(config, workspace);
+    let graph =
+        Graph::<MultiCompilerParser>::resolve(&rebased.project_paths::<MultiCompilerLanguage>())
+            .wrap_err("failed to resolve generated test imports")?;
+    let paths = files.iter().map(|file| file.path.clone()).collect::<HashSet<_>>();
+    let mut imports = BTreeMap::new();
+    for (index, node) in graph.nodes.iter().enumerate() {
+        let path = workspace::relative_to_root(workspace, node.path());
+        if paths.contains(&path) {
+            let imported = graph
+                .all_imported_nodes(index)
+                .map(|index| workspace::relative_to_root(workspace, graph.node(index).path()))
+                .filter(|path| paths.contains(path))
+                .collect();
+            imports.insert(path, imported);
+        }
+    }
+    Ok(imports)
+}
+
+/// Returns the files whose tests all pass on every seed, with the files that they import. A
+/// passing file that imports a file with a failing test is not kept.
+fn kept_files(
+    config: &Config,
+    workspace: &Path,
+    files: &[TestFile],
+    run: &TestRun,
+) -> Result<HashSet<PathBuf>> {
+    let passing = files
+        .iter()
+        .map(|file| &file.path)
+        .filter(|path| {
+            !run.failing_files.contains(*path)
+                && run.passing.iter().any(|test| test_path(test) == **path)
+        })
+        .collect::<Vec<_>>();
+    if passing.is_empty() {
+        return Ok(HashSet::new());
+    }
+    if passing.len() == files.len() {
+        return Ok(passing.into_iter().cloned().collect());
+    }
+    let imports = collected_imports(config, workspace, files)?;
+    let mut kept = HashSet::new();
+    for path in passing {
+        let imported = imports.get(path).ok_or_else(|| {
+            eyre!("passing test file {} is absent from the import graph", path.display())
+        })?;
+        if imported.iter().all(|path| !run.failing_files.contains(path)) {
+            kept.insert(path.clone());
+            kept.extend(imported.iter().cloned());
+        }
+    }
+    Ok(kept)
+}
+
+/// Fails if the nearest existing ancestor of `path` resolves outside `root`, for example through a
+/// linked directory.
+fn ensure_inside(root: &Path, path: &Path, orig: &Path) -> Result<()> {
+    match path.ancestors().find(|ancestor| ancestor.exists()) {
+        Some(existing) => workspace::ensure_within_root(root, existing, "generated test", orig),
+        None => Ok(()),
+    }
 }
 
 /// Returns the size and modification time of each project file, by path relative to the root.
@@ -1355,65 +1186,9 @@ fn project_fingerprint(config: &Config) -> BTreeMap<PathBuf, (u64, Option<System
     files
 }
 
-/// Copies the project and the build output of `build_cache` into a temporary workspace and adds
-/// the files.
-fn candidate_workspace(
-    config: &Config,
-    files: &[CandidateFile],
-    build_cache: Option<&Path>,
-) -> Result<TempDir> {
-    let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
-    let dependencies = config
-        .libs
-        .iter()
-        .map(|lib| lib.as_path())
-        .chain(["node_modules".as_ref(), "dependencies".as_ref()])
-        .map(|path| config.root.join(path))
-        .collect::<Vec<_>>();
-    copy_project_tree(config, workspace.path(), Path::new(""), &dependencies)?;
-    // Internal runs see the project's resolved config, including inherited `extends` values,
-    // absolute paths, and environment overrides, without reading files outside the workspace.
-    let mut rebased = workspace::rebase_config_paths(config, workspace.path());
-    rebased.extends = None;
-    // Foundry turns the compiler cache off when it denies warnings, so a workspace builds with
-    // `deny = "never"`, and `Campaign::denied_warnings` checks the warnings instead.
-    rebased.deny = DenyLevel::Never;
-    // With dynamic test linking, every new source file makes the compiler rebuild all files, so a
-    // workspace compiles without it. It changes how tests deploy contracts, not what they assert.
-    rebased.dynamic_test_linking = false;
-    let mut toml = rebased.to_string_pretty()?;
-    // Inline config may name the project's other profiles, so they must still exist.
-    for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
-        toml.push_str(&format!("\n[profile.{profile}]\n"));
-    }
-    fs::write(workspace.path().join(Config::FILE_NAME), toml)?;
-    // Remappings are already resolved and rebased in the workspace config.
-    let remappings = workspace.path().join("remappings.txt");
-    if remappings.exists() {
-        fs::remove_file(remappings)?;
-    }
-    if let Some(build) = build_cache {
-        copy_build_output(config, build, workspace.path())?;
-    }
-    for file in files {
-        let path = workspace.path().join(&file.path);
-        // A linked directory on the path must not lead outside the workspace.
-        if let Some(existing) = path.ancestors().find(|ancestor| ancestor.exists()) {
-            workspace::ensure_within_root(
-                workspace.path(),
-                existing,
-                "generated test",
-                &file.path,
-            )?;
-        }
-        fs::create_dir_all(path.parent().expect("candidate path has a parent"))?;
-        fs::write(path, &file.content)?;
-    }
-    Ok(workspace)
-}
-
-/// Copies a project directory into a workspace, without Git data, build output, agent settings and
-/// instructions (`AGENT_CONFIG`), and, at the project root, hidden entries such as `.env`.
+/// Copies a project directory into a workspace, without Git data, the `skipped` paths, agent
+/// settings and instructions (`AGENT_CONFIG`), and, at the project root, hidden entries such as
+/// `.env`.
 ///
 /// A dependency directory becomes a real directory whose entries link to the project's entries.
 /// A linked dependency directory would resolve outside the workspace, and the compiler then
@@ -1424,6 +1199,7 @@ fn copy_project_tree(
     copy: &Path,
     dir: &Path,
     dependencies: &[PathBuf],
+    skipped: &[PathBuf],
 ) -> Result<()> {
     fs::create_dir_all(copy.join(dir))?;
     for entry in fs::read_dir(config.root.join(dir))? {
@@ -1435,8 +1211,7 @@ fn copy_project_tree(
         if name == ".git"
             || AGENT_CONFIG.iter().any(|config| name == *config)
             || (dir.as_os_str().is_empty() && name.to_string_lossy().starts_with('.'))
-            || path == config.out
-            || path == config.cache_path
+            || skipped.contains(&path)
         {
             continue;
         }
@@ -1459,7 +1234,7 @@ fn copy_project_tree(
             };
             workspace::symlink_entry(&link, &target, file_type)?;
         } else if file_type.is_dir() {
-            copy_project_tree(config, copy, &rel, dependencies)?;
+            copy_project_tree(config, copy, &rel, dependencies, skipped)?;
         } else {
             fs::copy(&path, &target)?;
         }
@@ -1494,46 +1269,6 @@ fn copy_build_output(config: &Config, build: &Path, workspace: &Path) -> Result<
     fs::create_dir_all(workspace.join(&cache).parent().expect("cache file has a parent"))?;
     fs::write(workspace.join(&cache), text)?;
     Ok(())
-}
-
-/// Keeps the imported candidate files needed by passing tests.
-fn required_candidate_files(
-    config: &Config,
-    workspace: &Path,
-    files: &[CandidateFile],
-    passing: &HashSet<PathBuf>,
-) -> Result<Vec<PathBuf>> {
-    if passing.is_empty() || passing.len() == files.len() {
-        return Ok(files
-            .iter()
-            .filter(|file| passing.contains(&file.path))
-            .map(|file| file.path.clone())
-            .collect());
-    }
-    let rebased = workspace::rebase_config_paths(config, workspace);
-    let graph =
-        Graph::<MultiCompilerParser>::resolve(&rebased.project_paths::<MultiCompilerLanguage>())
-            .wrap_err("failed to resolve generated test imports")?;
-    let mut required = passing.clone();
-    for path in passing {
-        let index = graph
-            .nodes
-            .iter()
-            .position(|node| workspace::relative_to_root(workspace, node.path()) == *path)
-            .ok_or_else(|| {
-                eyre!("passing test file {} is absent from the import graph", path.display())
-            })?;
-        required.extend(
-            graph
-                .all_imported_nodes(index)
-                .map(|index| workspace::relative_to_root(workspace, graph.node(index).path())),
-        );
-    }
-    Ok(files
-        .iter()
-        .filter(|file| required.contains(&file.path))
-        .map(|file| file.path.clone())
-        .collect())
 }
 
 /// Returns every test result in Forge's JSON output, with one result per invariant predicate of a
@@ -1639,107 +1374,6 @@ fn test_path(test: &RerunFailure) -> PathBuf {
     PathBuf::from(test.contract.rsplit_once(':').map_or(test.contract.as_str(), |(path, _)| path))
 }
 
-/// Bounds sources to one shared byte budget so a single section cannot dominate the prompt.
-fn prompt_sources<'a>(
-    sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
-    budget: usize,
-) -> Vec<PromptSource> {
-    let mut prompt_sources = Vec::new();
-    let mut total_bytes = 0;
-    for (path, source) in sources {
-        let end = source.floor_char_boundary(budget - total_bytes);
-        if end == 0 {
-            break;
-        }
-        total_bytes += end;
-        prompt_sources.push(PromptSource {
-            path: path.to_path_buf(),
-            content: source[..end].to_string(),
-            truncated: end < source.len(),
-        });
-    }
-    prompt_sources
-}
-
-/// Adds the proposal's files to the kept files.
-fn merge_candidate(
-    current: Option<&Candidate>,
-    proposal: &Candidate,
-    generated_tests: &Path,
-) -> Result<Candidate> {
-    let Some(current) = current else { return Ok(proposal.clone()) };
-    let mut candidate = current.clone();
-    candidate.files.extend(proposal.files.iter().cloned());
-    candidate.evidence.extend(proposal.evidence.clone());
-    validate_candidate(&candidate, generated_tests)
-        .wrap_err("the proposal does not fit next to the kept files")?;
-    Ok(candidate)
-}
-
-/// Reads the check journal. Returns the last failure of each test, in the order of first record.
-fn read_check_journal(path: &Path) -> Result<Vec<CheckFailure>> {
-    let journal = match fs::read_to_string(path) {
-        Ok(journal) => journal,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-        Err(error) => return Err(error).wrap_err("failed to read the check journal"),
-    };
-    let mut failures = Vec::<CheckFailure>::new();
-    for line in journal.lines().filter(|line| !line.trim().is_empty()) {
-        let failure =
-            serde_json::from_str::<CheckFailure>(line).wrap_err("invalid check journal entry")?;
-        match failures
-            .iter_mut()
-            .find(|known| known.test == failure.test && known.path == failure.path)
-        {
-            Some(known) => *known = failure,
-            None => failures.push(failure),
-        }
-    }
-    Ok(failures)
-}
-
-fn read_candidate(path: &Path, generated_tests: &Path) -> Result<Candidate> {
-    let candidate = serde_json::from_slice::<Candidate>(
-        &fs::read(path).wrap_err_with(|| format!("failed to read {}", path.display()))?,
-    )
-    .wrap_err("invalid candidate JSON")?;
-    validate_candidate(&candidate, generated_tests)?;
-    Ok(candidate)
-}
-
-fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<()> {
-    ensure!(candidate.schema == CANDIDATE_SCHEMA, "unsupported candidate schema");
-    ensure!(!candidate.files.is_empty(), "candidate contains no files");
-    let mut paths = HashSet::new();
-    for file in &candidate.files {
-        ensure!(
-            file.path.extension().is_some_and(|extension| extension == "sol")
-                && file.path.starts_with(generated_tests)
-                && workspace::is_safe_relative_path(&file.path),
-            "candidate file {} is not a Solidity file under {}/",
-            file.path.display(),
-            generated_tests.display()
-        );
-        ensure!(paths.insert(&file.path), "candidate contains duplicate file paths");
-        // The seeds must decide every run, so a generated test cannot pin its own seed.
-        ensure!(
-            !has_inline_setting(&file.content, &["fuzz", "seed"]),
-            "candidate {} sets a seed in inline config",
-            file.path.display()
-        );
-        // Generated tests run outside the agent's sandbox, so they cannot widen their own access
-        // to the host.
-        for setting in ["ffi", "fs_permissions"] {
-            ensure!(
-                !has_inline_setting(&file.content, &[setting]),
-                "candidate {} sets {setting} in inline config",
-                file.path.display()
-            );
-        }
-    }
-    Ok(())
-}
-
 /// Returns whether NatSpec inline config sets the setting at `path` in any profile, in dotted or
 /// inline-table form.
 fn has_inline_setting(source: &str, path: &[&str]) -> bool {
@@ -1806,35 +1440,29 @@ fn shorten(text: &str) -> String {
 mod tests {
     use super::*;
 
-    fn failure(agent: usize, test: &str, claim: &str, code_path: &str) -> AgentFailure {
-        let evidence = (!claim.is_empty()).then(|| Evidence {
-            claim: claim.to_string(),
-            source: "src/Fee.sol:3".to_string(),
-            code_path: code_path.to_string(),
-        });
+    fn failure(agent: usize, test: &str, claim: &str) -> AgentFailure {
         AgentFailure {
             agent,
-            failure: CheckFailure {
+            failure: Failure {
                 test: test.to_string(),
                 path: PathBuf::from("test/generated/Fee.t.sol"),
                 reason: "revert".to_string(),
-                evidence,
-                source: None,
+                claim: (!claim.is_empty()).then(|| claim.to_string()),
             },
-            note: String::new(),
+            file: PathBuf::new(),
         }
     }
 
-    // Agreeing failures form one group with the set of their agents. Groups with evidence and more
-    // agents come first; a failure without evidence agrees with none.
+    // Agreeing failures form one group with the set of their agents. Groups with a claim and more
+    // agents come first; a failure without a claim agrees with none.
     #[test]
     fn groups_link_agreeing_failures_by_agent() {
         let groups = group_failures(vec![
-            failure(3, "C::zero", "A zero amount is charged.", "src/Fee.sol:11 charges()"),
-            failure(1, "A::cap", "The fee is capped at 100 ether.", "src/Fee.sol:7 fee()"),
-            failure(2, "B::cap", "Large amounts pay the maximum.", "src/Fee.sol:7 fee()"),
-            failure(2, "B::limit", "Large amounts pay the maximum fee.", "src/Fee.sol:8"),
-            failure(1, "D::none", "", ""),
+            failure(3, "C::zero", "A zero amount is charged; src/Fee.sol:11 charges()."),
+            failure(1, "A::cap", "The fee is capped at 100 ether; src/Fee.sol:7 fee()."),
+            failure(2, "B::cap", "Large amounts pay the maximum; src/Fee.sol:7 fee()."),
+            failure(2, "B::limit", "Large amounts pay the maximum fee (src/Fee.sol:8)."),
+            failure(1, "D::none", ""),
         ]);
         let groups = groups
             .iter()
@@ -1853,50 +1481,91 @@ mod tests {
         );
     }
 
-    // The focus holds the external and public state-changing functions that the target contracts
-    // implement, once per overload set. Interfaces, libraries, and files that do not parse add
-    // none.
+    // The claim is the comment right above the test function of the named contract, without
+    // comment markers, NatSpec tags, or inline config. A test without such a comment has none.
     #[test]
-    fn target_functions_lists_state_changing_entry_points() {
-        let root = tempfile::tempdir().unwrap();
-        let vault = r#"
+    fn test_claim_reads_the_comment_above_the_test() {
+        let source = r#"
 pragma solidity ^0.8.20;
-interface IVault { function deposit(uint256 amount) external; }
-library Math { function add(uint256 a, uint256 b) external returns (uint256) { return a + b; } }
-abstract contract Base {
-    function pause() public virtual {}
-    function hook() external virtual;
+contract FeeTest {
+    // The fee is capped at 100 ether (src/Fee.sol:7).
+    function testCap() public {}
+
+    /// @notice A zero amount is charged,
+    /// src/Fee.sol:11.
+    /// forge-config: default.fuzz.runs = 10
+    function testZero(uint256 amount) public {}
+
+    function testBare() public {}
 }
-contract Vault is Base {
-    uint256 public total;
-    function deposit(uint256 amount) external payable { total += amount; }
-    function deposit(uint256 amount, address to) external { total += amount; to; }
-    function shares(uint256 assets) external pure returns (uint256) { return assets; }
-    function balance() public view returns (uint256) { return total; }
-    function _sync() internal { total = 0; }
-    function sync() public { _sync(); }
-    function hook() external override {}
-    receive() external payable {}
+contract OtherTest {
+    /* Rounds down: src/Fee.sol:6 */
+    function testCap() public {}
 }
 "#;
-        fs::write(root.path().join("Vault.sol"), vault).unwrap();
-        fs::write(root.path().join("Broken.sol"), "contract Broken { function f( }").unwrap();
-        fs::write(root.path().join("Token.vy"), "@external\ndef f(): pass\n").unwrap();
-        let targets = ["Vault.sol", "Broken.sol", "Token.vy"].map(PathBuf::from);
         assert_eq!(
-            target_functions(root.path(), &targets),
-            ["Base.pause", "Vault.deposit", "Vault.sync", "Vault.hook"]
+            test_claim(source, "FeeTest", "testCap").as_deref(),
+            Some("The fee is capped at 100 ether (src/Fee.sol:7).")
         );
+        assert_eq!(
+            test_claim(source, "FeeTest", "testZero").as_deref(),
+            Some("A zero amount is charged, src/Fee.sol:11.")
+        );
+        assert_eq!(test_claim(source, "FeeTest", "testBare"), None);
+        assert_eq!(
+            test_claim(source, "OtherTest", "testCap").as_deref(),
+            Some("Rounds down: src/Fee.sol:6")
+        );
+        assert_eq!(test_claim(source, "OtherTest", "testZero"), None);
+        assert_eq!(test_claim(source, "MissingTest", "testCap"), None);
     }
 
-    // Agents get every n-th function in turn, so the slices are distinct and cover all functions.
-    // With fewer functions than agents, the slices repeat.
+    // Forge collects every Solidity file under the output directory, also in subdirectories, in
+    // path order. It skips other files and links, and rejects files that set a seed, `ffi`, or
+    // `fs_permissions` in inline config.
     #[test]
-    fn focus_deals_functions_to_agents_in_turn() {
-        let functions = ["A.a", "A.b", "A.c", "B.d", "B.e"].map(String::from);
-        assert_eq!(focus_slices(&functions, 2), [vec!["A.a", "A.c", "B.e"], vec!["A.b", "B.d"]]);
-        assert_eq!(focus_slices(&functions, 5), [["A.a"], ["A.b"], ["A.c"], ["B.d"], ["B.e"]]);
-        assert_eq!(focus_slices(&functions[..2], 3), [["A.a"], ["A.b"], ["A.a"]]);
-        assert_eq!(focus_slices(&[], 2), [Vec::<String>::new(), vec![]]);
+    fn collect_tests_reads_solidity_files_under_the_output_directory() {
+        let workspace = tempfile::tempdir().unwrap();
+        let out = Path::new("test/generated/agent-1");
+        let write = |path: &str, content: &str| {
+            let path = workspace.path().join(out).join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        };
+        write("Fee.t.sol", "contract FeeTest {}");
+        write("helpers/Helper.sol", "library Helper {}");
+        write("notes.md", "notes");
+        write("Seed.t.sol", "/// forge-config: default.fuzz.seed = \"0x3\"\ncontract SeedTest {}");
+        write("Ffi.t.sol", "/// forge-config: default.ffi = true\ncontract FfiTest {}");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            workspace.path().join(out).join("Fee.t.sol"),
+            workspace.path().join(out).join("Link.t.sol"),
+        )
+        .unwrap();
+
+        let mut rejected = Vec::new();
+        let files = collect_tests(workspace.path(), out, 1, &mut rejected).unwrap();
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| (file.path.to_str().unwrap(), file.content.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("test/generated/agent-1/Fee.t.sol", "contract FeeTest {}"),
+                ("test/generated/agent-1/helpers/Helper.sol", "library Helper {}"),
+            ]
+        );
+        rejected.sort_by(|a, b| a.paths.cmp(&b.paths));
+        assert_eq!(
+            rejected
+                .iter()
+                .map(|rejected| format!("{} {}", rejected.paths[0].display(), rejected.reason))
+                .collect::<Vec<_>>(),
+            [
+                "test/generated/agent-1/Ffi.t.sol sets ffi in inline config",
+                "test/generated/agent-1/Seed.t.sol sets a seed in inline config",
+            ]
+        );
     }
 }

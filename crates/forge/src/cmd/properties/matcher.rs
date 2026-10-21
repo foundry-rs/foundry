@@ -2,7 +2,6 @@
 //!
 //! [`root_cause_groups`] is the only entry point, so another matcher can replace this one.
 
-use super::Evidence;
 use regex::Regex;
 use std::{collections::HashSet, sync::LazyLock};
 
@@ -27,28 +26,27 @@ static CAMEL_CASE: LazyLock<Regex> =
 /// A lowercase word.
 static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-z0-9_]+").unwrap());
 
-/// What two failing tests must share to have one root cause: the target file in the evidence, and
-/// a function name or most of the claim's words.
+/// What two failing tests must share to have one root cause: the file that their claims name, and
+/// a function name or most of the claims' words.
 struct RootCause {
-    /// The file name of the first Solidity path in `code_path`, else in `source`.
+    /// The file name of the first Solidity path in the claim.
     file: String,
-    /// The function calls and camelCase identifiers in `code_path` and `claim`.
+    /// The function calls and camelCase identifiers in the claim.
     identifiers: HashSet<String>,
-    /// The words of `claim`, without stop words and words of one or two letters.
+    /// The words of the claim outside Solidity paths, without stop words and words of one or two
+    /// letters.
     words: HashSet<String>,
 }
 
 impl RootCause {
-    fn new(evidence: &Evidence) -> Option<Self> {
-        let paths = format!("{} {}", evidence.code_path, evidence.source);
-        let file = SOLIDITY_FILE.find(&paths)?.as_str().rsplit('/').next()?.to_string();
-        let text = format!("{} {}", evidence.code_path, evidence.claim);
+    fn new(claim: &str) -> Option<Self> {
+        let file = SOLIDITY_FILE.find(claim)?.as_str().rsplit('/').next()?.to_string();
         let identifiers = FUNCTION_CALL
-            .find_iter(&text)
-            .chain(CAMEL_CASE.find_iter(&text))
+            .find_iter(claim)
+            .chain(CAMEL_CASE.find_iter(claim))
             .map(|identifier| identifier.as_str().to_string())
             .collect();
-        let claim = evidence.claim.to_lowercase();
+        let claim = SOLIDITY_FILE.replace_all(claim, " ").to_lowercase();
         let words = WORD
             .find_iter(&claim)
             .map(|word| word.as_str())
@@ -67,12 +65,11 @@ impl RootCause {
     }
 }
 
-/// Returns a group number for the evidence of each failing test: tests with the same number have
-/// one root cause. Groups use single linkage: a chain of agreeing pairs links two tests. A test
-/// without evidence, or whose evidence names no Solidity file, agrees with no other test.
-pub(super) fn root_cause_groups(evidence: &[Option<&Evidence>]) -> Vec<usize> {
-    let causes =
-        evidence.iter().map(|evidence| RootCause::new(evidence.as_ref()?)).collect::<Vec<_>>();
+/// Returns a group number for the claim of each failing test: tests with the same number have one
+/// root cause. Groups use single linkage: a chain of agreeing pairs links two tests. A test without
+/// a claim, or whose claim names no Solidity file, agrees with no other test.
+pub(super) fn root_cause_groups(claims: &[Option<&str>]) -> Vec<usize> {
+    let causes = claims.iter().map(|claim| RootCause::new((*claim)?)).collect::<Vec<_>>();
     let mut group_of = (0..causes.len()).collect::<Vec<_>>();
     for (i, a) in causes.iter().enumerate() {
         for (j, b) in causes.iter().enumerate().skip(i + 1) {
@@ -92,25 +89,22 @@ pub(super) fn root_cause_groups(evidence: &[Option<&Evidence>]) -> Vec<usize> {
 mod tests {
     use super::*;
 
-    fn cause(claim: &str, code_path: &str) -> RootCause {
-        RootCause::new(&Evidence {
-            claim: claim.to_string(),
-            source: "src/Fee.sol:3".to_string(),
-            code_path: code_path.to_string(),
-        })
-        .unwrap()
+    fn cause(claim: &str) -> RootCause {
+        RootCause::new(claim).unwrap()
     }
 
+    // Two claims agree when they name the same file and share a function name or enough words.
+    // The words of the paths do not count, and a claim without a Solidity path has no root cause.
     #[test]
     fn root_causes_agree_on_file_and_function_or_claim_words() {
-        let cap = cause("The fee is capped at 100 ether.", "src/Fee.sol:7 fee() caps at 10 ether.");
+        let cap = cause("The fee is capped at 100 ether; src/Fee.sol:7 fee() caps at 10 ether.");
+        assert!(cap.agrees(&cause("Large amounts pay the maximum: src/Fee.sol:7 fee() is wrong")));
         assert!(
-            cap.agrees(&cause("Large amounts pay the maximum.", "src/Fee.sol:7 fee() is wrong"))
+            cap.agrees(&cause("The fee is capped at 100 ether for large amounts (src/Fee.sol)"))
         );
-        assert!(
-            cap.agrees(&cause("The fee is capped at 100 ether for large amounts.", "src/Fee.sol"))
-        );
-        assert!(!cap.agrees(&cause("The fee is capped at 100 ether.", "src/Other.sol:7 fee()")));
-        assert!(!cap.agrees(&cause("A zero amount is charged.", "src/Fee.sol:11 charges()")));
+        assert!(!cap.agrees(&cause("The fee is capped at 100 ether; src/Other.sol:7 fee()")));
+        assert!(!cap.agrees(&cause("A zero amount is charged; src/Fee.sol:11 charges()")));
+        assert!(!cause("Wrong result; src/Fee.sol:7").agrees(&cause("Bad output; src/Fee.sol:7")));
+        assert!(RootCause::new("The fee is capped at 100 ether.").is_none());
     }
 }

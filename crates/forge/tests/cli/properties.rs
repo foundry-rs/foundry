@@ -1,20 +1,22 @@
-//! Tests for the `forge properties` command. Generators are shell scripts, so the tests run only
-//! on Unix.
+//! Tests for the `forge properties` command. Agents are shell scripts, so the tests run only on
+//! Unix.
 #![cfg(unix)]
 
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_test_utils::{TestProject, assert_data_eq, forgetest_init, str};
-use std::{fs, os::unix::fs::PermissionsExt, str::FromStr};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    str::FromStr,
+    thread,
+    time::{Duration, Instant},
+};
 
-/// Starts a generator script. `check FILE` runs the prompt's check command on a candidate file.
+/// Starts an agent script: `out` is the output directory and `agent` the agent's number.
 const PRELUDE: &str = r#"#!/bin/sh
 set -eu
-prompt="$1"
-output="$2"
-check() {
-    set -- $(sed -n '/"check_command": \[/,/\]/p' "$prompt" | sed -e '1d;$d' -e 's/^ *"//' -e 's/",*$//' -e "s|^CANDIDATE_JSON\$|$1|")
-    "$@" > /dev/null 2>&1 || true
-}
+out="$FORGE_PROPERTIES_OUT"
+agent="${out##*-}"
 "#;
 
 const FEE: &str = r#"
@@ -33,17 +35,29 @@ library Fee {
 }
 "#;
 
-/// Writes the generator script and returns the common arguments.
+/// A passing test of `Fee`, as an agent writes it.
+const FEE_SPEC: &str = r#"cat > "$out/FeeSpec.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+contract FeeSpecTest {
+    function testSmallFee() public pure {
+        require(Fee.fee(100) == 1);
+    }
+}
+SOL
+"#;
+
+/// Writes the agent script and returns the common arguments.
 fn properties_args(prj: &TestProject, script: &str) -> Vec<String> {
-    let generator = prj.root().join("generator.sh");
-    fs::write(&generator, format!("{PRELUDE}{script}")).unwrap();
-    fs::set_permissions(&generator, fs::Permissions::from_mode(0o755)).unwrap();
+    let agent = prj.root().join("agent.sh");
+    fs::write(&agent, format!("{PRELUDE}{script}")).unwrap();
+    fs::set_permissions(&agent, fs::Permissions::from_mode(0o755)).unwrap();
     [
         "properties",
         "--root",
         prj.root().to_str().unwrap(),
-        "--generator",
-        generator.to_str().unwrap(),
+        "--agent-command",
+        agent.to_str().unwrap(),
         "--seed",
         "0x5eed",
         "--seed",
@@ -53,20 +67,29 @@ fn properties_args(prj: &TestProject, script: &str) -> Vec<String> {
     .to_vec()
 }
 
-/// Returns the first agent's `rounds.json`.
-fn rounds(prj: &TestProject) -> serde_json::Value {
-    let rounds =
-        fs::read_to_string(prj.root().join("cache/properties/agent-1/rounds.json")).unwrap();
-    serde_json::from_str(&rounds).unwrap()
+/// Returns `cache/properties/report.json`.
+fn report(prj: &TestProject) -> serde_json::Value {
+    let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
+    serde_json::from_str(&report).unwrap()
 }
 
-// Three agents run in parallel. Forge reports a possible bug only when two agents agree on its
-// root cause, keeps the other failures in the report file, keeps one copy of identical passing
-// files, and sums the usage that agents report.
+/// Returns the paths and reasons of the rejected files in the report, one line each.
+fn rejected(prj: &TestProject) -> String {
+    report(prj)["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rejected| format!("{} {}", rejected["paths"], rejected["reason"]))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// Three agents run in parallel, each in one session in its own copy of the project. Forge reports
+// a possible bug only when two agents agree on its root cause, keeps the other failures in the
+// report file, keeps one copy of identical passing files, and sums the usage that agents report.
 #[forgetest_init]
 fn properties_reports_bugs_that_agents_agree_on(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
-    prj.add_source("Vault.sol", VAULT);
     fs::write(prj.root().join("README.md"), "readme-marker").unwrap();
     for path in
         ["CLAUDE.md", "AGENTS.md", "src/CLAUDE.md", ".claude/settings.json", "src/.cursor/rules"]
@@ -75,85 +98,101 @@ fn properties_reports_bugs_that_agents_agree_on(prj: _, cmd: _) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "agent-config").unwrap();
     }
+    // Generated tests of an earlier run stay out of the copies: this one does not compile.
+    fs::create_dir_all(prj.root().join("test/generated")).unwrap();
+    fs::write(prj.root().join("test/generated/Old.t.sol"), "contract Old {").unwrap();
     let context = prj.root().join("context.md");
     fs::write(&context, "context-marker: rounding notes").unwrap();
     let mut args = properties_args(
         &prj,
-        r#"
-agent=$(sed -n 's/^    "id": \([0-9][0-9]*\),$/\1/p' "$prompt" | head -n 1)
-grep -q '"instructions": "Find bugs in the targets' "$prompt"
-grep -q '"count": 3' "$prompt"
-grep -q "\"allowed_path_prefix\": \"test/generated/agent-$agent\"" "$prompt"
-grep -q '"src/Fee.sol"' "$prompt"
-# Agents start with distinct functions of the target contracts, and libraries add none. With fewer
-# functions than agents, the slices repeat.
-case "$agent" in 2) focus=Vault.withdraw ;; *) focus=Vault.deposit ;; esac
-[ "$(sed -n '/"focus": \[/,/\]/p' "$prompt" | tr -d ' \n')" = "\"focus\":[\"$focus\"]" ]
-grep -q 'Start with the functions in agent.focus' "$prompt"
-# The context file reaches every agent verbatim.
-grep -q '"content": "context-marker: rounding notes"' "$prompt"
-# Each agent works in its own copy of the project, with the project's other files.
+        &format!(
+            r#"
+prompt="$FORGE_PROPERTIES_PROMPT"
+# The prompt names the targets, the context files, and the output directory.
+grep -qx 'Find bugs in these targets of the Foundry project in the current directory:' "$prompt"
+grep -qx -- '- src/Fee.sol' "$prompt"
+grep -qx -- "- $FORGE_PROPERTIES_CONTEXT" "$prompt"
+grep -qF "test in $out that fails because of the bug" "$prompt"
+printf '%s\n' "$FORGE_PROPERTIES_TARGETS" | grep -qx src/Fee.sol
+grep -q context-marker "$FORGE_PROPERTIES_CONTEXT"
+case "$FORGE_PROPERTIES_SEED" in 0x*) ;; *) exit 1 ;; esac
+# The output directory is in the agent's copy of the project and starts empty.
+[ "$(cd "$out" && pwd -P)" = "$(pwd -P)/test/generated/agent-$agent" ]
+[ "$(ls -A test/generated)" = "agent-$agent" ]
+[ -z "$(ls -A "$out")" ]
+# The copy has the project's other files, without agent settings and instructions.
 grep -q readme-marker README.md
-# Agent settings and instructions stay out of the copy.
 for path in CLAUDE.md AGENTS.md src/CLAUDE.md .claude src/.cursor; do
     [ ! -e "$path" ]
 done
-dir="test/generated/agent-$agent"
-spec='{"path": "'$dir'/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}'
-usage='"usage": {"input_tokens": 1000, "output_tokens": 200, "cost_usd": 0.01}'
+{FEE_SPEC}
+printf '{{"input_tokens": 1000, "output_tokens": 200, "cost_usd": 0.01}}' > "$FORGE_PROPERTIES_USAGE"
 case "$agent" in
-1) cat > "$output" <<JSON
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [$spec, {"path": "$dir/FeeCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeCapTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}],
-  "evidence": {"FeeCapTest::testDocumentedCap": {"claim": "The fee is capped at 100 ether.", "source": "src/Fee.sol:3", "code_path": "src/Fee.sol:7 fee() caps the fee at 10 ether."}},
-  $usage
-}
-JSON
+1) cat > "$out/FeeCap.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {{Fee}} from "../../../src/Fee.sol";
+contract FeeCapTest {{
+    // The fee is capped at 100 ether; src/Fee.sol:7 fee() caps the fee at 10 ether.
+    function testDocumentedCap() public pure {{
+        require(Fee.fee(1e30) == 100 ether);
+    }}
+}}
+SOL
 ;;
-2) cat > "$output" <<JSON
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [$spec, {"path": "$dir/FeeRounding.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeRoundingTest {\n    function testRoundsDown() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n"}, {"path": "$dir/FeeLimit.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeLimitTest {\n    function testReachesCap() public pure {\n        require(Fee.fee(2e22) == 100 ether);\n    }\n}\n"}],
-  "evidence": {"FeeLimitTest::testReachesCap": {"claim": "fee(amount) reaches the documented cap for large amounts.", "source": "src/Fee.sol:3", "code_path": "src/Fee.sol:7 caps at 10 ether."}},
-  $usage
-}
-JSON
+2) cat > "$out/FeeRounding.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {{Fee}} from "../../../src/Fee.sol";
+contract FeeRoundingTest {{
+    function testRoundsDown() public pure {{
+        require(Fee.fee(199) == 1);
+    }}
+}}
+SOL
+cat > "$out/FeeLimit.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {{Fee}} from "../../../src/Fee.sol";
+contract FeeLimitTest {{
+    /// fee(amount) reaches the documented cap for large amounts (src/Fee.sol:7).
+    function testReachesCap() public pure {{
+        require(Fee.fee(2e22) == 100 ether);
+    }}
+}}
+SOL
 ;;
-3) cat > "$output" <<JSON
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [$spec, {"path": "$dir/FeeCharges.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeChargesTest {\n    function testChargesZero() public pure {\n        require(Fee.charges(0));\n    }\n}\n"}],
-  "evidence": {"FeeChargesTest::testChargesZero": {"claim": "A zero amount is charged.", "source": "the name of charges", "code_path": "src/Fee.sol:11 charges() returns false below 100."}},
-  $usage
-}
-JSON
+3) cat > "$out/FeeCharges.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {{Fee}} from "../../../src/Fee.sol";
+contract FeeChargesTest {{
+    // A zero amount is charged; src/Fee.sol:11 charges() returns false below 100.
+    function testChargesZero() public pure {{
+        require(Fee.charges(0));
+    }}
+}}
+SOL
 ;;
 esac
-"#,
+"#
+        ),
     );
     args.extend(["--context", context.to_str().unwrap(), "--agents", "3"].map(String::from));
     cmd.args(args).assert_success().stdout_eq(str![[r#"
-possible bug (2/3 agents): The fee is capped at 100 ether.
+possible bug (2/3 agents): The fee is capped at 100 ether; src/Fee.sol:7 fee() caps the fee at 10 ether.
   agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    claim: The fee is capped at 100 ether. (src/Fee.sol:3)
-    code path: src/Fee.sol:7 fee() caps the fee at 10 ether.
-    fails on every seed; candidate: cache/properties/agent-1/0x[..]
+    claim: The fee is capped at 100 ether; src/Fee.sol:7 fee() caps the fee at 10 ether.
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
   agent 2: FeeLimitTest::testReachesCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    claim: fee(amount) reaches the documented cap for large amounts. (src/Fee.sol:3)
-    code path: src/Fee.sol:7 caps at 10 ether.
-    fails on every seed; candidate: cache/properties/agent-2/0x[..]
+    claim: fee(amount) reaches the documented cap for large amounts (src/Fee.sol:7).
+    file: cache/properties/agent-2/tests/FeeLimit.t.sol
 1 possible bug(s) below the quorum of 2: see cache/properties/report.json
-generator usage: 3000 input tokens, 600 output tokens, 0.03 USD
+agent usage: 3000 input tokens, 600 output tokens, 0.03 USD
 added 2 generated test file(s):
   test/generated/agent-1/FeeSpec.t.sol
   test/generated/agent-2/FeeRounding.t.sol
-skipped 2 generated test file(s) that repeat a file of another agent
+skipped 2 generated test file(s) that repeat a file of another agent or the project
 
 "#]]);
 
-    let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
-    let report = serde_json::from_str::<serde_json::Value>(&report).unwrap();
+    let report = report(&prj);
     let below = &report["below_quorum"][0];
     assert_data_eq!(
         format!("{} {}", below["agents"], below["failures"][0]["test"]),
@@ -165,39 +204,42 @@ skipped 2 generated test file(s) that repeat a file of another agent
             r#"["test/generated/agent-2/FeeSpec.t.sol","test/generated/agent-3/FeeSpec.t.sol"]"#
         ]]
     );
+    // Forge keeps a copy of each test that an agent wrote, also of the failing ones.
+    assert!(prj.root().join("cache/properties/agent-3/tests/FeeCharges.t.sol").exists());
+    assert!(prj.root().join("cache/properties/agent-1/prompt.md").exists());
 }
 
-// A kept property must keep its imported helper, while an unrelated proposal file can be dropped.
+// A kept test file keeps the file that it imports, while an unrelated file is dropped.
 #[forgetest_init]
-fn properties_keeps_imported_candidate_helpers(prj: _, cmd: _) {
+fn properties_keeps_imported_helpers(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
     let args = properties_args(
         &prj,
         r#"
-# The check command keeps the opt-ins.
-grep -q '"--allow-ffi"' "$prompt"
-grep -q '"--allow-network"' "$prompt"
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [
-    {"path": "test/generated/agent-1/Helper.sol", "content": "pragma solidity ^0.8.20;\nlibrary Helper { function fee(uint256 amount) internal pure returns (uint256) { return amount / 100; } }\n"},
-    {"path": "test/generated/agent-1/Property.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\nimport {Helper} from \"./Helper.sol\";\ncontract PropertyTest { function testFee() public pure { require(Fee.fee(199) == Helper.fee(199)); } }\n"},
-    {"path": "test/generated/agent-1/Unused.sol", "content": "pragma solidity ^0.8.20;\nlibrary Unused {}\n"}
-  ]
-}
-JSON
+cat > "$out/Helper.sol" <<'SOL'
+pragma solidity ^0.8.20;
+library Helper { function fee(uint256 amount) internal pure returns (uint256) { return amount / 100; } }
+SOL
+cat > "$out/Property.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+import {Helper} from "./Helper.sol";
+contract PropertyTest { function testFee() public pure { require(Fee.fee(199) == Helper.fee(199)); } }
+SOL
+cat > "$out/Unused.sol" <<'SOL'
+pragma solidity ^0.8.20;
+library Unused {}
+SOL
 "#,
     );
-    cmd.args(args)
-        .args(["--agents", "1", "--target", "src/Fee.sol", "--allow-ffi", "--allow-network"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
+        str![[r#"
 added 2 generated test file(s):
   test/generated/agent-1/Helper.sol
   test/generated/agent-1/Property.t.sol
 
-"#]]);
+"#]],
+    );
 
     assert!(!prj.root().join("test/generated/agent-1/Unused.sol").exists());
     cmd.forge_fuse().args(["test", "--match-contract", "PropertyTest"]).assert_success();
@@ -210,90 +252,60 @@ added 2 generated test file(s):
 fn properties_turns_off_ffi_unless_allowed(prj: _, cmd: _) {
     prj.update_config(|config| config.ffi = true);
     let marker = prj.root().join("ffi-ran");
-    let write_candidate = |name: &str, content: &str| {
-        let candidate = serde_json::json!({
-            "schema": "foundry/properties-candidate-v1",
-            "files": [{"path": "test/generated/Ffi.t.sol", "content": content}]
-        });
-        fs::write(prj.root().join(name), candidate.to_string()).unwrap();
-    };
-    write_candidate(
-        "ffi.json",
+    let args = properties_args(
+        &prj,
         &format!(
-            "pragma solidity ^0.8.20;\nimport {{Test}} from \"forge-std/Test.sol\";\ncontract FfiTest is Test {{\n    function testFfi() public {{\n        string[] memory command = new string[](2);\n        command[0] = \"touch\";\n        command[1] = \"{}\";\n        vm.ffi(command);\n    }}\n}}\n",
+            r#"
+cat > "$out/Ffi.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {{Test}} from "forge-std/Test.sol";
+contract FfiTest is Test {{
+    function testFfi() public {{
+        string[] memory command = new string[](2);
+        command[0] = "touch";
+        command[1] = "{}";
+        vm.ffi(command);
+    }}
+}}
+SOL
+cat > "$out/InlineFfi.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract InlineFfiTest {{
+    /// forge-config: default.ffi = true
+    function testFfi() public pure {{}}
+}}
+SOL
+cat > "$out/InlineFs.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract InlineFsTest {{
+    /// forge-config: default.fs_permissions = [{{ access = "read-write", path = "/" }}]
+    function testWrite() public pure {{}}
+}}
+SOL
+"#,
             marker.display()
         ),
     );
-    write_candidate(
-        "inline-ffi.json",
-        "pragma solidity ^0.8.20;\ncontract FfiTest {\n    /// forge-config: default.ffi = true\n    function testFfi() public pure {}\n}\n",
-    );
-    write_candidate(
-        "inline-fs.json",
-        "pragma solidity ^0.8.20;\ncontract FfiTest {\n    /// forge-config: default.fs_permissions = [{ access = \"read-write\", path = \"/\" }]\n    function testWrite() public pure {}\n}\n",
-    );
-    let check = ["properties", "--check", "CANDIDATE", "--seed", "1", "--seed", "2"];
-    let check = |candidate| check.map(|arg| if arg == "CANDIDATE" { candidate } else { arg });
+    cmd.args(&args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+no generated test file was kept
 
-    cmd.args(check("ffi.json")).assert_failure().stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "FfiTest::testFfi failed on seed 1: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands",
-    "FfiTest::testFfi failed on seed 2: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
-  ],
-  "possible_bugs": [
-    {
-      "test": "FfiTest::testFfi",
-      "path": "test/generated/Ffi.t.sol",
-      "reason": "seed 1: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands; seed 2: vm.ffi: FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
-    }
-  ]
-}
+"#]]).stderr_eq(str![[r#"
+Warning: 1 failing test(s) used a cheatcode that Forge blocks (ffi, environment, or network), so they are not possible bugs: see cache/properties/report.json
 
 "#]]);
     assert!(!marker.exists());
-    cmd.forge_fuse().args(check("ffi.json")).arg("--allow-ffi").assert_success();
+    assert_data_eq!(
+        rejected(&prj),
+        str![[r#"
+["test/generated/agent-1/InlineFfi.t.sol"] "sets ffi in inline config"
+["test/generated/agent-1/InlineFs.t.sol"] "sets fs_permissions in inline config"
+"#]]
+    );
+
+    cmd.forge_fuse().args(&args).args(["--agents", "1", "--allow-ffi"]).assert_success();
     assert!(marker.exists());
-    cmd.forge_fuse().args(check("inline-ffi.json")).assert_failure().stderr_eq(str![[r#"
-Error: candidate test/generated/Ffi.t.sol sets ffi in inline config
-
-"#]]);
-    cmd.forge_fuse().args(check("inline-fs.json")).assert_failure().stderr_eq(str![[r#"
-Error: candidate test/generated/Ffi.t.sol sets fs_permissions in inline config
-
-"#]]);
-}
-
-// Builds and test runs of generated code see only a small allowlist of environment variables, so a
-// generated test cannot read the secrets of Forge's environment.
-#[forgetest_init]
-fn properties_check_hides_the_environment(prj: _, cmd: _) {
-    let candidate = serde_json::json!({
-        "schema": "foundry/properties-candidate-v1",
-        "files": [{"path": "test/generated/Env.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract EnvTest is Test {\n    function testSecret() public view {\n        vm.envString(\"SECRET\");\n    }\n}\n"}]
-    });
-    fs::write(prj.root().join("env.json"), candidate.to_string()).unwrap();
-    cmd.env("SECRET", "secret-marker");
-    cmd.args(["properties", "--check", "env.json", "--seed", "1", "--seed", "2"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "EnvTest::testSecret failed on seed 1: vm.envString: environment variable /"SECRET/" not found",
-    "EnvTest::testSecret failed on seed 2: vm.envString: environment variable /"SECRET/" not found"
-  ],
-  "possible_bugs": [
-    {
-      "test": "EnvTest::testSecret",
-      "path": "test/generated/Env.t.sol",
-      "reason": "seed 1: vm.envString: environment variable /"SECRET/" not found; seed 2: vm.envString: environment variable /"SECRET/" not found"
-    }
-  ]
-}
-
-"#]]);
+    assert!(prj.root().join("test/generated/agent-1/Ffi.t.sol").exists());
 }
 
 // Generated tests cannot read Forge's environment or open network connections. Their failures
@@ -303,18 +315,20 @@ fn properties_blocks_environment_and_network(prj: _, cmd: _) {
     let args = properties_args(
         &prj,
         r#"
-agent=$(sed -n 's/^    "id": \([0-9][0-9]*\),$/\1/p' "$prompt" | head -n 1)
-dir="test/generated/agent-$agent"
-cat > "$output" <<JSON
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [{"path": "$dir/Sandbox.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract SandboxTest is Test {\n    function testSecret() public view {\n        vm.envString(\"SECRET\");\n    }\n    function testFork() public {\n        vm.createFork(\"http://127.0.0.1:1\");\n    }\n}\n"}],
-  "evidence": {
-    "SandboxTest::testSecret": {"claim": "The secret is set.", "source": "README.md:1", "code_path": "src/Secret.sol:1 secret() is missing."},
-    "SandboxTest::testFork": {"claim": "The fork opens.", "source": "README.md:2", "code_path": "src/Fork.sol:1 fork() is missing."}
-  }
+cat > "$out/Sandbox.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Test} from "forge-std/Test.sol";
+contract SandboxTest is Test {
+    // The secret is set (src/Secret.sol:1).
+    function testSecret() public view {
+        vm.envString("SECRET");
+    }
+    // The fork opens (src/Fork.sol:1).
+    function testFork() public {
+        vm.createFork("http://127.0.0.1:1");
+    }
 }
-JSON
+SOL
 "#,
     );
     cmd.env("SECRET", "secret-marker");
@@ -326,9 +340,7 @@ Warning: 4 failing test(s) used a cheatcode that Forge blocks (ffi, environment,
 
 "#]]);
 
-    let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
-    let report = serde_json::from_str::<serde_json::Value>(&report).unwrap();
-    let blocked = report["blocked"]
+    let blocked = report(&prj)["blocked"]
         .as_array()
         .unwrap()
         .iter()
@@ -345,76 +357,59 @@ Warning: 4 failing test(s) used a cheatcode that Forge blocks (ffi, environment,
     );
 }
 
-// With `--no-focus`, the prompt has no focus.
+// At the timeout, Forge ends the agent's whole process group and runs the tests that it wrote. An
+// agent that exits with an error fails the run, but its tests still count.
 #[forgetest_init]
-fn properties_no_focus_gives_agents_the_same_prompt(prj: _, cmd: _) {
-    prj.add_source("Vault.sol", VAULT);
-    let args = properties_args(
-        &prj,
-        r#"
-if grep -q -e '"focus"' -e 'agent.focus' "$prompt"; then
-    exit 1
-fi
-cat > "$output" <<'JSON'
-{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/VaultSpec.t.sol", "content": "pragma solidity ^0.8.20;\ncontract VaultSpecTest {\n    function testNothing() public pure {}\n}\n"}]}
-JSON
-"#,
-    );
-    cmd.args(args).args(["--agents", "1", "--no-focus"]).assert_success().stdout_eq(str![[r#"
-added 1 generated test file(s):
-  test/generated/agent-1/VaultSpec.t.sol
-
-"#]]);
-}
-
-// A failing test that a generator check saw and the generator then removed is still reported.
-#[forgetest_init]
-fn properties_reports_removed_check_failures(prj: _, cmd: _) {
+fn properties_runs_tests_after_timeout_and_agent_error(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
+    let marker = prj.root().join("still-running");
     let args = properties_args(
         &prj,
         r#"
-if grep -q '^  "round": 2,' "$prompt"; then
-    echo "generator quota exceeded" >&2
-    exit 3
+cat > "$out/FeeCap.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+contract FeeCapTest {
+    // The fee is capped at 100 ether; src/Fee.sol:7 fee().
+    function testDocumentedCap() public pure {
+        require(Fee.fee(1e30) == 100 ether);
+    }
+}
+SOL
+if [ "$agent" = 1 ]; then
+    (sleep 8; touch "$MARKER") &
+    sleep 30
 fi
-cat > removed.json <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [{"path": "test/generated/agent-1/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]
-}
-JSON
-check removed.json
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
-}
-JSON
+echo "quota exceeded" >&2
+exit 3
 "#,
     );
-    cmd.args(args)
-        .args(["--agents", "1", "--target", "src/Fee.sol", "--rounds", "2"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
-possible bug (1/1 agents): FeeRemovedTest::testDocumentedCap
-  agent 1: FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    seen in a generator check, then removed; journal: cache/properties/agent-1/check-failures.jsonl
-added 1 generated test file(s):
-  test/generated/agent-1/FeeSpec.t.sol
+    cmd.env("MARKER", &marker);
+    let start = Instant::now();
+    cmd.args(args).args(["--agents", "2", "--timeout", "5"]).assert_failure().stdout_eq(str![[r#"
+possible bug (2/2 agents): The fee is capped at 100 ether; src/Fee.sol:7 fee().
+  agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: The fee is capped at 100 ether; src/Fee.sol:7 fee().
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
+  agent 2: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: The fee is capped at 100 ether; src/Fee.sol:7 fee().
+    file: cache/properties/agent-2/tests/FeeCap.t.sol
+no generated test file was kept
 
-"#]])
-        .stderr_eq(str![[r#"
-Error: agent 1: generator failed in round 2 (exit status: 3): generator quota exceeded
+"#]]).stderr_eq(str![[r#"
+Warning: 1 agent(s) reached the timeout, so Forge ended them and ran the tests that they wrote
+Error: agent 2: agent command failed (exit status: 3): see cache/properties/agent-2/agent.log
 
 "#]]);
 
-    // The journal keeps the removed test's source for review.
-    let journal =
-        fs::read_to_string(prj.root().join("cache/properties/agent-1/check-failures.jsonl"))
-            .unwrap();
-    let journal = serde_json::from_str::<serde_json::Value>(&journal).unwrap();
-    assert!(journal["source"].as_str().unwrap().contains("function testDocumentedCap()"));
+    assert_eq!(report(&prj)["timed_out"].to_string(), "[1]");
+    assert_eq!(
+        fs::read_to_string(prj.root().join("cache/properties/agent-2/agent.log")).unwrap(),
+        "quota exceeded\n"
+    );
+    // The process that the agent started in the background ended with it.
+    thread::sleep(Duration::from_secs(9).saturating_sub(start.elapsed()));
+    assert!(!marker.exists());
 }
 
 // The target is in a linked dependency directory. It imports a library through a remapping and the
@@ -476,11 +471,17 @@ contract ArithmeticTest {
     let args = properties_args(
         &prj,
         r#"
-name=Lower
-body='require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);'
-cat > "$output" <<JSON
-{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/Arithmetic$name.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"bucket/Arithmetic.sol\";\ncontract Arithmetic${name}Test {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testBoundary() public view {\n        $body\n    }\n}\n"}]}
-JSON
+cat > "$out/ArithmeticLower.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Arithmetic} from "bucket/Arithmetic.sol";
+contract ArithmeticLowerTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+    function testBoundary() public view {
+        require(arithmetic.bucket(9) == 1);
+        require(arithmetic.bucket(10) == 2);
+    }
+}
+SOL
 "#,
     );
     cmd.args(args)
@@ -504,35 +505,22 @@ fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
     let failures = prj.root().join("cache/test-failures");
     fs::create_dir_all(failures.parent().unwrap()).unwrap();
     fs::write(&failures, r#"{"version":1,"failures":[]}"#).unwrap();
-    let args = properties_args(
-        &prj,
-        r#"
-cat > "$output" <<'JSON'
-{
-  "schema": "foundry/properties-candidate-v1",
-  "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]
-}
-JSON
-"#,
-    );
-    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
-no generated test file was kept
+    let args = properties_args(&prj, FEE_SPEC);
+    cmd.args(args).args(["--agents", "1"]).assert_failure().stderr_eq(str![[r#"
+Error: generated test path test/generated/agent-1/FeeSpec.t.sol escapes project root [..]
 
 "#]]);
 
-    assert_data_eq!(
-        rounds(&prj)[0]["reasons"][0].as_str().unwrap(),
-        str!["generated test path test/generated/agent-1/FeeSpec.t.sol escapes project root [..]"]
-    );
     assert!(!outside.path().join("FeeSpec.t.sol").exists());
     assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
 }
 
-// Checks run in a copy of the project. Inherited config, profiles, `FOUNDRY_CONFIG`, a source
-// directory other than `src`, and negative filters must apply as in the project, and filters must
-// not hide generated tests.
+// Test runs happen in a copy of the project. Inherited config, profiles, `FOUNDRY_CONFIG`, a
+// source directory other than `src`, and negative filters must apply as in the project, and
+// filters must not hide generated tests. Invariant predicates and handler failures count on their
+// own, and a file that does not compile does not hide the other files.
 #[forgetest_init]
-fn properties_check_reports_candidate_result(prj: _, cmd: _) {
+fn properties_runs_every_generated_test(prj: _, cmd: _) {
     fs::write(
         prj.root().join("base.toml"),
         "[profile.default]\nremappings = [\"fee/=contracts/\"]\n",
@@ -557,193 +545,326 @@ fn properties_check_reports_candidate_result(prj: _, cmd: _) {
         "pragma solidity ^0.8.20;\nlibrary Fee {\n    function fee(uint256 amount) internal pure returns (uint256) {\n        return amount / 100;\n    }\n}\n",
     )
     .unwrap();
-    let write_candidate = |name: &str, content: &str| {
-        let candidate = serde_json::json!({
-            "schema": "foundry/properties-candidate-v1",
-            "files": [{"path": "test/generated/FeeCheck.t.sol", "content": content}]
-        });
-        fs::write(prj.root().join(name), candidate.to_string()).unwrap();
-    };
-    write_candidate(
-        "passing.json",
-        "pragma solidity ^0.8.20;\nimport {Fee} from \"fee/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: ci.fuzz.runs = 10\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
-    );
-    write_candidate(
-        "broken.json",
-        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    function testFee() public {\n        missing();\n    }\n}\n",
-    );
-    // Forge runs every test in the files.
-    write_candidate(
-        "extra.json",
-        "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testHiddenRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
-    );
-    // A merged invariant campaign reports each predicate on its own.
-    write_candidate(
-        "invariants.json",
-        "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeHandler {\n    uint256 public total;\n    function add(uint256 amount) public {\n        total += Fee.fee(amount % 1e30);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract FeeInvariantTest is Test {\n    FeeHandler internal handler;\n    function setUp() public {\n        handler = new FeeHandler();\n        targetContract(address(handler));\n    }\n    function invariant_totalFitsSupply() public view {\n        assertLe(handler.total(), 1e30);\n    }\n    function invariant_totalStaysZero() public view {\n        assertEq(handler.total(), 0);\n    }\n}\n",
-    );
-    // A handler assertion fails the campaign even when every predicate holds.
-    write_candidate(
-        "handler.json",
-        "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract BrokenHandler {\n    uint256 public pokes;\n    function poke() public {\n        pokes += 1;\n        assert(false);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract HandlerInvariantTest is Test {\n    function setUp() public {\n        targetContract(address(new BrokenHandler()));\n    }\n    function invariant_one() public pure {}\n    function invariant_two() public pure {}\n}\n",
-    );
-    write_candidate(
-        "seeded.json",
-        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz.seed = \"0x3\"\n    function testFuzzFee(uint256 amount) public pure {}\n}\n",
-    );
-    let check = ["properties", "--check", "CANDIDATE", "--seed", "1", "--seed", "2"];
-    let check = |candidate| check.map(|arg| if arg == "CANDIDATE" { candidate } else { arg });
-
-    cmd.args(check("passing.json")).assert_success().stdout_eq(str![[r#"
-{
-  "passed": true,
-  "reasons": [],
-  "possible_bugs": []
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$out/FeeCheck.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "fee/Fee.sol";
+contract FeeCheckTest {
+    /// forge-config: ci.fuzz.runs = 10
+    function testFee() public pure {
+        require(Fee.fee(199) == 1);
+    }
 }
+SOL
+[ -n "${ONLY_PASSING:-}" ] && exit 0
+cat > "$out/FeeRounding.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "../../../contracts/Fee.sol";
+contract FeeRoundingTest {
+    // The fee rounds up (contracts/Fee.sol:4).
+    function testHiddenRoundsUp() public pure {
+        require(Fee.fee(199) == 2);
+    }
+}
+SOL
+cat > "$out/FeeInvariant.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Test} from "forge-std/Test.sol";
+import {Fee} from "../../../contracts/Fee.sol";
+contract FeeHandler {
+    uint256 public total;
+    function add(uint256 amount) public {
+        total += Fee.fee(amount % 1e30);
+    }
+}
+/// forge-config: default.invariant.runs = 8
+/// forge-config: default.invariant.depth = 8
+contract FeeInvariantTest is Test {
+    FeeHandler internal handler;
+    function setUp() public {
+        handler = new FeeHandler();
+        targetContract(address(handler));
+    }
+    function invariant_totalFitsSupply() public view {
+        assertLe(handler.total(), 1e30);
+    }
+    function invariant_totalStaysZero() public view {
+        assertEq(handler.total(), 0);
+    }
+}
+SOL
+cat > "$out/Handler.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Test} from "forge-std/Test.sol";
+contract BrokenHandler {
+    uint256 public pokes;
+    function poke() public {
+        pokes += 1;
+        assert(false);
+    }
+}
+/// forge-config: default.invariant.runs = 8
+/// forge-config: default.invariant.depth = 8
+contract HandlerInvariantTest is Test {
+    function setUp() public {
+        targetContract(address(new BrokenHandler()));
+    }
+    function invariant_one() public pure {}
+    function invariant_two() public pure {}
+}
+SOL
+cat > "$out/Broken.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract BrokenTest {
+    function testFee() public {
+        missing();
+    }
+}
+SOL
+cat > "$out/Seeded.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract SeededTest {
+    /** forge-config: default.fuzz = { seed = "0x3", runs = 1 } */
+    function testFuzzFee(uint256 amount) public pure {}
+}
+SOL
+"#,
+    );
+    cmd.args(&args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+possible bug (1/1 agents): The fee rounds up (contracts/Fee.sol:4).
+  agent 1: FeeRoundingTest::testHiddenRoundsUp (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: The fee rounds up (contracts/Fee.sol:4).
+    file: cache/properties/agent-1/tests/FeeRounding.t.sol
+possible bug (1/1 agents): FeeInvariantTest::invariant_totalStaysZero
+  agent 1: FeeInvariantTest::invariant_totalStaysZero (seed 24301: assertion failed: [..] != 0; counterexample: [..]; seed 12648430: assertion failed: [..] != 0; counterexample: [..])
+    file: cache/properties/agent-1/tests/FeeInvariant.t.sol
+possible bug (1/1 agents): HandlerInvariantTest::invariant_one
+  agent 1: HandlerInvariantTest::invariant_one (seed 24301: handler test/generated/agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 12648430: handler test/generated/agent-1/Handler.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])
+    file: cache/properties/agent-1/tests/Handler.t.sol
+2 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+added 1 generated test file(s):
+  test/generated/agent-1/FeeCheck.t.sol
 
 "#]]);
+    assert_data_eq!(
+        rejected(&prj),
+        str![[r#"
+["test/generated/agent-1/Seeded.t.sol"] "sets a seed in inline config"
+["test/generated/agent-1/Broken.t.sol"] "Error: Compiler run failed:/nError (7576): Undeclared identifier./n --> test/generated/agent-1/Broken.t.sol:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^"
+"#]]
+    );
+
     // The resolved workspace test path must win over an absolute inherited environment path.
     cmd.forge_fuse();
+    cmd.env("ONLY_PASSING", "1");
     cmd.env("FOUNDRY_TEST", prj.root().join("test"));
-    cmd.args(check("passing.json")).assert_success();
+    cmd.args(&args).args(["--agents", "1"]).assert_success();
     // A config file chosen with `FOUNDRY_CONFIG` is resolved in the project, not in the copy.
     fs::copy(&foundry_toml, prj.root().join("custom.toml")).unwrap();
-    cmd.forge_fuse().env("FOUNDRY_CONFIG", "custom.toml");
-    cmd.args(check("passing.json")).assert_success();
-    cmd.forge_fuse().args(check("broken.json")).assert_failure().stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "candidate tests failed on seed 1: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^",
-    "candidate tests failed on seed 2: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:4:9:/n  |/n4 |         missing();/n  |         ^^^^^^^"
-  ],
-  "possible_bugs": []
-}
-
-"#]]).stderr_eq(str![[r#"
-Error: candidate check failed
+    cmd.forge_fuse();
+    cmd.env("ONLY_PASSING", "1");
+    cmd.env("FOUNDRY_CONFIG", "custom.toml");
+    cmd.args(&args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+no generated test file was kept
 
 "#]]);
-    cmd.forge_fuse().args(check("extra.json")).assert_failure().stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "FeeRoundingTest::testHiddenRoundsUp failed on seed 1: EvmError: Revert",
-    "FeeRoundingTest::testHiddenRoundsUp failed on seed 2: EvmError: Revert"
-  ],
-  "possible_bugs": [
-    {
-      "test": "FeeRoundingTest::testHiddenRoundsUp",
-      "path": "test/generated/FeeCheck.t.sol",
-      "reason": "seed 1: EvmError: Revert; seed 2: EvmError: Revert"
-    }
-  ]
-}
-
-"#]]);
-    cmd.forge_fuse().args(check("invariants.json")).assert_failure().stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "FeeInvariantTest::invariant_totalStaysZero failed on seed 1: assertion failed: 1 != 0; counterexample: [..]",
-    "FeeInvariantTest::invariant_totalStaysZero failed on seed 2: assertion failed: 3 != 0; counterexample: [..]"
-  ],
-  "possible_bugs": [
-    {
-      "test": "FeeInvariantTest::invariant_totalStaysZero",
-      "path": "test/generated/FeeCheck.t.sol",
-      "reason": "seed 1: assertion failed: 1 != 0; counterexample: [..]; seed 2: assertion failed: 3 != 0; counterexample: [..]"
-    }
-  ]
-}
-
-"#]]);
-    cmd.forge_fuse().args(check("handler.json")).assert_failure().stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "HandlerInvariantTest::invariant_one failed on seed 1: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]",
-    "HandlerInvariantTest::invariant_one failed on seed 2: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]"
-  ],
-  "possible_bugs": [
-    {
-      "test": "HandlerInvariantTest::invariant_one",
-      "path": "test/generated/FeeCheck.t.sol",
-      "reason": "seed 1: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 2: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]"
-    }
-  ]
-}
-
-"#]]);
-    cmd.forge_fuse().args(check("seeded.json")).assert_failure().stderr_eq(str![[r#"
-Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
-
-"#]]);
-    write_candidate(
-        "seeded-table.json",
-        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz = { seed = \"0x3\", runs = 1 }\n    function testFuzzFee(uint256 amount) public pure {}\n}\n",
+    assert_eq!(
+        report(&prj)["duplicates"].to_string(),
+        r#"["test/generated/agent-1/FeeCheck.t.sol"]"#
     );
-    cmd.forge_fuse().args(check("seeded-table.json")).assert_failure().stderr_eq(str![[r#"
-Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
-
-"#]]);
-    assert!(!prj.root().join("test/generated/FeeCheck.t.sol").exists());
-    write_candidate(
-        "seeded-block.json",
-        "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    /** forge-config: default.fuzz.seed = \"0x3\" */\n    function testFuzzFee(uint256 amount) public pure {}\n}\n",
-    );
-    cmd.forge_fuse().args(check("seeded-block.json")).assert_failure().stderr_eq(str![[r#"
-Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
-
-"#]]);
 }
 
+// A remapping to a generated test directory is rebased into the copy, wherever it is set.
 #[forgetest_init]
-fn properties_check_rebases_remapping_providers(prj: _, cmd: _) {
-    let candidate = serde_json::json!({
-        "schema": "foundry/properties-candidate-v1",
-        "files": [
-            {"path": "test/generated/Helper.sol", "content": "pragma solidity ^0.8.20; library Helper { function value() internal pure returns (uint) { return 1; } }"},
-            {"path": "test/generated/Property.t.sol", "content": "pragma solidity ^0.8.20; import {Helper} from 'generated/Helper.sol'; contract Property { function testValue() public pure { require(Helper.value() == 1); } }"}
-        ]
-    });
-    fs::write(prj.root().join("candidate.json"), candidate.to_string()).unwrap();
+fn properties_rebases_remapping_providers(prj: _, cmd: _) {
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$out/Helper.sol" <<'SOL'
+pragma solidity ^0.8.20;
+library Helper { function value() internal pure returns (uint) { return 1; } }
+SOL
+cat > "$out/Property.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Helper} from 'generated/agent-1/Helper.sol';
+contract Property { function testValue() public pure { require(Helper.value() == 1); } }
+SOL
+"#,
+    );
     let mapping = format!("generated/={}/test/generated/", prj.root().display());
-    let check = ["properties", "--check", "candidate.json", "--seed", "1", "--seed", "2"];
     fs::write(prj.root().join("remappings.txt"), &mapping).unwrap();
-    cmd.args(check).assert_success();
+    cmd.args(&args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+added 2 generated test file(s):
+  test/generated/agent-1/Helper.sol
+  test/generated/agent-1/Property.t.sol
+
+"#]]);
     fs::remove_file(prj.root().join("remappings.txt")).unwrap();
     for variable in ["FOUNDRY_REMAPPINGS", "DAPP_REMAPPINGS"] {
         cmd.forge_fuse().env(variable, &mapping);
-        cmd.args(check).assert_success();
+        cmd.args(&args).args(["--agents", "1"]).assert_success();
+        assert_eq!(report(&prj)["kept"].to_string(), "[]");
+        assert_eq!(report(&prj)["rejected"].to_string(), "[]");
         cmd.unset_env(variable);
     }
 }
 
-// A last round whose tests do not compile earns one repair round with the compiler errors.
+// A pnpm package is a link into `node_modules/.pnpm`, and it imports its own files by absolute
+// paths such as `src/lib/Init.sol`. The workspace must resolve them as the project does.
 #[forgetest_init]
-fn properties_repairs_a_round_that_does_not_compile(prj: _, cmd: _) {
-    prj.add_source("Fee.sol", FEE);
+fn properties_resolves_pnpm_package_imports(prj: _, cmd: _) {
+    let package = prj.root().join("node_modules/.pnpm/pkg@1.0.0/node_modules/pkg");
+    fs::create_dir_all(package.join("src/lib")).unwrap();
+    fs::create_dir_all(package.join("src/utils")).unwrap();
+    fs::write(
+        package.join("src/lib/Init.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Init {\n    function value() internal pure returns (uint256) {\n        return 7;\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/utils/Proxy.sol"),
+        "pragma solidity ^0.8.20;\nimport {Init} from \"src/lib/Init.sol\";\ncontract Proxy {\n    function value() external pure returns (uint256) {\n        return Init.value();\n    }\n}\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        ".pnpm/pkg@1.0.0/node_modules/pkg",
+        prj.root().join("node_modules/pkg"),
+    )
+    .unwrap();
+    prj.update_config(|config| {
+        config.libs.push("node_modules".into());
+        config.remappings = vec![Remapping::from_str("pkg/=node_modules/pkg/src/").unwrap().into()];
+    });
     let args = properties_args(
         &prj,
         r#"
-if grep -q '^  "round": 2,' "$prompt"; then
-    grep -q 'Undeclared identifier' "$prompt"
-    body='require(Fee.fee(100) == 1);'
-else
-    body='missing();'
-fi
-cat > "$output" <<JSON
-{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        $body\n    }\n}\n"}]}
-JSON
+cat > "$out/Stub.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Proxy} from "pkg/utils/Proxy.sol";
+contract StubTest {
+    function testValue() public {
+        require(new Proxy().value() == 7);
+    }
+}
+SOL
 "#,
     );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+added 1 generated test file(s):
+  test/generated/agent-1/Stub.t.sol
+
+"#]]);
+}
+
+// A project test imports a file from a directory that is not a source, test, script, or library
+// directory. The workspace must still have it.
+#[forgetest_init]
+fn properties_copies_other_project_directories(prj: _, cmd: _) {
+    fs::create_dir_all(prj.root().join("deployments/genesis")).unwrap();
+    fs::write(
+        prj.root().join("deployments/genesis/Genesis.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Genesis {\n    function chainId() internal pure returns (uint256) {\n        return 2017;\n    }\n}\n",
+    )
+    .unwrap();
+    prj.add_test(
+        "utils/Helper.sol",
+        "pragma solidity ^0.8.20;\nimport {Genesis} from \"deployments/genesis/Genesis.sol\";\nlibrary Helper {\n    function chainId() internal pure returns (uint256) {\n        return Genesis.chainId();\n    }\n}\n",
+    );
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$out/Stub.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Helper} from "../../utils/Helper.sol";
+contract StubTest {
+    function testChainId() public pure {
+        require(Helper.chainId() == 2017);
+    }
+}
+SOL
+"#,
+    );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+added 1 generated test file(s):
+  test/generated/agent-1/Stub.t.sol
+
+"#]]);
+}
+
+// With `deny = "warnings"`, the project's ignored warning paths must still apply in the workspace,
+// and a warning in a generated test is a compiler error that rejects only its file.
+#[forgetest_init]
+fn properties_rejects_denied_warnings(prj: _, cmd: _) {
+    prj.add_test(
+        "legacy/Legacy.t.sol",
+        "pragma solidity ^0.8.20;\ncontract LegacyTest {\n    function testLegacy() public pure {\n        uint256 unused = 1;\n    }\n}\n",
+    );
+    prj.update_config(|config| {
+        config.deny = foundry_config::DenyLevel::Warnings;
+        config.ignored_file_paths = vec!["test/legacy".into()];
+    });
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$out/Passing.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract PassingTest {
+    function testStub() public pure {}
+}
+SOL
+cat > "$out/Warning.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract WarningTest {
+    function testStub() public pure {
+        uint256 unused = 1;
+    }
+}
+SOL
+"#,
+    );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+added 1 generated test file(s):
+  test/generated/agent-1/Passing.t.sol
+
+"#]]);
+    assert_data_eq!(
+        rejected(&prj),
+        str![[r#"
+["test/generated/agent-1/Warning.t.sol"] "the project denies compiler warnings: Warning (2072): Unused local variable./n --> test/generated/agent-1/Warning.t.sol:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^"
+"#]]
+    );
+}
+
+// Forge builds the project once, and every workspace starts from that build output, so a build in
+// a workspace compiles only the files that it adds. This holds also when the project denies
+// warnings, which turns Foundry's compiler cache off.
+#[forgetest_init]
+fn properties_workspaces_reuse_the_project_build(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
+    let mut args = properties_args(
+        &prj,
+        &format!(
+            r#"
+forge="$1"
+"$forge" build > build.log 2>&1
+grep -q 'No files changed, compilation skipped' build.log
+{FEE_SPEC}
+"$forge" test --match-path "test/generated/agent-$agent/FeeSpec.t.sol" > test.log 2>&1
+# The compiler builds only the new test, not the project's other files.
+grep -q 'Compiling 1 files' test.log
+"#
+        ),
+    );
+    args.extend(["--agent-arg".to_string(), prj.foundry_bin_path("forge").display().to_string()]);
     cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
 added 1 generated test file(s):
   test/generated/agent-1/FeeSpec.t.sol
 
 "#]]);
-    assert_eq!(rounds(&prj).as_array().unwrap().len(), 2);
 }
 
 const VAULT: &str = r#"
@@ -778,73 +899,71 @@ fn properties_runs_four_agents_by_default(prj: _, cmd: _) {
     let args = properties_args(
         &prj,
         r#"
-agent=$(sed -n 's/^    "id": \([0-9][0-9]*\),$/\1/p' "$prompt" | head -n 1)
-grep -q '"count": 4' "$prompt"
-dir="test/generated/agent-$agent"
-head='pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Vault} from \"../../../src/Vault.sol\";\n'
-setup='    Vault internal vault;\n    function setUp() public {\n        vault = new Vault();\n    }\n'
-zero='{"claim": "deposit(amount) accepts a zero amount.", "source": "src/Vault.sol:9", "code_path": "src/Vault.sol:11 deposit() reverts ZeroAmount."}'
-shares='{"claim": "shares(assets) returns one share per asset.", "source": "src/Vault.sol:15", "code_path": "src/Vault.sol:17 shares() halves the assets."}'
+head='pragma solidity ^0.8.20;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "../../../src/Vault.sol";'
+setup='    Vault internal vault;
+    function setUp() public {
+        vault = new Vault();
+    }'
+zero='    // deposit(amount) accepts a zero amount; src/Vault.sol:11 deposit() reverts ZeroAmount.
+    function testDepositZero() public {
+        vault.deposit(0);
+    }'
+shares='    // shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
+    function testShares() public view {
+        assertEq(vault.shares(10), 10);
+    }'
 case "$agent" in
-1) files="{\"path\": \"$dir/VaultBug.t.sol\", \"content\": \"${head}contract VaultBugTest is Test {\n${setup}    function testDepositZero() public {\n        vault.deposit(0);\n    }\n    function testShares() public view {\n        assertEq(vault.shares(10), 10);\n    }\n}\n\"}"
-   evidence="\"VaultBugTest::testDepositZero\": $zero, \"VaultBugTest::testShares\": $shares" ;;
-2) files="{\"path\": \"$dir/VaultBug.t.sol\", \"content\": \"${head}contract VaultBugTest is Test {\n${setup}    function testShares() public view {\n        assertEq(vault.shares(10), 10);\n    }\n}\n\"}"
-   evidence="\"VaultBugTest::testShares\": $shares" ;;
-*) files="{\"path\": \"$dir/VaultSpec.t.sol\", \"content\": \"${head}contract VaultSpecTest is Test {\n${setup}    function testDepositFive() public {\n        vault.deposit(5);\n    }\n}\n\"}"
-   evidence="" ;;
+1) printf '%s\ncontract VaultBugTest is Test {\n%s\n%s\n%s\n}\n' "$head" "$setup" "$zero" "$shares" > "$out/VaultBug.t.sol" ;;
+2) printf '%s\ncontract VaultBugTest is Test {\n%s\n%s\n}\n' "$head" "$setup" "$shares" > "$out/VaultBug.t.sol" ;;
+*) printf '%s\ncontract VaultSpecTest is Test {\n%s\n    function testDepositFive() public {\n        vault.deposit(5);\n    }\n}\n' "$head" "$setup" > "$out/VaultSpec.t.sol" ;;
 esac
-cat > "$output" <<JSON
-{"schema": "foundry/properties-candidate-v1", "files": [$files], "evidence": {$evidence}}
-JSON
 "#,
     );
     cmd.args(args).args(["--target", "src/Vault.sol"]).assert_success().stdout_eq(str![[r#"
-possible bug (2/4 agents): shares(assets) returns one share per asset.
+possible bug (2/4 agents): shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
   agent 1: VaultBugTest::testShares (seed 24301: assertion failed: 5 != 10; seed 12648430: assertion failed: 5 != 10)
-    claim: shares(assets) returns one share per asset. (src/Vault.sol:15)
-    code path: src/Vault.sol:17 shares() halves the assets.
-    fails on every seed; candidate: cache/properties/agent-1/0x[..]
+    claim: shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
+    file: cache/properties/agent-1/tests/VaultBug.t.sol
   agent 2: VaultBugTest::testShares (seed 24301: assertion failed: 5 != 10; seed 12648430: assertion failed: 5 != 10)
-    claim: shares(assets) returns one share per asset. (src/Vault.sol:15)
-    code path: src/Vault.sol:17 shares() halves the assets.
-    fails on every seed; candidate: cache/properties/agent-2/0x[..]
+    claim: shares(assets) returns one share per asset; src/Vault.sol:17 shares() halves the assets.
+    file: cache/properties/agent-2/tests/VaultBug.t.sol
 1 possible bug(s) below the quorum of 2: see cache/properties/report.json
 added 1 generated test file(s):
   test/generated/agent-3/VaultSpec.t.sol
-skipped 1 generated test file(s) that repeat a file of another agent
+skipped 1 generated test file(s) that repeat a file of another agent or the project
 
 "#]]);
 }
 
-// Forge runs journal failures again in a fresh copy of the project, because the generator can
-// write the journal, and it reports project files that change while the agents run.
+// Agents work in copies whose dependency entries link to the project, so Forge reports project
+// files that change while the agents run. A failing test without a comment has its name as the
+// claim.
 #[forgetest_init]
-fn properties_reruns_journal_failures_and_reports_changed_files(prj: _, cmd: _) {
+fn properties_reports_changed_files(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
     let args = properties_args(
         &prj,
         r#"
-root=$(sed -n '/"--root",/{n;s/^ *"//;s/",*$//;p;}' "$prompt")
-cat > removed.json <<'JSON'
-{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/FeeRemoved.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeRemovedTest {\n    function testDocumentedCap() public pure {\n        require(Fee.fee(1e30) == 100 ether);\n    }\n}\n"}]}
-JSON
-check removed.json
-# A journal line that the generator wrote itself, for a test that passes.
-printf '%s\n' '{"test": "FeeFakeTest::testFake", "path": "test/generated/agent-1/FeeFake.t.sol", "reason": "made up", "source": "pragma solidity ^0.8.20;\ncontract FeeFakeTest {\n    function testFake() public pure {}\n}\n"}' >> "$root/cache/properties/agent-1/check-failures.jsonl"
-echo changed > "$root/notes.txt"
-cat > "$output" <<'JSON'
-{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]}
-JSON
+echo changed > lib/forge-std/notes.txt
+cat > "$out/FeeCap.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+contract FeeCapTest {
+    function testDocumentedCap() public pure {
+        require(Fee.fee(1e30) == 100 ether);
+    }
+}
+SOL
 "#,
     );
     cmd.args(args).args(["--agents", "1", "--target", "src/Fee.sol"]).assert_success().stdout_eq(
         str![[r#"
-possible bug (1/1 agents): FeeRemovedTest::testDocumentedCap
-  agent 1: FeeRemovedTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
-    seen in a generator check, then removed; journal: cache/properties/agent-1/check-failures.jsonl
-1 check journal failure(s) did not fail again in a fresh copy: see cache/properties/report.json
-added 1 generated test file(s):
-  test/generated/agent-1/FeeSpec.t.sol
+possible bug (1/1 agents): FeeCapTest::testDocumentedCap
+  agent 1: FeeCapTest::testDocumentedCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    file: cache/properties/agent-1/tests/FeeCap.t.sol
+no generated test file was kept
 
 "#]],
     )
@@ -853,165 +972,5 @@ Warning: 1 project file(s) changed while the agents ran, so the run is tainted: 
 
 "#]]);
 
-    let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
-    let report = serde_json::from_str::<serde_json::Value>(&report).unwrap();
-    assert_data_eq!(
-        format!("{} {}", report["unverified"][0]["test"], report["tainted"]),
-        str![[r#""FeeFakeTest::testFake" ["notes.txt"]"#]]
-    );
-}
-
-/// Writes a candidate with one test file at `test/generated/Stub.t.sol` and returns its path.
-fn write_stub_candidate(prj: &TestProject, name: &str, content: &str) -> String {
-    let candidate = serde_json::json!({
-        "schema": "foundry/properties-candidate-v1",
-        "files": [{"path": "test/generated/Stub.t.sol", "content": content}]
-    });
-    fs::write(prj.root().join(name), candidate.to_string()).unwrap();
-    name.to_string()
-}
-
-// A pnpm package is a link into `node_modules/.pnpm`, and it imports its own files by absolute
-// paths such as `src/lib/Init.sol`. The workspace must resolve them as the project does.
-#[forgetest_init]
-fn properties_check_resolves_pnpm_package_imports(prj: _, cmd: _) {
-    let package = prj.root().join("node_modules/.pnpm/pkg@1.0.0/node_modules/pkg");
-    fs::create_dir_all(package.join("src/lib")).unwrap();
-    fs::create_dir_all(package.join("src/utils")).unwrap();
-    fs::write(
-        package.join("src/lib/Init.sol"),
-        "pragma solidity ^0.8.20;\nlibrary Init {\n    function value() internal pure returns (uint256) {\n        return 7;\n    }\n}\n",
-    )
-    .unwrap();
-    fs::write(
-        package.join("src/utils/Proxy.sol"),
-        "pragma solidity ^0.8.20;\nimport {Init} from \"src/lib/Init.sol\";\ncontract Proxy {\n    function value() external pure returns (uint256) {\n        return Init.value();\n    }\n}\n",
-    )
-    .unwrap();
-    std::os::unix::fs::symlink(
-        ".pnpm/pkg@1.0.0/node_modules/pkg",
-        prj.root().join("node_modules/pkg"),
-    )
-    .unwrap();
-    prj.update_config(|config| {
-        config.libs.push("node_modules".into());
-        config.remappings = vec![Remapping::from_str("pkg/=node_modules/pkg/src/").unwrap().into()];
-    });
-    let candidate = write_stub_candidate(
-        &prj,
-        "candidate.json",
-        "pragma solidity ^0.8.20;\nimport {Proxy} from \"pkg/utils/Proxy.sol\";\ncontract StubTest {\n    function testValue() public {\n        require(new Proxy().value() == 7);\n    }\n}\n",
-    );
-    cmd.args(["properties", "--check", &candidate, "--seed", "1", "--seed", "2"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-{
-  "passed": true,
-  "reasons": [],
-  "possible_bugs": []
-}
-
-"#]]);
-}
-
-// A project test imports a file from a directory that is not a source, test, script, or library
-// directory. The workspace must still have it.
-#[forgetest_init]
-fn properties_check_copies_other_project_directories(prj: _, cmd: _) {
-    fs::create_dir_all(prj.root().join("deployments/genesis")).unwrap();
-    fs::write(
-        prj.root().join("deployments/genesis/Genesis.sol"),
-        "pragma solidity ^0.8.20;\nlibrary Genesis {\n    function chainId() internal pure returns (uint256) {\n        return 2017;\n    }\n}\n",
-    )
-    .unwrap();
-    prj.add_test(
-        "utils/Helper.sol",
-        "pragma solidity ^0.8.20;\nimport {Genesis} from \"deployments/genesis/Genesis.sol\";\nlibrary Helper {\n    function chainId() internal pure returns (uint256) {\n        return Genesis.chainId();\n    }\n}\n",
-    );
-    let candidate = write_stub_candidate(
-        &prj,
-        "candidate.json",
-        "pragma solidity ^0.8.20;\nimport {Helper} from \"../utils/Helper.sol\";\ncontract StubTest {\n    function testChainId() public pure {\n        require(Helper.chainId() == 2017);\n    }\n}\n",
-    );
-    cmd.args(["properties", "--check", &candidate, "--seed", "1", "--seed", "2"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-{
-  "passed": true,
-  "reasons": [],
-  "possible_bugs": []
-}
-
-"#]]);
-}
-
-// With `deny = "warnings"`, the project's ignored warning paths must still apply in the workspace,
-// and a warning in a generated test must reach the generator, because it is the compiler error.
-#[forgetest_init]
-fn properties_check_reports_denied_warnings(prj: _, cmd: _) {
-    prj.add_test(
-        "legacy/Legacy.t.sol",
-        "pragma solidity ^0.8.20;\ncontract LegacyTest {\n    function testLegacy() public pure {\n        uint256 unused = 1;\n    }\n}\n",
-    );
-    prj.update_config(|config| {
-        config.deny = foundry_config::DenyLevel::Warnings;
-        config.ignored_file_paths = vec!["test/legacy".into()];
-    });
-    let passing = write_stub_candidate(
-        &prj,
-        "passing.json",
-        "pragma solidity ^0.8.20;\ncontract StubTest {\n    function testStub() public pure {}\n}\n",
-    );
-    let warning = write_stub_candidate(
-        &prj,
-        "warning.json",
-        "pragma solidity ^0.8.20;\ncontract StubTest {\n    function testStub() public pure {\n        uint256 unused = 1;\n    }\n}\n",
-    );
-    let check = ["properties", "--check", "CANDIDATE", "--seed", "1", "--seed", "2"];
-    let check = |candidate: &str| {
-        check.map(|arg| if arg == "CANDIDATE" { candidate.to_string() } else { arg.to_string() })
-    };
-    cmd.args(check(&passing)).assert_success();
-    cmd.forge_fuse().args(check(&warning)).assert_failure().stdout_eq(str![[r#"
-{
-  "passed": false,
-  "reasons": [
-    "candidate tests failed to build: the project denies compiler warnings: Warning (2072): Unused local variable./n [FILE]:4:9:/n  |/n4 |         uint256 unused = 1;/n  |         ^^^^^^^^^^^^^^"
-  ],
-  "possible_bugs": []
-}
-
-"#]]);
-}
-
-// Forge builds the project once, and every workspace starts from that build output, so a build in
-// a workspace compiles only the files that it adds. This holds also when the project denies
-// warnings, which turns Foundry's compiler cache off.
-#[forgetest_init]
-fn properties_workspaces_reuse_the_project_build(prj: _, cmd: _) {
-    prj.add_source("Fee.sol", FEE);
-    prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
-    let args = properties_args(
-        &prj,
-        r#"
-forge=$(sed -n '/"check_command": \[/{n;s/^ *"//;s/",*$//;p;}' "$prompt")
-"$forge" build > build.log 2>&1
-grep -q 'No files changed, compilation skipped' build.log
-dir=test/generated/agent-1
-mkdir -p "$dir"
-printf 'pragma solidity ^0.8.20;\nimport {Fee} from "../../../src/Fee.sol";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n' > "$dir/FeeSpec.t.sol"
-"$forge" test --match-path "$dir/FeeSpec.t.sol" > test.log 2>&1
-# The compiler builds only the new test, not the project's other files.
-grep -q 'Compiling 1 files' test.log
-rm "$dir/FeeSpec.t.sol"
-cat > "$output" <<'JSON'
-{"schema": "foundry/properties-candidate-v1", "files": [{"path": "test/generated/agent-1/FeeSpec.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../../src/Fee.sol\";\ncontract FeeSpecTest {\n    function testSmallFee() public pure {\n        require(Fee.fee(100) == 1);\n    }\n}\n"}]}
-JSON
-"#,
-    );
-    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
-added 1 generated test file(s):
-  test/generated/agent-1/FeeSpec.t.sol
-
-"#]]);
+    assert_eq!(report(&prj)["tainted"].to_string(), r#"["lib/forge-std/notes.txt"]"#);
 }

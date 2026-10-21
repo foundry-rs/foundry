@@ -48,8 +48,8 @@ pub enum ForgeSubcommand {
     /// Run agents that prove bugs with failing tests and report the bugs that they agree on
     ///
     /// Examples:
-    /// - forge properties --target src/A.sol --generator ./gen.sh --seed 1 --seed 2
-    /// - forge properties --context docs/spec.md --generator ./gen.sh --seed 1 --seed 2
+    /// - forge properties --target src/A.sol --agent-command ./agent.sh --seed 1 --seed 2
+    /// - forge properties --context docs/spec.md --agent-command ./agent.sh --seed 1 --seed 2
     #[command(verbatim_doc_comment)]
     Properties(PropertiesArgs),
 
