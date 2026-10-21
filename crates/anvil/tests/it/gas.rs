@@ -2,6 +2,7 @@
 
 use crate::utils::http_provider_with_signer;
 use alloy_chains::NamedChain;
+use alloy_consensus::Transaction;
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
@@ -21,7 +22,9 @@ use anvil::{
 };
 use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
 use foundry_evm_networks::arbitrum;
-use revm::context_interface::block::BlobExcessGasAndPrice;
+use revm::{
+    context_interface::block::BlobExcessGasAndPrice, primitives::eip7825::TX_GAS_LIMIT_CAP,
+};
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -923,4 +926,73 @@ async fn test_estimate_gas_create_without_nonce_amsterdam() {
     api.anvil_set_nonce(maxed, U256::from(u64::MAX)).await.unwrap();
     let call = TransactionRequest::default().with_from(maxed).with_to(from);
     provider.call(WithOtherFields::new(call)).await.unwrap();
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17716>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_amsterdam_state_gas_reservoir() {
+    // Stores and returns `gasleft()`, which reports only regular gas.
+    let gasleft_code = bytes!("5a8060005560005260206000f3");
+    // Deploys 12000 zero bytes, which pay 18,360,000 code deposit state gas.
+    let large_deploy_code = bytes!("612ee06000f3");
+    // The cap bounds regular gas, out of which the call pays 15,000 intrinsic gas and 2 for `GAS`.
+    let expected_gasleft = U256::from(TX_GAS_LIMIT_CAP - 15_002);
+
+    for enable_tx_gas_limit in [false, true] {
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+                .enable_tx_gas_limit(enable_tx_gas_limit),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let from = handle.dev_accounts().next().unwrap();
+        let contract = Address::random();
+        api.anvil_set_code(contract, gasleft_code.clone()).await.unwrap();
+
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(contract)
+            .with_gas_limit(30_000_000);
+        let output = provider.call(WithOtherFields::new(tx.clone())).await.unwrap();
+        assert_eq!(U256::from_be_slice(&output), expected_gasleft);
+
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx.clone()))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status());
+        assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), expected_gasleft);
+
+        let deploy = TransactionRequest::default()
+            .with_from(from)
+            .with_deploy_code(large_deploy_code.clone());
+        let estimate = provider.estimate_gas(WithOtherFields::new(deploy.clone())).await.unwrap();
+        assert!(estimate > TX_GAS_LIMIT_CAP, "{estimate}");
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(deploy.with_gas_limit(estimate)))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used, estimate);
+
+        // A transaction whose estimate fails falls back to the block gas limit, not the cap.
+        let reverting =
+            TransactionRequest::default().with_from(from).with_deploy_code(bytes!("60006000fd"));
+        let pending = provider.send_transaction(WithOtherFields::new(reverting)).await.unwrap();
+        let sent = provider.get_transaction_by_hash(*pending.tx_hash()).await.unwrap().unwrap();
+        assert_eq!(sent.inner.gas_limit(), 30_000_000);
+
+        // A memory reset keeps the cap in place.
+        api.anvil_reset(None).await.unwrap();
+        api.anvil_set_code(contract, gasleft_code.clone()).await.unwrap();
+        let output = provider.call(WithOtherFields::new(tx)).await.unwrap();
+        assert_eq!(U256::from_be_slice(&output), expected_gasleft);
+    }
 }
