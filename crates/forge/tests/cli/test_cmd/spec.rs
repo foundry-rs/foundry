@@ -269,8 +269,8 @@ Traces:
 "#]]);
 }
 
-// `vm.setEvmVersion` inside a test applies to the calls and creates started after it, isolated or
-// not, and their end hooks, such as `expectRevert`'s, run once.
+// `vm.setEvmVersion` inside a test applies to the calls, creates and executed transactions started
+// after it, isolated or not, and their end hooks, such as `expectRevert`'s, run once.
 #[forgetest_init]
 fn test_set_evm_version_applies_to_new_frames(prj: _, cmd: _) {
     prj.add_test(
@@ -295,6 +295,16 @@ contract EvmVersionFramesTest is Test {
         new Store();
         new Store();
     }
+
+    function test_executed_transaction_uses_new_version() public {
+        vm.setEvmVersion("istanbul");
+        // Legacy create of `PUSH1 1 PUSH0 RETURN`, signed for chain 31337 by the first anvil key.
+        try vm.executeTransaction(
+            hex"f8528080830186a080808460015ff382f4f5a0163754a7df29423d6f8bd4bf6f01698dd1a105fa44d7e97b4b313bd0cfe7da28a02241492692e0f6986a25cb0d03286526b9f6fe9afa7449b8ce382b6a5e058952"
+        ) {
+            revert("istanbul executed PUSH0");
+        } catch {}
+    }
 }
    "#,
     );
@@ -304,9 +314,10 @@ contract EvmVersionFramesTest is Test {
         cmd.forge_fuse().args(["test", "--mc", "EvmVersionFramesTest"]).assert_success().stdout_eq(
             str![[r#"
 ...
-Ran 1 test for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+Ran 2 tests for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+[PASS] test_executed_transaction_uses_new_version() ([GAS])
 [PASS] test_new_frames_use_new_version() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]],
         );

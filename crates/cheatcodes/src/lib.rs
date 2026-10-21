@@ -19,7 +19,10 @@ use alloy_primitives::{Address, B256, U256};
 use evm2::env::TxEnv;
 use foundry_evm_core::{
     backend::{Backend, CowBackend, LocalForkId},
-    evm::{BlockEnvFor, FoundryEvmFor, FoundryEvmNetwork, SpecFor, TypesFor},
+    evm::{
+        BlockEnvFor, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork,
+        SpecFor, TypesFor, evm_env,
+    },
     fork::CreateFork,
 };
 
@@ -212,6 +215,17 @@ impl<'evm, FEN: FoundryEvmNetwork> CheatsCtxt<'_, 'evm, FEN> {
             .execution_evm_version
             .or_else(|| self.db().lifecycle().pending_env().map(|env| env.spec))
             .unwrap_or_else(|| self.evm.config_spec_id())
+    }
+
+    /// Returns the running environment with [`Self::spec`], for transactions a cheatcode executes,
+    /// which REVM ran with the requested spec.
+    pub(crate) fn evm_env(&self) -> EvmEnvFor<FEN> {
+        let env = evm_env(self.evm);
+        let spec = self.spec();
+        if spec == env.spec {
+            return env;
+        }
+        EvmFactoryFor::<FEN>::default().env_with_spec(env, spec)
     }
 
     /// Returns the chain ID.

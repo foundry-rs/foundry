@@ -1302,8 +1302,11 @@ impl Cheatcode for broadcastRawTransactionCall {
         let evm_tx = FEN::evm_tx(tx.clone(), sender, TxPayload::Signed)?;
         let overrides = ccx.state.env_overrides.get(ccx.active_fork_id());
         let chain_id = overrides.and_then(|o| o.chain_id);
-        let env = (chain_id.is_some() || ccx.state.isolation_env.is_some()).then(|| {
-            let mut env = evm_env(ccx.evm);
+        let custom_env = chain_id.is_some()
+            || ccx.state.isolation_env.is_some()
+            || ccx.spec() != ccx.evm.config_spec_id();
+        let env = custom_env.then(|| {
+            let mut env = ccx.evm_env();
             // Inside an isolated call, the transaction pays fees as in the transaction the call
             // runs in.
             if let Some(outer) = &ccx.state.isolation_env {
@@ -1393,7 +1396,7 @@ impl Cheatcode for executeTransactionCall {
         // payment, nonce checks, the spec's transaction gas limit cap, and an initcode limit
         // derived from the configured code size limit rather than the unlimited one used for
         // test contracts.
-        let mut env = evm_env(ccx.evm);
+        let mut env = ccx.evm_env();
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
         env.set_feature(EvmFeatures::NONCE_CHECK, true);
