@@ -59,14 +59,21 @@ pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(fork: &Fork, backend: &SharedBa
         let keys = Arc::clone(&keys);
         let backend = backend.with_blocking_mode(BlockingMode::Block);
         runtime.spawn_blocking(move || {
-            loop {
-                let Some(key) = keys.lock().next() else { break };
-                // A failed read is dropped, so the EVM fetches the key itself if it needs it.
-                let _ = match key {
-                    Key::Account(address) => backend.basic_ref(address).map(drop),
-                    Key::Slot(address, slot) => backend.storage_ref(address, slot).map(drop),
-                };
-            }
+            // A failed speculative read is not an error: the backend logs one per failure, and
+            // every remaining read fails once the run ends, so keep these reads quiet.
+            tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
+                loop {
+                    let Some(key) = keys.lock().next() else { break };
+                    let read = match key {
+                        Key::Account(address) => backend.basic_ref(address).map(drop),
+                        Key::Slot(address, slot) => backend.storage_ref(address, slot).map(drop),
+                    };
+                    // The EVM fetches any key it still needs, so stop at the first failure.
+                    if read.is_err() {
+                        break;
+                    }
+                }
+            })
         });
     }
 }
