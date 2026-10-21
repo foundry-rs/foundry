@@ -18,7 +18,6 @@ use foundry_compilers::{
     compilers::{
         Language,
         multi::{MultiCompilerLanguage, MultiCompilerParser},
-        solc::Solc,
     },
     utils::source_files_iter,
 };
@@ -102,10 +101,6 @@ const AGENT_CONFIG: [&str; 14] = [
     "CLAUDE.md",
     "GEMINI.md",
 ];
-/// The environment variables that builds and test runs of generated code see, besides `HOME`,
-/// `FOUNDRY_PROFILE`, and the seed settings. Generated tests run outside the agent's sandbox, so
-/// they must not read the secrets of Forge's environment with the env cheatcodes.
-const PASSED_ENV: [&str; 7] = ["LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"];
 /// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
 /// contract or test name, and no project file is under `/forge-properties-none`.
 const SELECT_ALL_TESTS: [&str; 10] = [
@@ -439,15 +434,7 @@ impl PropertiesArgs {
             cache_root,
             quorum,
             build_cache: self.build_cache.clone(),
-            home: tempfile::Builder::new().prefix("forge-properties-home-").tempdir()?,
         };
-        if let Some(svm) = Solc::svm_home().filter(|svm| svm.is_dir()) {
-            workspace::symlink_entry(
-                &svm,
-                &campaign.home.path().join(".svm"),
-                fs::metadata(&svm)?.file_type(),
-            )?;
-        }
         if let Some(path) = &self.check {
             return campaign.check(path);
         }
@@ -469,8 +456,6 @@ struct Campaign<'a> {
     quorum: usize,
     /// The workspace whose build output every new workspace copies.
     build_cache: Option<PathBuf>,
-    /// The home directory of builds and test runs, whose `.svm` links to the installed compilers.
-    home: TempDir,
 }
 
 /// The inputs that every agent shares.
@@ -875,19 +860,18 @@ impl Campaign<'_> {
     fn forge_command(&self, workspace: &Path, seed: &U256) -> Command {
         let seed_dir = seed_dir(self.config, workspace, seed);
         let mut command = Command::new(&self.forge);
-        // A workspace has its own resolved `foundry.toml`, so the command needs only the selected
-        // profile from the environment. Generated tests cannot read other variables.
         command
             .current_dir(workspace)
-            .env_clear()
-            .envs(PASSED_ENV.iter().filter_map(|key| Some((key, std::env::var_os(key)?))))
-            .env("HOME", self.home.path())
-            .env("FOUNDRY_PROFILE", self.config.profile.as_str().as_str())
             .env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"))
             .env("FOUNDRY_FUZZ_FAILURE_PERSIST_DIR", seed_dir.join("fuzz"))
             .env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", seed_dir.join("invariant"))
             // Internal runs must not replace the project's own `--rerun` state.
-            .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"));
+            .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"))
+            // A workspace has its own resolved `foundry.toml`.
+            .env_remove("FOUNDRY_CONFIG")
+            .env_remove("FOUNDRY_REMAPPINGS")
+            .env_remove("DAPP_REMAPPINGS")
+            .env_remove("FOUNDRY_TEST");
         command
     }
 }
