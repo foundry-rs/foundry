@@ -25,6 +25,7 @@ use std::{
         mpsc,
     },
 };
+use tracing::subscriber::{NoSubscriber, with_default};
 
 /// Prefetch requests in flight at once. The fork backend sends its own cold reads without a limit;
 /// this bound keeps a large key set from flooding a public endpoint.
@@ -42,7 +43,8 @@ enum Key {
 /// Starts a background prefetch through `backend` if its cache is empty.
 ///
 /// Each key is read through the backend like an EVM read, so the backend fetches and caches it with
-/// its own request path, and a key it already has costs no request.
+/// its own request path, and a key it already has costs no request. Loading the previous cache file
+/// runs in the background too, so it does not block the fork handler.
 pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(
     fork: &Fork,
     backend: &SharedBackend<N, B>,
@@ -51,40 +53,55 @@ pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(
         return None;
     }
     let runtime = tokio::runtime::Handle::try_current().ok()?;
-    let path = Config::foundry_chain_cache_dir(fork.context().source_chain_id)
-        .and_then(|dir| previous_cache_file(&dir, fork.number()))?;
-    let previous = JsonBlockCacheDB::<B>::load(&path).ok()?;
-    let keys = keys(previous.db());
-    debug!(target: "fork::prefetch", ?path, keys = keys.len(), "prefetching fork cache");
-
-    // Workers read on blocking tasks, so they take the next key without a lock held during a read.
-    let keys = Arc::new(Mutex::new(keys.into_iter()));
+    let (chain, number) = (fork.context().source_chain_id, fork.number());
     let stop = Arc::new(AtomicBool::new(false));
     let (done_tx, done) = mpsc::channel::<()>();
-    for _ in 0..MAX_CONCURRENT_REQUESTS {
-        let (keys, stop, done_tx) = (Arc::clone(&keys), Arc::clone(&stop), done_tx.clone());
-        let backend = backend.with_blocking_mode(BlockingMode::Block);
-        runtime.spawn_blocking(move || {
-            // A failed speculative read is not an error: the backend logs one per failure, and
-            // every remaining read fails once the run ends, so keep these reads quiet.
-            tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
-                while !stop.load(Ordering::Relaxed) {
-                    let Some(key) = keys.lock().next() else { break };
-                    let read = match key {
-                        Key::Account(address) => backend.basic_ref(address).map(drop),
-                        Key::Slot(address, slot) => backend.storage_ref(address, slot).map(drop),
-                    };
-                    // The EVM fetches any key it still needs, so stop at the first failure.
-                    if read.is_err() {
-                        break;
-                    }
-                }
-            });
-            // The last backend clone flushes the disk cache, so drop it before reporting done.
-            drop(backend);
-            drop(done_tx);
-        });
-    }
+    let backend = backend.with_blocking_mode(BlockingMode::Block);
+    let coordinator_stop = Arc::clone(&stop);
+    runtime.clone().spawn_blocking(move || {
+        let stop = coordinator_stop;
+        if let Some(path) =
+            Config::foundry_chain_cache_dir(chain).and_then(|dir| previous_cache_file(&dir, number))
+            && let Ok(previous) = JsonBlockCacheDB::<B>::load(&path)
+            && !stop.load(Ordering::Relaxed)
+        {
+            let keys = keys(previous.db());
+            debug!(target: "fork::prefetch", ?path, keys = keys.len(), "prefetching fork cache");
+            // Workers take the next key without a lock held during a read.
+            let keys = Arc::new(Mutex::new(keys.into_iter()));
+            for _ in 0..MAX_CONCURRENT_REQUESTS {
+                let (keys, stop, done_tx) = (Arc::clone(&keys), Arc::clone(&stop), done_tx.clone());
+                let backend = backend.clone();
+                runtime.spawn_blocking(move || {
+                    // A failed speculative read is not an error: the backend logs one per failure,
+                    // and every remaining read fails once the run ends, so keep
+                    // these reads quiet.
+                    with_default(NoSubscriber::default(), || {
+                        while !stop.load(Ordering::Relaxed) {
+                            let Some(key) = keys.lock().next() else { break };
+                            let read = match key {
+                                Key::Account(address) => backend.basic_ref(address).map(drop),
+                                Key::Slot(address, slot) => {
+                                    backend.storage_ref(address, slot).map(drop)
+                                }
+                            };
+                            // The EVM fetches any key it still needs, so stop at the first
+                            // failure.
+                            if read.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    // Drop the backend clone before reporting done, as below.
+                    drop(backend);
+                    drop(done_tx);
+                });
+            }
+        }
+        // The last backend clone flushes the disk cache, so drop it before reporting done.
+        drop(backend);
+        drop(done_tx);
+    });
     Some(Prefetch { stop, done })
 }
 
@@ -95,8 +112,8 @@ pub(crate) struct Prefetch {
 }
 
 impl Prefetch {
-    /// Stops the workers and waits until they exit, so a worker that holds the last backend clone
-    /// flushes the disk cache before shutdown completes.
+    /// Stops the workers and waits until they and their coordinator exit, so whichever holds the
+    /// last backend clone flushes the disk cache before shutdown completes.
     pub(crate) fn stop(self) {
         self.stop.store(true, Ordering::Relaxed);
         // Returns once every worker has dropped its sender.
