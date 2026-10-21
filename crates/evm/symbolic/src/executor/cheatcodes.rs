@@ -1328,7 +1328,7 @@ impl SymbolicExecutor {
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 let code = state.world.extcode(&mut self.cx, executor, target)?;
                 // Like the concrete cheatcode, EIP-7702 delegated EOAs reset to 0.
-                let delegated = if code.len() == EIP7702_BYTECODE_LEN {
+                let delegated = if !code.is_legacy() && code.len() == EIP7702_BYTECODE_LEN {
                     let prefix = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01, 0x00]);
                     code.read_bytes(&mut self.cx, 0, prefix.len())
                         .prefix_condition(&mut self.cx, &prefix)
