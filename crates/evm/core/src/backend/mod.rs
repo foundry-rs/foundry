@@ -912,18 +912,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Moves the running transaction onto a separate frame EVM. See
     /// [`ExecutionLifecycle::begin_frame_evm`].
-    pub fn begin_frame_evm<'a>(&self, evm: &mut FoundryEvmFor<'_, FEN>) -> FoundryEvmFor<'a, FEN> {
-        self.lifecycle.begin_frame_evm(evm)
-    }
-
-    /// Moves the running transaction onto a separate frame EVM executing with `env`. See
-    /// [`ExecutionLifecycle::begin_frame_evm_with_env`].
-    pub fn begin_frame_evm_with_env<'a>(
+    pub fn begin_frame_evm<'a>(
         &self,
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: EvmEnvFor<FEN>,
     ) -> FoundryEvmFor<'a, FEN> {
-        self.lifecycle.begin_frame_evm_with_env(evm, env)
+        self.lifecycle.begin_frame_evm(evm, env)
     }
 
     /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].

@@ -1308,9 +1308,10 @@ impl Cheatcode for broadcastRawTransactionCall {
         let env = custom_env.then(|| {
             let mut env = ccx.evm_env();
             // Inside an isolated call, the transaction pays fees as in the transaction the call
-            // runs in.
+            // runs in, with the requested spec's gas schedule and validation rules.
             if let Some(outer) = &ccx.state.isolation_env {
-                env.version = outer.version;
+                env.version =
+                    EvmFactoryFor::<FEN>::default().env_with_spec(*outer, env.spec).version;
                 env.block.basefee = overrides
                     .and_then(|o| o.basefee_override())
                     .map_or(outer.block.basefee, U256::from);

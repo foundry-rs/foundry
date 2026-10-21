@@ -499,7 +499,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // A `deployCode` create called from the test contract duplicates a top-level deployment,
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
-        let mut frame = backend.backend().begin_frame_evm(evm);
+        let env = evm_env(evm);
+        let mut frame = backend.backend().begin_frame_evm(evm, env);
         frame.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(cheats),
             inner: &mut *self,
@@ -1102,7 +1103,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
         env.version.chain_id = chain_id;
-        let mut frame = backend.backend().begin_frame_evm_with_env(evm, env);
+        let mut frame = backend.backend().begin_frame_evm(evm, env);
         frame.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,

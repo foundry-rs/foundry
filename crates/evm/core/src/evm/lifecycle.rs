@@ -23,7 +23,7 @@
 //! applies the deferred environment at the next transaction boundary. Callers must surface a
 //! deferred transition rather than ignore it. Until then, the inspector stack runs frames started
 //! after the change on a frame EVM built with the deferred environment
-//! ([`ExecutionLifecycle::begin_frame_evm_with_env`]).
+//! ([`ExecutionLifecycle::begin_frame_evm`]).
 //!
 //! Suspending a context accepts its in-flight writes, so a fork switch is not undone when an
 //! enclosing call reverts.
@@ -506,20 +506,14 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         executor
     }
 
-    /// Moves the transaction `evm` is running onto a separate frame EVM, such as to execute a
-    /// nested message for `deployCode` with an inspector that must not re-enter `evm`'s own.
+    /// Moves the transaction `evm` is running onto a separate frame EVM executing with `env`,
+    /// such as for `deployCode` or an in-flight spec change.
     ///
     /// Execute messages on the returned EVM with [`Host::execute_message`] and hand its state back
     /// with [`Self::end_frame_evm`]; `evm` must not execute in between.
     ///
     /// [`Host::execute_message`]: evm2::interpreter::Host::execute_message
-    pub fn begin_frame_evm<'a>(&self, evm: &mut Evm<'_, F::Types>) -> Evm<'a, F::Types> {
-        self.begin_frame_evm_with_env(evm, evm_env(evm))
-    }
-
-    /// Like [`Self::begin_frame_evm`], but the frame EVM executes with `env`, such as with the
-    /// spec requested by `vm.setEvmVersion` while a transaction is in flight.
-    pub fn begin_frame_evm_with_env<'a>(
+    pub fn begin_frame_evm<'a>(
         &self,
         evm: &mut Evm<'_, F::Types>,
         env: EvmEnv<F::Types>,

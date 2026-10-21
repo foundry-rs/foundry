@@ -273,6 +273,7 @@ Traces:
 // after it, isolated or not, and their end hooks, such as `expectRevert`'s, run once.
 #[forgetest_init]
 fn test_set_evm_version_applies_to_new_frames(prj: _, cmd: _) {
+    prj.update_config(|config| config.evm_version = EvmVersion::Prague);
     prj.add_test(
         "EvmVersionFrames.t.sol",
         r#"
@@ -297,13 +298,40 @@ contract EvmVersionFramesTest is Test {
     }
 
     function test_executed_transaction_uses_new_version() public {
+        this.executeTransactionAfterVersionChange();
+    }
+
+    function executeTransactionAfterVersionChange() external {
         vm.setEvmVersion("istanbul");
         // Legacy create of `PUSH1 1 PUSH0 RETURN`, signed for chain 31337 by the first anvil key.
         try vm.executeTransaction(
             hex"f8528080830186a080808460015ff382f4f5a0163754a7df29423d6f8bd4bf6f01698dd1a105fa44d7e97b4b313bd0cfe7da28a02241492692e0f6986a25cb0d03286526b9f6fe9afa7449b8ce382b6a5e058952"
         ) {
             revert("istanbul executed PUSH0");
-        } catch {}
+        } catch (bytes memory reason) {
+            assertEq(reason, abi.encodeWithSignature(
+                "CheatcodeError(string)", "vm.executeTransaction: transaction halted: NotActivated"
+            ));
+        }
+    }
+
+    function test_broadcast_transaction_uses_new_version() public {
+        address sender = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+        vm.deal(sender, 1 ether);
+        vm.fee(1);
+        this.broadcastTransactionAfterVersionChange();
+        assertEq(address(0xbeef).balance, 17);
+        assertEq(sender.balance, 1 ether - 21_016 - 17);
+        assertEq(vm.getNonce(sender), 1);
+    }
+
+    function broadcastTransactionAfterVersionChange() external {
+        vm.setEvmVersion("istanbul");
+        // Legacy transfer of 17 wei with one nonzero calldata byte, signed by the first anvil
+        // key for chain 31337. Its 21,016 gas covers Istanbul's intrinsic cost, not Prague's floor.
+        vm.broadcastRawTransaction(
+            hex"f861800182521894000000000000000000000000000000000000beef110182f4f5a0139546151de151d3d9c6a6d6c11c9534756a590e72203003c0539ad14008a1d2a013b9f73145239d6d8db8697470a4372b90f1d8974ee6d64c99885cea85984fc6"
+        );
     }
 }
    "#,
@@ -314,10 +342,11 @@ contract EvmVersionFramesTest is Test {
         cmd.forge_fuse().args(["test", "--mc", "EvmVersionFramesTest"]).assert_success().stdout_eq(
             str![[r#"
 ...
-Ran 2 tests for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+Ran 3 tests for test/EvmVersionFrames.t.sol:EvmVersionFramesTest
+[PASS] test_broadcast_transaction_uses_new_version() ([GAS])
 [PASS] test_executed_transaction_uses_new_version() ([GAS])
 [PASS] test_new_frames_use_new_version() ([GAS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]],
         );
@@ -2348,18 +2377,9 @@ fn test_tempo_chain_id_applies_to_new_frames(prj: _, cmd: _) {
 pragma solidity >=0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {Vm} from "forge-std/Vm.sol";
 
 interface ITIP20 {
     function DOMAIN_SEPARATOR() external view returns (bytes32);
-}
-
-contract ChainIdSetter {
-    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-
-    function setChainId(uint256 chainId) external {
-        VM.chainId(chainId);
-    }
 }
 
 contract TempoChainIdTest is Test {
@@ -2373,8 +2393,12 @@ contract TempoChainIdTest is Test {
         bytes32 newDomain = PATH_USD.DOMAIN_SEPARATOR();
         assertTrue(newDomain != originalDomain, "TIP-20 domain uses the new chain ID");
 
-        new ChainIdSetter().setChainId(original + 1);
+        this.setChainId(original + 1);
         assertEq(PATH_USD.DOMAIN_SEPARATOR(), newDomain);
+    }
+
+    function setChainId(uint256 chainId) external {
+        vm.chainId(chainId);
     }
 }
    "#,

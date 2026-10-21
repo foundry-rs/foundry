@@ -118,11 +118,9 @@ contract ForkTest is Test {
 
     // ensures switching between two forks of the same chain in a call keeps its chain id
     function testSameChainForkSwitchKeepsChainId() public {
-        ForkSelector selector = new ForkSelector();
-        vm.makePersistent(address(selector));
         vm.selectFork(forkA);
         assertEq(block.chainid, 1);
-        selector.select(forkB);
+        this.select(forkB);
         assertEq(vm.activeFork(), forkB);
         assertEq(block.chainid, 1);
     }
@@ -151,10 +149,6 @@ contract ForkTest is Test {
     function testStorageCaching() public {
         vm.createSelectFork("mainnet", 19800000);
     }
-}
-
-contract ForkSelector {
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     function select(uint256 forkId) external {
         vm.selectFork(forkId);
