@@ -202,7 +202,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        backend.backend_mut().transact(fork_id, transaction, evm, None)
+        backend.backend_mut().transact(fork_id, transaction, evm, 0, None)
     }
 
     fn transact_from_tx(

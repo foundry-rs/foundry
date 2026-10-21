@@ -348,8 +348,8 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
 /// such as an isolated call or the transaction of `vm.executeTransaction`.
 ///
 /// The duplicated frame already ran the inspectors' call hooks in the running transaction, so the
-/// root frame skips them. Its depth is set to the duplicated frame's, so the frames it starts keep
-/// their depth in the surrounding trace.
+/// root frame skips them. The nested transaction starts at the duplicated frame's depth, so the
+/// frames it starts keep their depth in the surrounding trace.
 #[derive(Clone, Copy, Debug)]
 struct InnerRoot {
     /// Depth of the duplicated frame.
@@ -518,7 +518,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let mut child = backend.backend().nested_evm(evm, tx, env);
+        let mut env = env.unwrap_or_else(|| evm_env(evm));
+        env.version.initial_call_depth = depth;
+        let mut child = backend.backend().nested_evm(evm, tx, Some(env));
         let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
         // `ORIGIN` reads the nested transaction's signer, not the origin of an isolated call the
         // transaction runs in.
@@ -554,7 +556,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let mut inspector =
             InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
         let result =
-            backend.backend_mut().transact(fork_id, transaction, evm, Some(&mut inspector));
+            backend.backend_mut().transact(fork_id, transaction, evm, depth, Some(&mut inspector));
         self.exit_inner_context(previous);
         result
     }
@@ -567,10 +569,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
+        let mut env = env.unwrap_or_else(|| evm_env(evm));
+        env.version.initial_call_depth = depth;
         let previous = self.enter_inner_context(InnerRoot { depth, caller: Some(tx.signer()) });
         let mut inspector =
             InspectorStackRefMut::<FEN> { cheatcodes: None, inner: &mut *self, backend: None };
-        let result = backend.backend_mut().transact_from_tx(tx, evm, env, Some(&mut inspector));
+        let result =
+            backend.backend_mut().transact_from_tx(tx, evm, Some(env), Some(&mut inspector));
         self.exit_inner_context(previous);
         result
     }
@@ -1129,6 +1134,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if version.feature(EvmFeatures::BLOCK_GAS_LIMIT_CHECK) {
             gas_limit = gas_limit.min(env.block.gas_limit.saturating_to());
         }
+        // The root keeps its depth in the surrounding trace, with a fresh call-depth budget.
+        env.version.initial_call_depth = message.depth;
         let outer_basefee = env.block.basefee;
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
@@ -1304,21 +1311,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> bool {
-        let Some(root) = self.inner.pending_inner_root.take_if(|root| {
-            message.depth == 0 && root.caller.is_none_or(|caller| caller == message.caller)
-        }) else {
+        if self
+            .inner
+            .pending_inner_root
+            .take_if(|root| {
+                message.depth == root.depth
+                    && root.caller.is_none_or(|caller| caller == message.caller)
+            })
+            .is_none()
+        {
             return false;
-        };
-        message.depth = root.depth;
+        }
         warm_arbitrum_system_contract::<FEN>(interp);
-        if matches!(message.kind, MessageKind::Create | MessageKind::Create2) {
-            // The transaction already bumped the creator's nonce, and a create below the top
-            // level bumps it again.
-            if let Ok(mut account) = interp.host().state_mut().account(&message.caller) {
-                let nonce = account.nonce();
-                account.set_nonce(nonce.saturating_sub(1));
-            }
-        } else if let Some(cheatcodes) = self.cheatcodes.as_deref() {
+        if !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
+            && let Some(cheatcodes) = self.cheatcodes.as_deref()
+        {
             // Transaction messages use the original target, so resolve function mocks here too.
             apply_mocked_function(cheatcodes, interp, message);
         }

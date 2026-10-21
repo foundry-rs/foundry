@@ -823,12 +823,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ///
     /// On the active fork the transaction runs as a nested transaction of the running one, whose
     /// writes are journaled; on another fork it is accepted there and its changes to persistent
-    /// accounts are merged into the running transaction.
+    /// accounts are merged into the running transaction. Its root frame runs at `depth`.
     pub fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         evm: &mut FoundryEvmFor<'_, FEN>,
+        depth: u16,
         inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         trace!(?id, ?transaction, "execute transaction");
@@ -863,6 +864,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.networks,
         );
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut env, source_chain_id);
+        env.version.initial_call_depth = depth;
 
         let ext = if self.networks.is_monad() {
             let index = target
