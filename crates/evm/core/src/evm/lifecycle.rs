@@ -36,16 +36,17 @@ use crate::{
     backend::{RevertStateSnapshotAction, transaction_error},
     state_snapshot::StateSnapshots,
 };
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::{Typed2718, transaction::Recovered};
 use alloy_primitives::{
     Address, KECCAK256_EMPTY, Log, U256,
-    map::{AddressMap, HashSet},
+    map::{AddressMap, AddressSet, HashSet},
 };
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
     evm::{
         AccountChanges, Cache, DbResult, EmptyDB, JournalEntry, PendingState, PrewarmSet, State,
+        StateSnapshot,
     },
 };
 use std::{mem, sync::Arc};
@@ -85,6 +86,68 @@ impl<T: EvmTypesHost> Default for NestedTx<'_, T> {
     fn default() -> Self {
         Self { env: None, ext: None, inspector: None }
     }
+}
+
+/// A transaction prepared to execute as a nested transaction of the running one, such as for
+/// `vm.transact`, whose inspector may hold the lifecycle's owner while it runs.
+///
+/// Build it with [`ExecutionLifecycle::prepare_nested`] or
+/// [`ExecutionLifecycle::prepare_on_inactive`], run it with [`Self::execute`] and store its
+/// outcome with [`ExecutionLifecycle::store_executed`].
+pub struct PreparedTx<T: EvmTypesHost> {
+    executor: Evm<'static, T>,
+    tx: Recovered<T::Tx>,
+    /// The inactive context the transaction executes on, with the persistent accounts whose
+    /// changes merge back into the running transaction.
+    inactive: Option<(Option<U256>, AddressSet)>,
+}
+
+impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
+    /// Returns the transaction.
+    pub const fn tx(&self) -> &Recovered<T::Tx> {
+        &self.tx
+    }
+
+    /// Executes the transaction observed by `inspector` and merges its changes into the running
+    /// transaction of `evm` as journaled writes: all of them on the running transaction's
+    /// context, where a failed transaction only keeps its nonce increment and fee payment, and
+    /// the changes to persistent accounts on an inactive context, which accepts the transaction.
+    /// With `untracked`, changes on the active context survive reverts of the enclosing calls.
+    pub fn execute(
+        self,
+        evm: &mut Evm<'_, T>,
+        inspector: Option<&mut dyn Inspector<T>>,
+        untracked: bool,
+    ) -> eyre::Result<ExecutedNested<T>> {
+        let Self { executor, tx, inactive } = self;
+        let mut executor: Evm<'_, T> = executor;
+        if let Some(inspector) = inspector {
+            executor.set_inspector(inspector);
+        }
+        let executed = executor.transact(&tx).map_err(transaction_error)?;
+        let Some((id, persistent)) = inactive else {
+            merge_changes(evm.state_mut(), executed.account_changes(), |_| true, untracked)?;
+            return Ok(ExecutedNested { result: executed.result().clone(), context: None });
+        };
+        merge_changes(
+            evm.state_mut(),
+            executed.account_changes(),
+            |address| persistent.contains(address),
+            false,
+        )?;
+        let result = executed.commit();
+        executor.clear_inspector();
+        let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
+        Ok(ExecutedNested { result, context: Some((id, cache)) })
+    }
+}
+
+/// The outcome of a [`PreparedTx`], to store with [`ExecutionLifecycle::store_executed`].
+#[must_use = "an inactive context's accepted state must be stored"]
+pub struct ExecutedNested<T: EvmTypesHost> {
+    result: TxResult<T>,
+    /// The inactive context the transaction was accepted on, with its new accepted state.
+    context: Option<(Option<U256>, Cache)>,
 }
 
 /// Fork, snapshot and nested-execution lifecycle for one EVM network family.
@@ -288,6 +351,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         Ok(self.resume(evm, suspended, phase))
     }
 
+    /// Makes `id` the active context, or the local context for `None`, without suspending the
+    /// running state: for a throwaway copy of the lifecycle whose transaction already runs over
+    /// `id`'s state, such as one prepared with [`Self::prepare_on_inactive`].
+    pub const fn activate_detached(&mut self, id: Option<U256>) {
+        self.forks.active = id;
+    }
+
     /// Moves fork `id`, or the running context for `None`, onto a new backing database and
     /// environment, such as a later block.
     ///
@@ -400,22 +470,26 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         })
     }
 
-    /// Restores snapshot `id` and returns its `extra`, or `None` if it does not exist.
+    /// Restores snapshot `id` and returns its `extra` and the running state it replaced, or `None`
+    /// if it does not exist.
     ///
     /// Logs emitted since the snapshot are kept. Persistent accounts and forks created after the
     /// snapshot survive the revert; every fork that existed at the snapshot gets its state back.
+    /// The replaced state is materialized, so that a failing frame can reinstate it over a backing
+    /// database with [`SnapshotRestores`](super::SnapshotRestores).
     pub fn revert(
         &mut self,
         evm: &mut Evm<'_, F::Types>,
         id: U256,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(C, EnvTransition)> {
+    ) -> Option<(C, EnvTransition, StateSnapshot)> {
         let snapshot = if action.is_keep() {
             self.snapshots.get(id).cloned()
         } else {
             self.snapshots.remove(id)
         }?;
+        self.materialize(evm);
         let LifecycleSnapshot { state, forks, env, ext, extra } = snapshot;
         let mut current = mem::replace(&mut self.forks, forks);
         self.forks.next_id = current.next_id;
@@ -424,14 +498,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             self.forks.forks.entry(id).or_insert(entry);
         }
         let db = self.forks.active_db();
-        let logs = mem::take(evm.state_mut().logs_mut());
         let mut state = state.into_state(db.clone_backing());
-        *state.logs_mut() = logs;
-        *evm.state_mut() = state;
+        *state.logs_mut() = evm.state().logs().to_vec();
+        let replaced = mem::replace(evm.state_mut(), state).into_snapshot();
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
-        Some((extra, transition))
+        Some((extra, transition, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.
@@ -547,28 +620,41 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm.set_block(*frame.block());
     }
 
-    /// Executes `tx` on the inactive fork `id`, or the local context for `None`, and accepts its
-    /// state there, such as for `vm.transact` on another fork.
+    /// Prepares `tx` to execute as a nested transaction of the running one on the EVM
+    /// [`Self::nested_evm`] builds.
+    pub fn prepare_nested(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        tx: Recovered<<F::Types as EvmTypesHost>::Tx>,
+        env: Option<EvmEnv<F::Types>>,
+        ext: Option<<F::Types as EvmTypesHost>::EvmExt>,
+    ) -> PreparedTx<F::Types> {
+        PreparedTx { executor: self.nested_evm(evm, &tx, env, ext), tx, inactive: None }
+    }
+
+    /// Prepares `tx` to execute on the inactive fork `id`, or the local context for `None`, and
+    /// be accepted there, such as for `vm.transact` on another fork.
     ///
     /// Persistent accounts carry the running transaction's state into the fork, and the
     /// transaction's changes to them are merged back into the running transaction as journaled
     /// writes.
-    pub fn transact_on_inactive(
-        &mut self,
+    pub fn prepare_on_inactive(
+        &self,
         evm: &mut Evm<'_, F::Types>,
         id: Option<U256>,
-        tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
-        nested: NestedTx<'_, F::Types>,
-    ) -> eyre::Result<TxResult<F::Types>> {
+        tx: Recovered<<F::Types as EvmTypesHost>::Tx>,
+        env: Option<EvmEnv<F::Types>>,
+        ext: Option<<F::Types as EvmTypesHost>::EvmExt>,
+    ) -> eyre::Result<PreparedTx<F::Types>> {
         eyre::ensure!(id != self.forks.active(), "fork {} is active", id.unwrap_or_default());
         let Some(context) = self.forks.context(id) else {
             eyre::bail!("fork {} does not exist", id.unwrap_or_default());
         };
         let db = context.db.clone_backing();
-        let env = nested.env.unwrap_or(context.env);
-        let ext = nested.ext.unwrap_or_else(|| {
+        let env = env.unwrap_or(context.env);
+        let ext = ext.unwrap_or_else(|| {
             let mut ext = context.ext.get();
-            ext.for_transaction(tx);
+            ext.for_transaction(&tx);
             ext
         });
         let factory = self.factory.configure_for(&db, &env);
@@ -591,20 +677,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             &running.overlay_db().cache,
             &mut executor.state_mut().overlay_db_mut().cache,
         );
+        Ok(PreparedTx { executor, tx, inactive: Some((id, self.forks.persistent.clone())) })
+    }
 
-        if let Some(inspector) = nested.inspector {
-            executor.set_inspector(inspector);
+    /// Stores the outcome of a [`PreparedTx`]: an inactive context's new accepted state.
+    pub fn store_executed(&mut self, executed: ExecutedNested<F::Types>) -> TxResult<F::Types> {
+        let ExecutedNested { result, context } = executed;
+        if let Some((id, cache)) = context {
+            let context = self.forks.context_mut(id).expect("prepared context exists");
+            context.cache = Some(Arc::new(cache));
         }
-        let executed = executor.transact(tx).map_err(transaction_error)?;
-        let persistent = &self.forks.persistent;
-        merge_changes(evm.state_mut(), executed.account_changes(), |address| {
-            persistent.contains(address)
-        })?;
-        let result = executed.commit();
-        executor.clear_inspector();
-        let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
-        self.forks.context_mut(id).expect("context exists").cache = Some(Arc::new(cache));
-        Ok(result)
+        result
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active
@@ -786,21 +869,31 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true)
+    merge_changes(state, executed.account_changes(), |_| true, false)
+}
+
+/// Applies a nested transaction's changes to the running transaction's `state` so that they survive
+/// reverts of the enclosing calls, such as for `executeTransaction`.
+pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
+    state: &mut State<'_>,
+    executed: &ExecutedTx<'_, '_, T>,
+) -> DbResult<()> {
+    merge_changes(state, executed.account_changes(), |_| true, true)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
 /// transaction's `state` as journaled writes, like [`merge_nested_changes`].
 pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
-    merge_changes(state, pending.account_changes(), |_| true)
+    merge_changes(state, pending.account_changes(), |_| true, false)
 }
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
-/// journaled writes.
+/// journaled writes, or so that they survive reverts of the enclosing calls if `untracked`.
 fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
     filter: impl Fn(&Address) -> bool,
+    untracked: bool,
 ) -> DbResult<()> {
     for change in changes.filter(|change| change.is_changed()) {
         let address = change.address;
@@ -809,26 +902,45 @@ fn merge_changes<'c>(
         }
         {
             let mut account = state.account(&address)?;
-            match change.current {
-                Some(info) => {
-                    account.set_balance(info.balance);
-                    account.set_nonce(info.nonce);
-                    if let Some((code_hash, code)) = change.code {
-                        account.set_code(code_hash, code.clone());
-                    }
-                }
-                None => {
-                    account.set_balance(U256::ZERO);
-                    account.set_nonce(0);
-                    account.set_code(KECCAK256_EMPTY, Bytecode::default());
+            let (balance, nonce) =
+                change.current.map_or((U256::ZERO, 0), |info| (info.balance, info.nonce));
+            if untracked {
+                account.touch();
+                account.set_balance_untracked(balance);
+                account.set_nonce_untracked(nonce);
+            } else {
+                account.set_balance(balance);
+                account.set_nonce(nonce);
+            }
+            let code = match (change.current, change.code) {
+                (Some(_), Some((code_hash, code))) => Some((code_hash, code.clone())),
+                // Changes only carry non-empty code, so a different hash means cleared code.
+                (Some(info), None) if info.code_hash == account.code_hash() => None,
+                _ => Some((KECCAK256_EMPTY, Bytecode::default())),
+            };
+            if let Some((code_hash, code)) = code {
+                if untracked {
+                    account.override_code(code_hash, code);
+                } else {
+                    account.set_code(code_hash, code);
                 }
             }
         }
         if change.current.is_none() || change.storage.wiped {
-            state.storage(&address)?.wipe();
+            let mut storage = state.storage(&address)?;
+            if untracked {
+                storage.override_wipe();
+            } else {
+                storage.wipe();
+            }
         }
         for (key, slot) in change.storage.changed_slots() {
-            state.storage_slot(&address, *key)?.set(slot.current);
+            let mut storage = state.storage_slot(&address, *key)?;
+            if untracked {
+                storage.set_untracked(slot.current);
+            } else {
+                storage.set(slot.current);
+            }
         }
     }
     Ok(())

@@ -25,10 +25,10 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
-        BackingDb, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutionLifecycle,
-        ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory,
-        FoundryEvmFor, FoundryEvmNetwork, NestedTx, Parked, SpecFor, TxFor, TxResultFor, TypesFor,
-        block_txs, evm_env,
+        BackingDb, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
+        ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, Parked, PreparedTx, SpecFor, TxFor,
+        TxResultFor, TypesFor, block_txs, evm_env, merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -50,7 +50,7 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState,
+        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
 };
@@ -819,19 +819,23 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(transition)
     }
 
-    /// Executes the mined `transaction` of fork `id`, or of the active fork for `None`, with its
-    /// block's environment, such as for `vm.transact`.
+    /// Prepares the mined `transaction` of fork `id`, or of the active fork for `None`, to execute
+    /// with its block's environment, such as for `vm.transact`, and returns it with the throwaway
+    /// backend it executes over. Store the outcome with [`Self::store_executed`].
     ///
     /// On the active fork the transaction runs as a nested transaction of the running one, whose
     /// writes are journaled; on another fork it is accepted there and its changes to persistent
-    /// accounts are merged into the running transaction.
-    pub fn transact(
-        &mut self,
+    /// accounts are merged into the running transaction. Its root frame runs at `depth`.
+    ///
+    /// Cheatcodes running in the transaction see the throwaway backend with the target fork active
+    /// at the transaction's block; their changes to it are discarded.
+    pub fn prepare_transact(
+        &self,
         id: Option<LocalForkId>,
         transaction: B256,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
+        depth: u16,
+    ) -> eyre::Result<(PreparedTx<TypesFor<FEN>>, CowBackend<'_, FEN>)> {
         trace!(?id, ?transaction, "execute transaction");
         let id = self.ensure_fork(id)?;
         let info = self.fork_info(id)?;
@@ -864,6 +868,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             self.networks,
         );
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut env, source_chain_id);
+        env.version.initial_call_depth = depth;
 
         let ext = if self.networks.is_monad() {
             let index = target
@@ -877,16 +882,24 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         } else {
             None
         };
-        let nested = NestedTx { env: Some(env), ext, inspector };
-        if active {
-            self.lifecycle.nested_transaction_with(evm, &tx, nested)
+        let prepared = if active {
+            self.lifecycle.prepare_nested(evm, tx, Some(env), ext)
         } else {
-            self.lifecycle.transact_on_inactive(evm, Some(id), &tx, nested)
+            self.lifecycle.prepare_on_inactive(evm, Some(id), tx, Some(env), ext)?
+        };
+
+        let mut backend = CowBackend::new_borrowed(self);
+        if !active {
+            // The prepared transaction already runs over the target fork's state.
+            backend.lifecycle.activate_detached(Some(id));
         }
+        backend.fork_block_number_override = Some(target.block.header.number());
+        Ok((prepared, backend))
     }
 
     /// Executes `tx` as a nested transaction of the running one, in `env` or the running
-    /// environment for `None`, and merges its changes into the running transaction.
+    /// environment for `None`, and merges its changes into the running transaction so that they
+    /// survive reverts of the enclosing calls.
     pub fn transact_from_tx(
         &mut self,
         tx: &Recovered<TxFor<FEN>>,
@@ -895,7 +908,35 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         trace!("execute signed transaction");
-        self.lifecycle.nested_transaction_with(evm, tx, NestedTx { env, ext: None, inspector })
+        let mut executor = self.lifecycle.nested_evm(evm, tx, env, None);
+        if let Some(inspector) = inspector {
+            executor.set_inspector(inspector);
+        }
+        let executed = executor.transact(tx).map_err(transaction_error)?;
+        merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        Ok(executed.result().clone())
+    }
+
+    /// Prepares [`Self::transact_from_tx`], such as for `vm.broadcastRawTransaction`, and returns
+    /// it with the throwaway backend it executes over. Store the outcome with
+    /// [`Self::store_executed`].
+    ///
+    /// Cheatcodes running in the transaction see the throwaway backend, a copy-on-write view of
+    /// this one; their changes to it are discarded.
+    pub fn prepare_nested(
+        &self,
+        tx: Recovered<TxFor<FEN>>,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        env: Option<EvmEnvFor<FEN>>,
+    ) -> (PreparedTx<TypesFor<FEN>>, CowBackend<'_, FEN>) {
+        trace!("execute signed transaction");
+        (self.lifecycle.prepare_nested(evm, tx, env, None), CowBackend::new_borrowed(self))
+    }
+
+    /// Stores the outcome of a transaction prepared with [`Self::prepare_transact`] or
+    /// [`Self::prepare_nested`].
+    pub fn store_executed(&mut self, executed: ExecutedNested<TypesFor<FEN>>) -> TxResultFor<FEN> {
+        self.lifecycle.store_executed(executed)
     }
 
     /// Builds the EVM a nested transaction of the running one executes on, such as an isolated
@@ -1109,7 +1150,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id
     }
 
-    /// Restores snapshot `id`, or returns `None` if it does not exist.
+    /// Restores snapshot `id` and returns the running state it replaced, or returns `None` if it
+    /// does not exist.
     ///
     /// Logs emitted since the snapshot, persistent accounts and forks created after it survive.
     /// A test failure recorded in the reverted state sets [`Self::has_state_snapshot_failure`].
@@ -1119,7 +1161,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<EnvTransition> {
+    ) -> Option<(EnvTransition, StateSnapshot)> {
         trace!(?id, "revert snapshot");
         if !self.lifecycle.has_snapshot(id) {
             warn!(target: "backend", "No snapshot to revert for {}", id);
@@ -1135,7 +1177,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         {
             self.has_state_snapshot_failure = true;
         }
-        self.lifecycle.revert(evm, id, action, phase).map(|((), transition)| transition)
+        self.lifecycle
+            .revert(evm, id, action, phase)
+            .map(|((), transition, replaced)| (transition, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.

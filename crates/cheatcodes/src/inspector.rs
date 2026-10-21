@@ -48,8 +48,8 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, SpecFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor,
-        TypesFor, evm_env, release_inspector,
+        MessageFor, MessageResultFor, SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor,
+        TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
 };
 use foundry_evm_traces::{
@@ -88,8 +88,9 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     ) -> Result<MessageResultFor<FEN>, ExecutionError>;
 
     /// Executes `tx` as a nested transaction of the transaction `evm` is running, with `env` or
-    /// the running environment, and merges its changes, such as for `executeTransaction`. A
-    /// failed transaction only keeps its nonce increment.
+    /// the running environment, and merges its changes so that they survive reverts of the
+    /// enclosing calls, such as for `executeTransaction`. A failed transaction only keeps its nonce
+    /// increment.
     ///
     /// `depth` is the depth of the cheatcode call; the nested transaction's root frame duplicates
     /// it, so its children run one level deeper.
@@ -105,10 +106,12 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
 
     /// Replays a mined transaction of fork `fork_id`, or of the active fork, for `vm.transact`.
     ///
-    /// Cheatcodes are not active in the replayed transaction. Its root frame duplicates the
-    /// cheatcode call at `depth`, like [`Self::nested_transaction`].
+    /// The replayed transaction runs with `cheats` active over a throwaway copy of `backend`, so
+    /// its cheatcodes cannot modify `backend`. Its root frame is a call below the cheatcode call
+    /// at `depth`.
     fn transact(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
@@ -119,10 +122,12 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     /// Executes a signed transaction as a nested transaction, such as for
     /// `broadcastRawTransaction`.
     ///
-    /// Cheatcodes are not active in the executed transaction. It runs in `env`, or the running
-    /// environment for `None`, and its root frame duplicates the cheatcode call at `depth`.
+    /// The transaction runs with `cheats` active over a throwaway copy of `backend`, in `env` or
+    /// the running environment for `None`. Its root frame is a call below the cheatcode call at
+    /// `depth`.
     fn transact_from_tx(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
@@ -193,7 +198,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let result =
             child.transact(tx).map_err(|err| eyre::eyre!("{err:?}")).and_then(|executed| {
                 // A failed transaction keeps its nonce increment.
-                foundry_evm_core::evm::merge_nested_changes(evm.state_mut(), &executed)?;
+                foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
                 Ok(executed.result().clone())
             });
         drop(release_inspector(child));
@@ -206,26 +211,37 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         result
     }
 
+    // Without the inspector stack's nested-root handling, replayed transactions run without
+    // cheatcodes, which would take their root frame for a top-level call; only their logs reach
+    // `expectEmit` and `recordLogs`.
     fn transact(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         _depth: u16,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        backend.backend_mut().transact(fork_id, transaction, evm, None)
+        let (prepared, _) = backend.backend().prepare_transact(fork_id, transaction, evm, 0)?;
+        let executed = prepared.execute(evm, None, false)?;
+        let result = backend.backend_mut().store_executed(executed);
+        result.logs.iter().for_each(|log| cheats.log_hook(log));
+        Ok(result)
     }
 
     fn transact_from_tx(
         &mut self,
+        cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
         _depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        backend.backend_mut().transact_from_tx(tx, evm, env, None)
+        let result = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
+        result.logs.iter().for_each(|log| cheats.log_hook(log));
+        Ok(result)
     }
 
     fn console_log(&mut self, _msg: &str) {}
@@ -313,18 +329,16 @@ macro_rules! try_or_return {
     };
 }
 
-/// Returns the result of a message that did not execute, keeping its whole gas budget.
+/// Returns the result of a message that did not execute, keeping its whole execution gas.
+///
+/// The result returns no state gas reservoir, which the caller adopts, as cheatcode results did
+/// with REVM.
 pub fn message_result<M, E: Default>(
     message: &MessageExt<M>,
     stop: InstrStop,
     output: Bytes,
 ) -> MessageResultExt<E> {
-    MessageResultExt {
-        stop,
-        gas: GasTracker::new_with_execution_gas_and_reservoir(message.gas_limit, message.reservoir),
-        output,
-        ..Default::default()
-    }
+    MessageResultExt { stop, gas: GasTracker::new(message.gas_limit), output, ..Default::default() }
 }
 
 /// Stops the running frame with a revert carrying `output`, before its current instruction runs
@@ -762,9 +776,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// its `LOG` instruction finishes.
     pending_emit_failure: Option<&'static str>,
 
-    /// Incremented whenever a cheatcode replaces the running state, such as a fork switch or a
-    /// state snapshot restoration, so nested executions know to adopt the replaced state.
+    /// Incremented whenever a cheatcode replaces the running state outside of a snapshot
+    /// restoration, such as a fork switch, so nested executions know to adopt the replaced state.
     pub state_epoch: u64,
+
+    /// Running states replaced by snapshot restorations in the open frames of the running
+    /// transaction, reinstated when a frame that was open at the restoration fails.
+    pub snapshot_restores: SnapshotRestores,
 
     /// Target of the root call of the running transaction, if it is a call.
     root_call_target: Option<Address>,
@@ -908,6 +926,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// execute inside it start from this environment instead.
     pub isolation_env: Option<EvmEnvFor<FEN>>,
 
+    /// Whether a replay is running whose fork-context changes cannot be merged into its parent.
+    pub in_replay: bool,
+
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
 }
@@ -938,6 +959,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_gas_price: Default::default(),
             pending_emit_failure: Default::default(),
             state_epoch: Default::default(),
+            snapshot_restores: Default::default(),
             root_call_target: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
@@ -983,6 +1005,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fork_block_number_override_snapshots: Default::default(),
             in_isolation_context: false,
             isolation_env: None,
+            in_replay: false,
             deploy_code_depth: None,
         }
     }
@@ -1589,9 +1612,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
+                    // The increment survives reverts of the enclosing calls.
                     if !isolate_call && let Ok(mut account) = evm.state_mut().account(&new_origin) {
                         let prev = account.nonce();
-                        account.set_nonce(prev + 1);
+                        account.set_nonce_untracked(prev + 1);
                         debug!(target: "cheatcodes", address=%new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if single_call {
@@ -3643,7 +3667,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         let nonce = account.nonce();
         if auth.nonce() == nonce + u64::from(authority == sender) {
-            account.set_nonce(nonce + 1);
+            account.set_nonce_untracked(nonce + 1);
         }
     }
     Ok(())

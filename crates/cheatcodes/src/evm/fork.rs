@@ -450,6 +450,7 @@ fn fork_op<FEN: FoundryEvmNetwork, T: SolValue>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     f: impl FnOnce(&mut Backend<FEN>, &mut FoundryEvmFor<'_, FEN>) -> eyre::Result<T>,
 ) -> Result {
+    ensure!(!ccx.state.in_replay, "cannot select or roll forks in a replayed transaction");
     let (evm, db) = ccx.evm_db_mut();
     let result = f(db, evm)?;
     ccx.state.state_epoch += 1;
@@ -531,12 +532,14 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let result = executor.transact(ccx.backend, ccx.evm, ccx.depth as u16, fork_id, transaction)?;
-    // Cheatcodes do not run inside the replayed transaction; let `expectEmit` and `recordLogs`
-    // see its logs.
-    for log in &result.logs {
-        ccx.state.log_hook(log);
-    }
+    let _ = executor.transact(
+        ccx.state,
+        ccx.backend,
+        ccx.evm,
+        ccx.depth as u16,
+        fork_id,
+        transaction,
+    )?;
     ccx.state.state_epoch += 1;
     Ok(Default::default())
 }

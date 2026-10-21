@@ -787,7 +787,9 @@ impl Cheatcode for dealCall {
         let Self { account: address, newBalance: new_balance } = *self;
         let mut account = ccx.evm.state_mut().account(&address)?;
         let old_balance = account.balance();
-        account.set_balance(new_balance);
+        // The balance survives reverts of the enclosing calls.
+        account.touch();
+        account.set_balance_untracked(new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
         Ok(Default::default())
@@ -828,7 +830,9 @@ impl Cheatcode for resetNonceCall {
         let code_hash = account.code_hash();
         let empty = code_hash == KECCAK256_EMPTY || code_hash.is_zero();
         let nonce = if empty { 0 } else { 1 };
-        account.set_nonce(nonce);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        account.touch();
+        account.set_nonce_untracked(nonce);
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
@@ -845,7 +849,8 @@ impl Cheatcode for setNonceCall {
             "new nonce ({newNonce}) must be strictly equal to or higher than the \
              account's current nonce ({current})"
         );
-        account.set_nonce(newNonce);
+        account.touch();
+        account.set_nonce_untracked(newNonce);
         Ok(Default::default())
     }
 }
@@ -853,7 +858,9 @@ impl Cheatcode for setNonceCall {
 impl Cheatcode for setNonceUnsafeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
-        ccx.evm.state_mut().account(&account)?.set_nonce(newNonce);
+        let mut account = ccx.evm.state_mut().account(&account)?;
+        account.touch();
+        account.set_nonce_untracked(newNonce);
         Ok(Default::default())
     }
 }
@@ -1322,13 +1329,14 @@ impl Cheatcode for broadcastRawTransactionCall {
             }
             env
         });
-        let result =
-            executor.transact_from_tx(ccx.backend, ccx.evm, ccx.depth as u16, &evm_tx, env)?;
-        // Cheatcodes do not run inside the transaction; let `expectEmit` and `recordLogs` see its
-        // logs.
-        for log in &result.logs {
-            ccx.state.log_hook(log);
-        }
+        let _ = executor.transact_from_tx(
+            ccx.state,
+            ccx.backend,
+            ccx.evm,
+            ccx.depth as u16,
+            &evm_tx,
+            env,
+        )?;
         ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {
@@ -1569,16 +1577,13 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     snapshot_id: U256,
 ) -> Result {
     let (evm, db) = ccx.evm_db_mut();
-    if db
-        .revert_state(
-            snapshot_id,
-            evm,
-            RevertStateSnapshotAction::RevertKeep,
-            ExecutionPhase::InFlight,
-        )
-        .is_some()
-    {
-        ccx.state.state_epoch += 1;
+    if let Some((_, replaced)) = db.revert_state(
+        snapshot_id,
+        evm,
+        RevertStateSnapshotAction::RevertKeep,
+        ExecutionPhase::InFlight,
+    ) {
+        ccx.state.snapshot_restores.capture(replaced);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1600,16 +1605,13 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     snapshot_id: U256,
 ) -> Result {
     let (evm, db) = ccx.evm_db_mut();
-    if db
-        .revert_state(
-            snapshot_id,
-            evm,
-            RevertStateSnapshotAction::RevertRemove,
-            ExecutionPhase::InFlight,
-        )
-        .is_some()
-    {
-        ccx.state.state_epoch += 1;
+    if let Some((_, replaced)) = db.revert_state(
+        snapshot_id,
+        evm,
+        RevertStateSnapshotAction::RevertRemove,
+        ExecutionPhase::InFlight,
+    ) {
+        ccx.state.snapshot_restores.capture(replaced);
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
