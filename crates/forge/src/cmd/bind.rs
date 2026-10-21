@@ -6,11 +6,11 @@ use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{
     compile::{ProjectCompiler, compile_abi_project},
-    fs::{json_files, normalize_path, read_json_file},
+    fs::json_files,
 };
 use foundry_compilers::{
     Graph, Project,
-    artifacts::{ConfigurableContractArtifact, Contract, output_selection::OutputSelection},
+    artifacts::{Contract, output_selection::OutputSelection},
     cache::CompilerCache,
     compilers::{Compiler, CompilerOutput, CompilerSettings, CompilerVersion},
     error::SolcError,
@@ -39,7 +39,7 @@ struct BindingFile {
     name: String,
     path: PathBuf,
     /// Source identity, if available. Otherwise the artifact directory identifies it.
-    source: Option<PathBuf>,
+    source: PathBuf,
 }
 
 /// CLI arguments for `forge bind`.
@@ -243,7 +243,6 @@ impl BindArgs {
             // Without cache-based selection, include all artifacts on disk.
             json_files(&config.out).collect()
         };
-        let mut files = self.filter_artifact_paths(files.into_iter().map(|path| (path, None)))?;
         // Source identity is independent of cache-based selection: compiler variants can live in
         // different artifact directories, even with --no-cache.
         let sources = cache
@@ -253,13 +252,10 @@ impl BindArgs {
                 entry.artifacts().map(move |artifact| (&artifact.path, source))
             })
             .collect::<HashMap<_, _>>();
-        for file in &mut files {
-            file.source = sources
-                .get(&file.path)
-                .map(|source| (*source).clone())
-                .or_else(|| artifact_source(&file.path, &file.name))
-                .map(|source| normalize_path(&config.root.join(source)));
-        }
+        let files = self.filter_artifact_paths(files.into_iter().map(|path| {
+            let source = sources.get(&path).map(|source| (*source).clone());
+            (path, source)
+        }))?;
         // Cache-based selection already guarantees membership for built-in artifacts.
         if !config.cache
             && !definitions.is_empty()
@@ -376,7 +372,11 @@ impl BindArgs {
                     return None;
                 }
                 let name = stem.split('.').next().unwrap().to_owned();
-                filter.is_match(&binding_name(&name)).then_some(BindingFile { name, path, source })
+                filter.is_match(&binding_name(&name)).then(|| BindingFile {
+                    name,
+                    source: source.unwrap_or_else(|| path.parent().unwrap().to_path_buf()),
+                    path,
+                })
             })
             .collect::<Vec<_>>();
         files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -389,9 +389,7 @@ impl BindArgs {
         let mut modules = HashMap::<_, _>::default();
         let mut instances = Vec::new();
         for file in files {
-            // Keep compiler source identities separate from artifact-only directory identities.
-            let source = file.source.as_deref().unwrap_or_else(|| file.path.parent().unwrap());
-            if !identities.insert((file.source.is_some(), source, &file.name)) {
+            if !identities.insert((&file.source, &file.name)) {
                 continue;
             }
             let name = binding_name(&file.name);
@@ -636,20 +634,6 @@ fn resolved_artifact_contexts<C: Compiler<CompilerContract = Contract>>(
 
 fn binding_name(name: &str) -> String {
     name.replace(char::is_whitespace, "").replace(['-', '$'], "_")
-}
-
-/// Recovers source identity only from an unambiguous metadata target matching the contract name.
-fn artifact_source(path: &Path, name: &str) -> Option<PathBuf> {
-    let artifact = read_json_file::<ConfigurableContractArtifact>(path).ok()?;
-    let metadata = artifact
-        .metadata
-        .or_else(|| serde_json::from_str(artifact.raw_metadata.as_deref()?).ok())?;
-    let targets = metadata.settings.compilation_target;
-    if targets.len() != 1 {
-        return None;
-    }
-    let (source, contract) = targets.into_iter().next()?;
-    (contract == name).then(|| source.into())
 }
 
 /// Provides compiler versions to the graph without installing or compiling anything.
