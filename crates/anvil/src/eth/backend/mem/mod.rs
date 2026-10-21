@@ -2076,7 +2076,15 @@ impl<N: Network> Backend<N> {
 
     /// Returns the block number for the given block id
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
-        let current = self.best_number();
+        self.convert_block_number_at(block, self.best_number())
+    }
+
+    /// Returns the block number for the given block id, resolving head-relative tags against
+    /// `current`.
+    ///
+    /// Callers that compare against or resolve multiple tags from the head should read it once and
+    /// pass the same snapshot, since mining can advance the head between separate reads.
+    pub(crate) fn convert_block_number_at(&self, block: Option<BlockNumber>, current: u64) -> u64 {
         // The chain starts at the configured genesis number, so `earliest` and the epoch-based
         // tags never resolve below it.
         let genesis = self.genesis_number();
@@ -2437,7 +2445,7 @@ impl<N: Network> Backend<N> {
                     .header
                     .number
             }
-            BlockId::Number(num) => self.convert_block_number(Some(num)),
+            BlockId::Number(num) => self.convert_block_number_at(Some(num), current),
         };
 
         if requested > current {
@@ -5303,10 +5311,11 @@ where
             self.logs_for_block(filter, hash).await
         } else {
             let best = self.best_number();
-            let to_block =
-                self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
+            let to_block = self
+                .convert_block_number_at(filter.block_option.get_to_block().copied(), best)
+                .min(best);
             let from_block =
-                self.convert_block_number(filter.block_option.get_from_block().copied());
+                self.convert_block_number_at(filter.block_option.get_from_block().copied(), best);
             if from_block > best {
                 return Err(BlockchainError::BlockOutOfRange(best, from_block));
             }
