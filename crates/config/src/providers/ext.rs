@@ -68,7 +68,7 @@ impl TomlFileProvider {
         self.env_val.get_or_init(|| self.env_var.and_then(Env::var)).as_deref()
     }
 
-    fn file(&self) -> PathBuf {
+    pub(crate) fn file(&self) -> PathBuf {
         self.env_val().map(PathBuf::from).unwrap_or_else(|| self.default.clone())
     }
 

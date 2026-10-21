@@ -3492,3 +3492,173 @@ remappings = ["lib/dependency:unused/=lib/dependency/"]
         assert_eq!(bytecodes[0], bytecodes[1], "{field} differs between project roots");
     }
 }
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_respects_project_selection(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected");
+    fs::create_dir_all(selected.join("src")).unwrap();
+    // Migration must not require valid configuration values.
+    let legacy = "[default]\noptimizer_runs = \"invalid\"\n";
+
+    for (cwd, args) in [
+        (".", ["--root", "selected"].as_slice()),
+        (".", ["--config-path", "selected/foundry.toml"].as_slice()),
+        ("selected/src", [].as_slice()),
+    ] {
+        fs::write(prj.root().join(Config::FILE_NAME), legacy).unwrap();
+        fs::write(selected.join(Config::FILE_NAME), legacy).unwrap();
+
+        cmd.forge_fuse();
+        cmd.env("HOME", test_home.path());
+        cmd.unset_env("FOUNDRY_CONFIG");
+        cmd.current_dir(prj.root().join(cwd))
+            .args(["config", "--fix"])
+            .args(args)
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![""]);
+
+        assert_data_eq!(
+            fs::read_to_string(selected.join(Config::FILE_NAME)).unwrap(),
+            str![[r#"
+[profile.default]
+optimizer_runs = "invalid"
+
+"#]]
+        );
+        assert_eq!(fs::read_to_string(prj.root().join(Config::FILE_NAME)).unwrap(), legacy);
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_preserves_environment_precedence(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected/foundry.toml");
+    fs::create_dir_all(selected.parent().unwrap()).unwrap();
+    let cwd_config = prj.root().join(Config::FILE_NAME);
+    let custom = prj.root().join("custom.toml");
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    for path in [&cwd_config, &selected, &custom] {
+        fs::write(path, legacy).unwrap();
+    }
+
+    fs::write(prj.root().join(".env"), "FOUNDRY_CONFIG=custom.toml\n").unwrap();
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.args(["config", "--fix", "--config-path", "selected/foundry.toml"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![""]);
+
+    assert_data_eq!(
+        fs::read_to_string(&custom).unwrap(),
+        str![[r#"
+[profile.default]
+optimizer_runs = 123
+
+"#]]
+    );
+    assert_eq!(fs::read_to_string(&cwd_config).unwrap(), legacy);
+    assert_eq!(fs::read_to_string(&selected).unwrap(), legacy);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_rejects_invalid_config_path_before_writing(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let global = test_home.path().join(".foundry/foundry.toml");
+    fs::create_dir_all(global.parent().unwrap()).unwrap();
+    fs::create_dir_all(prj.root().join("directory/foundry.toml")).unwrap();
+    let cwd_config = prj.root().join(Config::FILE_NAME);
+    let other = prj.root().join("other.toml");
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    for path in [&global, &cwd_config, &other] {
+        fs::write(path, legacy).unwrap();
+    }
+
+    for (path, expected) in [
+        (
+            "missing/foundry.toml",
+            str![[r#"
+Error: config-path `missing/foundry.toml` does not exist
+
+"#]],
+        ),
+        (
+            "other.toml",
+            str![[r#"
+Error: the config-path must be a path to a foundry.toml file
+
+"#]],
+        ),
+        (
+            "directory/foundry.toml",
+            str![[r#"
+Error: config-path `directory/foundry.toml` is not a file
+
+"#]],
+        ),
+    ] {
+        cmd.forge_fuse();
+        cmd.env("HOME", test_home.path());
+        cmd.unset_env("FOUNDRY_CONFIG");
+        cmd.args(["config", "--fix", "--config-path", path])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(expected);
+
+        for path in [&global, &cwd_config, &other] {
+            assert_eq!(fs::read_to_string(path).unwrap(), legacy);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_matches_loading_for_config_file_symlink(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected");
+    let shared = prj.root().join("shared");
+    fs::create_dir_all(&selected).unwrap();
+    fs::create_dir_all(&shared).unwrap();
+    let config_path = selected.join(Config::FILE_NAME);
+    let target = shared.join("custom.toml");
+    let sibling = shared.join(Config::FILE_NAME);
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    fs::write(&target, legacy).unwrap();
+    fs::write(&sibling, "[default]\noptimizer_runs = 456\n").unwrap();
+    std::os::unix::fs::symlink("../shared/custom.toml", &config_path).unwrap();
+
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.current_dir(&selected)
+        .args(["config", "--fix", "--config-path", Config::FILE_NAME])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![""]);
+
+    assert_eq!(fs::read_to_string(&target).unwrap(), legacy);
+    assert_eq!(fs::read_link(&config_path).unwrap(), Path::new("../shared/custom.toml"));
+    assert_data_eq!(
+        fs::read_to_string(&sibling).unwrap(),
+        str![[r#"
+[profile.default]
+optimizer_runs = 456
+
+"#]]
+    );
+
+    cmd.forge_fuse();
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.current_dir(&selected)
+        .args(["config", "--json", "--config-path", Config::FILE_NAME])
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"{ "optimizer_runs": 456, "...": "{...}" }"#]],
+        )
+        .stderr_eq(str![""]);
+}
