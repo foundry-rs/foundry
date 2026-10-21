@@ -113,8 +113,6 @@ allow-git = [
     "https://github.com/alloy-rs/chains",
     "https://github.com/foundry-rs/foundry-core",
     "https://github.com/paradigmxyz/solar",
-    # Temporary: soldeer until the zip 9 bump is released.
-    "https://github.com/mario-eth/soldeer",
     # Only for tests.
     "https://github.com/rust-cli/rexpect",
     # Tempo
