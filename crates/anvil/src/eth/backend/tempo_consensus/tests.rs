@@ -283,8 +283,20 @@ fn genesis_and_hardfork_context_preserve_execution_header_fields() {
     for &hardfork in TempoHardfork::VARIANTS {
         let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
         let mut genesis = TempoHeader::default();
+        genesis.inner.timestamp = 42;
+        genesis.inner.state_root = B256::repeat_byte(7);
+        genesis.inner.extra_data = Bytes::from_static(b"tempo-genesis");
+        let expected_genesis = genesis.clone();
+        genesis.consensus_context = Some(TempoConsensusContext {
+            epoch: 0,
+            view: 1,
+            parent_view: 0,
+            proposer: consensus.identity().proposer.try_into().unwrap(),
+        });
         consensus.prepare_header(&mut genesis, hardfork).unwrap();
-        assert!(genesis.consensus_context.is_none());
+        assert_eq!(genesis, expected_genesis);
+        consensus.prepare_header(&mut genesis, hardfork).unwrap();
+        assert_eq!(genesis, expected_genesis);
         assert_eq!(
             consensus.finalize(&genesis, hardfork),
             Err(TempoConsensusError::UnexpectedHeight { expected: 1, actual: 0 })

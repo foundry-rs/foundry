@@ -102,9 +102,12 @@ impl TempoConsensus {
 
     /// Installs metadata for the next header before its hash is calculated.
     ///
-    /// Genesis stays contextless and unsigned. For other heights, this owns `consensus_context`
-    /// and `extra_data`: non-boundaries have no dealer logs, while boundaries announce the native
-    /// next-epoch outcome. Execution fields are preserved. Errors leave the header unchanged.
+    /// Genesis stays contextless and unsigned. Only its `consensus_context` is cleared; all other
+    /// fields, including caller-provided `extra_data`, are preserved.
+    ///
+    /// For other heights, this owns `consensus_context` and `extra_data`: non-boundaries have no
+    /// dealer logs, while boundaries announce the native next-epoch outcome. Execution fields are
+    /// preserved. Errors leave the header unchanged.
     pub fn prepare_header(
         &self,
         header: &mut TempoHeader,
