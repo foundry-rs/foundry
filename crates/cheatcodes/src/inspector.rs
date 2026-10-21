@@ -88,8 +88,9 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     ) -> Result<MessageResultFor<FEN>, ExecutionError>;
 
     /// Executes `tx` as a nested transaction of the transaction `evm` is running, with `env` or
-    /// the running environment, and merges its changes, such as for `executeTransaction`. A
-    /// failed transaction only keeps its nonce increment.
+    /// the running environment, and merges its changes so that they survive reverts of the
+    /// enclosing calls, such as for `executeTransaction`. A failed transaction only keeps its nonce
+    /// increment.
     ///
     /// `depth` is the depth of the cheatcode call; the nested transaction's root frame duplicates
     /// it, so its children run one level deeper.
@@ -190,7 +191,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
         // A failed transaction keeps its nonce increment.
-        foundry_evm_core::evm::merge_nested_changes(evm.state_mut(), &executed)?;
+        foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
         Ok(executed.result().clone())
     }
 
@@ -1577,9 +1578,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
+                    // The increment survives reverts of the enclosing calls.
                     if !isolate_call && let Ok(mut account) = evm.state_mut().account(&new_origin) {
                         let prev = account.nonce();
-                        account.set_nonce(prev + 1);
+                        account.set_nonce_untracked(prev + 1);
                         debug!(target: "cheatcodes", address=%new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if single_call {
@@ -3631,7 +3633,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         let nonce = account.nonce();
         if auth.nonce() == nonce + u64::from(authority == sender) {
-            account.set_nonce(nonce + 1);
+            account.set_nonce_untracked(nonce + 1);
         }
     }
     Ok(())

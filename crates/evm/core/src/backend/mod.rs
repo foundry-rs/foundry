@@ -28,7 +28,7 @@ use crate::{
         BackingDb, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutionLifecycle,
         ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory,
         FoundryEvmFor, FoundryEvmNetwork, NestedTx, Parked, SpecFor, TxFor, TxResultFor, TypesFor,
-        block_txs, evm_env,
+        block_txs, evm_env, merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -885,7 +885,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Executes `tx` as a nested transaction of the running one, in `env` or the running
-    /// environment for `None`, and merges its changes into the running transaction.
+    /// environment for `None`, and merges its changes into the running transaction so that they
+    /// survive reverts of the enclosing calls.
     pub fn transact_from_tx(
         &mut self,
         tx: &Recovered<TxFor<FEN>>,
@@ -894,7 +895,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
         trace!("execute signed transaction");
-        self.lifecycle.nested_transaction_with(evm, tx, NestedTx { env, ext: None, inspector })
+        let mut executor = self.lifecycle.nested_evm(evm, tx, env, None);
+        if let Some(inspector) = inspector {
+            executor.set_inspector(inspector);
+        }
+        let executed = executor.transact(tx).map_err(transaction_error)?;
+        merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        Ok(executed.result().clone())
     }
 
     /// Builds the EVM a nested transaction of the running one executes on, such as an isolated
