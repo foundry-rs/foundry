@@ -373,16 +373,16 @@ evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "64785b94b5697f
 # Tempo's evm2 integration (tempoxyz/tempo#7871). The `-evm2` aliases stay while the revm-based
 # Tempo crates of the same name are still wired.
 tempo-evm = { git = "https://github.com/mablr/tempo", rev = "158118b957dad5080a6d29d02d59a4783669276c", default-features = false }
-tempo-hardfork = { git = "https://github.com/mablr/tempo", rev = "048b6f5fed72fca5c6f72712526a3ee08e2b4a3f", default-features = false, features = [
+tempo-hardfork = { git = "https://github.com/mablr/tempo", rev = "158118b957dad5080a6d29d02d59a4783669276c", default-features = false, features = [
     "serde",
     "std",
 ] }
 tempo-primitives-evm2 = { package = "tempo-primitives", git = "https://github.com/mablr/tempo", rev = "158118b957dad5080a6d29d02d59a4783669276c", default-features = false }
 tempo-precompiles-evm2 = { package = "tempo-precompiles", git = "https://github.com/mablr/tempo", rev = "158118b957dad5080a6d29d02d59a4783669276c", default-features = false }
 # Op, Base and Monad evm2 type families.
-op-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "efe51d34832c8102f30730cabcd74d19a51adcee", default-features = false }
-base-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "efe51d34832c8102f30730cabcd74d19a51adcee", default-features = false }
-monad-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "efe51d34832c8102f30730cabcd74d19a51adcee", default-features = false }
+op-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "b068ddf1e3e7fb4bcefa37b129874c2dc30476a8", default-features = false }
+base-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "b068ddf1e3e7fb4bcefa37b129874c2dc30476a8", default-features = false }
+monad-evm2 = { git = "https://github.com/mablr/evm2-networks", rev = "b068ddf1e3e7fb4bcefa37b129874c2dc30476a8", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }
@@ -582,10 +582,10 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "e935d251ce533
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "e935d251ce5335ef07ad4f49176d3fb52d08d68d" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "5a9edd9684cf573c616e4c932a75658aa710772b" }
-foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "5a9edd9684cf573c616e4c932a75658aa710772b" }
-foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "5a9edd9684cf573c616e4c932a75658aa710772b" }
-foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "5a9edd9684cf573c616e4c932a75658aa710772b" }
+foundry-wallets = { git = "https://github.com/mablr/foundry-core", rev = "8b3b454477b6b289b777a57818bf9a07dca0c866" }
+foundry-compilers = { git = "https://github.com/mablr/foundry-core", rev = "8b3b454477b6b289b777a57818bf9a07dca0c866" }
+foundry-block-explorers = { git = "https://github.com/mablr/foundry-core", rev = "8b3b454477b6b289b777a57818bf9a07dca0c866" }
+foundry-fork-db = { git = "https://github.com/mablr/foundry-core", rev = "8b3b454477b6b289b777a57818bf9a07dca0c866" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }

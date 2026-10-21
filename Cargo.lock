@@ -1318,7 +1318,7 @@ dependencies = [
  "clap_complete",
  "ctrlc",
  "ethereum_ssz",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "evm2-inspectors",
  "eyre",
  "fdlimit",
@@ -1350,7 +1350,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -1375,7 +1375,7 @@ dependencies = [
  "alloy-rpc-types-mev",
  "alloy-serde",
  "bytes",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "evm2-inspectors",
  "foundry-common",
  "foundry-primitives",
@@ -2662,7 +2662,7 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=efe51d34832c8102f30730cabcd74d19a51adcee#efe51d34832c8102f30730cabcd74d19a51adcee"
+source = "git+https://github.com/mablr/evm2-networks?rev=b068ddf1e3e7fb4bcefa37b129874c2dc30476a8#b068ddf1e3e7fb4bcefa37b129874c2dc30476a8"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2672,7 +2672,7 @@ dependencies = [
  "base-common-eip8130",
  "base-common-genesis",
  "base-common-l1-fees",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84)",
+ "evm2",
 ]
 
 [[package]]
@@ -3336,7 +3336,7 @@ dependencies = [
  "clap_complete",
  "comfy-table",
  "dirs",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "evmole",
  "eyre",
  "forge-fmt",
@@ -3374,7 +3374,7 @@ dependencies = [
  "tempfile",
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tokio",
  "tower",
@@ -5193,46 +5193,11 @@ dependencies = [
  "blst",
  "c-kzg",
  "derive-where",
- "evm2-macros 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2-macros",
  "k256 0.14.0",
  "once_cell",
  "p256 0.14.0",
  "paste",
- "phf 0.14.0",
- "ripemd 0.2.0",
- "ruint",
- "secp256k1 0.33.1",
- "serde",
- "sha2 0.11.1",
- "thiserror 2.0.21",
- "triomphe",
- "typeid",
-]
-
-[[package]]
-name = "evm2"
-version = "0.1.0"
-source = "git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84#a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84"
-dependencies = [
- "alloy-consensus",
- "alloy-eip7928",
- "alloy-eips",
- "alloy-primitives",
- "ark-bls12-381",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.6.0",
- "ark-serialize 0.6.0",
- "arrayref",
- "aurora-engine-modexp",
- "auto_impl",
- "blst",
- "c-kzg",
- "derive-where",
- "evm2-macros 0.1.0 (git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84)",
- "k256 0.14.0",
- "once_cell",
- "p256 0.14.0",
  "phf 0.14.0",
  "ripemd 0.2.0",
  "ruint",
@@ -5259,7 +5224,7 @@ dependencies = [
  "boa_engine",
  "boa_gc",
  "colorchoice",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "num-bigint 0.5.1",
  "serde",
  "serde_json",
@@ -5270,16 +5235,6 @@ dependencies = [
 name = "evm2-macros"
 version = "0.1.0"
 source = "git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2#64785b94b5697f6d4bb9f03d9884dd4cf0356cf2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
-
-[[package]]
-name = "evm2-macros"
-version = "0.1.0"
-source = "git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84#a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5535,7 +5490,7 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "dunce",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "flate2",
  "forge-doc",
@@ -5667,7 +5622,7 @@ dependencies = [
  "anvil",
  "clap",
  "dialoguer",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "forge-script-sequence",
  "forge-verify",
@@ -5744,7 +5699,7 @@ dependencies = [
  "alloy-rpc-types",
  "async-trait",
  "clap",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "foundry-block-explorers",
  "foundry-cli",
@@ -5800,7 +5755,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5837,7 +5792,7 @@ dependencies = [
  "dialoguer",
  "ecdsa 0.16.9",
  "ed25519-consensus",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "forge-script-sequence",
  "foundry-cheatcodes-spec",
@@ -5863,7 +5818,7 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "thiserror 2.0.21",
@@ -5981,7 +5936,7 @@ dependencies = [
  "clap",
  "comfy-table",
  "dunce",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "flate2",
  "foundry-block-explorers",
@@ -6049,7 +6004,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6059,7 +6014,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.15.0",
+ "itertools 0.13.0",
  "path-slash",
  "rand 0.10.3",
  "rayon",
@@ -6081,7 +6036,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -6090,7 +6045,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6110,7 +6065,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6123,7 +6078,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6193,7 +6148,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "crossterm",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -6217,7 +6172,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-sol-types",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "evm2-inspectors",
  "eyre",
  "foundry-cheatcodes",
@@ -6283,7 +6238,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-evm2",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
@@ -6307,7 +6262,7 @@ dependencies = [
  "tempo-alloy",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tempo-evm",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "thiserror 2.0.21",
@@ -6322,7 +6277,7 @@ version = "1.8.6"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -6342,7 +6297,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -6370,12 +6325,12 @@ dependencies = [
  "alloy-rpc-types",
  "base-common-genesis",
  "base-evm2",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "foundry-compilers",
  "monad-evm2",
  "op-evm2",
  "serde",
- "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f)",
+ "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
 ]
 
 [[package]]
@@ -6412,7 +6367,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "base64 0.23.1",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-config",
@@ -6439,7 +6394,7 @@ dependencies = [
  "async-trait",
  "base-common-precompiles",
  "ciborium",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "evm2-inspectors",
  "eyre",
  "foundry-block-explorers",
@@ -6471,14 +6426,14 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84)",
+ "evm2",
  "eyre",
  "futures",
  "parking_lot",
@@ -6586,7 +6541,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/mablr/foundry-core?rev=5a9edd9684cf573c616e4c932a75658aa710772b#5a9edd9684cf573c616e4c932a75658aa710772b"
+source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -8384,14 +8339,14 @@ dependencies = [
 [[package]]
 name = "monad-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=efe51d34832c8102f30730cabcd74d19a51adcee#efe51d34832c8102f30730cabcd74d19a51adcee"
+source = "git+https://github.com/mablr/evm2-networks?rev=b068ddf1e3e7fb4bcefa37b129874c2dc30476a8#b068ddf1e3e7fb4bcefa37b129874c2dc30476a8"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84)",
- "evm2-macros 0.1.0 (git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84)",
+ "evm2",
+ "evm2-macros",
 ]
 
 [[package]]
@@ -8879,12 +8834,12 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=efe51d34832c8102f30730cabcd74d19a51adcee#efe51d34832c8102f30730cabcd74d19a51adcee"
+source = "git+https://github.com/mablr/evm2-networks?rev=b068ddf1e3e7fb4bcefa37b129874c2dc30476a8#b068ddf1e3e7fb4bcefa37b129874c2dc30476a8"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84)",
+ "evm2",
  "thiserror 2.0.21",
 ]
 
@@ -10484,7 +10439,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "auto_impl",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "fixed-cache",
  "futures-util",
  "moka",
@@ -10512,7 +10467,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-sol-types",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "reth-chainspec",
  "reth-ethereum-forks",
  "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=168b157db3ca7a6023217a47fce5dc7babdd5001)",
@@ -10547,7 +10502,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "derive_more",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=168b157db3ca7a6023217a47fce5dc7babdd5001)",
  "reth-primitives-traits 0.8.2",
  "reth-trie-common",
@@ -12979,8 +12934,8 @@ dependencies = [
  "auto_impl",
  "commonware-codec",
  "derive_more",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
- "evm2-macros 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
+ "evm2-macros",
  "reth-chainspec",
  "reth-consensus",
  "reth-consensus-common",
@@ -13002,25 +12957,12 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.16.0"
-source = "git+https://github.com/mablr/tempo?rev=048b6f5fed72fca5c6f72712526a3ee08e2b4a3f#048b6f5fed72fca5c6f72712526a3ee08e2b4a3f"
-dependencies = [
- "alloy-eips",
- "alloy-hardforks",
- "alloy-primitives",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=a4852586072a3a2e6f2b5f3fe9d6ea8338b3fe84)",
- "paste",
- "serde",
-]
-
-[[package]]
-name = "tempo-hardfork"
-version = "1.16.0"
 source = "git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c#158118b957dad5080a6d29d02d59a4783669276c"
 dependencies = [
  "alloy-eips",
  "alloy-hardforks",
  "alloy-primitives",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "paste",
  "serde",
 ]
@@ -13065,7 +13007,7 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "derive_more",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "itertools 0.14.0",
  "keccak-const",
  "paste",
@@ -13106,7 +13048,7 @@ dependencies = [
  "base64 0.22.1",
  "commonware-cryptography",
  "derive_more",
- "evm2 0.1.0 (git+https://github.com/mablr/evm2?rev=64785b94b5697f6d4bb9f03d9884dd4cf0356cf2)",
+ "evm2",
  "once_cell",
  "p256 0.13.2",
  "reth-codecs 0.8.2",
