@@ -516,8 +516,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Restores snapshot `id` and returns its `extra` and the running state it replaced, or `None`
     /// if it does not exist.
     ///
-    /// Logs emitted since the snapshot are kept. Persistent accounts and forks created after the
-    /// snapshot survive the revert; every fork that existed at the snapshot gets its state back.
+    /// Logs emitted since the snapshot are kept. As on master, only the context that was active at
+    /// the snapshot gets its state back and becomes active again; other contexts, persistent
+    /// accounts and forks created after the snapshot are left as they are.
     /// The replaced state is materialized, so that a failing frame can reinstate it over a backing
     /// database with [`SnapshotRestores`](super::SnapshotRestores).
     pub fn revert(
@@ -533,17 +534,28 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             self.snapshots.remove(id)
         }?;
         self.materialize(evm);
-        let LifecycleSnapshot { state, forks, env, ext, extra } = snapshot;
-        let mut current = mem::replace(&mut self.forks, forks);
-        self.forks.next_id = current.next_id;
-        self.forks.persistent = mem::take(&mut current.persistent);
-        for (id, entry) in current.forks {
-            self.forks.forks.entry(id).or_insert(entry);
+        let LifecycleSnapshot { state, mut forks, env, ext, extra } = snapshot;
+        let (replaced, logs) = if forks.active == self.forks.active {
+            (None, evm.state().logs().to_vec())
+        } else {
+            // Like master, other contexts are not part of the snapshot: park the running state
+            // in its own context so that its writes survive the revert.
+            let replaced = evm.state().snapshot();
+            (Some(replaced), self.suspend(evm).logs)
+        };
+        match forks.active {
+            None => self.forks.local = forks.local,
+            Some(id) => {
+                let entry = forks.forks.remove(&id).expect("snapshot's active fork exists");
+                self.forks.forks.insert(id, entry);
+            }
         }
+        self.forks.active = forks.active;
         let db = self.forks.active_db();
         let mut state = state.into_state(db.clone_backing());
-        *state.logs_mut() = evm.state().logs().to_vec();
-        let replaced = mem::replace(evm.state_mut(), state).into_snapshot();
+        *state.logs_mut() = logs;
+        let running = mem::replace(evm.state_mut(), state).into_snapshot();
+        let replaced = replaced.unwrap_or(running);
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
