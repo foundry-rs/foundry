@@ -15,15 +15,25 @@
 //! [tempo]: https://github.com/tempoxyz/tempo/blob/2c25f7cd8267b205a6b95e08bbc73baf887bea88/crates/consensus/src/config.rs
 
 use alloy_primitives::{B256, Bytes};
-use commonware_codec::{Write, varint::UInt};
+use commonware_codec::{
+    FixedSize, Write,
+    varint::{MAX_U64_VARINT_SIZE, UInt},
+};
 use commonware_cryptography::{
     bls12381::{
         dkg::feldman_desmedt::Output,
-        primitives::{group::Share, ops::threshold, variant::MinSig},
+        primitives::{
+            group::{G1, Share},
+            ops::threshold,
+            variant::MinSig,
+        },
     },
     ed25519::PublicKey,
 };
 use commonware_parallel::Sequential;
+
+// Three UInt<u64> varints, a digest, and two compressed MinSig signatures.
+const MAX_CERTIFICATE_BYTES: usize = 3 * MAX_U64_VARINT_SIZE + B256::len_bytes() + 2 * G1::SIZE;
 
 /// Signs a proposal with the local 1-of-1 committee and encodes its finalization certificate.
 pub(super) fn encode(
@@ -34,7 +44,7 @@ pub(super) fn encode(
     output: &Output<MinSig, PublicKey>,
     share: &Share,
 ) -> Bytes {
-    let mut certificate = Vec::new();
+    let mut certificate = Vec::with_capacity(MAX_CERTIFICATE_BYTES);
     UInt(epoch).write(&mut certificate);
     UInt(view).write(&mut certificate);
     let seed = threshold::sign_message::<MinSig>(share, b"TEMPO_SEED", &certificate);
@@ -57,7 +67,7 @@ mod tests {
         Signer,
         bls12381::{
             dkg::feldman_desmedt,
-            primitives::{group::G1, ops, sharing::Mode},
+            primitives::{ops, sharing::Mode},
         },
         ed25519::PrivateKey,
     };

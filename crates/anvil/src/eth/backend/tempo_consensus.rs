@@ -113,39 +113,15 @@ impl TempoConsensus {
         header: &mut TempoHeader,
         hardfork: TempoHardfork,
     ) -> Result<(), TempoConsensusError> {
-        let format = WireFormat::for_hardfork(hardfork)?;
+        ensure_supported_hardfork(hardfork)?;
         if header.inner.number == 0 && self.state.height == 0 {
             header.consensus_context = None;
             return Ok(());
         }
         self.check_next_height(header.inner.number)?;
-        let epoch = header.inner.number / self.epoch_length.get();
-        let parent_view = header.inner.number % self.epoch_length.get();
-        let extra_data = if parent_view == self.epoch_length.get() - 1 {
-            let next_epoch = epoch.checked_add(1).ok_or(TempoConsensusError::EpochOverflow)?;
-            let committee = self.committee_at(next_epoch).1;
-            let outcome = OnchainDkgOutcome {
-                epoch: next_epoch,
-                output: committee.output.clone(),
-                next_players: committee.output.players().clone(),
-                is_next_full_dkg: false,
-            };
-            match format {
-                WireFormat::Commonware202609 => outcome.encode().into(),
-            }
-        } else {
-            Bytes::new()
-        };
-        let proposer = B256::from(<[u8; 32]>::from(&self.committee_at(epoch).1.proposer))
-            .try_into()
-            .expect("the committee has a valid ed25519 public key");
-        header.consensus_context = hardfork.is_t4().then_some(TempoConsensusContext {
-            epoch,
-            view: parent_view + 1,
-            parent_view,
-            proposer,
-        });
-        header.inner.extra_data = extra_data;
+        let metadata = self.header_metadata(header.inner.number, hardfork.is_t4())?;
+        header.consensus_context = metadata.consensus_context;
+        header.inner.extra_data = metadata.extra_data;
         Ok(())
     }
 
@@ -161,12 +137,12 @@ impl TempoConsensus {
         hardfork: TempoHardfork,
     ) -> Result<TempoFinalization, TempoConsensusError> {
         self.check_next_height(header.inner.number)?;
-        let mut expected = header.clone();
-        self.prepare_header(&mut expected, hardfork)?;
-        if expected.consensus_context != header.consensus_context {
+        ensure_supported_hardfork(hardfork)?;
+        let metadata = self.header_metadata(header.inner.number, hardfork.is_t4())?;
+        if metadata.consensus_context != header.consensus_context {
             return Err(TempoConsensusError::InvalidContext);
         }
-        if expected.inner.extra_data != header.inner.extra_data {
+        if metadata.extra_data != header.inner.extra_data {
             return Err(TempoConsensusError::InvalidExtraData);
         }
         let height = header.inner.number;
@@ -175,16 +151,14 @@ impl TempoConsensus {
         let view = parent_view + 1;
         let digest = header.hash_slow();
         let committee = self.committee_at(epoch).1;
-        let certificate = match WireFormat::for_hardfork(hardfork)? {
-            WireFormat::Commonware202609 => certificate::encode(
-                epoch,
-                view,
-                parent_view,
-                digest,
-                &committee.output,
-                &committee.share,
-            ),
-        };
+        let certificate = certificate::encode(
+            epoch,
+            view,
+            parent_view,
+            digest,
+            &committee.output,
+            &committee.share,
+        );
         let finalization = TempoFinalization { epoch, view, digest, certificate };
         self.state.height = height;
         self.finalizations.insert(height, finalization.clone());
@@ -225,6 +199,36 @@ impl TempoConsensus {
             return Err(TempoConsensusError::UnexpectedHeight { expected, actual: height });
         }
         Ok(())
+    }
+
+    fn header_metadata(
+        &self,
+        height: u64,
+        include_context: bool,
+    ) -> Result<PreparedHeaderMetadata, TempoConsensusError> {
+        let epoch = height / self.epoch_length.get();
+        let parent_view = height % self.epoch_length.get();
+        let extra_data = if parent_view == self.epoch_length.get() - 1 {
+            let next_epoch = epoch.checked_add(1).ok_or(TempoConsensusError::EpochOverflow)?;
+            let committee = self.committee_at(next_epoch).1;
+            OnchainDkgOutcome {
+                epoch: next_epoch,
+                output: committee.output.clone(),
+                next_players: committee.output.players().clone(),
+                is_next_full_dkg: false,
+            }
+            .encode()
+            .into()
+        } else {
+            Bytes::new()
+        };
+        let consensus_context = include_context.then(|| {
+            let proposer = B256::from(<[u8; 32]>::from(&self.committee_at(epoch).1.proposer))
+                .try_into()
+                .expect("the committee has a valid ed25519 public key");
+            TempoConsensusContext { epoch, view: parent_view + 1, parent_view, proposer }
+        });
+        Ok(PreparedHeaderMetadata { consensus_context, extra_data })
     }
 
     /// Schedules a fresh committee after the epoch containing the next block.
@@ -311,6 +315,11 @@ struct Checkpoint {
     committees: BTreeMap<u64, Arc<Committee>>,
 }
 
+struct PreparedHeaderMetadata {
+    consensus_context: Option<TempoConsensusContext>,
+    extra_data: Bytes,
+}
+
 /// Invalid local consensus input or exhausted height/identity space.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TempoConsensusError {
@@ -363,35 +372,28 @@ impl Committee {
     }
 }
 
-/// The pinned upstream codec has no historical certificate or DKG format dispatch.
-enum WireFormat {
-    Commonware202609,
-}
-
-impl WireFormat {
-    const fn for_hardfork(hardfork: TempoHardfork) -> Result<Self, TempoConsensusError> {
-        match hardfork {
-            TempoHardfork::Genesis
-            | TempoHardfork::T0
-            | TempoHardfork::T1
-            | TempoHardfork::T1A
-            | TempoHardfork::T1B
-            | TempoHardfork::T1C
-            | TempoHardfork::T2
-            | TempoHardfork::T3
-            | TempoHardfork::T4
-            | TempoHardfork::T5
-            | TempoHardfork::T6
-            | TempoHardfork::T7
-            | TempoHardfork::T8
-            | TempoHardfork::T9
-            | TempoHardfork::T10
-            | TempoHardfork::T11
-            | TempoHardfork::T12
-            | TempoHardfork::T13
-            | TempoHardfork::T14 => Ok(Self::Commonware202609),
-            _ => Err(TempoConsensusError::UnsupportedHardfork(hardfork)),
-        }
+const fn ensure_supported_hardfork(hardfork: TempoHardfork) -> Result<(), TempoConsensusError> {
+    match hardfork {
+        TempoHardfork::Genesis
+        | TempoHardfork::T0
+        | TempoHardfork::T1
+        | TempoHardfork::T1A
+        | TempoHardfork::T1B
+        | TempoHardfork::T1C
+        | TempoHardfork::T2
+        | TempoHardfork::T3
+        | TempoHardfork::T4
+        | TempoHardfork::T5
+        | TempoHardfork::T6
+        | TempoHardfork::T7
+        | TempoHardfork::T8
+        | TempoHardfork::T9
+        | TempoHardfork::T10
+        | TempoHardfork::T11
+        | TempoHardfork::T12
+        | TempoHardfork::T13
+        | TempoHardfork::T14 => Ok(()),
+        _ => Err(TempoConsensusError::UnsupportedHardfork(hardfork)),
     }
 }
 
