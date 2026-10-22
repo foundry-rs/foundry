@@ -336,7 +336,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &self.lifecycle
     }
 
-    /// Returns the environment of the active context, as of the last park.
+    /// Returns the environment of the active context, as of the last park, with a fork's own chain
+    /// ID.
     pub fn evm_env(&self) -> EvmEnvFor<FEN> {
         self.lifecycle.active().env
     }
@@ -952,13 +953,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Moves the running transaction onto a separate frame EVM. See
     /// [`ExecutionLifecycle::begin_frame_evm`].
-    pub fn begin_frame_evm<'a>(&self, evm: &mut FoundryEvmFor<'_, FEN>) -> FoundryEvmFor<'a, FEN> {
-        self.lifecycle.begin_frame_evm(evm)
+    pub fn begin_frame_evm<'a>(
+        &self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        env: EvmEnvFor<FEN>,
+    ) -> FoundryEvmFor<'a, FEN> {
+        self.lifecycle.begin_frame_evm(evm, env)
     }
 
     /// Hands a frame EVM's state back to `evm`. See [`ExecutionLifecycle::end_frame_evm`].
-    pub fn end_frame_evm(evm: &mut FoundryEvmFor<'_, FEN>, frame: FoundryEvmFor<'_, FEN>) {
-        ExecutionLifecycle::<EvmFactoryFor<FEN>>::end_frame_evm(evm, frame);
+    pub fn end_frame_evm(&self, evm: &mut FoundryEvmFor<'_, FEN>, frame: FoundryEvmFor<'_, FEN>) {
+        self.lifecycle.end_frame_evm(evm, frame);
     }
 
     // ---- Running-state operations ----

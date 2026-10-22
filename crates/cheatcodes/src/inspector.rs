@@ -49,7 +49,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor,
-        TxFor, TxResultFor, TypesFor,
+        TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
 };
 use foundry_evm_traces::{
@@ -175,10 +175,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         tx_env: &TxEnvFor<FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Result<MessageResultFor<FEN>, ExecutionError> {
-        let mut frame = backend.backend().begin_frame_evm(evm);
+        let env = evm_env(evm);
+        let mut frame = backend.backend().begin_frame_evm(evm, env);
         frame.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let result = Host::execute_message(&mut frame, tx_env, message);
-        foundry_evm_core::backend::Backend::<FEN>::end_frame_evm(evm, frame);
+        let frame = release_inspector(frame);
+        backend.backend().end_frame_evm(evm, frame);
         result
     }
 

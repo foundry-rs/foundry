@@ -21,7 +21,9 @@
 //! need a different spec or chain ID while a transaction is in flight apply everything else at
 //! once and report [`EnvTransition::Deferred`]; [`ExecutionLifecycle::begin_transaction`] then
 //! applies the deferred environment at the next transaction boundary. Callers must surface a
-//! deferred transition rather than ignore it.
+//! deferred transition rather than ignore it. Until then, the inspector stack runs frames started
+//! after the change on a frame EVM built with the deferred environment
+//! ([`ExecutionLifecycle::begin_frame_evm`]).
 //!
 //! Suspending a context accepts its in-flight writes, so a fork switch is not undone when an
 //! enclosing call reverts.
@@ -228,10 +230,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// for reads between executions.
     pub fn accepted_db(&self) -> impl BackingDb + use<F, C> {
         let context = self.active();
-        AcceptedView {
-            cache: context.cache.clone().unwrap_or_default(),
-            backing: context.db.clone_backing(),
-        }
+        let backing = context.db.clone_backing();
+        backing.set_eip161(context.env.version.feature(EvmFeatures::EIP161));
+        AcceptedView { cache: context.cache.clone().unwrap_or_default(), backing }
     }
 
     /// Returns whether a snapshot exists.
@@ -259,7 +260,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
     }
 
-    /// Accepts `evm`'s state, environment and network extension state into the active context.
+    /// Accepts `evm`'s state, environment and network extension state into the active context. A
+    /// fork keeps its own chain ID.
     ///
     /// Call this between transactions, with an EVM created by [`Self::create_evm`] whose
     /// executions were committed. In-flight state that was not committed is discarded, and a
@@ -278,12 +280,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             (true, Some(accepted)) => Arc::make_mut(accepted).merge(local),
             _ => context.cache = Some(Arc::new(local)),
         }
-        context.env = env;
         context.ext = StoredExt::new(&ext);
         // Like REVM's per-fork journals, inactive contexts keep what they loaded and created until
         // they finish a transaction themselves, and the local context keeps seeding forks.
         context.loaded.clear();
         context.created.clear();
+        self.store_env(env);
     }
 
     /// Parks accepted state, environment and extensions without committing pending writes.
@@ -294,9 +296,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             return;
         }
         self.begin_transaction(&mut evm);
-        let context = self.active_mut();
-        context.env = evm_env(&evm);
-        context.ext = StoredExt::new(evm.ext());
+        self.active_mut().ext = StoredExt::new(evm.ext());
+        self.store_env(evm_env(&evm));
     }
 
     /// Materializes the accepted state `evm` reads through a shared view into its own overlay.
@@ -315,6 +316,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         cache.merge(mem::take(&mut overlay.cache));
         overlay.cache = cache;
         overlay.db = Box::new(context.db.clone_backing());
+        self.sync_database_policy(evm);
     }
 
     /// Registers a fork without selecting it and returns its local fork ID.
@@ -467,6 +469,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             env.block = *evm.block();
             let db = self.forks.active_db();
             self.factory.configure_for(&db, &env).set_env(evm, env);
+            self.sync_database_policy(evm);
         }
     }
 
@@ -601,18 +604,22 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let mut executor = self.factory.configure_for(&db, &env).new_evm(db, env);
         *executor.state_mut() = state;
         *executor.ext_mut() = ext;
+        self.sync_database_policy(&mut executor);
         executor
     }
 
-    /// Moves the transaction `evm` is running onto a separate frame EVM, such as to execute a
-    /// nested message for `deployCode` with an inspector that must not re-enter `evm`'s own.
+    /// Moves the transaction `evm` is running onto a separate frame EVM executing with `env`,
+    /// such as for `deployCode` or an in-flight spec change.
     ///
     /// Execute messages on the returned EVM with [`Host::execute_message`] and hand its state back
     /// with [`Self::end_frame_evm`]; `evm` must not execute in between.
     ///
     /// [`Host::execute_message`]: evm2::interpreter::Host::execute_message
-    pub fn begin_frame_evm<'a>(&self, evm: &mut Evm<'_, F::Types>) -> Evm<'a, F::Types> {
-        let env = evm_env(evm);
+    pub fn begin_frame_evm<'a>(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        env: EvmEnv<F::Types>,
+    ) -> Evm<'a, F::Types> {
         let db = self.forks.active_db();
         let factory = self.factory.configure_for(&db, &env);
         let mut frame = factory.new_evm_with_ext(EmptyDB::default(), env, evm.ext().clone());
@@ -620,12 +627,14 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         // SAFETY: `State`'s lifetime only bounds its backing database, and every database the
         // lifecycle installs is owned (`'static`), so the state outlives both EVMs.
         *frame.state_mut() = unsafe { mem::transmute::<State<'_>, State<'a>>(state) };
+        self.sync_database_policy(&mut frame);
         frame
     }
 
     /// Hands the state, block and network extension state of a frame EVM created with
-    /// [`Self::begin_frame_evm`] back to `evm`.
-    pub fn end_frame_evm(evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
+    /// [`Self::begin_frame_evm`] back to `evm`, restoring `evm`'s empty-account policy on the
+    /// active backing database.
+    pub fn end_frame_evm(&self, evm: &mut Evm<'_, F::Types>, mut frame: Evm<'_, F::Types>) {
         frame.clear_inspector();
         let state = mem::replace(frame.state_mut(), State::new(EmptyDB::default()));
         // SAFETY: See `begin_frame_evm`; the frame only ever installs owned backing databases,
@@ -633,6 +642,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         *evm.state_mut() = unsafe { mem::transmute::<State<'_>, State<'_>>(state) };
         *evm.ext_mut() = frame.ext().clone();
         evm.set_block(*frame.block());
+        self.sync_database_policy(evm);
     }
 
     /// Prepares `tx` to execute as a nested transaction of the running one on the EVM
@@ -710,7 +720,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active
-    /// context. Returns what the running transaction carries into the next context.
+    /// context. A fork keeps its own chain ID. Returns what the running transaction carries into
+    /// the next context.
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
         let state = evm.state_mut();
         let loaded = state
@@ -730,11 +741,10 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let logs = mem::take(state.logs_mut());
         let prewarm = state.prewarm_set().clone();
         let cache = state.overlay_db().cache.clone();
-        let env = evm_env(evm);
+        self.store_env(evm_env(evm));
         let ext = evm.ext().clone();
         let context = self.active_mut();
         context.cache = Some(Arc::new(cache.clone()));
-        context.env = env;
         context.ext = StoredExt::new(&ext);
         Suspended {
             cache,
@@ -826,14 +836,21 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         phase: ExecutionPhase,
     ) -> EnvTransition {
         let current = evm_env(evm);
+        self.sync_database_policy(evm);
         if current.spec == env.spec && current.chain_id() == env.chain_id() {
             evm.set_block(env.block);
-            self.pending_env = None;
+            // `evm` can be a frame EVM that already runs the pending environment while the frames
+            // it suspended do not, so the request stays pending for them.
+            self.pending_env = match phase {
+                ExecutionPhase::InFlight if self.pending_env.is_some() => Some(env),
+                _ => None,
+            };
             return EnvTransition::Applied;
         }
         match phase {
             ExecutionPhase::Boundary => {
                 factory.set_env(evm, env);
+                self.sync_database_policy(evm);
                 self.pending_env = None;
                 EnvTransition::Applied
             }
@@ -843,6 +860,20 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
                 EnvTransition::Deferred
             }
         }
+    }
+
+    /// Stores `env` as the active context's environment.
+    ///
+    /// A fork keeps the chain ID it was created or rolled with, as REVM selected a fork with its
+    /// own chain ID: a running change such as `vm.chainId` does not follow the fork to its next
+    /// selection. The executor carries such a change to its next transaction instead.
+    fn store_env(&mut self, mut env: EvmEnv<F::Types>) {
+        let is_fork = self.forks.active().is_some();
+        let context = self.active_mut();
+        if is_fork {
+            env.set_chain_id(context.env.chain_id());
+        }
+        context.env = env;
     }
 
     /// Returns the accounts loaded in the running transaction, including accounts loaded as
@@ -868,6 +899,22 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         slots.sort_unstable();
         slots.dedup();
         slots
+    }
+
+    /// Rebinds the running state's backing handle to its EVM's empty-account policy without
+    /// copying accepted state or changing another execution's policy.
+    pub fn sync_database_policy(&self, evm: &mut Evm<'_, F::Types>) {
+        let db = self.forks.active_db();
+        db.set_eip161(evm.version().feature(EvmFeatures::EIP161));
+        let overlay = evm.state_mut().overlay_db_mut();
+        overlay.db = if AcceptedView::is(&*overlay.db) {
+            Box::new(AcceptedView {
+                cache: Arc::clone(self.active().cache.as_ref().expect("accepted view has a cache")),
+                backing: db,
+            })
+        } else {
+            Box::new(db)
+        };
     }
 }
 

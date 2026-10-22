@@ -22,13 +22,14 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryInspectorExt,
-    backend::{Backend, transaction_error},
-    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    backend::transaction_error,
+    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, ExecutedNested, FoundryEvmExt, FoundryEvmFor,
-        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PreparedTx,
-        SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env,
-        merge_pending_changes, merge_untracked_nested_changes, release_inspector,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested, FoundryEvmExt,
+        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
+        MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
+        TxResultFor, TypesFor, evm_env, merge_pending_changes, merge_untracked_nested_changes,
+        release_inspector,
     },
     precompiles::P256_VERIFY,
 };
@@ -444,6 +445,9 @@ pub struct InspectorStackInner {
     pending_inner_root: Option<InnerRoot>,
     /// Synthetic CREATE depth corresponding to an outer top-level deployment.
     synthetic_create_depth: Option<u16>,
+    /// Whether the frame that just ended ran on a frame EVM with an in-flight environment change,
+    /// whose hooks already ran there. See `InspectorStackRefMut::env_handoff`.
+    env_handoff_ended: bool,
     /// Accounts the running top-level transaction created, directly or through isolated calls.
     tx_created: AddressSet,
     /// Address that reverted the call, if any.
@@ -499,14 +503,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // A `deployCode` create called from the test contract duplicates a top-level deployment,
         // so isolate it as well.
         self.synthetic_create_depth = (message.depth == 2).then_some(2);
-        let mut frame = backend.backend().begin_frame_evm(evm);
+        let env = evm_env(evm);
+        let mut frame = backend.backend().begin_frame_evm(evm, env);
         frame.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(cheats),
             inner: &mut *self,
             backend: Some(&mut *backend),
         });
         let result = Host::execute_message(&mut frame, tx_env, message);
-        Backend::<FEN>::end_frame_evm(evm, frame);
+        let frame = release_inspector(frame);
+        backend.backend().end_frame_evm(evm, frame);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
@@ -540,8 +546,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let result = match child.transact(tx) {
             Ok(executed) => {
                 // A failed transaction keeps its nonce increment.
-                merge_untracked_nested_changes(evm.state_mut(), &executed)?;
-                Ok(executed.result().clone())
+                merge_untracked_nested_changes(evm.state_mut(), &executed)
+                    .map(|()| executed.result().clone())
+                    .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };
@@ -1074,6 +1081,66 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
+    /// Executes `message` on a frame EVM with the spec and chain ID requested while the
+    /// transaction is in flight, if they differ from the running EVM's.
+    ///
+    /// evm2 fixes the spec and chain ID of a running EVM, so a change deferred by an in-flight
+    /// operation, such as `vm.chainId` or a fork switch, or requested by `vm.setEvmVersion`,
+    /// moves new frames onto a frame EVM built with it while the running frames keep theirs, as
+    /// REVM applied such changes to the frames started after them. The message's hooks run on the
+    /// frame EVM.
+    ///
+    /// Cheatcode calls run on the running EVM: they execute no code, and the cheatcodes that read
+    /// or change the environment act on the running EVM and the in-flight request.
+    fn env_handoff(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &mut MessageFor<FEN>,
+    ) -> Option<MessageResultFor<FEN>> {
+        if message.destination == CHEATCODE_ADDRESS {
+            return None;
+        }
+        let backend = self.backend.as_deref_mut()?;
+        let pending =
+            backend.backend().lifecycle().pending_env().map(|env| (env.spec, env.chain_id()));
+        let requested = self.cheatcodes.as_deref().and_then(|cheats| cheats.execution_evm_version);
+        if pending.is_none() && requested.is_none() {
+            return None;
+        }
+        let tx_env = interp.tx_env();
+        let evm = interp.host();
+        let running = evm_env(evm);
+        // Same precedence as the next transaction's environment: `vm.setEvmVersion` overrides
+        // the pending spec.
+        let (pending_spec, chain_id) = pending.unwrap_or((running.spec, running.chain_id()));
+        let spec = requested.unwrap_or(pending_spec);
+        if spec == running.spec && chain_id == running.chain_id() {
+            return None;
+        }
+        let mut env = EvmFactoryFor::<FEN>::default().env_with_spec(running, spec);
+        env.version.chain_id = chain_id;
+        let mut frame = backend.backend().begin_frame_evm(evm, env);
+        frame.set_inspector(InspectorStackRefMut {
+            cheatcodes: self.cheatcodes.as_deref_mut(),
+            inner: &mut *self.inner,
+            backend: Some(&mut *backend),
+        });
+        let result = Host::execute_message(&mut frame, tx_env, message);
+        let frame = release_inspector(frame);
+        backend.backend().end_frame_evm(evm, frame);
+        match result {
+            Ok(result) => {
+                // evm2 runs the end hooks right after this hook returns a result.
+                self.inner.env_handoff_ended = true;
+                Some(result)
+            }
+            Err(error) => {
+                interp.fail(error);
+                Some(message_result(message, InstrStop::Revert, Bytes::new()))
+            }
+        }
+    }
+
     /// Executes `message`, a top-level call or create of the running transaction, as a separate
     /// nested transaction, for precise gas accounting and transaction state changes.
     ///
@@ -1266,10 +1333,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let replaced = restored
             || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
-            || self.backend.as_deref().is_some_and(|b| b.backend().active_fork_id() != source_fork);
+            || backend.backend().active_fork_id() != source_fork;
         let merged = if replaced {
             child.commit_source(&executed.pending_state);
-            Backend::<FEN>::end_frame_evm(evm, child);
+            backend.backend().end_frame_evm(evm, child);
             true
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
@@ -1613,6 +1680,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.start_inner_root(interp, message) {
             return None;
         }
+        if let Some(result) = self.env_handoff(interp, message) {
+            return Some(result);
+        }
 
         let depth = message.depth;
         if depth == 0 && !self.inner.in_inner_context {
@@ -1759,6 +1829,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.inner.is_inner_context_root(message.depth) {
             return;
         }
+        if mem::take(&mut self.inner.env_handoff_ended) {
+            return;
+        }
 
         if let Some(pending) = self.inner.pending_call_traces.pop()
             && let Some(tracer) = self.inner.tracer.as_deref_mut()
@@ -1786,6 +1859,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
     ) -> Option<MessageResultFor<FEN>> {
         if self.start_inner_root(interp, message) {
             return None;
+        }
+        if let Some(result) = self.env_handoff(interp, message) {
+            return Some(result);
         }
 
         // A CREATE redirected to the CREATE2 factory is observed as a call to the factory.
@@ -1872,6 +1948,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        if mem::take(&mut self.inner.env_handoff_ended) {
+            return;
+        }
         // A redirected CREATE ends as the call to the factory, then becomes the CREATE result.
         if message.kind == MessageKind::Call {
             self.call_end(interp, message, result);
