@@ -924,3 +924,28 @@ async fn test_estimate_gas_create_without_nonce_amsterdam() {
     let call = TransactionRequest::default().with_from(maxed).with_to(from);
     provider.call(WithOtherFields::new(call)).await.unwrap();
 }
+
+// https://github.com/foundry-rs/foundry/issues/17725
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_respects_genesis_block_number() {
+    let (api, handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(100u64))).await;
+    let provider = handle.http_provider();
+
+    // The range is clamped to the blocks that exist, both before and after the first mined block.
+    for (head, blocks) in [(100, 1), (101, 2)] {
+        if head > 100 {
+            api.mine_one().await.unwrap();
+        }
+        let history =
+            api.fee_history(U256::from(10), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+        assert_eq!(history.oldest_block, 100, "head={head}");
+        assert_eq!(history.gas_used_ratio.len(), blocks, "head={head}");
+        assert_eq!(history.base_fee_per_gas.len(), blocks + 1, "head={head}");
+
+        // Fee estimation requests more blocks than exist.
+        provider.estimate_eip1559_fees().await.unwrap();
+    }
+
+    // A range ending before genesis has no blocks.
+    api.fee_history(U256::ONE, BlockNumberOrTag::Number(99), vec![]).await.unwrap_err();
+}
