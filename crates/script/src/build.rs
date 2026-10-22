@@ -304,13 +304,15 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
 
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
     pub async fn resume(mut self) -> Result<BundledState<FEN>> {
-        let chain = if self.args.multi {
+        let endpoint = if self.args.multi {
             None
         } else {
             let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
             let provider = Arc::new(ProviderBuilder::<AnyNetwork>::new(&fork_url).build()?);
-            Some(provider.get_chain_id().await?)
+            let chain = provider.get_chain_id().await?;
+            Some((fork_url, chain))
         };
+        let chain = endpoint.as_ref().map(|(_, chain)| *chain);
 
         let mut sequence = if self.sequence_exists(chain, false)? {
             self.try_load_sequence(chain, false)?
@@ -328,6 +330,17 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             sequence
         };
 
+        // A single-chain resume reaches the chain through `--rpc-url`, not the saved endpoint.
+        if let Some((fork_url, chain)) = endpoint {
+            let saved = sequence.sequences()[0].chain;
+            if saved != chain {
+                eyre::bail!(
+                    "saved sequence is for chain {saved}, but `--rpc-url` is on chain {chain}"
+                );
+            }
+            sequence.set_rpc_override(fork_url);
+        }
+
         let resolution = sequence.restore_delegated_pending(
             self.args.resume_attempt,
             self.args.resume_tx_hash,
@@ -337,7 +350,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             if let Some((sequence_index, _, attempt_id, hash)) = resolution {
                 let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
                     &self.script_config.config,
-                    sequence.sequences()[sequence_index].rpc_url(),
+                    sequence.rpc_url(sequence_index),
                 )?
                 .build()?;
                 let transaction = provider
@@ -350,7 +363,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             for index in 0..sequence.sequences().len() {
                 let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
                     &self.script_config.config,
-                    sequence.sequences()[index].rpc_url(),
+                    sequence.rpc_url(index),
                 )?
                 .build()?;
                 // A saved signed attempt whose response was lost before its hash was recorded is

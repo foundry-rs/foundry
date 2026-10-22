@@ -1612,6 +1612,110 @@ contract InterruptedResume is Script {
 }
 
 #[forgetest_init]
+async fn resume_uses_rpc_url_instead_of_saved_endpoint(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "RebindResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract RebindResumeTarget {}
+
+contract RebindResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new RebindResumeTarget();
+        new RebindResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (submission_a, submissions_a) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_a, receipts_a) =
+        spawn_rpc_proxy_recording_method(submission_a, "eth_getTransactionReceipt").await;
+    let (submission_b, submissions_b) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_b, receipts_b) =
+        spawn_rpc_proxy_recording_method(submission_b, "eth_getTransactionReceipt").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/RebindResume.s.sol/31337/run-latest.json");
+    let sensitive_path = prj.root().join("cache/RebindResume.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/RebindResume.s.sol/31337/run-latest.json.recovery.json");
+
+    // Operator A is interrupted while the first deployment is pending.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "RebindResume",
+        "--rpc-url",
+        &rpc_a,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--slow",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let first_hash = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 1)
+                && sequence["transactions"][0]["hash"].is_string()
+            {
+                break sequence["transactions"][0]["hash"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("first transaction was not checkpointed");
+    assert!(child.is_running(), "forge exited before it could be interrupted");
+    drop(child.kill_and_wait());
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    let submitted_a = submissions_a.lock().unwrap().len();
+    let polled_a = receipts_a.lock().unwrap().len();
+    assert_eq!(submitted_a, 1);
+
+    // Operator B resumes through its own endpoint.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RebindResume",
+        "--rpc-url",
+        &rpc_b,
+        "--private-key",
+        private_key,
+        "--resume",
+        "--slow",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions_a.lock().unwrap().len(), submitted_a);
+    assert_eq!(receipts_a.lock().unwrap().len(), polled_a);
+    assert_eq!(submissions_b.lock().unwrap().len(), 1);
+    assert!(receipts_b.lock().unwrap().iter().any(|params| params.get(0) == Some(&first_hash)));
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+
+    // The saved endpoint is not rewritten.
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let sensitive: Value = foundry_common::fs::read_json_file(&sensitive_path).unwrap();
+    let saved = recovery["deployments"][0]["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(sensitive["transactions"].as_array().unwrap())
+        .map(|entry| entry["rpc"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(saved, [rpc_a.as_str(); 4]);
+}
+
+#[forgetest_init]
 async fn broadcast_reports_submission_without_receipt(prj: _, cmd: _) {
     let script = prj.add_script(
         "InvisibleSubmission.s.sol",

@@ -159,6 +159,8 @@ where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
     recovery: RecoveryStore<N>,
+    /// Endpoint that replaces the saved one for this run, never persisted.
+    rpc_override: Option<String>,
 }
 
 impl<N: Network> ScriptSequenceKind<N>
@@ -229,7 +231,7 @@ where
             }
             RecoveryStore::import(data, batch, lock)?
         };
-        let sequence = Self { recovery };
+        let sequence = Self { recovery, rpc_override: None };
         sequence.recovery.data().publish(&paths)?;
         Ok(sequence)
     }
@@ -237,7 +239,7 @@ where
     fn create(data: SequenceData<N>, batch: bool) -> Result<Self> {
         let paths = data.paths();
         let recovery = RecoveryStore::create(data, batch)?;
-        let sequence = Self { recovery };
+        let sequence = Self { recovery, rpc_override: None };
         sequence.recovery.data().publish(&paths)?;
         Ok(sequence)
     }
@@ -273,6 +275,16 @@ where
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence<N>] {
         self.recovery.data_mut().sequences_mut()
+    }
+
+    /// Uses `rpc` instead of the saved endpoint for the rest of this run.
+    pub(crate) fn set_rpc_override(&mut self, rpc: String) {
+        self.rpc_override = Some(rpc);
+    }
+
+    /// Returns the endpoint used to reach the sequence at `index`.
+    pub(crate) fn rpc_url(&self, index: usize) -> &str {
+        self.rpc_override.as_deref().unwrap_or_else(|| self.sequences()[index].rpc_url())
     }
 
     pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
