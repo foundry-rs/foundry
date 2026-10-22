@@ -7541,7 +7541,8 @@ where
         if number > best {
             return Err(BlockchainError::BlockOutOfRange(best, number));
         }
-        let Some(parent) = number.checked_sub(1) else {
+        let genesis = if self.is_fork() { 0 } else { self.genesis_number() };
+        let Some(parent) = (number > genesis).then(|| number - 1) else {
             return Err(BlockchainError::Message(
                 "genesis block has no parent state to build a witness from".to_string(),
             ));
