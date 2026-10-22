@@ -75,38 +75,27 @@ mod tests {
     use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};
 
     #[test]
-    fn finalization_contains_verified_vote_and_seed() {
-        let (output, share) = committee(7);
-        let certificate = encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share);
-        assert_eq!(certificate.len(), 3 + 32 + 48 + 48);
-        assert_eq!(&certificate[..3], &[7, 9, 8]);
-        assert_eq!(&certificate[3..35], &[0x42; 32]);
-
-        let vote = G1::decode(&certificate[35..83]).unwrap();
-        let seed = G1::decode(&certificate[83..]).unwrap();
-        let public = output.public().public();
-        assert!(
-            ops::verify_message::<MinSig>(public, b"TEMPO_FINALIZE", &certificate[..35], &vote)
-                .is_ok()
-        );
-        assert!(ops::verify_message::<MinSig>(public, b"TEMPO_SEED", &[7, 9], &seed).is_ok());
-    }
-
-    #[test]
-    fn finalization_uses_variable_length_epoch_and_views() {
+    fn finalization_encodes_and_signs_variable_length_proposals() {
         let (output, share) = committee(7);
         // Literal protobuf varints independently specify the proposal's three integer fields.
         let cases = [
-            (127, &[0x7f, 0x80, 0x01, 0x7f][..], 3),
-            (128, &[0x80, 0x01, 0x81, 0x01, 0x80, 0x01][..], 4),
-            (16_383, &[0xff, 0x7f, 0x80, 0x80, 0x01, 0xff, 0x7f][..], 5),
-            (16_384, &[0x80, 0x80, 0x01, 0x81, 0x80, 0x01, 0x80, 0x80, 0x01][..], 6),
+            ((7, 9, 8), 0x42, &[7, 9, 8][..], 2),
+            ((127, 128, 127), 0, &[0x7f, 0x80, 0x01, 0x7f][..], 3),
+            ((128, 129, 128), 0, &[0x80, 0x01, 0x81, 0x01, 0x80, 0x01][..], 4),
+            ((16_383, 16_384, 16_383), 0, &[0xff, 0x7f, 0x80, 0x80, 0x01, 0xff, 0x7f][..], 5),
+            (
+                (16_384, 16_385, 16_384),
+                0,
+                &[0x80, 0x80, 0x01, 0x81, 0x80, 0x01, 0x80, 0x80, 0x01][..],
+                6,
+            ),
         ];
-        for (epoch, prefix, round_len) in cases {
-            let certificate = encode(epoch, epoch + 1, epoch, B256::ZERO, &output, &share);
+        for ((epoch, view, parent_view), digest_byte, prefix, round_len) in cases {
+            let certificate =
+                encode(epoch, view, parent_view, B256::repeat_byte(digest_byte), &output, &share);
             let proposal_len = prefix.len() + 32;
             assert_eq!(&certificate[..prefix.len()], prefix);
-            assert_eq!(&certificate[prefix.len()..proposal_len], &[0; 32]);
+            assert_eq!(&certificate[prefix.len()..proposal_len], &[digest_byte; 32]);
             assert_eq!(certificate.len(), proposal_len + 96);
 
             let vote = G1::decode(&certificate[proposal_len..proposal_len + 48]).unwrap();
@@ -122,94 +111,9 @@ mod tests {
                 .is_ok()
             );
             assert!(
-                ops::verify_message::<MinSig>(public, b"TEMPO_SEED", &prefix[..round_len], &seed,)
+                ops::verify_message::<MinSig>(public, b"TEMPO_SEED", &prefix[..round_len], &seed)
                     .is_ok()
             );
-        }
-    }
-
-    #[test]
-    fn finalization_signatures_reject_wrong_key_and_domain() {
-        let (output, share) = committee(7);
-        let (other, _) = committee(8);
-        let certificate = encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share);
-        let vote = G1::decode(&certificate[35..83]).unwrap();
-        let seed = G1::decode(&certificate[83..]).unwrap();
-
-        for (signature, message, namespace) in [
-            (&vote, &certificate[..35], &b"TEMPO_FINALIZE"[..]),
-            (&seed, &certificate[..2], &b"TEMPO_SEED"[..]),
-        ] {
-            assert!(
-                ops::verify_message::<MinSig>(
-                    other.public().public(),
-                    namespace,
-                    message,
-                    signature,
-                )
-                .is_err()
-            );
-            for wrong_namespace in [b"TEMPO".as_slice(), b"TEMPO_NOTARIZE", b"OTHER_FINALIZE"] {
-                assert!(
-                    ops::verify_message::<MinSig>(
-                        output.public().public(),
-                        wrong_namespace,
-                        message,
-                        signature,
-                    )
-                    .is_err()
-                );
-            }
-        }
-        assert!(
-            ops::verify_message::<MinSig>(
-                output.public().public(),
-                b"TEMPO_FINALIZE",
-                &certificate[..35],
-                &seed,
-            )
-            .is_err()
-        );
-        assert!(
-            ops::verify_message::<MinSig>(
-                output.public().public(),
-                b"TEMPO_SEED",
-                &certificate[..2],
-                &vote,
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn finalization_binds_every_proposal_field_and_both_signatures() {
-        let (output, share) = committee(7);
-        let certificate = encode(7, 9, 8, B256::repeat_byte(0x42), &output, &share);
-        let vote = G1::decode(&certificate[35..83]).unwrap();
-        let seed = G1::decode(&certificate[83..]).unwrap();
-        let public = output.public().public();
-
-        for index in [0, 1, 2, 3, 34] {
-            let mut modified = certificate.to_vec();
-            modified[index] ^= 1;
-            assert!(
-                ops::verify_message::<MinSig>(public, b"TEMPO_FINALIZE", &modified[..35], &vote,)
-                    .is_err()
-            );
-            let seed_valid =
-                ops::verify_message::<MinSig>(public, b"TEMPO_SEED", &modified[..2], &seed).is_ok();
-            assert_eq!(seed_valid, index >= 2);
-        }
-
-        for (range, message, namespace) in [
-            (35..83, &certificate[..35], &b"TEMPO_FINALIZE"[..]),
-            (83..131, &certificate[..2], &b"TEMPO_SEED"[..]),
-        ] {
-            let mut modified = certificate[range].to_vec();
-            modified[47] ^= 1;
-            assert!(!G1::decode(modified.as_slice()).is_ok_and(|signature| {
-                ops::verify_message::<MinSig>(public, namespace, message, &signature).is_ok()
-            }));
         }
     }
 

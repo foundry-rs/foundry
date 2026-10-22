@@ -9,10 +9,7 @@ use commonware_cryptography::bls12381::primitives::{
 #[test]
 fn zero_depth_unwind_preserves_pending_rotation() {
     let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
-    let mut header = TempoHeader::default();
-    header.inner.number = 1;
-    consensus.prepare_header(&mut header, TempoHardfork::T4).unwrap();
-    let first = consensus.finalize(&header, TempoHardfork::T4).unwrap();
+    let (_, first) = finalize(&mut consensus, 1);
     let pending = consensus.rotate().unwrap();
     let mut unchanged = consensus.clone();
 
