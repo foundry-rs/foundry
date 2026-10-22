@@ -775,7 +775,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub snapshot_restores: SnapshotRestores,
 
     /// Target of the root call of the running transaction, if it is a call.
-    root_call_target: Option<Address>,
+    ///
+    /// While an isolated call or create runs as a nested transaction, this is the target of that
+    /// transaction instead.
+    pub root_call_target: Option<Address>,
 
     /// Prank information, mapped to the call depth where pranks were added.
     pub pranks: BTreeMap<usize, Prank>,

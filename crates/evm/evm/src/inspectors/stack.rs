@@ -1276,14 +1276,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         // Cheatcodes route environment changes through their opcode overrides while isolated,
-        // and the root frame reads the running transaction's origin.
-        let previous_origin = self.cheatcodes.as_deref_mut().map(|cheats| {
+        // the root frame reads the running transaction's origin, and fork revert diagnostics
+        // compare against the nested transaction's target.
+        let previous_cheats = self.cheatcodes.as_deref_mut().map(|cheats| {
             let previous = cheats.origin_override;
             let origin = previous.unwrap_or(tx_origin);
             cheats.origin_override = (origin != message.caller).then_some(origin);
             cheats.in_isolation_context = true;
             cheats.isolation_env = Some(outer_env);
-            previous
+            let root_call_target = mem::replace(
+                &mut cheats.root_call_target,
+                (!is_create).then_some(message.destination),
+            );
+            (previous, root_call_target)
         });
         let previous_inner = self.inner.enter_inner_context(InnerRoot {
             depth: message.depth,
@@ -1309,10 +1314,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let restored = self.cheatcodes.as_deref_mut().zip(snapshot_restores).is_some_and(
             |(cheats, restores)| mem::replace(&mut cheats.snapshot_restores, restores).kept(),
         );
-        if let (Some(cheats), Some(previous)) = (self.cheatcodes.as_deref_mut(), previous_origin) {
+        if let (Some(cheats), Some((previous, root_call_target))) =
+            (self.cheatcodes.as_deref_mut(), previous_cheats)
+        {
             cheats.origin_override = previous;
             cheats.in_isolation_context = false;
             cheats.isolation_env = None;
+            cheats.root_call_target = root_call_target;
         }
 
         let Some(executed) = executed else {
