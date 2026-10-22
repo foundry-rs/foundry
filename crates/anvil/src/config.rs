@@ -2184,9 +2184,14 @@ latest block number: {latest_block}"
         // Blob rules and fee state belong to the selected fork context even when the target block
         // predates Cancun. Always replace both so a reset cannot retain the previous fork's
         // schedule or excess gas. The source headers' excess blob gas was produced under the source
-        // chain's rules, so use its hardfork, falling back to the fork's own when it is unknown.
-        let blob_params =
-            get_blob_params_by_hardfork(source_protocol_hardfork.unwrap_or(effective_hardfork));
+        // chain's rules, so prefer its public schedule. An Anvil endpoint reports the hardfork it
+        // executes, which can differ from the blob schedule it inherited from its own source, so
+        // only use it for chains without a public schedule.
+        let blob_hardfork =
+            source_hardfork(effective_network, source_chain_id, block.header.timestamp())
+                .or(fork_identity.hardfork)
+                .unwrap_or(effective_hardfork);
+        let blob_params = get_blob_params_by_hardfork(blob_hardfork);
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
