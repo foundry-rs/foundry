@@ -526,6 +526,15 @@ pub struct Config {
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
+    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    ///
+    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
+    /// and storage slots in the cache of the newest older block on the same chain are fetched
+    /// again at the new block in the background. This helps forks of `latest`, which start
+    /// cold on each new head. Values come from the fork block and never replace cached values,
+    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    #[serde(default)]
+    pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
     /// `compute_units_per_second`
     pub no_rpc_rate_limit: bool,
@@ -3148,6 +3157,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             no_fork_bal: false,
+            fork_prefetch: false,
             no_rpc_rate_limit: false,
             use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
@@ -3603,6 +3613,31 @@ mod tests {
             let config = Config::load().unwrap();
             assert!(!config.no_fork_bal);
             assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_prefetch_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                fork_prefetch = true
+
+                [profile.ci]
+                fork_prefetch = false
+                ",
+            )?;
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "true");
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "invalid");
+            assert!(Config::load().is_err());
             Ok(())
         });
     }
@@ -4802,6 +4837,7 @@ mod tests {
                 names = false
                 no_storage_caching = false
                 no_fork_bal = false
+                fork_prefetch = false
                 no_rpc_rate_limit = false
                 offline = false
                 optimizer = true

@@ -1403,6 +1403,96 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
     }
 }
 
+// A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
+// continues with the operations after it.
+#[forgetest_init]
+async fn resume_skips_recorded_revert(prj: _, cmd: _) {
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    let script = prj.add_script(
+        "RevertedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract RevertedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+        require(success);
+        payable(address(0xdEaD)).transfer(1);
+        payable(address(0xdEaD)).transfer(1);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let path = prj.root().join("broadcast/RevertedResume.s.sol/31337/run-latest.json");
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // Runtime that reverts once storage slot 0 is set.
+    api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let args = [
+        "--tc",
+        "RevertedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--slow",
+    ];
+
+    // The gate call passes simulation, then reverts on chain before later calls are sent.
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--broadcast");
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let reverted = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && let Some(hash) = sequence["pending"].get(0)
+            {
+                break hash.as_str().unwrap().to_string();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the gate call was not checkpointed");
+    api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("Error: Transaction Failure: {reverted}\n")
+    );
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+
+    // Every resume skips the revert; the first submits the remaining calls, the second nothing.
+    let provider = handle.http_provider();
+    for _ in 0..2 {
+        cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
+        cmd.assert_success().stderr_eq(format!(
+            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\nWarning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 31337: {reverted}\n"
+        ));
+        let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+        assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
+        let receipts = sequence["receipts"].as_array().unwrap();
+        assert_eq!(receipts.len(), 2);
+        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+    }
+}
+
 #[forgetest_init]
 async fn resume_replays_dropped_signed_checkpoint(prj: _, cmd: _) {
     let script = prj.add_script(
@@ -5751,7 +5841,7 @@ Traces:
   [..] CounterScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    ├─ [..] VM::deployCode("src/Counter.sol:Counter")
     │   ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0x5FbDB2315678afecb367f032d93F642f64180aa3]
@@ -6545,6 +6635,95 @@ async fn tempo_batch_resume_reuses_signed_payload(prj: _, cmd: _) {
         U256::from_be_slice(deployed[0].as_slice())
     );
     assert_eq!(provider.get_storage_at(deployed[2], U256::ZERO).await.unwrap(), U256::from(0x1234));
+}
+
+// A reverted batch is recorded outside `receipts`, and resume warns about it without resubmitting.
+#[forgetest_init]
+async fn tempo_batch_resume_skips_recorded_revert(prj: _, cmd: _) {
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    let script = prj.add_script(
+        "RevertedBatch.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract RevertedBatch is Script {
+    function run() external {
+        vm.startBroadcast();
+        for (uint256 i; i < 2; i++) {
+            (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+            require(success);
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    // Runtime that reverts once storage slot 0 is set.
+    api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let args = [
+        "--tc",
+        "RevertedBatch",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--batch",
+        "--network",
+        "tempo",
+    ];
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--broadcast");
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let (path, reverted) = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(path) =
+                foundry_common::fs::json_files(&prj.root().join("broadcast")).find(|file| {
+                    file.ends_with("run-latest.json") && !file.to_string_lossy().contains("dry-run")
+                })
+                && let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && let Some(hash) = sequence["pending"].get(0)
+            {
+                break (path, hash.as_str().unwrap().to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the batch was not checkpointed");
+    api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)\nError: Batch transaction failed (reverted)\n"
+    );
+
+    let provider = handle.http_provider();
+    for _ in 0..2 {
+        let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+        assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
+        assert!(sequence["receipts"].as_array().unwrap().is_empty());
+        assert!(sequence["pending"].as_array().unwrap().is_empty());
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+
+        cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
+        cmd.assert_success().stderr_eq(format!(
+            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\n"
+        ));
+    }
 }
 
 #[forgetest_init]
@@ -7797,6 +7976,7 @@ async fn script_check_contract_sizes_uses_amsterdam_code_size_limit(prj: _, cmd:
     write_large_runtime_deploy_script(&prj, 50_000);
     prj.update_config(|config| {
         config.evm_version = EvmVersion::Amsterdam;
+        config.experimental = true;
     });
 
     let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000_000))).await;
@@ -7836,6 +8016,7 @@ async fn script_check_contract_sizes_uses_network_specific_spec(prj: _, cmd: _) 
     ] {
         prj.update_config(|config| {
             config.evm_version = EvmVersion::Amsterdam;
+            config.experimental = true;
             config.networks = networks;
             config.hardfork = hardfork.map(|hardfork| hardfork.parse().unwrap());
         });
@@ -7857,7 +8038,7 @@ async fn script_check_contract_sizes_uses_network_specific_spec(prj: _, cmd: _) 
         let assert = cmd.assert_success();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
         assert!(
-            stderr.contains("above the contract size limit (50308 > 24576)"),
+            stderr.contains("above the contract size limit (50322 > 24576)"),
             "missing size warning for {hardfork:?}: {stderr}"
         );
     }
