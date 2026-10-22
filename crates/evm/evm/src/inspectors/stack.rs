@@ -1919,8 +1919,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         let trace_idx = self.inner.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
         // Pranks and broadcasts can change the creator and destination, so read the opcode's
-        // charge first. A synthetic `deployCode` create is not created by an opcode.
-        let precharged_state = if depth == 1
+        // charge first. A synthetic `deployCode` create carries the charge of the cheatcode.
+        let precharged_state = if self.inner.synthetic_create_depth == Some(depth) {
+            self.cheatcodes.as_deref().map_or(0, |cheats| cheats.deploy_code_create_state_gas)
+        } else if depth == 1
             && message.kind == MessageKind::Create
             && self.inner.enable_isolation
             && !self.inner.in_inner_context

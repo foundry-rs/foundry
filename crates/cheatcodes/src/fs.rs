@@ -25,6 +25,7 @@ use foundry_evm_traces::CallKind;
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
+    mem,
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -618,8 +619,13 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     };
     // Restore the outer marker afterwards, as constructors can call `deployCode` too.
     let outer_deploy_code_depth = ccx.state.deploy_code_depth.replace(depth);
+    let outer_create_state_gas = mem::replace(
+        &mut ccx.state.deploy_code_create_state_gas,
+        if charged_create_state_gas { create_state_gas } else { 0 },
+    );
     let outcome = exec_create(executor, message, ccx);
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
+    ccx.state.deploy_code_create_state_gas = outer_create_state_gas;
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.

@@ -924,6 +924,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
+
+    /// Account-creation state gas the in-flight `deployCode` call already charged its caller for
+    /// its create frame.
+    pub deploy_code_create_state_gas: u64,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1000,6 +1004,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             isolation_env: None,
             in_replay: false,
             deploy_code_depth: None,
+            deploy_code_create_state_gas: 0,
         }
     }
 
