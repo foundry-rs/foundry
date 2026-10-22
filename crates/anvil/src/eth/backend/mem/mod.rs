@@ -8176,10 +8176,8 @@ where
         let transaction = block.body.transactions[info.transaction_index as usize].clone();
 
         // Cancun specific
-        let excess_blob_gas = block.header.excess_blob_gas();
         let blob_gas_used = transaction.blob_gas_used();
-        let blob_gas_price = blob_gas_used
-            .map(|_| alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default()));
+        let blob_gas_price = blob_gas_used.and_then(|_| block.header.blob_fee(self.blob_params()));
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
