@@ -907,6 +907,7 @@ fn cache_block_env(block: &evm2::env::BlockEnv) -> BlockEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::opts::EvmOpts;
     use alloy_chains::NamedChain;
     use alloy_eips::eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
     use alloy_primitives::{Address, B256, U256};
@@ -1133,5 +1134,58 @@ mod tests {
             );
             assert!(manager.forks[&id].bal_prewarmed.load(Ordering::Relaxed));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_state_by_number_does_not_load_or_overwrite_hash_cache() {
+        let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+        let (_api, handle) = anvil::spawn(
+            anvil::NodeConfig::test().with_chain_id(Some(chain_id)).with_no_mining(true),
+        )
+        .await;
+        let opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(0),
+            ..Default::default()
+        };
+        let resolved = opts.prepare_fork().await.unwrap().unwrap();
+        let (env, _) = opts.env_at_fork::<EthEvmNetwork>(Some(&resolved)).await.unwrap();
+        let path = Config::foundry_block_cache_dir(chain_id, resolved.number()).unwrap();
+        assert!(!path.exists());
+        let meta = BlockchainDbMeta::new(cache_block_env(&env.block), handle.http_endpoint())
+            .with_fork_identity(resolved.hash(), resolved.source_id());
+        let cached = BlockchainDb::new(meta.clone(), Some(path.clone()));
+        let address = Address::with_last_byte(0x42);
+        cached.storage().write().entry(address).or_default().insert(U256::ZERO, U256::from(42));
+        cached.cache().flush();
+        assert!(path.exists());
+
+        for state_by_number in [true, false] {
+            let fork = CreateFork {
+                url: handle.http_endpoint(),
+                enable_caching: true,
+                evm_opts: EvmOpts { fork_state_by_number: state_by_number, ..opts.clone() },
+            };
+            let (_, fork, fork_state, block_env, _) =
+                create_fork(fork, None, false, None).await.unwrap();
+            let (backend, handler) = create_backend(&fork, &fork_state, &block_env).unwrap();
+            assert_eq!(backend.data().storage.read().contains_key(&address), !state_by_number);
+            if state_by_number {
+                backend
+                    .data()
+                    .storage
+                    .write()
+                    .entry(address)
+                    .or_default()
+                    .insert(U256::ZERO, U256::from(99));
+            }
+            backend.flush_cache();
+            drop(backend);
+            drop(handler);
+            let reloaded = BlockchainDb::new(meta.clone(), Some(path.clone()));
+            assert_eq!(reloaded.storage().read()[&address][&U256::ZERO], U256::from(42));
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
     }
 }
