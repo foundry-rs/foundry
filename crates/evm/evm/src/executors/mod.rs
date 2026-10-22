@@ -1087,7 +1087,9 @@ fn install_env<FEN: FoundryEvmNetwork>(
         backend.lifecycle().sync_database_policy(evm);
         return;
     }
-    let factory = EvmFactoryFor::<FEN>::default();
+    // The backend's factory carries network configuration, such as Base's activation admin.
+    let lifecycle = backend.lifecycle();
+    let factory = lifecycle.factory().configure_for(&lifecycle.forks().active_db(), &env);
     let precompiles = factory.precompiles(&env, evm.ext());
     let EvmEnv { spec, version, block } = env;
     evm.set_block_and_execution_config(
