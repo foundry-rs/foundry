@@ -2140,13 +2140,21 @@ mod tests {
     }
 
     #[test]
-    fn set_spec_id_updates_spec_dependent_version() {
+    fn set_spec_id_updates_spec_dependent_cfg_state() {
         let mut executor = eth_executor(ExecutorBuilder::default().spec_id(SpecId::HOMESTEAD));
+        assert_eq!(
+            executor.evm_env().version.gas_params,
+            evm2::Version::new(SpecId::HOMESTEAD).gas_params
+        );
         assert!(!executor.evm_env().version.feature(evm2::EvmFeatures::EIP8037));
 
         executor.set_spec_id(SpecId::AMSTERDAM);
 
         assert_eq!(executor.spec_id(), SpecId::AMSTERDAM);
+        assert_eq!(
+            executor.evm_env().version.gas_params,
+            evm2::Version::new(SpecId::AMSTERDAM).gas_params
+        );
         assert!(executor.evm_env().version.feature(evm2::EvmFeatures::EIP8037));
     }
 
