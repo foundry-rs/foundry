@@ -223,7 +223,7 @@ where
 
 #[test]
 fn eth_lifecycle() {
-    lifecycle_suite::<EthEvmNetwork>(EthEvmFactory, SpecId::PRAGUE);
+    lifecycle_suite::<EthEvmNetwork>(EthEvmFactory::default(), SpecId::PRAGUE);
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn eth_signed_transactions_pay_effective_fees() {
     let signer = PrivateKeySigner::random();
     let (caller, to, coinbase) =
         (signer.address(), Address::with_last_byte(0xA2), Address::with_last_byte(0xA3));
-    let factory = EthEvmFactory;
+    let factory = EthEvmFactory::default();
     let mut env =
         EvmEnv::new(SpecId::PRAGUE, factory.version(SpecId::PRAGUE, 1), Default::default());
     env.block.basefee = U256::from(5 * GWEI);
@@ -312,7 +312,7 @@ fn requests_without_sender_or_fields_fail() {
 #[test]
 fn spec_changes_keep_foundry_policy() {
     let caller = Address::with_last_byte(0xA1);
-    let factory = EthEvmFactory;
+    let factory = EthEvmFactory::default();
     let mut env =
         EvmEnv::new(SpecId::CANCUN, factory.version(SpecId::CANCUN, 31337), Default::default());
     env.set_feature(EvmFeatures::NONCE_CHECK, false);

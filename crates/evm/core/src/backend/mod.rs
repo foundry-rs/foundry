@@ -260,7 +260,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             EmptyDB::default(),
             self.lifecycle.active().env,
         );
-        backend.networks = self.networks;
+        backend.set_networks(self.networks);
         backend
     }
 
@@ -273,7 +273,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<()> {
         let networks = self.networks;
         *self = Self::new(self.forks.clone(), fork, env)?;
-        self.networks = networks;
+        self.set_networks(networks);
         Ok(())
     }
 
@@ -316,8 +316,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Sets the active network configuration.
-    pub const fn set_networks(&mut self, networks: NetworkConfigs) {
+    pub fn set_networks(&mut self, networks: NetworkConfigs) {
         self.networks = networks;
+        let factory = self.lifecycle.factory().with_networks(networks);
+        self.lifecycle.set_factory(factory);
     }
 
     /// Sets the block number the active fork reports while executing transactions of that block

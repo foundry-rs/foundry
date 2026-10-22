@@ -38,6 +38,7 @@ use evm2::{
 };
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_evm_hardforks::ExecutionSpec;
+use foundry_evm_networks::NetworkConfigs;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -211,6 +212,12 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         _db: &D,
         _env: &EvmEnv<Self::Types>,
     ) -> Self {
+        self.clone()
+    }
+
+    /// Returns this factory configured for `networks`, such as Celo's transfer precompile on
+    /// Ethereum.
+    fn with_networks(&self, _networks: NetworkConfigs) -> Self {
         self.clone()
     }
 

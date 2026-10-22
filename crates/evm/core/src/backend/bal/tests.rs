@@ -17,7 +17,7 @@ fn bal_reads_use_index_and_fall_back_to_parent_state() {
     let address = Address::with_last_byte(1);
     let slot = U256::ZERO;
     let spec = evm2::SpecId::AMSTERDAM;
-    let env = EvmEnv::new(spec, EthEvmFactory.version(spec, 1), Default::default());
+    let env = EvmEnv::new(spec, EthEvmFactory::default().version(spec, 1), Default::default());
     let mut backend = Backend::<EthEvmNetwork>::with_db(EmptyDB::default(), env);
     backend.insert_account_info(address, AccountInfo::default().with_balance(U256::from(10)));
     backend.insert_account_storage(address, slot, U256::from(10));

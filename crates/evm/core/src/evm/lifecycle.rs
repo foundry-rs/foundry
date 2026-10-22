@@ -201,6 +201,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         &self.factory
     }
 
+    /// Replaces the factory used for EVMs built from now on.
+    pub fn set_factory(&mut self, factory: F) {
+        self.factory = factory;
+    }
+
     /// Returns the fork registry.
     pub const fn forks(&self) -> &ForkRegistry<F::Types> {
         &self.forks
