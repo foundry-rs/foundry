@@ -397,3 +397,121 @@ fn persistent_account_keeps_created_status_without_source_state() {
     let _ = backend.select_fork(first, &mut evm, ExecutionPhase::InFlight).unwrap();
     assert!(evm.state_mut().account(&STORE_ADDRESS).unwrap().is_created());
 }
+
+/// Ethereum replay skips protocol system envelopes it cannot represent, but still rejects
+/// unknown non-system transaction types.
+#[test]
+fn ethereum_replay_skips_unknown_system_envelopes_before_conversion() {
+    use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
+
+    let transaction = |ty| {
+        let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+            hash: B256::ZERO,
+            inner: UnknownTypedTransaction {
+                ty: AnyTxType(ty),
+                fields: Default::default(),
+                memo: Default::default(),
+            },
+        });
+        AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
+            inner: Recovered::new_unchecked(unknown, Address::with_last_byte(0x42)),
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            block_timestamp: None,
+        }))
+    };
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::PRAGUE;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let backend = Backend::<EthEvmNetwork>::with_db(db_with(&[], 0), env);
+    let db = db_with(&[], 0);
+
+    let block = rpc_block(vec![transaction(SYSTEM_TRANSACTION_TYPE), transaction(0xff)]);
+    assert!(backend.replay_until(&db, env, &block, 1, None, CHAIN_ID).is_ok());
+    assert!(backend.replay_until(&db, env, &block, 2, None, CHAIN_ID).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_fork_account_updates_loaded_journals() {
+    use alloy_provider::Provider;
+
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let target = alloy_primitives::address!("0x0000000000000000000000000000000000001331");
+    let code = Bytes::from_static(&[0x60, 0x2a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+    let block_number = handle.http_provider().get_block_number().await.unwrap();
+    let mut evm_opts = EvmOpts {
+        fork_url: Some(handle.http_endpoint()),
+        fork_block_number: Some(block_number),
+        ..Default::default()
+    };
+    evm_opts.infer_network_from_fork().await.unwrap();
+    let fork = evm_opts.get_fork(&Default::default(), 31_337, Some(block_number)).unwrap();
+    let backend =
+        Backend::<EthEvmNetwork>::spawn(Some(fork), evm_opts.local_evm_env::<EthEvmNetwork>())
+            .unwrap();
+
+    // The running transaction loaded the account and changed its balance.
+    let mut evm = backend.create_evm();
+    evm.state_mut().account(&target).unwrap().set_balance(U256::ONE);
+    assert_eq!(
+        evm.read_account_info(&target).unwrap().unwrap().code_hash,
+        alloy_primitives::KECCAK256_EMPTY
+    );
+
+    api.anvil_set_code(target, code.clone()).await.unwrap();
+    backend.refresh_fork_account(target, ForkAccountField::Code, &mut evm).unwrap();
+
+    let refreshed = evm.read_account_info(&target).unwrap().unwrap();
+    assert_eq!(refreshed.code_hash, alloy_primitives::keccak256(&code));
+    assert_eq!(refreshed.balance, U256::ONE);
+    let refreshed_code = evm.state_mut().account(&target).unwrap().load_code().unwrap();
+    assert_eq!(refreshed_code.original_bytes(), code);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_execution_scopes_release_their_registry() {
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let request = CreateFork {
+        url: handle.http_endpoint(),
+        enable_caching: false,
+        evm_opts: EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() },
+    };
+    let env = EvmOpts::default().local_evm_env::<EthEvmNetwork>();
+    let seed = Backend::<EthEvmNetwork>::spawn(Some(request.clone()), env).unwrap();
+    let initial = seed.ensure_fork_id(seed.active_fork_id().unwrap()).unwrap().clone();
+    let shared = seed.forks.get_fork(initial.clone()).unwrap().unwrap();
+    let mut execution = seed.clone_with_fork_scope().unwrap();
+    let inherited = execution.forks.get_fork(initial.clone()).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&shared.data(), &inherited.data()));
+
+    let local = execution.create_fork(request).unwrap();
+    let local = execution.ensure_fork_id(local).unwrap().clone();
+    assert!(execution.forks.get_fork(local.clone()).unwrap().is_some());
+    assert!(seed.forks.get_fork(local.clone()).unwrap().is_none());
+    let next = seed.clone_with_fork_scope().unwrap();
+    assert!(next.forks.get_fork(local).unwrap().is_none());
+    let (_other_api, other) = anvil::spawn(anvil::NodeConfig::test()).await;
+    let unique = execution
+        .create_fork(CreateFork {
+            url: other.http_endpoint(),
+            enable_caching: false,
+            evm_opts: EvmOpts { fork_url: Some(other.http_endpoint()), ..Default::default() },
+        })
+        .unwrap();
+    let unique = execution.ensure_fork_id(unique).unwrap().clone();
+    let unique = execution.forks.get_fork(unique).unwrap().unwrap();
+    let cache = Arc::downgrade(&unique.data());
+    drop(unique);
+    drop(execution);
+    assert!(cache.upgrade().is_none(), "execution-owned remote cache must be released");
+    drop(seed);
+
+    // The child retains the original handler even after its owner is gone.
+    assert!(next.forks.get_fork(initial).unwrap().is_some());
+    assert!(
+        next.basic(handle.dev_accounts().next().unwrap()).unwrap().unwrap().balance > U256::ZERO
+    );
+}
