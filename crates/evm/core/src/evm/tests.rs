@@ -633,9 +633,8 @@ fn from_any_rpc_transaction_for_tempo_aa() {
         calls,
         ..Default::default()
     };
-    tempo_tx.fee_payer_signature = Some(
-        sponsor.sign_hash_sync(&tempo_tx.fee_payer_signature_hash(sender.address())).unwrap(),
-    );
+    tempo_tx.fee_payer_signature =
+        Some(sponsor.sign_hash_sync(&tempo_tx.fee_payer_signature_hash(sender.address())).unwrap());
     let signature = sender.sign_hash_sync(&tempo_tx.signature_hash()).unwrap();
     let aa_signed = tempo_tx.into_signed(signature.into());
     let tx_hash = *aa_signed.hash();
@@ -681,10 +680,7 @@ fn captured_tempo_aa(json: &str) -> Recovered<tempo_evm::TempoTxEnv> {
     let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
     let aa = tx.as_aa().unwrap();
     // Recovery over the recomputed signing hash only succeeds if every signed field decoded.
-    assert_eq!(
-        aa.signature().recover_signer(&aa.signature_hash()).unwrap(),
-        tx.signer()
-    );
+    assert_eq!(aa.signature().recover_signer(&aa.signature_hash()).unwrap(), tx.signer());
     assert_eq!(tx.ty(), 0x76);
     tx
 }
@@ -694,7 +690,13 @@ fn tempo_call(to: Address, input: Bytes) -> (TxKind, U256, Bytes) {
 }
 
 fn tempo_calls(tx: &tempo_evm::TempoTxEnv) -> Vec<(TxKind, U256, Bytes)> {
-    tx.as_aa().unwrap().tx().calls.iter().map(|call| (call.to, call.value, call.input.clone())).collect()
+    tx.as_aa()
+        .unwrap()
+        .tx()
+        .calls
+        .iter()
+        .map(|call| (call.to, call.value, call.input.clone()))
+        .collect()
 }
 
 #[test]
