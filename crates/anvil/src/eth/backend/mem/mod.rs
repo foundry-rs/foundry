@@ -2830,7 +2830,8 @@ impl<N: Network> Backend<N> {
     ///  - the base fee is zero and its check disabled for a zero-fee call, while a priced call must
     ///    pay at least the base fee
     ///  - the blob base fee is zero for a blob call without a blob fee cap
-    ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
+    ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap, except under
+    ///    EIP-8037
     ///  - `nonce` check is skipped
     fn build_call_env_with_base(
         &self,
@@ -2851,7 +2852,10 @@ impl<N: Network> Backend<N> {
         // we want to disable this in eth_call, since this is common practice used by other node
         // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
         evm_env.cfg_env.disable_block_gas_limit = true;
-        evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+        // Under EIP-8037 the cap stays, because gas above it becomes the state gas reservoir.
+        if evm_env.cfg_env.spec < SpecId::AMSTERDAM {
+            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+        }
 
         // Disable the nonce check.
         evm_env.cfg_env.disable_nonce_check = true;
@@ -4982,14 +4986,11 @@ impl<N: Network> Backend<N> {
             if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
         let mut staged_cfg = CfgEnv::new();
-        staged_cfg.set_spec_and_mainnet_gas_params(local_spec);
+        staged_config.set_cfg_spec(&mut staged_cfg, local_spec);
         staged_cfg.chain_id = local_chain_id;
         staged_cfg.limit_contract_code_size = staged_config.code_size_limit;
         staged_cfg.disable_eip3607 = true;
         staged_cfg.disable_block_gas_limit = staged_config.disable_block_gas_limit;
-        if !staged_config.enable_tx_gas_limit {
-            staged_cfg.tx_gas_limit_cap = Some(u64::MAX);
-        }
         if let Some(memory_limit) = staged_config.memory_limit {
             staged_cfg.memory_limit = memory_limit;
         }

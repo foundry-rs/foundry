@@ -9,6 +9,7 @@ use alloy_eips::{
     eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_TYPE},
     eip7251::{CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_TYPE},
     eip7685::{EMPTY_REQUESTS_HASH, Requests},
+    eip7825::MAX_TX_GAS_LIMIT_OSAKA as TX_GAS_LIMIT_CAP,
     eip7928::{
         AccountChanges, BlockAccessIndex, NonceChange, SlotChanges, StorageChange,
         compute_block_access_list_hash,
@@ -2884,4 +2885,47 @@ async fn spawn_hash_aware_rpc_proxy(
 
 fn quantity(value: &Value) -> u64 {
     u64::from_str_radix(value.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17716>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_amsterdam_state_gas_reservoir() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let sender = address!("0xc000000000000000000000000000000000000000");
+    let contract = address!("0xc200000000000000000000000000000000000000");
+    let payload = SimulatePayload {
+        block_state_calls: vec![SimBlock {
+            block_overrides: None,
+            state_overrides: Some(
+                StateOverridesBuilder::with_capacity(1)
+                    .append(
+                        contract,
+                        AccountOverride {
+                            // Stores and returns `gasleft()`, which reports only regular gas.
+                            code: Some(Bytes::from_static(&[
+                                0x5a, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60,
+                                0x00, 0xf3,
+                            ])),
+                            ..Default::default()
+                        },
+                    )
+                    .build(),
+            ),
+            calls: vec![TransactionRequest {
+                from: Some(sender),
+                to: Some(TxKind::Call(contract)),
+                gas: Some(30_000_000),
+                ..Default::default()
+            }],
+        }],
+        ..Default::default()
+    };
+
+    let blocks = api.simulate_v1(payload, None).await.unwrap();
+    let call = &blocks[0].calls[0];
+
+    assert!(call.status);
+    // The cap bounds regular gas, out of which the call pays 15,000 intrinsic gas and 2 for `GAS`.
+    assert_eq!(U256::from_be_slice(&call.return_data), U256::from(TX_GAS_LIMIT_CAP - 15_002));
 }
