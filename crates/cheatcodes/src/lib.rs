@@ -16,7 +16,7 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::{Address, B256, U256};
-use evm2::env::TxEnv;
+use evm2::{env::TxEnv, interpreter::GasTracker};
 use foundry_evm_core::{
     backend::{Backend, CowBackend, LocalForkId},
     evm::{
@@ -164,8 +164,8 @@ pub struct CheatsCtxt<'a, 'evm, FEN: FoundryEvmNetwork> {
     pub(crate) tx_env: &'a TxEnv<TypesFor<FEN>>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
-    /// Gas limit of the current cheatcode call.
-    pub(crate) gas_limit: u64,
+    /// Gas of the current cheatcode call, returned to the caller.
+    pub(crate) gas: &'a mut GasTracker,
     /// Whether the current cheatcode call is static.
     pub(crate) is_static: bool,
     /// Call depth of the frame calling the cheatcode.

@@ -4995,8 +4995,8 @@ contract StorageHooksTest is Test {
         StorageHookDepthTarget hooked = new StorageHookDepthTarget();
         hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
 
-        // The test contract's frame takes one call-depth slot, also for an isolated call.
-        uint256 depth = 1023;
+        // Without isolation the test contract's frame takes one more call-depth slot.
+        uint256 depth = vm.isIsolateMode() ? 1024 : 1023;
         assertTrue(baseline.recurse(depth));
         assertFalse(hooked.recurse(depth));
     }

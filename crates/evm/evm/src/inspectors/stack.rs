@@ -12,7 +12,7 @@ use alloy_primitives::{
 use evm2::{
     EvmFeatures, ExecutionError, Inspector,
     ethereum::intrinsic_and_floor_gas,
-    evm::{DbResult, JournalEntry, PendingState, State},
+    evm::{DbResult, JournalEntry, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
 };
 use foundry_cheatcodes::{
@@ -29,13 +29,13 @@ use foundry_evm_core::{
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
         TxResultFor, TypesFor, evm_env, merge_pending_changes, merge_untracked_nested_changes,
-        release_inspector,
+        release_inspector, warm_set,
     },
     precompiles::P256_VERIFY,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
-use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
+use foundry_evm_traces::{CallTrace, SparsedTraceArena, TraceRequirements};
 use std::{
     mem,
     ops::{Deref, DerefMut},
@@ -445,6 +445,11 @@ pub struct InspectorStackInner {
     pending_inner_root: Option<InnerRoot>,
     /// Synthetic CREATE depth corresponding to an outer top-level deployment.
     synthetic_create_depth: Option<u16>,
+    /// Active fork when the running isolated call started.
+    isolated_source_fork: Option<Option<U256>>,
+    /// Warmth of the running isolated call when it succeeded after switching forks, captured
+    /// before its transaction ended.
+    isolated_switch_warmth: Option<PrewarmSet>,
     /// Whether the frame that just ended ran on a frame EVM with an in-flight environment change,
     /// whose hooks already ran there. See `InspectorStackRefMut::env_handoff`.
     env_handoff_ended: bool,
@@ -1276,14 +1281,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         // Cheatcodes route environment changes through their opcode overrides while isolated,
-        // and the root frame reads the running transaction's origin.
-        let previous_origin = self.cheatcodes.as_deref_mut().map(|cheats| {
+        // the root frame reads the running transaction's origin, and fork revert diagnostics
+        // compare against the nested transaction's target.
+        let previous_cheats = self.cheatcodes.as_deref_mut().map(|cheats| {
             let previous = cheats.origin_override;
             let origin = previous.unwrap_or(tx_origin);
             cheats.origin_override = (origin != message.caller).then_some(origin);
             cheats.in_isolation_context = true;
             cheats.isolation_env = Some(outer_env);
-            previous
+            let root_call_target = mem::replace(
+                &mut cheats.root_call_target,
+                (!is_create).then_some(message.destination),
+            );
+            (previous, root_call_target)
         });
         let previous_inner = self.inner.enter_inner_context(InnerRoot {
             depth: message.depth,
@@ -1295,6 +1305,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let snapshot_restores =
             self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
 
+        let previous_source_fork = self.inner.isolated_source_fork.replace(source_fork);
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
@@ -1302,6 +1313,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         });
         let executed = child.transact(&tx).ok().map(|executed| executed.detach());
         let mut child = release_inspector(child);
+        self.inner.isolated_source_fork = previous_source_fork;
+        let switch_warmth = self.inner.isolated_switch_warmth.take();
 
         self.inner.exit_inner_context(previous_inner);
         self.inner.pending_create2_redirects.truncate(create2_redirects);
@@ -1309,10 +1322,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let restored = self.cheatcodes.as_deref_mut().zip(snapshot_restores).is_some_and(
             |(cheats, restores)| mem::replace(&mut cheats.snapshot_restores, restores).kept(),
         );
-        if let (Some(cheats), Some(previous)) = (self.cheatcodes.as_deref_mut(), previous_origin) {
+        if let (Some(cheats), Some((previous, root_call_target))) =
+            (self.cheatcodes.as_deref_mut(), previous_cheats)
+        {
             cheats.origin_override = previous;
             cheats.in_isolation_context = false;
             cheats.isolation_env = None;
+            cheats.root_call_target = root_call_target;
         }
 
         let Some(executed) = executed else {
@@ -1331,13 +1347,40 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .map(|change| change.address),
         );
 
+        let fork_changed = backend.backend().active_fork_id() != source_fork;
         let replaced = restored
-            || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
-            || backend.backend().active_fork_id() != source_fork;
+            || fork_changed
+            || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
         let merged = if replaced {
+            // Across another state replacement the running transaction keeps its warmth, and the
+            // nested transaction's on success. A restored snapshot brings its own, and, as on
+            // master, so does a fork switch: the nested transaction's state replaces the running
+            // one's.
+            let warmth = if restored {
+                None
+            } else if fork_changed {
+                switch_warmth
+            } else {
+                Some(warm_set(evm.state_mut()))
+            };
             child.commit_source(&executed.pending_state);
             backend.backend().end_frame_evm(evm, child);
-            true
+            if let Some(warmth) = warmth {
+                evm.state_mut().set_prewarm_set(warmth);
+            } else if fork_changed && !restored {
+                // As on master, persistent slots the call had warmed when it switched forks stay
+                // warm after it fails, without their accounts.
+                let slots = backend.backend().lifecycle().switch_slots().clone();
+                for (address, keys) in slots {
+                    for key in keys {
+                        let _ =
+                            evm.state_mut().storage_slot(&address, key).map(|mut slot| slot.warm());
+                    }
+                }
+            }
+            restored
+                || !result.status
+                || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok()
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
                 && (!result.status
@@ -1394,6 +1437,22 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheatcodes.clear_storage_hook_mapping_slots();
             cheatcodes.snapshot_restores = SnapshotRestores::default();
         }
+    }
+
+    /// Captures the warmth of an isolated call whose root frame succeeded on another fork than it
+    /// started on, before its transaction ends and clears it.
+    fn capture_switch_warmth(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        result: &MessageResultFor<FEN>,
+    ) {
+        let switched = self.inner.isolated_source_fork.is_some_and(|source| {
+            self.backend
+                .as_deref()
+                .is_some_and(|backend| backend.backend().active_fork_id() != source)
+        });
+        self.inner.isolated_switch_warmth =
+            (switched && result.is_success()).then(|| warm_set(interp.host().state_mut()));
     }
 
     /// Handles the root frame of a nested transaction, returning whether `message` is one that
@@ -1653,10 +1712,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
     fn log(&mut self, log: &Log, host: &mut FoundryEvmFor<'_, FEN>) {
         let inner = &mut *self.inner;
-        // Network post-transaction hooks, such as Tempo's fee settlement, emit logs after the root
-        // frame has ended, when the tracer has no call to attach them to.
+        // Network transaction hooks emit logs outside the root frame, when the tracer has no call
+        // to attach them to: Tempo's 2D nonce increment before it starts and its fee settlement
+        // after it ends. As on master, where REVM only reports logs of running frames, they stay
+        // out of the trace. Until the root frame starts, the arena's entry node is a placeholder.
         let tracer = inner.tracer.as_mut().filter(|tracer| {
-            tracer.traces().nodes().first().is_none_or(|root| root.trace.status.is_none())
+            tracer.traces().nodes().first().is_none_or(|root| {
+                root.trace.status.is_none() && root.trace != CallTrace::default()
+            })
         });
         call_inspectors!([tracer, &mut inner.log_collector], |inspector| {
             Inspector::<TypesFor<FEN>>::log(&mut **inspector, log, host)
@@ -1827,6 +1890,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
         // surrounding transaction.
         if self.inner.is_inner_context_root(message.depth) {
+            self.capture_switch_warmth(interp, result);
             return;
         }
         if mem::take(&mut self.inner.env_handoff_ended) {
@@ -1899,8 +1963,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         let trace_idx = self.inner.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
         // Pranks and broadcasts can change the creator and destination, so read the opcode's
-        // charge first. A synthetic `deployCode` create is not created by an opcode.
-        let precharged_state = if depth == 1
+        // charge first. A synthetic `deployCode` create carries the charge of the cheatcode.
+        let precharged_state = if self.inner.synthetic_create_depth == Some(depth) {
+            self.cheatcodes.as_deref().map_or(0, |cheats| cheats.deploy_code_create_state_gas)
+        } else if depth == 1
             && message.kind == MessageKind::Create
             && self.inner.enable_isolation
             && !self.inner.in_inner_context
@@ -1961,6 +2027,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         self.end_snapshot_frame(interp, message, result);
 
         if self.inner.is_inner_context_root(message.depth) {
+            self.capture_switch_warmth(interp, result);
             return;
         }
 
@@ -2019,6 +2086,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Storage of accounts with arbitrary storage stays warm, so its generated values are kept.
     fn cool_for_static_call(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         let state = interp.host().state_mut();
+        // Warmth carried across fork switches cools too.
+        if let Some(prewarm) =
+            self.backend.as_deref().and_then(|backend| backend.backend().lifecycle().tx_prewarm())
+        {
+            state.set_prewarm_set(prewarm.clone());
+        }
         let arbitrary = self
             .cheatcodes
             .as_deref()

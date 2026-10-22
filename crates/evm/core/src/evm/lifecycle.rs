@@ -157,6 +157,10 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory, C = ()> {
     forks: ForkRegistry<F::Types>,
     snapshots: StateSnapshots<LifecycleSnapshot<F::Types, C>>,
     pending_env: Option<EvmEnv<F::Types>>,
+    /// Base warm set of the running transaction from before a fork switch carried warmth into it.
+    tx_prewarm: Option<PrewarmSet>,
+    /// Warm slots of persistent accounts the last fork switch carried into the next context.
+    switch_slots: AddressMap<HashSet<U256>>,
 }
 
 impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
@@ -166,6 +170,8 @@ impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
             forks: self.forks.clone(),
             snapshots: self.snapshots.clone(),
             pending_env: self.pending_env,
+            tx_prewarm: self.tx_prewarm.clone(),
+            switch_slots: self.switch_slots.clone(),
         }
     }
 }
@@ -185,6 +191,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             forks: ForkRegistry::new(Parked::new(Box::new(db), env, ext)),
             snapshots: StateSnapshots::default(),
             pending_env: None,
+            tx_prewarm: None,
+            switch_slots: AddressMap::default(),
         }
     }
 
@@ -462,9 +470,20 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.pending_env.as_ref()
     }
 
-    /// Applies an environment change deferred by an in-flight operation. Call before every
-    /// transaction.
+    /// Returns the base warm set of the running transaction if a fork switch carried warmth into
+    /// its warm set, which cooling the transaction's state must restore.
+    pub const fn tx_prewarm(&self) -> Option<&PrewarmSet> {
+        self.tx_prewarm.as_ref()
+    }
+
+    /// Applies an environment change deferred by an in-flight operation and forgets the warmth
+    /// contexts kept from the previous transaction. Call before every transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {
+        self.tx_prewarm = None;
+        self.forks.local.warm.clear();
+        for entry in self.forks.forks.values_mut() {
+            entry.context.warm.clear();
+        }
         if let Some(mut env) = self.pending_env.take() {
             env.block = *evm.block();
             let db = self.forks.active_db();
@@ -501,8 +520,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Restores snapshot `id` and returns its `extra` and the running state it replaced, or `None`
     /// if it does not exist.
     ///
-    /// Logs emitted since the snapshot are kept. Persistent accounts and forks created after the
-    /// snapshot survive the revert; every fork that existed at the snapshot gets its state back.
+    /// Logs emitted since the snapshot are kept. As on master, only the context that was active at
+    /// the snapshot gets its state back and becomes active again; other contexts, persistent
+    /// accounts and forks created after the snapshot are left as they are.
     /// The replaced state is materialized, so that a failing frame can reinstate it over a backing
     /// database with [`SnapshotRestores`](super::SnapshotRestores).
     pub fn revert(
@@ -518,17 +538,34 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             self.snapshots.remove(id)
         }?;
         self.materialize(evm);
-        let LifecycleSnapshot { state, forks, env, ext, extra } = snapshot;
-        let mut current = mem::replace(&mut self.forks, forks);
-        self.forks.next_id = current.next_id;
-        self.forks.persistent = mem::take(&mut current.persistent);
-        for (id, entry) in current.forks {
-            self.forks.forks.entry(id).or_insert(entry);
+        let LifecycleSnapshot { state, mut forks, env, ext, extra } = snapshot;
+        let (replaced, logs) = if forks.active == self.forks.active {
+            (None, evm.state().logs().to_vec())
+        } else {
+            // Like master, other contexts are not part of the snapshot. The running context keeps
+            // what reached its state before the running transaction and drops the transaction's
+            // changes, as master drops the journal of the fork active at the revert.
+            let replaced = evm.state().snapshot();
+            let state = evm.state_mut();
+            let logs = mem::take(state.logs_mut());
+            state.clear_transaction_state();
+            let cache = mem::take(&mut state.overlay_db_mut().cache);
+            self.active_mut().cache = Some(Arc::new(cache));
+            (Some(replaced), logs)
+        };
+        match forks.active {
+            None => self.forks.local = forks.local,
+            Some(id) => {
+                let entry = forks.forks.remove(&id).expect("snapshot's active fork exists");
+                self.forks.forks.insert(id, entry);
+            }
         }
+        self.forks.active = forks.active;
         let db = self.forks.active_db();
         let mut state = state.into_state(db.clone_backing());
-        *state.logs_mut() = evm.state().logs().to_vec();
-        let replaced = mem::replace(evm.state_mut(), state).into_snapshot();
+        *state.logs_mut() = logs;
+        let running = mem::replace(evm.state_mut(), state).into_snapshot();
+        let replaced = replaced.unwrap_or(running);
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
@@ -728,6 +765,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             .loaded_accounts()
             .map(|(address, slots)| (*address, slots.copied().collect::<HashSet<_>>()))
             .collect::<Vec<_>>();
+        let warm = warm_accounts(state);
         let context = self.active_mut();
         for (address, slots) in loaded {
             if state.account(&address).is_ok_and(|account| account.is_created()) {
@@ -735,11 +773,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             }
             context.loaded.entry(address).or_default().extend(slots);
         }
+        // The context keeps the warmth it resumed with, which the running state holds in its
+        // prewarm set rather than in loaded accounts, even if this visit did not touch it.
+        for (address, slots) in &warm {
+            context.warm.entry(*address).or_default().extend(slots);
+        }
         self.materialize(evm);
         let state = evm.state_mut();
         state.commit_transaction();
         let logs = mem::take(state.logs_mut());
-        let prewarm = state.prewarm_set().clone();
+        let prewarm = self.tx_prewarm.get_or_insert_with(|| state.prewarm_set().clone()).clone();
         let cache = state.overlay_db().cache.clone();
         self.store_env(evm_env(evm));
         let ext = evm.ext().clone();
@@ -752,6 +795,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             created: context.created.clone(),
             logs,
             prewarm,
+            warm,
         }
     }
 
@@ -770,7 +814,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             loaded: source_loaded,
             created: source_created,
             logs,
-            prewarm,
+            mut prewarm,
+            warm: source_warm,
         } = suspended;
         if carry {
             self.active_mut().inherit(&source_loaded, &source_created, &source);
@@ -797,6 +842,26 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         });
         context.created.extend(persistent_created);
         let created = context.created.clone();
+        // Like REVM's per-fork journals, a selected context resumes with its own warmth from this
+        // transaction, and a rolled one warms every account the running transaction loaded, with
+        // slots for created and persistent accounts. Persistent accounts keep their warmth.
+        let mut warm = mem::take(&mut context.warm);
+        if carry {
+            for (address, slots) in &source_loaded {
+                warm.entry(*address).or_default().extend(slots);
+            }
+        }
+        self.switch_slots.clear();
+        for address in &persistent {
+            if let Some(slots) = source_warm.get(address) {
+                warm.entry(*address).or_default().extend(slots);
+                self.switch_slots.insert(*address, slots.clone());
+            }
+        }
+        for (address, slots) in &warm {
+            prewarm.warm_storage(address, slots.iter().copied());
+        }
+        self.active_mut().warm = warm;
 
         let mut state = State::new(db.clone_backing());
         state.overlay_db_mut().cache = cache;
@@ -876,6 +941,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         context.env = env;
     }
 
+    /// Returns the warm slots of persistent accounts the last fork switch carried into the next
+    /// context.
+    pub const fn switch_slots(&self) -> &AddressMap<HashSet<U256>> {
+        &self.switch_slots
+    }
+
     /// Returns the accounts loaded in the running transaction, including accounts loaded as
     /// absent and accounts loaded before fork switches, with their loaded slots.
     ///
@@ -928,8 +999,11 @@ struct Suspended {
     created: AddressSet,
     /// Logs of the running transaction.
     logs: Vec<Log>,
-    /// Base warmth of the running transaction, such as its access list.
+    /// Base warmth of the running transaction, such as its access list, without warmth carried
+    /// by fork switches.
     prewarm: PrewarmSet,
+    /// Accounts and slots warm in the running transaction.
+    warm: AddressMap<HashSet<U256>>,
 }
 
 /// Clears `evm`'s inspector and returns the EVM without the borrows the inspector held, such as
@@ -979,6 +1053,37 @@ pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
 /// transaction's `state` as journaled writes, like [`merge_nested_changes`].
 pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
     merge_changes(state, pending.account_changes(), |_| true, false)
+}
+
+/// Returns the warmth of the running transaction in `state`: its base warm set and the accounts and
+/// slots it warmed, for a transaction that continues in a replaced state.
+pub fn warm_set(state: &mut State<'_>) -> PrewarmSet {
+    let mut prewarm = state.prewarm_set().clone();
+    for (address, slots) in warm_accounts(state) {
+        prewarm.warm_storage(&address, slots);
+    }
+    prewarm
+}
+
+/// Returns the accounts the running transaction in `state` loaded and that are warm, with their
+/// warm slots.
+fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
+    let loaded = state
+        .loaded_accounts()
+        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    let mut warm = AddressMap::default();
+    for (address, slots) in loaded {
+        if !state.account(&address).is_ok_and(|account| account.is_warm()) {
+            continue;
+        }
+        let slots = slots
+            .into_iter()
+            .filter(|key| state.storage_slot(&address, *key).is_ok_and(|slot| slot.is_warm()))
+            .collect();
+        warm.insert(address, slots);
+    }
+    warm
 }
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
