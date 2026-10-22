@@ -373,27 +373,11 @@ impl Committee {
 }
 
 const fn ensure_supported_hardfork(hardfork: TempoHardfork) -> Result<(), TempoConsensusError> {
-    match hardfork {
-        TempoHardfork::Genesis
-        | TempoHardfork::T0
-        | TempoHardfork::T1
-        | TempoHardfork::T1A
-        | TempoHardfork::T1B
-        | TempoHardfork::T1C
-        | TempoHardfork::T2
-        | TempoHardfork::T3
-        | TempoHardfork::T4
-        | TempoHardfork::T5
-        | TempoHardfork::T6
-        | TempoHardfork::T7
-        | TempoHardfork::T8
-        | TempoHardfork::T9
-        | TempoHardfork::T10
-        | TempoHardfork::T11
-        | TempoHardfork::T12
-        | TempoHardfork::T13
-        | TempoHardfork::T14 => Ok(()),
-        _ => Err(TempoConsensusError::UnsupportedHardfork(hardfork)),
+    // Upstream appends new hardforks; extending support requires a wire-format review.
+    if hardfork as u64 <= TempoHardfork::T14 as u64 {
+        Ok(())
+    } else {
+        Err(TempoConsensusError::UnsupportedHardfork(hardfork))
     }
 }
 
