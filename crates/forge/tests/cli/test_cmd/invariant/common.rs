@@ -2706,6 +2706,45 @@ contract OptimizationTest {
     );
 }
 
+#[forgetest]
+fn invariant_optimization_shrink_keeps_raising_calls(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 12;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Queue {
+    uint256 length;
+    int256 score;
+    function push() external { length++; }
+    function pop() external { if (length > 0) length--; }
+    function sum() external { score = int256(length); }
+    function value() external view returns (int256) { return score; }
+}
+contract OptimizationTest {
+    Queue queue;
+    function setUp() public { queue = new Queue(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(queue); }
+    function invariant_optimize() public view returns (int256) { return queue.value(); }
+}
+"#);
+    // Seed 3 reaches 3 with a pop among four pushes. Dropping the pop reaches 4; dropping it in a
+    // block with a push would keep 3.
+    cmd.args(["test", "--fuzz-seed", "3", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 12, shrunk: 5)
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=sum() args=[]
+ invariant_optimize() (best: 4, runs: 1, calls: 12)
+...
+"#]]);
+}
+
 // Test that optimization mode works with negative values (finding max of negative range).
 #[forgetest]
 fn invariant_optimization_negative_values(prj: _, cmd: _) {

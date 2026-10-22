@@ -394,12 +394,14 @@ fn build_shrunk_sequence(
 /// Shared sequence shrinker. Tries to drop each call; `predicate` decides whether the candidate
 /// should be accepted, rejected, or skipped without spending a replay attempt.
 ///
-/// First tries to drop blocks of kept calls, halving the block size down to two calls, then drops
-/// single calls. Stops when every kept call was tried once since the last accepted removal: the
-/// sequence is then a fixpoint and further passes would replay the same rejected candidates.
+/// With `drop_blocks`, first tries to drop blocks of kept calls, halving the block size down to two
+/// calls, then drops single calls. Stops when every kept call was tried once since the last
+/// accepted removal: the sequence is then a fixpoint and further passes would replay the same
+/// rejected candidates.
 pub fn shrink_sequence_by_removing<P, S, A>(
     calls_len: usize,
     run: &mut ShrinkRun,
+    drop_blocks: bool,
     mut should_stop: S,
     mut on_attempt: A,
     mut predicate: P,
@@ -411,7 +413,7 @@ where
 {
     let mut shrinker = SequenceShrink::new(calls_len);
 
-    let mut chunk = calls_len / 2;
+    let mut chunk = if drop_blocks { calls_len / 2 } else { 0 };
     while chunk >= 2 && run.can_try() && !should_stop() {
         let kept = shrinker.current().collect::<Vec<_>>();
         let mut accepted_block = false;
@@ -509,6 +511,7 @@ where
     let shrinker = shrink_sequence_by_removing(
         calls.len(),
         &mut run,
+        true,
         || early_exit.should_stop(),
         || progress.inc(),
         |shrinker| {
@@ -939,6 +942,9 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     let shrinker = shrink_sequence_by_removing(
         calls.len(),
         &mut run,
+        // Dropping a block whose calls cancel out keeps the score but can discard a call that
+        // raises it once a single removal drops the call that lowered it.
+        false,
         || early_exit.should_stop() || replay_failed.get(),
         || progress.inc(),
         |shrinker| {
@@ -1366,6 +1372,7 @@ mod tests {
         let shrinker = shrink_sequence_by_removing(
             2,
             &mut run,
+            true,
             || false,
             || {},
             |shrinker| {
