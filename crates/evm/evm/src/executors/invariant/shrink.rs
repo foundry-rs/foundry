@@ -394,8 +394,9 @@ fn build_shrunk_sequence(
 /// Shared sequence shrinker. Tries to drop each call; `predicate` decides whether the candidate
 /// should be accepted, rejected, or skipped without spending a replay attempt.
 ///
-/// Stops when every kept call was tried once since the last accepted removal: the sequence is
-/// then a fixpoint and further passes would replay the same rejected candidates.
+/// First tries to drop blocks of kept calls, halving the block size down to two calls, then drops
+/// single calls. Stops when every kept call was tried once since the last accepted removal: the
+/// sequence is then a fixpoint and further passes would replay the same rejected candidates.
 pub fn shrink_sequence_by_removing<P, S, A>(
     calls_len: usize,
     run: &mut ShrinkRun,
@@ -409,6 +410,38 @@ where
     A: FnMut(),
 {
     let mut shrinker = SequenceShrink::new(calls_len);
+
+    let mut chunk = calls_len / 2;
+    while chunk >= 2 && run.can_try() && !should_stop() {
+        let kept = shrinker.current().collect::<Vec<_>>();
+        let mut accepted_block = false;
+        for block in kept.chunks(chunk) {
+            if !run.can_try() || should_stop() {
+                break;
+            }
+            for &call_idx in block {
+                shrinker.remove(call_idx);
+            }
+            let decision = run.try_candidate_decision(|| predicate(&shrinker));
+            if decision.is_some() {
+                on_attempt();
+            }
+            if decision == Some(true) {
+                accepted_block = true;
+            } else {
+                for &call_idx in block {
+                    shrinker.restore(call_idx);
+                }
+            }
+        }
+        // The first levels cost a few attempts. Once a level has eight or more blocks and none
+        // can go, the needed calls are dense and single removals are the cheaper path.
+        if !accepted_block && kept.len() / chunk >= 8 {
+            break;
+        }
+        chunk /= 2;
+    }
+
     let mut call_idx = 0;
     // Kept calls tried without an accepted removal since the last change.
     let mut unchanged_candidates = 0usize;
@@ -1315,9 +1348,10 @@ mod tests {
             },
         );
 
-        // Pass 1: call 0 rejected, call 1 accepted, calls 2 and 3 rejected. Pass 2: call 0
-        // rejected again, which completes a pass over the three kept calls.
-        assert_eq!(replay_attempts, 5);
+        // Chunk pass: blocks [0, 1] and [2, 3] rejected. Single pass 1: call 0 rejected, call 1
+        // accepted, calls 2 and 3 rejected. Pass 2: call 0 rejected again, which completes a pass
+        // over the three kept calls.
+        assert_eq!(replay_attempts, 7);
         assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![0, 2, 3]);
     }
 
