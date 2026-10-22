@@ -830,6 +830,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             commit,
             recovery_generation: None,
             profile,
+            reverted: vec![],
         };
         Ok(sequence)
     }

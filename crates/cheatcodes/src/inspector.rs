@@ -1123,6 +1123,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
         call: &CallInputs,
+        gas: &mut Gas,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
         // decode the cheatcode call
@@ -1146,13 +1147,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         apply_dispatch(
             &decoded,
-            &mut CheatsCtxt {
-                state: self,
-                ecx,
-                gas_limit: call.gas_limit,
-                caller,
-                is_static: call.is_static,
-            },
+            &mut CheatsCtxt { state: self, ecx, gas, caller, is_static: call.is_static },
             executor,
         )
     }
@@ -1163,6 +1158,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
         call: &CallInputs,
+        gas: &mut Gas,
     ) -> Result {
         let input = call.input.bytes(ecx);
         let caller = call.transfer_from();
@@ -1172,13 +1168,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
 
         crate::monad::apply_monad_cheatcode(
-            &mut CheatsCtxt {
-                state: self,
-                ecx,
-                gas_limit: call.gas_limit,
-                caller,
-                is_static: call.is_static,
-            },
+            &mut CheatsCtxt { state: self, ecx, gas, caller, is_static: call.is_static },
             &input,
         )
     }
@@ -1246,6 +1236,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Maps the depth of the synthetic `deployCode` create frame, which runs in a nested EVM one
+    /// level deeper, to the depth of the cheatcode call, where a native create would run.
+    fn deploy_code_caller_depth(&self, depth: usize) -> usize {
+        if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth }
+    }
+
     /// Handles a call, accounting for whether the executor will isolate it as a transaction.
     ///
     /// If `isolate_call` is true, the executor owns the transaction nonce increment when the call
@@ -1262,7 +1258,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             EvmFactoryFor::<FEN>::set_execution_spec(ecx, spec_id);
         }
 
-        let gas = Gas::new(call.gas_limit);
+        let mut gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journal().depth();
         self.start_created_accounts_frame(
             curr_depth == 0,
@@ -1298,7 +1294,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         if call.transfer_to() == CHEATCODE_ADDRESS {
-            return match self.apply_cheatcode(ecx, call, executor) {
+            return match self.apply_cheatcode(ecx, call, &mut gas, executor) {
                 Ok(retdata) => Some(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Return,
@@ -1328,7 +1324,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if crate::monad::is_monad_cheatcode_call(self.extra_cheatcode_addresses, call.transfer_to())
         {
             let checkpoint = ecx.journal_mut().checkpoint();
-            return match self.apply_monad_cheatcode(ecx, call) {
+            return match self.apply_monad_cheatcode(ecx, call, &mut gas) {
                 Ok(retdata) => {
                     ecx.journal_mut().checkpoint_commit();
                     Some(CallOutcome {
@@ -2389,9 +2385,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
-        let isolated_snapshot_gas_used = self
-            .gas_metering
-            .take_isolated_snapshot_gas_used(ecx.journal().depth(), &outcome.result.gas);
+        // Depth at which the caller resumes and applies the region snapshot correction.
+        let caller_depth = self.deploy_code_caller_depth(ecx.journal().depth());
+        let isolated_snapshot_gas_used =
+            self.gas_metering.take_isolated_snapshot_gas_used(caller_depth, &outcome.result.gas);
         if self.finish_storage_hook_call(ecx, call, outcome) {
             return;
         }
@@ -2813,9 +2810,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
-        let isolated_snapshot_gas_used = self
-            .gas_metering
-            .take_isolated_snapshot_gas_used(ecx.journal().depth(), &outcome.result.gas);
+        // Depth at which the caller resumes and applies the region snapshot correction.
+        let caller_depth = self.deploy_code_caller_depth(ecx.journal().depth());
+        let isolated_snapshot_gas_used =
+            self.gas_metering.take_isolated_snapshot_gas_used(caller_depth, &outcome.result.gas);
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -2961,10 +2959,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
 impl<FEN: FoundryEvmNetwork> InspectorExt for Cheatcodes<FEN> {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
-        // `deployCode` executes its create frame in a nested EVM one level deeper, so match it
-        // at the depth of the cheatcode call, as for native creates.
-        let depth =
-            if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth };
+        // Match the synthetic `deployCode` create at the depth of the cheatcode call, as for
+        // native creates.
+        let depth = self.deploy_code_caller_depth(depth);
         let target_depth = if let Some(prank) = &self.get_prank(depth) {
             prank.depth
         } else if let Some(broadcast) = &self.broadcast {

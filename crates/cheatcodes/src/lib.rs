@@ -23,7 +23,10 @@ use foundry_evm_core::{
     evm::{FoundryContextFor, FoundryEvmNetwork, SpecFor},
     fork::CreateFork,
 };
-use revm::context::{Block, Cfg, ContextTr, JournalTr, Transaction};
+use revm::{
+    context::{Block, Cfg, ContextTr, JournalTr, Transaction},
+    interpreter::Gas,
+};
 
 pub use Vm::ForgeContext;
 pub use config::{ChainBuild, CheatsConfig};
@@ -127,8 +130,8 @@ pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork> {
     pub(crate) ecx: &'a mut FoundryContextFor<'db, FEN>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
-    /// Gas limit of the current cheatcode call.
-    pub(crate) gas_limit: u64,
+    /// Gas of the current cheatcode call, returned to the caller.
+    pub(crate) gas: &'a mut Gas,
     /// Whether the current cheatcode call is static.
     pub(crate) is_static: bool,
 }
@@ -196,10 +199,10 @@ impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
         self.ecx.block().slot_num()
     }
 
-    /// Returns the block excess blob gas, if any.
+    /// Returns the block blob gas price (`block.blobbasefee`), if any.
     #[inline]
-    pub(crate) fn blob_excess_gas(&self) -> Option<u64> {
-        self.ecx.block().blob_excess_gas()
+    pub(crate) fn blob_gasprice(&self) -> Option<u128> {
+        self.ecx.block().blob_gasprice()
     }
 
     /// Returns the transaction caller (`tx.origin`).

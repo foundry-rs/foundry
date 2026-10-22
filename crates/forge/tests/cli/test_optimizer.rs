@@ -146,19 +146,19 @@ Ran 1 test for test/Value.t.sol:ValueTest
 [PASS] test_arguments() ([GAS])
 Traces:
   [[..]] ValueTest::test_arguments()
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
     │   ├─ [[..]] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
     │   ├─ [[..]] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
     │   ├─ [[..]] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
     │   ├─ [[..]] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
@@ -3165,7 +3165,7 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
   [..] CounterTest::test_Increment()
-    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    ├─ [[..]] VM::deployCode("src/Counter.sol:Counter")
     │   ├─ [[..]] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
@@ -4172,7 +4172,7 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 Traces:
 ...
-    ├─ [0] VM::deployCode("src/Targets.sol:Literal", 0x[..])
+    ├─ [[..]] VM::deployCode("src/Targets.sol:Literal", 0x[..])
 ...
 "#]]);
 }
@@ -4627,7 +4627,7 @@ Ran 1 test for test/Isolation.t.sol:IsolationTest
 [PASS] test_create() ([GAS])
 Traces:
   [[..]] IsolationTest::test_create()
-    ├─ [0] VM::deployCode("src/Target.sol:Target")
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target")
     │   ├─ [[..]] → new Target@[..]
     │   │   ├─ [[..]] IsolationTest::read() [staticcall]
     │   │   │   └─ ← [Return] 0
@@ -5511,4 +5511,51 @@ Error: Compiler run failed:
 Error: Yul exception:Variable _8 is 1 too deep in the stack.
 
 "#]]);
+}
+
+// This two-file reproducer fails with a real Yul stack error on Solc 0.8.24.
+// Its fork test is compile-only here; a separate smoke test deploys without a fork.
+#[forgetest]
+fn preprocess_via_ir_codegen(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.dynamic_test_linking = true;
+        config.via_ir = true;
+        config.evm_version = EvmVersion::Shanghai;
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(200);
+        config.bytecode_hash = foundry_compilers::artifacts::BytecodeHash::None;
+        config.cbor_metadata = false;
+    });
+    prj.add_raw_source(
+        "core/HedgerPool.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/HedgerPool.sol"),
+    );
+    prj.add_raw_test(
+        "Repro.t.sol",
+        include_str!("../../../../testdata/fixtures/PreprocessViaIr/repro/Repro.t.sol"),
+    );
+    cmd.args(["test", "--match-contract", "^DeploymentSmokeTest$"])
+        .assert_success()
+        .stderr_eq("")
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Repro.t.sol:DeploymentSmokeTest
+[PASS] test_deployment() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    // Empty stderr rules out fallback, but both owners must also have been preprocessed.
+    for owner in ["HedgerPoolDustDeadlockForkTest", "DeploymentSmokeTest"] {
+        let helper = format!(
+            "Repro.t.sol/VmContractHelper{:x}.json",
+            keccak256(format!("test/Repro.t.sol:{owner}"))
+        );
+        assert!(prj.artifacts().join(helper).exists(), "{owner} was not preprocessed");
+    }
 }

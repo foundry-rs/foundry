@@ -340,6 +340,32 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Pauses or resumes automatic block production.
+    ///
+    /// While paused, the block time interval keeps ticking but blocks that come due are skipped,
+    /// so the next block is mined on the first tick after mining resumes. Once this returns with
+    /// `paused` set, no automatic block is mined until mining resumes.
+    ///
+    /// Handler for RPC call: `anvil_setMiningPaused`
+    pub async fn anvil_set_mining_paused(&self, paused: bool) -> Result<()> {
+        node_info!("anvil_setMiningPaused");
+        self.miner.set_paused(paused);
+        if paused {
+            // Wait for a block that is already being mined. Candidates that take the lock after
+            // this are skipped by the mining task.
+            drop(self.backend.lock_mining().await);
+        }
+        Ok(())
+    }
+
+    /// Returns `true` if automatic block production is paused.
+    ///
+    /// Handler for RPC call: `anvil_getMiningPaused`
+    pub fn anvil_get_mining_paused(&self) -> Result<bool> {
+        node_info!("anvil_getMiningPaused");
+        Ok(self.miner.is_paused())
+    }
+
     /// Removes transactions from the pool
     ///
     /// Handler for RPC call: `anvil_dropTransaction`
@@ -1163,8 +1189,7 @@ impl<N: Network> EthApi<N> {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
-        let signature = alloy_primitives::hex::encode(signature.as_bytes());
-        Ok(format!("0x{signature}"))
+        Ok(alloy_primitives::hex::encode_prefixed(signature.as_bytes()))
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -1173,9 +1198,8 @@ impl<N: Network> EthApi<N> {
     pub async fn sign(&self, address: Address, content: impl AsRef<[u8]>) -> Result<String> {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
-        let signature =
-            alloy_primitives::hex::encode(signer.sign(address, content.as_ref()).await?.as_bytes());
-        Ok(format!("0x{signature}"))
+        let signature = signer.sign(address, content.as_ref()).await?;
+        Ok(alloy_primitives::hex::encode_prefixed(signature.as_bytes()))
     }
 
     /// Returns transaction at given block hash and index.
@@ -1342,6 +1366,13 @@ impl<N: Network> EthApi<N> {
         // highest and lowest block num in the requested range
         let highest = number;
         let lowest = highest.saturating_sub(block_count.saturating_sub(1));
+        // A local chain starts at its genesis number, so clamp the range to `[genesis, highest]`.
+        // A newest block below genesis keeps failing as not found.
+        let lowest = if fork.is_none() {
+            lowest.max(self.backend.genesis_number().min(highest))
+        } else {
+            lowest
+        };
 
         // only support ranges that are in cache range
         if lowest < self.backend.best_number().saturating_sub(self.fee_history_limit) {
@@ -1847,11 +1878,12 @@ impl EthApi<FoundryNetwork> {
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
+        let genesis = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        let common_height = current_height.checked_sub(depth).filter(|h| *h >= genesis).ok_or(
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}, genesis {genesis}"
+            ))),
+        )?;
 
         // Get the common ancestor block
         let common_block =
@@ -2123,7 +2155,7 @@ impl EthApi<FoundryNetwork> {
         } else {
             Some(self.lifecycle_lock.read().await)
         };
-        let response = match request.clone() {
+        match request {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
@@ -2431,6 +2463,10 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_interval_mining(interval).to_rpc_result()
             }
             EthRequest::GetIntervalMining(()) => self.anvil_get_interval_mining().to_rpc_result(),
+            EthRequest::SetMiningPaused(paused) => {
+                self.anvil_set_mining_paused(paused).await.to_rpc_result()
+            }
+            EthRequest::GetMiningPaused(()) => self.anvil_get_mining_paused().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
@@ -2604,15 +2640,7 @@ impl EthApi<FoundryNetwork> {
                 .anvil_set_fee_amm_liquidity(user_token, validator_token, amount)
                 .await
                 .to_rpc_result(),
-        };
-
-        if let ResponseResult::Error(err) = &response {
-            node_info!("\nRPC request failed:");
-            node_info!("    Request: {:?}", request);
-            node_info!("    Error: {}\n", err);
         }
-
-        response
     }
 
     fn sign_request(&self, from: &Address, typed_tx: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
@@ -3879,12 +3907,13 @@ impl EthApi<FoundryNetwork> {
 
         // no mined blocks yet
         let latest_block = self.backend.best_number();
-        if latest_block == 0 {
+        let first_block = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        if latest_block <= first_block {
             return Ok(None);
         }
 
         // binary search for the block containing the transaction
-        let mut low = 1u64;
+        let mut low = first_block + 1;
         let mut high = latest_block;
 
         while low <= high {
@@ -3943,16 +3972,10 @@ impl EthApi<FoundryNetwork> {
         node_info!("eth_getLogs");
         let best = self.backend.best_number();
         let to_block =
-            self.backend.convert_block_number(filter.block_option.get_to_block().copied());
+            self.backend.convert_block_number_at(filter.block_option.get_to_block().copied(), best);
         if to_block > best {
             return Err(BlockchainError::BlockOutOfRange(best, to_block));
         }
-        let from_block =
-            self.backend.convert_block_number(filter.block_option.get_from_block().copied());
-        if from_block > to_block {
-            return Err(RpcError::invalid_params("invalid block range params").into());
-        }
-
         self.backend.logs(filter).await
     }
 
@@ -4493,11 +4516,12 @@ impl EthApi<FoundryNetwork> {
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
+        let genesis = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        let common_height = current_height.checked_sub(depth).filter(|h| *h >= genesis).ok_or(
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}, genesis {genesis}"
+            ))),
+        )?;
 
         // Get the common ancestor block
         let common_block =

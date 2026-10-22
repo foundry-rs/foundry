@@ -619,6 +619,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     let deployment = &sequence.sequences()[index];
                     if let Some(hash) = sequence.signed_payload(index, operation).map(|s| s.hash)
                         && !deployment.pending.contains(&hash)
+                        && !deployment.reverted.contains(&hash)
                         && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
                         && let Some(receipt) = provider.get_transaction_receipt(hash).await?
                         && is_mined_receipt_for(&receipt, hash)
@@ -645,6 +646,14 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 sequence.save(true, false)?;
                 result?;
                 sequence.ensure_delegated_outcomes_known(index)?;
+            }
+        }
+        for deployment in sequence.sequences() {
+            for hash in &deployment.reverted {
+                sh_warn!(
+                    "Transaction {hash} on chain {} reverted; resume will not resubmit it.",
+                    deployment.chain
+                )?;
             }
         }
 

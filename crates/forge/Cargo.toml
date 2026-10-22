@@ -74,6 +74,7 @@ dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
 globset = "0.4"
+heck.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true

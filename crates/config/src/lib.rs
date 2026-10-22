@@ -18,10 +18,10 @@ use figment::{
 };
 use filter::GlobMatcher;
 use foundry_compilers::{
-    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectBuilder, ProjectPathsConfig,
     RestrictionsWithVersion, VyperLanguage,
     artifacts::{
-        BytecodeHash, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
+        BytecodeHash, Contract, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
         ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
         Severity,
         output_selection::{ContractOutputSelection, OutputSelection},
@@ -36,7 +36,7 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
     },
     error::SolcError,
-    multi::{MultiCompilerParser, MultiCompilerRestrictions},
+    multi::{MultiCompilerLanguage, MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcLanguage, SolcSettings},
     utils::canonicalize,
 };
@@ -526,6 +526,15 @@ pub struct Config {
     /// change forks already created by `setUp`.
     #[serde(default)]
     pub no_fork_bal: bool,
+    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    ///
+    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
+    /// and storage slots in the cache of the newest older block on the same chain are fetched
+    /// again at the new block in the background. This helps forks of `latest`, which start
+    /// cold on each new head. Values come from the fork block and never replace cached values,
+    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    #[serde(default)]
+    pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
     /// `compute_units_per_second`
     pub no_rpc_rate_limit: bool,
@@ -1452,13 +1461,42 @@ impl Config {
     ///
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
+        let project =
+            self.create_project_with_compiler(|| self.compiler(), cached, no_artifacts)?;
+
+        if self.force {
+            // Warnings are intentionally dropped here because `sh_warn!` is a circular
+            // dependency. Callers that need warnings should call `cleanup()` directly.
+            let _ = self.cleanup(&project);
+        }
+
+        Ok(project)
+    }
+
+    /// Creates a project using the supplied compiler constructor after validating its settings.
+    ///
+    /// Unlike [`Self::create_project`], this does not clean cached artifacts when `force` is set.
+    /// Use this to inspect the source graph with compiler metadata supplied by the caller.
+    pub fn create_project_with_compiler<C>(
+        &self,
+        compiler: impl FnOnce() -> Result<C, SolcError>,
+        cached: bool,
+        no_artifacts: bool,
+    ) -> Result<Project<C>, SolcError>
+    where
+        C: Compiler<
+                Settings = MultiCompilerSettings,
+                Language = MultiCompilerLanguage,
+                CompilerContract = Contract,
+            >,
+    {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();
 
         // Strip "./" prefix for consistent path matching
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
 
-        let mut builder = Project::builder()
+        let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
             .restrictions(self.restrictions(&paths)?)
@@ -1484,7 +1522,7 @@ impl Config {
             builder = builder.sparse_output(filter);
         }
 
-        let project = builder.build(self.compiler()?)?;
+        let project = builder.build(compiler()?)?;
 
         // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
         // directory boundary with the native separator so a later `Remapping::to_string` does not
@@ -1499,12 +1537,6 @@ impl Config {
                 context.pop();
                 context.push(std::path::MAIN_SEPARATOR);
             }
-        }
-
-        if self.force {
-            // Warnings are intentionally dropped here because `sh_warn!` is a circular
-            // dependency. Callers that need warnings should call `cleanup()` directly.
-            let _ = self.cleanup(&project);
         }
 
         Ok(project)
@@ -3197,6 +3229,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             no_fork_bal: false,
+            fork_prefetch: false,
             no_rpc_rate_limit: false,
             use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
@@ -3652,6 +3685,31 @@ mod tests {
             let config = Config::load().unwrap();
             assert!(!config.no_fork_bal);
             assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_prefetch_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                fork_prefetch = true
+
+                [profile.ci]
+                fork_prefetch = false
+                ",
+            )?;
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "true");
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "invalid");
+            assert!(Config::load().is_err());
             Ok(())
         });
     }
@@ -4855,6 +4913,7 @@ mod tests {
                 names = false
                 no_storage_caching = false
                 no_fork_bal = false
+                fork_prefetch = false
                 no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
@@ -9782,5 +9841,43 @@ mod tests {
             }
             Ok(())
         });
+    }
+
+    #[test]
+    fn supplied_compiler_project_preserves_artifacts_and_compilation_settings() {
+        let directory = tempdir().unwrap();
+        let mut config = Config::with_root(directory.path()).sanitized();
+        config.solc = Some(SolcReq::Local(config.root.join("missing-solc")));
+        config.force = true;
+        config
+            .additional_compiler_profiles
+            .push(toml::from_str("name = 'via-ir'\nvia_ir = true").unwrap());
+        config
+            .compilation_restrictions
+            .push(toml::from_str("paths = 'src/**'\nversion = '=0.8.21'\nvia_ir = true").unwrap());
+        fs::create_dir_all(&config.src).unwrap();
+        fs::write(config.src.join("Foo.sol"), "pragma solidity ^0.8.0; contract Foo {}").unwrap();
+        fs::create_dir_all(&config.out).unwrap();
+        fs::create_dir_all(&config.cache_path).unwrap();
+        let artifact = config.out.join("Foo.json");
+        let cache = config.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME);
+        fs::write(&artifact, "existing artifact").unwrap();
+        fs::write(&cache, "existing cache").unwrap();
+
+        let compiler = MultiCompiler { solc: None, vyper: None };
+        let project = config.create_project_with_compiler(|| Ok(compiler), true, true).unwrap();
+
+        assert!(project.compiler.solc.is_none());
+        assert!(project.compiler.vyper.is_none());
+        assert!(project.cached);
+        assert!(project.no_artifacts);
+        assert_eq!(project.paths.artifacts, config.out);
+        assert_eq!(project.settings.solc.via_ir, Some(false));
+        assert_eq!(project.additional_settings["via-ir"].solc.via_ir, Some(true));
+        let restriction = &project.restrictions[&config.src.join("Foo.sol")];
+        assert_eq!(restriction.version, Some("=0.8.21".parse().unwrap()));
+        assert_eq!(restriction.restrictions.solc.via_ir, Some(true));
+        assert_eq!(fs::read_to_string(artifact).unwrap(), "existing artifact");
+        assert_eq!(fs::read_to_string(cache).unwrap(), "existing cache");
     }
 }

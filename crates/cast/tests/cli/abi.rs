@@ -219,6 +219,166 @@ fn decode_event_with_indexed_params(cmd: _) {
 }
 
 #[casttest]
+fn decode_event_with_topics(cmd: _) {
+    let args = [
+        "decode-event",
+        "--sig",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "--topics",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,0x0000000000000000000000000000000000000000000000000000000000000001,0x0000000000000000000000000000000000000000000000000000000000000002",
+        "0x000000000000000000000000000000000000000000000000000000000000002a",
+    ];
+    cmd.args(args).assert_success().stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000001
+0x0000000000000000000000000000000000000002
+42
+
+"#]]);
+
+    cmd.cast_fuse().args(args).arg("--json").assert_json_stdout(
+        json!({
+            "schema_version": 1,
+            "success": true,
+            "data": [
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000002",
+                "42"
+            ],
+            "errors": [],
+            "warnings": []
+        })
+        .to_string(),
+    );
+}
+
+#[casttest]
+fn decode_event_topics_interleaved_dynamic_data(cmd: _) {
+    let topic0 = keccak256("Message(string,address,uint256,uint256)").to_string();
+    let data = hex::encode_prefixed(("hello", U256::from(42)).abi_encode_params());
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Message(string message,address indexed sender,uint256 value,uint256 indexed id)",
+        "-t",
+        &topic0,
+        "-t",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "-t",
+        "0x0000000000000000000000000000000000000000000000000000000000000007",
+        &data,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+"hello"
+0x0000000000000000000000000000000000000001
+42
+7
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_anonymous(cmd: _) {
+    let data = hex::encode_prefixed(("hello",).abi_encode_params());
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Log(uint256 indexed id,string message) anonymous",
+        "--topics",
+        "0x0000000000000000000000000000000000000000000000000000000000000007",
+        &data,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+7
+"hello"
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_indexed_hash(cmd: _) {
+    let topic0 = keccak256("Message(string)").to_string();
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Message(string indexed message)",
+        "-t",
+        &topic0,
+        "-t",
+        "0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8",
+        "0x",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_invalid_count(cmd: _) {
+    let signature = "Transfer(address indexed from,address indexed to,uint256 value)";
+    let topic0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    cmd.args(["decode-event", "--sig", signature, "-t", topic0, "0x"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: invalid log topic list length: expected 3 topics, got 1
+
+"#]]);
+
+    let topics = format!("{topic0},{topic0},{topic0},{topic0}");
+    cmd.cast_fuse()
+        .args(["decode-event", "--sig", signature, "-t", &topics, "0x"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: invalid log topic list length: expected 3 topics, got 4
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_wrong_signature(cmd: _) {
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Transfer(address indexed from,address indexed to,uint256 value)",
+        "--topics",
+        "0x0000000000000000000000000000000000000000000000000000000000000000,0x0000000000000000000000000000000000000000000000000000000000000001,0x0000000000000000000000000000000000000000000000000000000000000002",
+        "0x000000000000000000000000000000000000000000000000000000000000002a",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+Error: invalid event signature: expected 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef, got 0x0000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+}
+
+#[casttest]
+fn decode_event_topics_requires_signature(cmd: _) {
+    cmd.args([
+        "decode-event",
+        "--topics",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "0x",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --sig <SIG>
+
+Usage: cast[..] decode-event --sig <SIG> --topics <TOPICS> <DATA>
+
+For more information, try '--help'.
+
+"#]]);
+}
+
+#[casttest]
 fn abi_encode_event_argument_count_mismatch(cmd: _) {
     cmd.args(["abi-encode-event", "Pair(uint256,uint256)", "1"]).assert_failure().stderr_eq(str![
         [r#"

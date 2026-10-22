@@ -52,8 +52,10 @@ use futures::{
     future::{join_all, pending},
 };
 use revm::{
-    context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
-    precompile::PrecompileStatus, primitives::hardfork::SpecId,
+    context::BlockEnv,
+    context_interface::block::BlobExcessGasAndPrice,
+    precompile::PrecompileStatus,
+    primitives::{eip7825::TX_GAS_LIMIT_CAP, hardfork::SpecId},
 };
 use serde_json::{Value, json};
 use std::{
@@ -4732,14 +4734,23 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_anvil_reset_rejects_self_reference_without_mutation() {
+async fn test_fork_reset_rejects_self_reference_with_existing_forge_cache() {
     let marker = Address::random();
     let marker_balance = U256::from(91_337u64);
-    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let cache_path = Config::foundry_block_cache_dir(chain_id, 0).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    // Forge persists the block cache as a file rather than a directory of endpoint caches.
+    std::fs::write(&cache_path, b"existing Forge cache").unwrap();
+
+    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
     origin_api.anvil_set_balance(marker, marker_balance).await.unwrap();
     let origin_url = origin_handle.http_endpoint();
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
     let provider = handle.http_provider();
+    let local_balance = U256::from(42u64);
+    api.anvil_set_balance(marker, local_balance).await.unwrap();
     let metadata_before = api.anvil_metadata().await.unwrap();
     let info_before = api.anvil_node_info().await.unwrap();
 
@@ -4748,14 +4759,31 @@ async fn test_anvil_reset_rejects_self_reference_without_mutation() {
             .anvil_reset(Some(Forking { json_rpc_url: Some(self_url), block_number: None }))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("own RPC endpoint"), "{err}");
+        let anvil::eth::error::BlockchainError::RpcError(err) = err else {
+            panic!("unexpected reset error: {err}");
+        };
+        assert_eq!(
+            err,
+            anvil_rpc::error::RpcError::invalid_params(
+                "cannot reset Anvil to its own RPC endpoint"
+            )
+        );
 
         let fork = api.backend.get_fork().unwrap();
         assert_eq!(fork.config.read().fork_urls, vec![origin_url.clone()]);
         assert_eq!(api.anvil_metadata().await.unwrap(), metadata_before);
         assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
-        assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
+        assert_eq!(provider.get_balance(marker).await.unwrap(), local_balance);
     }
+
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+    assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
+    assert_eq!(std::fs::read(&cache_path).unwrap(), b"existing Forge cache");
+
+    // Release the disk-backed fork before cleanup so shutdown cannot recreate its cache.
+    api.anvil_reset(None).await.unwrap();
+    drop((provider, api, handle, origin_api, origin_handle));
+    std::fs::remove_dir_all(cache_dir).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -5181,4 +5209,73 @@ fn test_fork_historical_reads_with_pending_logs() {
         result.expect("historical reads and logs deadlocked the fork node");
     }
     proxy.abort();
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17716>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_follows_amsterdam_tx_gas_limit_cap() {
+    let (_osaka_api, osaka_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
+    let (_amsterdam_api, amsterdam_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+
+    for enable_tx_gas_limit in [false, true] {
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .enable_tx_gas_limit(enable_tx_gas_limit)
+                .with_eth_rpc_url(Some(amsterdam_handle.http_endpoint())),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let from = handle.dev_accounts().next().unwrap();
+
+        // The forked hardfork is inferred from each endpoint, so every reset switches spec.
+        for (is_amsterdam, next_url) in [
+            (true, Some(osaka_handle.http_endpoint())),
+            (false, Some(amsterdam_handle.http_endpoint())),
+            (true, None),
+        ] {
+            // A reset restores the sender's nonce, so a fresh recipient keeps transaction hashes
+            // distinct across resets.
+            let contract = Address::random();
+            let tx = TransactionRequest::default()
+                .with_from(from)
+                .with_to(contract)
+                .with_gas_limit(TX_GAS_LIMIT_CAP + 1);
+            // Returns `gasleft()`, which reports only regular gas.
+            api.anvil_set_code(contract, bytes!("5a60005260206000f3")).await.unwrap();
+            let output = provider.call(WithOtherFields::new(tx.clone())).await.unwrap();
+            let gasleft = U256::from_be_slice(&output).to::<u64>();
+            let result = provider.send_transaction(WithOtherFields::new(tx.clone())).await;
+            if is_amsterdam {
+                // The call pays 15,000 intrinsic gas and 2 for `GAS` out of the regular cap.
+                assert_eq!(gasleft, TX_GAS_LIMIT_CAP - 15_002);
+                assert!(result.unwrap().get_receipt().await.unwrap().status());
+            } else {
+                // Before Amsterdam, calls lift the cap and get the whole gas limit as regular
+                // gas, minus 21,000 intrinsic gas and 2 for `GAS`.
+                assert_eq!(gasleft, TX_GAS_LIMIT_CAP + 1 - 21_002);
+                if enable_tx_gas_limit {
+                    let err = result.unwrap_err();
+                    let err = err.as_error_resp().unwrap();
+                    assert_eq!(err.code, -32000);
+                    assert_eq!(
+                        err.message,
+                        "intrinsic gas too high -- tx.gas_limit > resolved tx gas limit cap"
+                    );
+                } else {
+                    assert!(result.unwrap().get_receipt().await.unwrap().status());
+                }
+            }
+
+            if let Some(json_rpc_url) = next_url {
+                api.anvil_reset(Some(Forking {
+                    json_rpc_url: Some(json_rpc_url),
+                    block_number: None,
+                }))
+                .await
+                .unwrap();
+            }
+        }
+    }
 }
