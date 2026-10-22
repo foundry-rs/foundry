@@ -3,7 +3,7 @@
 use crate::{compile::PathOrContractInfo, find_metadata_start, strip_bytecode_placeholders};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{Address, B256, Bytes, Selector, address, hex};
+use alloy_primitives::{Address, B256, Bytes, Selector, address, hex, map::HashMap};
 use eyre::{OptionExt, Result};
 use foundry_compilers::{
     ArtifactId, Project, ProjectCompileOutput,
@@ -19,7 +19,7 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 /// Libraries' runtime code always starts with the following instruction:
@@ -186,7 +186,7 @@ impl<'a> ContractsByArtifactBuilder<'a> {
             })
             .collect();
 
-        ContractsByArtifact(Arc::new(map))
+        ContractsByArtifact::from_contracts(map)
     }
 }
 
@@ -194,9 +194,20 @@ type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
 
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
 #[derive(Clone, Default, Debug)]
-pub struct ContractsByArtifact(Arc<BTreeMap<ArtifactId, ContractData>>);
+pub struct ContractsByArtifact(Arc<ContractsByArtifactInner>);
+
+#[derive(Default, Debug)]
+struct ContractsByArtifactInner {
+    contracts: BTreeMap<ArtifactId, ContractData>,
+    /// Artifact IDs keyed by contract name without a version suffix, built on first use.
+    by_name: OnceLock<HashMap<String, Vec<ArtifactId>>>,
+}
 
 impl ContractsByArtifact {
+    fn from_contracts(contracts: BTreeMap<ArtifactId, ContractData>) -> Self {
+        Self(Arc::new(ContractsByArtifactInner { contracts, by_name: OnceLock::new() }))
+    }
+
     /// Creates a new instance by collecting all artifacts with present bytecode from an iterator.
     pub fn new(artifacts: impl IntoIterator<Item = (ArtifactId, CompactContractBytecode)>) -> Self {
         let map = artifacts
@@ -216,7 +227,7 @@ impl ContractsByArtifact {
                 ))
             })
             .collect();
-        Self(Arc::new(map))
+        Self::from_contracts(map)
     }
 
     /// Clears all contracts.
@@ -493,6 +504,24 @@ impl ContractsByArtifact {
             .map(|(_, contract)| (contract.abi.clone(), contract.name.clone()))
     }
 
+    /// Finds the contracts named `name`, ignoring version suffixes such as `Counter.0.8.23`.
+    ///
+    /// Uses an index shared by all clones, so lookups do not scan every artifact.
+    pub fn find_by_contract_name<'a>(
+        &'a self,
+        name: &str,
+    ) -> impl Iterator<Item = ArtifactWithContractRef<'a>> + use<'a> {
+        let by_name = self.0.by_name.get_or_init(|| {
+            let mut by_name = HashMap::<_, Vec<_>>::default();
+            for id in self.0.contracts.keys() {
+                let name = id.name.split('.').next().unwrap();
+                by_name.entry(name.to_string()).or_default().push(id.clone());
+            }
+            by_name
+        });
+        by_name.get(name).into_iter().flatten().filter_map(|id| self.0.contracts.get_key_value(id))
+    }
+
     /// Flattens the contracts into functions, events and errors.
     pub fn flatten(&self) -> (BTreeMap<Selector, Function>, BTreeMap<B256, Event>, JsonAbi) {
         let mut funcs = BTreeMap::new();
@@ -532,7 +561,7 @@ impl Deref for ContractsByArtifact {
     type Target = BTreeMap<ArtifactId, ContractData>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.0.contracts
     }
 }
 
