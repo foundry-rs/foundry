@@ -538,10 +538,16 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let (replaced, logs) = if forks.active == self.forks.active {
             (None, evm.state().logs().to_vec())
         } else {
-            // Like master, other contexts are not part of the snapshot: park the running state
-            // in its own context so that its writes survive the revert.
+            // Like master, other contexts are not part of the snapshot. The running context keeps
+            // what reached its state before the running transaction and drops the transaction's
+            // changes, as master drops the journal of the fork active at the revert.
             let replaced = evm.state().snapshot();
-            (Some(replaced), self.suspend(evm).logs)
+            let state = evm.state_mut();
+            let logs = mem::take(state.logs_mut());
+            state.clear_transaction_state();
+            let cache = mem::take(&mut state.overlay_db_mut().cache);
+            self.active_mut().cache = Some(Arc::new(cache));
+            (Some(replaced), logs)
         };
         match forks.active {
             None => self.forks.local = forks.local,
