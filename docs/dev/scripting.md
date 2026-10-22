@@ -333,13 +333,18 @@ implemented guarantee.
 
 ### Transaction semantics
 
-Recovery preserves every field that can change transaction identity or behavior, including:
+For an existing attempt, recovery preserves every field that can change transaction identity or
+behavior, including:
 
 - chain ID, sender, nonce, destination or create form, value, input, and call order;
 - gas limit and legacy or EIP-1559 fee fields;
 - access lists, blobs, authorization lists, and pre-signed envelopes when present;
 - Tempo fee token, nonce key, validity window, calls, access-key metadata, sponsor data, and batch
   membership.
+
+An operation without an attempt is prepared on resume like a new one. Its saved request keeps the
+sender, nonce, destination, value, and input, but fees, gas estimates, Tempo options such as the fee
+token, nonce key, and validity window, and sponsorship can come from the resume invocation.
 
 Reconciliation and rebroadcast of identical locally signed bytes do not request a signer. The
 initial recovery implementation fails closed instead of replacing an existing attempt with changed
