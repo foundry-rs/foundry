@@ -394,12 +394,14 @@ fn build_shrunk_sequence(
 /// Shared sequence shrinker. Tries to drop each call; `predicate` decides whether the candidate
 /// should be accepted, rejected, or skipped without spending a replay attempt.
 ///
-/// First tries to drop blocks of kept calls, halving the block size down to two calls, then drops
-/// single calls. Stops when every kept call was tried once since the last accepted removal: the
-/// sequence is then a fixpoint and further passes would replay the same rejected candidates.
+/// With `drop_blocks`, first tries to drop blocks of kept calls, halving the block size down to two
+/// calls, then drops single calls. Stops when every kept call was tried once since the last
+/// accepted removal: the sequence is then a fixpoint and further passes would replay the same
+/// rejected candidates.
 pub fn shrink_sequence_by_removing<P, S, A>(
     calls_len: usize,
     run: &mut ShrinkRun,
+    drop_blocks: bool,
     mut should_stop: S,
     mut on_attempt: A,
     mut predicate: P,
@@ -411,7 +413,7 @@ where
 {
     let mut shrinker = SequenceShrink::new(calls_len);
 
-    let mut chunk = calls_len / 2;
+    let mut chunk = if drop_blocks { calls_len / 2 } else { 0 };
     while chunk >= 2 && run.can_try() && !should_stop() {
         let kept = shrinker.current().collect::<Vec<_>>();
         let mut accepted_block = false;
@@ -509,6 +511,7 @@ where
     let shrinker = shrink_sequence_by_removing(
         calls.len(),
         &mut run,
+        true,
         || early_exit.should_stop(),
         || progress.inc(),
         |shrinker| {
@@ -902,13 +905,9 @@ fn assertion_failure_reason<FEN: FoundryEvmNetwork>(
     call_failure_reason(call_result, rd).or_else(|| Some("assertion failed".to_string()))
 }
 
-/// Shrinks a call sequence to the shortest sequence that still produces the target optimization
-/// value. This is specifically for optimization mode where we want to find the minimal sequence
-/// that achieves the maximum value.
-///
-/// Unlike `shrink_sequence` (for check mode), this function:
-/// - Accumulates warp/roll values from removed calls into the next kept call
-/// - Checks for target value equality rather than invariant failure
+/// Shrinks an optimization witness while preserving the best value seen during replay.
+/// Warp and roll of removed calls move to the next kept call.
+/// Returns the shrunk sequence and its value, which can exceed `target_value`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
@@ -919,21 +918,22 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     target_value: I256,
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
-) -> eyre::Result<Vec<BasicTxDetails>> {
+) -> eyre::Result<(Vec<BasicTxDetails>, I256)> {
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().into();
 
-    // Special case: check if target value is achieved with 0 calls.
+    // Campaigns score only after a call, so an empty witness must match the target exactly.
     if check_sequence_value(executor.clone(), calls, &[], target_address, calldata.clone())?
         == Some(target_value)
     {
-        return Ok(vec![]);
+        return Ok((vec![], target_value));
     }
 
     let replay_failed = Cell::new(false);
     let mut replay_error = None;
+    let mut best = target_value;
     let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
     let initial = SequenceShrink::new(calls.len());
     progress.update(calls, &initial, true);
@@ -942,12 +942,18 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     let shrinker = shrink_sequence_by_removing(
         calls.len(),
         &mut run,
+        // Dropping a block whose calls cancel out keeps the score but can discard a call that
+        // raises it once a single removal drops the call that lowered it.
+        false,
         || early_exit.should_stop() || replay_failed.get(),
         || progress.inc(),
         |shrinker| {
             progress.update(calls, shrinker, true);
             sequence.clear();
             sequence.extend(shrinker.current());
+            if sequence.is_empty() {
+                return Some(false);
+            }
             match check_sequence_value(
                 executor.clone(),
                 calls,
@@ -955,8 +961,11 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
                 target_address,
                 calldata.clone(),
             ) {
-                Ok(Some(value)) => Some(value == target_value),
-                Ok(None) => Some(false),
+                Ok(Some(value)) if value >= best => {
+                    best = value;
+                    Some(true)
+                }
+                Ok(_) => Some(false),
                 Err(err) => {
                     replay_error = Some(err);
                     replay_failed.set(true);
@@ -970,7 +979,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
         return Err(err);
     }
 
-    Ok(build_shrunk_sequence(calls, &shrinker, true))
+    Ok((build_shrunk_sequence(calls, &shrinker, true), best))
 }
 
 /// Replays a handler-bug sequence and returns whether the anchor still asserts on the same
@@ -1363,6 +1372,7 @@ mod tests {
         let shrinker = shrink_sequence_by_removing(
             2,
             &mut run,
+            true,
             || false,
             || {},
             |shrinker| {

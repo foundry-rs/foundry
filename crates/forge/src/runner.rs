@@ -4611,7 +4611,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Some(best_value) = invariant_result.optimization_best_value {
                 // Optimization mode: replay and shrink to find shortest best sequence.
                 match self.replay_error(
-                    invariant_config.clone(),
+                    evm.config(),
                     self.clone_executor(),
                     &invariant_result.optimization_best_sequence,
                     None,
@@ -4623,13 +4623,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     progress.as_ref(),
                     None,
                 ) {
-                    Ok(ReplayErrorResult { counterexample_sequence: sequence, .. })
-                        if !sequence.is_empty() =>
-                    {
+                    Ok(ReplayErrorResult {
+                        counterexample_sequence: sequence,
+                        optimization_value,
+                        ..
+                    }) if !sequence.is_empty() => {
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
                             sequence,
                         ));
+                        // Shrinking can reach a higher value than the campaign did.
+                        if let Some(value) = optimization_value
+                            && value > best_value
+                        {
+                            invariant_result.optimization_best_value = Some(value);
+                        }
                     }
                     Err(err) => {
                         error!(%err, "Failed to replay optimization best sequence");

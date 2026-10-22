@@ -1,5 +1,6 @@
 use super::*;
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_test_utils::snapbox::IntoData;
 
 #[forgetest]
 fn invariant_after_invariant(prj: _, cmd: _) {
@@ -2648,6 +2649,98 @@ contract InvariantOptimizeTest is Test {
 [..]calldata=increment()[..]
 [..]calldata=increment()[..]
  invariant_optimize_value() (best: 50, runs: 1, calls: 5)
+...
+"#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_reports_raised_shrink_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Handler {
+    bool penalty;
+    bool reward;
+    function penalize() external { penalty = true; }
+    function earn() external { reward = true; }
+    function score() external view returns (int256) { return reward ? (penalty ? int256(12) : int256(22)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 7 calls penalize then earn: the campaign reaches 12, but earn alone reaches 22.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 1, calls: 2)
+...
+"#]]);
+    assert!(!prj.root().join("opt_corpus/optimization_best.json").exists());
+    let saved =
+        prj.root().join("opt_corpus/OptimizationTest/invariant_optimize/optimization_best.json");
+    assert_data_eq!(
+        std::fs::read_to_string(saved).unwrap().is_json(),
+        str![[r#"
+{
+  "best_value": "22",
+  "best_sequence": [
+    {
+      "sender": "[..]",
+      "target": "[..]",
+      "calldata": "[..]"
+    }
+  ]
+}
+"#]]
+        .is_json()
+    );
+}
+
+#[forgetest]
+fn invariant_optimization_shrink_keeps_raising_calls(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 12;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Queue {
+    uint256 length;
+    int256 score;
+    function push() external { length++; }
+    function pop() external { if (length > 0) length--; }
+    function sum() external { score = int256(length); }
+    function value() external view returns (int256) { return score; }
+}
+contract OptimizationTest {
+    Queue queue;
+    function setUp() public { queue = new Queue(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(queue); }
+    function invariant_optimize() public view returns (int256) { return queue.value(); }
+}
+"#);
+    // Seed 3 reaches 3 with a pop among four pushes. Dropping the pop reaches 4; dropping it in a
+    // block with a push would keep 3.
+    cmd.args(["test", "--fuzz-seed", "3", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 12, shrunk: 5)
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=sum() args=[]
+ invariant_optimize() (best: 4, runs: 1, calls: 12)
 ...
 "#]]);
 }
