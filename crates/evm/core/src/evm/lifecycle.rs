@@ -761,6 +761,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             .loaded_accounts()
             .map(|(address, slots)| (*address, slots.copied().collect::<HashSet<_>>()))
             .collect::<Vec<_>>();
+        let warm = warm_accounts(state);
         let context = self.active_mut();
         for (address, slots) in loaded {
             if state.account(&address).is_ok_and(|account| account.is_created()) {
@@ -770,10 +771,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         // The context keeps the warmth it resumed with, which the running state holds in its
         // prewarm set rather than in loaded accounts, even if this visit did not touch it.
-        for (address, slots) in warm_accounts(state) {
-            context.warm.entry(address).or_default().extend(slots);
+        for (address, slots) in &warm {
+            context.warm.entry(*address).or_default().extend(slots);
         }
-        let warm = context.warm.clone();
         self.materialize(evm);
         let state = evm.state_mut();
         state.commit_transaction();
