@@ -447,6 +447,8 @@ struct MonadExecutionContext<'a> {
 struct EnvelopeExecution<'a> {
     monad_context: Option<MonadExecutionContext<'a>>,
     hardfork: FoundryHardfork,
+    /// Whether the envelope is trusted mined history, whose protocol transactions replay.
+    protocol_replay: bool,
 }
 
 impl<'a> EnvelopeExecution<'a> {
@@ -454,14 +456,14 @@ impl<'a> EnvelopeExecution<'a> {
         monad_context: Option<MonadExecutionContext<'a>>,
         hardfork: FoundryHardfork,
     ) -> Self {
-        Self { monad_context, hardfork }
+        Self { monad_context, hardfork, protocol_replay: false }
     }
 
     const fn replay(
         monad_context: Option<MonadExecutionContext<'a>>,
         hardfork: FoundryHardfork,
     ) -> Self {
-        Self { monad_context, hardfork }
+        Self { monad_context, hardfork, protocol_replay: true }
     }
 }
 
@@ -2611,12 +2613,20 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the network context of executing `tx` as the next transaction of `context`.
+    ///
+    /// `protocol_replay` marks `tx` as trusted mined history, whose protocol transactions replay.
     #[cfg_attr(not(feature = "monad"), allow(unused_variables))]
-    fn tx_context(&self, context: Option<MonadExecutionContext<'_>>, tx: &PreparedTx) -> TxContext {
+    fn tx_context(
+        &self,
+        context: Option<MonadExecutionContext<'_>>,
+        tx: &PreparedTx,
+        protocol_replay: bool,
+    ) -> TxContext {
         #[cfg(feature = "monad")]
         if self.is_monad() {
             return TxContext {
                 monad: monad::resolve_execution_context(context, tx, self.cheats()),
+                monad_protocol_replay: protocol_replay,
             };
         }
         TxContext::default()
@@ -2651,7 +2661,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<Executed, BlockchainError> {
         let tx = PreparedTx::signed(pending.transaction.as_ref().clone(), *pending.sender());
         let opts = self.evm_options_at(evm_env, execution.hardfork);
-        let context = self.tx_context(execution.monad_context, &tx);
+        let context = self.tx_context(execution.monad_context, &tx, execution.protocol_replay);
         self.execute_tx(db, evm_env, &opts, &tx, &context, inspector)
     }
 
@@ -2748,6 +2758,9 @@ impl<N: Network> Backend<N> {
                                 &tx,
                                 self.cheats(),
                             ),
+                            // Only forced historical replays are trusted protocol history; pool
+                            // admission keeps rejecting protocol envelopes.
+                            monad_protocol_replay: _pool_tx.is_replay,
                         };
                     }
                     TxContext::default()
@@ -3337,7 +3350,7 @@ impl<N: Network> Backend<N> {
         hardfork: FoundryHardfork,
     ) -> Result<Executed, BlockchainError> {
         let opts = self.evm_options_at(evm_env, hardfork);
-        let context = self.tx_context(monad_context, tx);
+        let context = self.tx_context(monad_context, tx, false);
         self.execute_tx(db, evm_env, &opts, tx, &context, inspector)
     }
 
@@ -5649,6 +5662,9 @@ where
                                 &tx,
                                 self.cheats(),
                             ),
+                            // The source block is trusted history; only envelopes the source
+                            // attributes to the system sender are prepared with it.
+                            monad_protocol_replay: true,
                         };
                     }
                     TxContext::default()
@@ -8797,7 +8813,7 @@ impl Backend<FoundryNetwork> {
                     let mut opts = self.evm_options(&evm_env);
                     opts.precompile_moves = precompile_overrides.moves.clone();
                     let context =
-                        self.tx_context(monad_context.as_mut().map(next_monad_context), &tx);
+                        self.tx_context(monad_context.as_mut().map(next_monad_context), &tx, false);
                     let execution_result =
                         self.execute_tx(&cache_db, &evm_env, &opts, &tx, &context, &mut inspector);
                     let Executed { result, mut state } = match execution_result {
@@ -9387,7 +9403,7 @@ where
         evm_env: &EvmEnv,
     ) -> Result<(), InvalidTransactionError> {
         #[cfg(feature = "monad")]
-        if self.validate_monad_mining_pool_transaction_for(pool_tx, account, evm_env)? {
+        if self.validate_monad_mining_pool_transaction_for(pool_tx) {
             return Ok(());
         }
 

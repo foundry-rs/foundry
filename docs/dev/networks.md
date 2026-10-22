@@ -181,10 +181,12 @@ Their transaction context, environment restoration, and native journal handling 
 an isolated call belongs to its enclosing transaction, while `executeTransaction` runs a fresh one.
 
 Historical replay retains the RPC envelope's system classification after transaction conversion.
-The default nested replay behavior deliberately skips system envelopes unsupported by the selected
-execution family without mutating state. A family that supports protocol system envelopes must
-override that behavior in its concrete nested EVM and test canonical execution, foreign-envelope
-skips, malformed envelopes, and rollback after failed protocol prestate.
+Replay deliberately skips system envelopes unsupported by the selected execution family without
+mutating state. A family that supports protocol system envelopes implements
+`FoundryEvmExt::is_protocol_transaction` and `set_protocol_replay`; only trusted historical
+execution (block prefix and target replay, Anvil forced and mined replays) enables the latter,
+per transaction, and pool admission never does. Test canonical execution, foreign-envelope skips,
+malformed envelopes, and rollback after failed protocol prestate.
 
 ## Tool coverage
 

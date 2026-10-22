@@ -24,7 +24,7 @@ use anvil_core::eth::{
 };
 use evm2::AccountInfo;
 use eyre::Result;
-use foundry_evm_core::utils::get_blob_params;
+use foundry_evm_core::{evm::monad::is_protocol_system_legacy, utils::get_blob_params};
 use foundry_evm_hardforks::{FoundryHardfork, MonadHardfork};
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use monad_evm2::{MonadChainContext, staking::constants::SYSTEM_ADDRESS};
@@ -101,12 +101,13 @@ fn context_from_participants(
     }
 }
 
-/// Error returned for Monad protocol system transactions, which evm2 cannot replay yet.
-fn system_replay_unsupported() -> InvalidTransactionError {
-    InvalidTransactionError::Rejected(
-        "replaying Monad protocol system transactions is not supported by the evm2 backend"
-            .to_string(),
-    )
+/// Returns whether `tx`, attributed to the system sender, is a canonical Monad protocol system
+/// envelope, whatever its signature recovers to.
+fn is_protocol_system_envelope(tx: &FoundryTxEnvelope) -> bool {
+    match tx {
+        FoundryTxEnvelope::Legacy(tx) => is_protocol_system_legacy(tx.tx()),
+        _ => false,
+    }
 }
 
 pub(super) struct ForkReplay {
@@ -469,22 +470,23 @@ impl<N: Network> Backend<N> {
 
     /// Validates a forced Monad protocol transaction selected for mining.
     ///
-    /// Returns whether the transaction was recognized and fully validated as a protocol call.
+    /// Returns whether the transaction was recognized as a canonical protocol system call. Its
+    /// chain ID, nonce and reward mint are validated by the protocol replay at execution, which
+    /// rejects the transaction atomically; it pays no gas, so ordinary fee and balance validation
+    /// does not apply.
     pub(super) fn validate_monad_mining_pool_transaction_for(
         &self,
         pool_tx: &PoolTransaction<FoundryTxEnvelope>,
-        account: &AccountInfo,
-        evm_env: &EvmEnv,
-    ) -> Result<bool, InvalidTransactionError> {
-        if !self.is_monad() || !pool_tx.is_replay {
-            return Ok(false);
-        }
+    ) -> bool {
+        pool_tx.is_replay
+            && *pool_tx.pending_transaction.sender() == SYSTEM_ADDRESS
+            && self.is_monad_protocol_envelope(pool_tx.pending_transaction.transaction.as_ref())
+    }
 
-        let _ = (account, evm_env);
-        if *pool_tx.pending_transaction.sender() != SYSTEM_ADDRESS {
-            return Ok(false);
-        }
-        Err(system_replay_unsupported())
+    /// Returns whether `tx` is a canonical Monad protocol system envelope of this Monad chain,
+    /// whatever its signature recovers to.
+    pub(crate) fn is_monad_protocol_envelope(&self, tx: &FoundryTxEnvelope) -> bool {
+        self.is_monad() && is_protocol_system_envelope(tx)
     }
 
     /// Reconstructs a locally mined transaction using its authoritative stored sender.

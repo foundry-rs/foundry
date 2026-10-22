@@ -25,10 +25,10 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
-        BackingDb, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
-        ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase, FoundryEvmExt,
-        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, Parked, PreparedTx, SpecFor, TxFor,
-        TxResultFor, TypesFor, block_txs, evm_env, merge_untracked_nested_changes,
+        BackingDb, ChainFor, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor,
+        ExecutedNested, ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase,
+        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, Parked, PreparedTx,
+        SpecFor, TxFor, TxResultFor, TypesFor, block_txs, evm_env, merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -880,6 +880,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let context = block_context::<FEN>(&shared, &target.block)?;
             let mut ext = self.lifecycle.factory().evm_ext(&env);
             context.prepare(&mut ext, index);
+            // The mined transaction is trusted history: a protocol transaction replays as such,
+            // and a non-canonical envelope from the protocol sender is rejected.
+            ext.set_protocol_replay(true);
             Some(ext)
         } else {
             None
@@ -1346,8 +1349,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// accepted state.
     ///
     /// `context` positions network state that depends on the block, such as Monad's. System
-    /// transactions are skipped, except deposits, which networks that support them execute
-    /// natively.
+    /// transactions are skipped, except deposits and canonical protocol transactions, which
+    /// networks that support them execute natively.
     fn replay_until(
         &self,
         db: &impl BackingDb,
@@ -1367,20 +1370,24 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         for (position, rpc_tx) in transactions[..index].iter().enumerate() {
             let is_system =
                 is_known_system_sender(rpc_tx.from()) || rpc_tx.ty() == SYSTEM_TRANSACTION_TYPE;
-            if is_system && rpc_tx.ty() != SYSTEM_TRANSACTION_TYPE {
-                // Protocol system transactions have no native representation.
-                continue;
-            }
             let tx = match FEN::tx_from_any_rpc(rpc_tx) {
                 Ok(tx) => tx,
-                // Deposits of networks without deposit support.
+                // Deposits of networks without deposit support, and system envelopes without a
+                // native representation.
                 Err(_) if is_system => continue,
                 Err(err) => return Err(err),
             };
+            let is_protocol = ChainFor::<FEN>::is_protocol_transaction(&tx);
+            if is_system && rpc_tx.ty() != SYSTEM_TRANSACTION_TYPE && !is_protocol {
+                // Other system transactions have no native representation.
+                continue;
+            }
             match &context {
                 Some(context) => context.prepare(evm.ext_mut(), position),
                 None => evm.ext_mut().for_transaction(&tx),
             }
+            // The canonical block is trusted history, so its protocol transactions replay.
+            evm.ext_mut().set_protocol_replay(is_protocol);
             trace!(tx=?rpc_tx.tx_hash(), "committing transaction");
             let _ = evm
                 .transact(&tx)

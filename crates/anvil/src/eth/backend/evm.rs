@@ -189,6 +189,10 @@ pub struct TxContext {
     /// Monad's block-level sender and authority context for the reserve-balance rules.
     #[cfg(feature = "monad")]
     pub monad: Option<monad_evm2::MonadChainContext>,
+    /// Whether the transaction is trusted Monad history, such as a mined or forced replay, so a
+    /// canonical protocol system envelope executes as a protocol system call.
+    #[cfg(feature = "monad")]
+    pub monad_protocol_replay: bool,
 }
 
 /// Anvil's binding of an evm2 network family.
@@ -330,6 +334,11 @@ impl AnvilEvmNetwork for MonadEvmNetwork {
             Some(chain) => evm.ext_mut().chain = chain.clone(),
             None => evm.ext_mut().for_transaction(tx),
         }
+        // Only canonical envelopes replay as protocol system calls, so other transactions from
+        // the system sender, such as impersonated ones, keep their ordinary semantics.
+        let protocol = context.monad_protocol_replay
+            && <monad_evm2::MonadEvmExt as FoundryEvmExt<_>>::is_protocol_transaction(tx);
+        evm.ext_mut().set_protocol_replay(protocol);
     }
 }
 

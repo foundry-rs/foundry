@@ -156,6 +156,19 @@ pub trait FoundryEvmExt<Tx>: SendableExt + Debug + Default + 'static {
     fn replace_while_executing(&mut self, ext: Self) {
         *self = ext;
     }
+
+    /// Returns whether `tx` is a canonical protocol transaction of the network, such as a Monad
+    /// staking syscall, which only executes with [`Self::set_protocol_replay`] enabled.
+    fn is_protocol_transaction(_tx: &Recovered<Tx>) -> bool {
+        false
+    }
+
+    /// Sets whether transactions from the network's protocol sender execute as protocol
+    /// transactions.
+    ///
+    /// Enable it only to replay trusted canonical chain history, after preparing the transaction
+    /// with [`Self::for_transaction`] or [`Self::for_block`], which disable it.
+    fn set_protocol_replay(&mut self, _enabled: bool) {}
 }
 
 impl<Tx> FoundryEvmExt<Tx> for () {}

@@ -4,7 +4,7 @@ use super::{
     EvmEnv, FoundryBlockExt, FoundryEvmExt, FoundryEvmFactory, FoundryEvmNetwork,
     FoundryTxResultExt, SendableExt, TxPayload, eth_envelope_from_any_rpc, eth_tx,
 };
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
 use alloy_primitives::{Address, map::HashSet};
 use evm2::{
@@ -14,6 +14,7 @@ use evm2::{
 use monad_evm2::{
     MonadBlockExt, MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
+    protocol_system_call, staking::constants::SYSTEM_ADDRESS,
 };
 
 /// Monad EVM network.
@@ -53,6 +54,8 @@ impl FoundryEvmExt<TxEnvelope> for MonadEvmExt {
             current_tx_index: index,
             ..Default::default()
         };
+        // Protocol replay is opted into per trusted transaction.
+        self.protocol_replay = false;
     }
 
     fn replace_while_executing(&mut self, ext: Self) {
@@ -62,6 +65,21 @@ impl FoundryEvmExt<TxEnvelope> for MonadEvmExt {
         *self = ext;
         self.memory_pool_offset = memory_pool_offset;
     }
+
+    fn is_protocol_transaction(tx: &Recovered<TxEnvelope>) -> bool {
+        matches!(protocol_system_call(tx), Ok(Some(_)))
+    }
+
+    fn set_protocol_replay(&mut self, enabled: bool) {
+        self.protocol_replay = enabled;
+    }
+}
+
+/// Returns whether `tx`, attributed to the Monad system sender, is a canonical protocol system
+/// transaction, whatever its signature recovers to.
+pub fn is_protocol_system_legacy(tx: &TxLegacy) -> bool {
+    let tx = Recovered::new_unchecked(TxEnvelope::Legacy(tx.clone()), SYSTEM_ADDRESS);
+    matches!(protocol_system_call(&tx), Ok(Some(_)))
 }
 
 /// Returns the EIP-7702 authorities of `tx`.

@@ -700,8 +700,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ///
     /// `context` holds the block context of networks whose execution depends on the block
     /// position, such as Monad's reserve balance; prefix and target transactions are positioned
-    /// in it. Protocol system transactions (known system senders) are skipped. `target_kind` is
-    /// the target's kind, which decides the test contract.
+    /// in it, and, with a context, the target replays trusted protocol transactions. Prefix
+    /// transactions from known system senders are skipped, except canonical protocol transactions
+    /// of the network, which replay. `target_kind` is the target's kind, which decides the test
+    /// contract.
     #[instrument(name = "transact_block_replay", level = "debug", skip_all)]
     pub fn transact_with_block_replay(
         &mut self,
@@ -733,18 +735,22 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
         let factory = EvmFactoryFor::<FEN>::default();
         for (tx_hash, tx) in replay {
-            if foundry_common::is_known_system_sender(tx.signer()) {
+            let is_protocol = ChainFor::<FEN>::is_protocol_transaction(tx);
+            if foundry_common::is_known_system_sender(tx.signer()) && !is_protocol {
                 continue;
             }
             let backend = self.backend_mut();
             let mut evm = backend.create_evm();
             install_env::<FEN>(backend, &mut evm, evm_env);
             prepare_ext::<FEN>(&mut evm, tx, context.as_mut(), &factory);
+            // The block prefix is trusted history, so its protocol transactions replay.
+            evm.ext_mut().set_protocol_replay(is_protocol);
             let result = evm.transact(tx).map(|executed| executed.commit()).map_err(|err| {
                 eyre::eyre!(
                     "Failed to execute transaction: {tx_hash:?} in block {block_number}: {err:?}"
                 )
             })?;
+            evm.ext_mut().set_protocol_replay(false);
             backend.park(evm);
             if result.status
                 && let Some(address) = result.created_address
@@ -761,6 +767,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let ext = context.as_ref().map(|context| {
             let mut ext = factory.evm_ext(&evm_env);
             context.prepare_next(&mut ext, target);
+            // The mined target is trusted history: a protocol transaction replays as such, and a
+            // non-canonical envelope from the protocol sender is rejected.
+            ext.set_protocol_replay(true);
             ext
         });
         self.transact_tx(evm_env, target, ext)
@@ -1142,8 +1151,10 @@ fn execute<FEN: FoundryEvmNetwork>(
         evm.set_inspector(stack.as_inspector(&mut *backend));
         evm.transact(tx).map(|executed| executed.detach())
     };
-    let evm: Evm<'_, _> = release_inspector(evm);
+    let mut evm: Evm<'_, _> = release_inspector(evm);
     let TxResultWithState { result, pending_state, .. } = executed.map_err(handler_error)?;
+    // Permission to replay protocol history belongs to this transaction, not the parked backend.
+    evm.ext_mut().set_protocol_replay(false);
 
     // A spec or chain ID change deferred by a cheatcode applies from the next transaction.
     let mut env = evm_env(&evm);
@@ -2136,6 +2147,80 @@ mod tests {
             .unwrap();
 
         assert!(executor.backend().is_persistent(&deployed));
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn monad_block_replay_executes_canonical_protocol_transactions() {
+        const STAKING: Address =
+            alloy_primitives::address!("0x0000000000000000000000000000000000001000");
+        let system = foundry_common::MONAD_SYSTEM_ADDRESS;
+        let system_tx = |nonce, gas_limit, input: Vec<u8>| {
+            Recovered::new_unchecked(
+                evm2::ethereum::TxEnvelope::Legacy(alloy_consensus::TxLegacy {
+                    nonce,
+                    gas_limit,
+                    to: TxKind::Call(STAKING),
+                    input: input.into(),
+                    ..Default::default()
+                }),
+                system,
+            )
+        };
+        let snapshot = system_tx(0, 0, keccak256("syscallSnapshot()")[..4].to_vec());
+        let gas_paying = system_tx(1, 100_000, keccak256("syscallSnapshot()")[..4].to_vec());
+        let epoch_change = system_tx(
+            1,
+            0,
+            [&keccak256("syscallOnEpochChange(uint64)")[..4], &B256::with_last_byte(1)[..]]
+                .concat(),
+        );
+        let mut executor = test_executor(
+            ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20),
+            NetworkConfigs::with_monad(),
+        );
+        // Historical staking state is funded; EIP-161 prunes a touched empty account's storage.
+        executor.set_balance(STAKING, U256::ONE).unwrap();
+        let env = *executor.evm_env();
+        let context = || Some(BlockContext::new(Vec::new(), Vec::new(), Vec::new()));
+
+        // The canonical prefix syscall replays, the gas-paying system envelope is skipped, and the
+        // canonical target replays at the prefix's nonce.
+        let result = executor
+            .transact_with_block_replay(
+                env,
+                &epoch_change,
+                TxKind::Call(STAKING),
+                &[(B256::repeat_byte(1), snapshot), (B256::repeat_byte(2), gas_paying.clone())],
+                context(),
+            )
+            .unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 0);
+        assert_eq!(executor.get_nonce(system).unwrap(), 2);
+        assert_eq!(executor.get_balance(system).unwrap(), U256::ZERO);
+        assert_eq!(executor.get_balance(STAKING).unwrap(), U256::ONE);
+        let epoch = U256::from(1) << 192;
+        assert_eq!(executor.backend().storage(STAKING, U256::from(1)).unwrap(), epoch);
+        assert_eq!(executor.backend().storage(STAKING, U256::from(2)).unwrap(), U256::ZERO);
+
+        // Reusing the accepted backend must not retain permission to replay protocol envelopes.
+        let mut evm = executor.backend().create_evm();
+        let next_snapshot = system_tx(2, 0, keccak256("syscallSnapshot()")[..4].to_vec());
+        assert!(matches!(
+            evm.transact(&next_snapshot),
+            Err(evm2::registry::HandlerError::IntrinsicGasTooLow { .. })
+        ));
+
+        // A non-canonical target from the system sender is rejected without effects.
+        let error = executor
+            .transact_with_block_replay(env, &gas_paying, TxKind::Call(STAKING), &[], context())
+            .unwrap_err();
+        assert_eq!(
+            error.root_cause().to_string(),
+            "invalid Monad protocol system transaction: gas limit must be zero, got 100000"
+        );
+        assert_eq!(executor.get_nonce(system).unwrap(), 2);
     }
 
     #[test]

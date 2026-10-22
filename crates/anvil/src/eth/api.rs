@@ -4463,19 +4463,20 @@ impl EthApi<FoundryNetwork> {
 
     /// Recognizes a canonical Monad protocol envelope without requiring its reserved sender to be
     /// globally impersonated or recoverable from the envelope signature.
+    ///
+    /// The explicit reorg is trusted history, so a canonical envelope is attributed to the system
+    /// sender, keeping its exact bytes and hash, and replays as a protocol system call. Other
+    /// envelopes keep their ordinary sender resolution.
     #[cfg(feature = "monad")]
     fn monad_protocol_reorg_transaction(
         &self,
-        transaction: FoundryTxEnvelope,
+        transaction: &FoundryTxEnvelope,
     ) -> Option<PendingTransaction<FoundryTxEnvelope>> {
-        if !self.backend.is_monad() {
+        if !self.backend.is_monad_protocol_envelope(transaction) {
             return None;
         }
-
-        // Protocol system transactions cannot be replayed on evm2 yet, so they are submitted like
-        // regular impersonated transactions and rejected at mining validation.
         Some(PendingTransaction::with_sender(
-            MaybeImpersonatedTransaction::new(transaction),
+            MaybeImpersonatedTransaction::new(transaction.clone()),
             monad_evm2::staking::constants::SYSTEM_ADDRESS,
         ))
     }
@@ -4566,7 +4567,7 @@ impl EthApi<FoundryNetwork> {
                         let protocol_pending = {
                             #[cfg(feature = "monad")]
                             {
-                                self.monad_protocol_reorg_transaction(decoded.clone())
+                                self.monad_protocol_reorg_transaction(&decoded)
                             }
                             #[cfg(not(feature = "monad"))]
                             {
@@ -4621,7 +4622,7 @@ impl EthApi<FoundryNetwork> {
                             {
                                 if from == monad_evm2::staking::constants::SYSTEM_ADDRESS {
                                     self.monad_protocol_reorg_transaction(
-                                        typed_tx.clone().into_impersonated(),
+                                        &typed_tx.clone().into_impersonated(),
                                     )
                                 } else {
                                     None
