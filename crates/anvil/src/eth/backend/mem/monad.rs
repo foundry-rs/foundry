@@ -57,7 +57,7 @@ use revm::{
     context::{Transaction, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{HaltReason, InvalidTransaction, ResultAndState},
+        result::{ExecutionResult, HaltReason, InvalidTransaction, ResultAndState, ResultGas},
         transaction::AuthorizationTr,
     },
     database_interface::WrapDatabaseRef,
@@ -164,10 +164,18 @@ where
     prepare_transaction(executor.evm_mut(), &tx_env);
     let result = (|| {
         if !is_replay {
-            return executor.execute_transaction_without_commit((tx_env, recovered));
+            return executor.execute_transaction_without_commit_with(
+                (tx_env, recovered),
+                transact_for_receipt,
+            );
         }
         match protocol_system_call(&tx_env) {
-            Ok(None) => return executor.execute_transaction_without_commit((tx_env, recovered)),
+            Ok(None) => {
+                return executor.execute_transaction_without_commit_with(
+                    (tx_env, recovered),
+                    transact_for_receipt,
+                );
+            }
             Ok(Some(_)) => {}
             Err(err) => return Err(BlockExecutionError::msg(err)),
         }
@@ -603,13 +611,13 @@ impl<N: Network> Backend<N> {
             &mut executor,
             transactions,
             inspector_tx_config,
-            |evm, tx_env, _transaction_hash| {
+            |evm, tx_env, transaction_hash| {
                 prepare_transaction(evm, &tx_env);
                 let result = match try_transact_monad_system_replay(evm, &tx_env)
                     .map_err(BlockExecutionError::msg)
                 {
                     Ok(Some(result)) => Ok(result),
-                    Ok(None) => evm.transact(tx_env).map_err(BlockExecutionError::msg),
+                    Ok(None) => transact_for_receipt(evm, tx_env, transaction_hash),
                     Err(err) => Err(err),
                 };
                 if result.is_err() {
@@ -931,4 +939,24 @@ pub(super) fn store_block_metadata<N: Network>(
         block_hash,
         MonadBlockReplayProfile { execution_chain_id, hardfork: MonadHardfork::from(hardfork) },
     );
+}
+
+/// Executes an ordinary Monad transaction with the gas accounting used by native receipts.
+fn transact_for_receipt<DB>(
+    evm: &mut MonadEvm<DB, AnvilInspector>,
+    tx_env: TxEnv,
+    transaction_hash: B256,
+) -> Result<ResultAndState<HaltReason>, BlockExecutionError>
+where
+    DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
+{
+    let gas_limit = tx_env.gas_limit();
+    let mut result =
+        evm.transact(tx_env).map_err(|err| BlockExecutionError::evm(err, transaction_hash))?;
+    // Keep execution gas for calls and estimates, but publish the full gas charged for inclusion.
+    let (ExecutionResult::Success { gas, .. }
+    | ExecutionResult::Revert { gas, .. }
+    | ExecutionResult::Halt { gas, .. }) = &mut result.result;
+    *gas = ResultGas::default().with_total_gas_spent(gas_limit);
+    Ok(result)
 }
