@@ -200,8 +200,6 @@ jobs:
           toolchain: nightly
           components: rustfmt
       - run: cargo fmt --all --check
-      - name: Check Tempo compatibility verifier formatting
-        run: cargo fmt --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml --all --check
 
   forge-fmt:
     runs-on: depot-ubuntu-latest

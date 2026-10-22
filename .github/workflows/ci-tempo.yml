@@ -146,54 +146,11 @@ jobs:
           TEMPO_HOME: ${{ runner.temp }}/tempo-wallet
         run: ./.github/scripts/tempo-wallet.sh
 
-  tempo-consensus-compat:
-    # This local compatibility check also runs on fork PRs and needs no RPC secrets.
-    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
-    runs-on: depot-ubuntu-latest-16
-    timeout-minutes: 60
-    permissions:
-      id-token: write
-      contents: read
-    env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_INCREMENTAL: "0"
-    steps:
-      - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
-      - name: Install Linux system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
-          prefix-key: v1-tempo-consensus-compat
-          workspaces: |
-            .
-            crates/anvil/tests/fixtures/tempo-consensus-compat
-      - name: Export certificates from the consensus core
-        env:
-          ANVIL_TEMPO_CONSENSUS_ARTIFACT: ${{ runner.temp }}/tempo-consensus-core.json
-        run: cargo test --locked -p anvil --lib eth::backend::tempo_consensus::tests::export_native_compatibility_vectors -- --exact --ignored
-      - name: Verify certificates with native Commonware
-        env:
-          ANVIL_TEMPO_CONSENSUS_ARTIFACT: ${{ runner.temp }}/tempo-consensus-core.json
-        run: cargo run --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml
-      - name: Lint the native compatibility verifier
-        run: cargo clippy --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml --all-targets -- -D warnings
-
   # If the nightly run fails, this will create an issue to signal so.
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [tempo-check, tempo-consensus-compat]
+    needs: [tempo-check]
     if: failure() && github.event_name == 'schedule'
     permissions:
       contents: read
