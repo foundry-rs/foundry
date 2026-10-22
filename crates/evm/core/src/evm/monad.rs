@@ -8,13 +8,15 @@ use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
 use alloy_primitives::{Address, map::HashSet};
 use evm2::{
-    ExecutionConfig, TxResult, Version, ethereum::TxEnvelope, evm::precompile::PrecompileProvider,
-    registry::TxRegistry,
+    Evm, ExecutionConfig, TxResult, Version, ethereum::TxEnvelope,
+    evm::precompile::PrecompileProvider, registry::TxRegistry,
 };
 use monad_evm2::{
     MonadBlockExt, MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
-    protocol_system_call, staking::constants::SYSTEM_ADDRESS,
+    protocol_system_call,
+    reserve_balance::{rebase_reserve_balance, sync_reserve_balance},
+    staking::constants::SYSTEM_ADDRESS,
 };
 
 /// Monad EVM network.
@@ -72,6 +74,10 @@ impl FoundryEvmExt<TxEnvelope> for MonadEvmExt {
 
     fn set_protocol_replay(&mut self, enabled: bool) {
         self.protocol_replay = enabled;
+    }
+
+    fn set_preserve_transaction_state(&mut self, preserve: bool) {
+        self.set_preserve_reserve_balance_tracker(preserve);
     }
 }
 
@@ -143,5 +149,18 @@ impl FoundryEvmFactory for MonadEvmFactory {
         _ext: &MonadEvmExt,
     ) -> Box<dyn PrecompileProvider<MonadEvmTypes>> {
         Box::new(MonadPrecompiles::new(env.spec))
+    }
+
+    fn sync_transaction(&self, evm: &mut Evm<'_, MonadEvmTypes>) {
+        // A database error surfaces again when execution next reads the account.
+        let _ = sync_reserve_balance(evm);
+    }
+
+    fn refresh_transaction(&self, evm: &mut Evm<'_, MonadEvmTypes>) {
+        // Foundry's writes, such as `deal` rebasing earlier journal entries, are not reserve
+        // balance events.
+        let journal_len = evm.state().journal().len();
+        evm.ext_mut().reserve_balance_sync.begin(journal_len);
+        let _ = rebase_reserve_balance(evm);
     }
 }

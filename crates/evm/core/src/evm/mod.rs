@@ -221,6 +221,17 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
         self.clone()
     }
 
+    /// Folds the running transaction's execution so far into network state derived from it, such
+    /// as Monad's reserve-balance tracker. Call it before Foundry changes that state outside
+    /// execution, then call [`Self::refresh_transaction`].
+    fn sync_transaction(&self, _evm: &mut Evm<'_, Self::Types>) {}
+
+    /// Rebases network state derived from the running transaction's state onto that state after
+    /// Foundry changed it outside execution, such as cheatcode writes and isolated calls. The
+    /// change itself is not execution: Monad's reserve-balance tracker recomputes the thresholds
+    /// of its tracked accounts without recording debits or credits.
+    fn refresh_transaction(&self, _evm: &mut Evm<'_, Self::Types>) {}
+
     /// Seeds network state into a newly created EVM, such as Tempo genesis or Base sentinels.
     fn initialize_evm(&self, _evm: &mut Evm<'_, Self::Types>, _is_forked: bool) {}
 

@@ -1263,10 +1263,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         };
         let source_fork = backend.backend().active_fork_id();
         let epoch = self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
+        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, &tx, Some(env));
         // The nested transaction continues the running one's network extension state, such as
-        // Monad's reserve balance context.
+        // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
+        child.ext_mut().set_preserve_transaction_state(true);
         // Accounts the running transaction created stay created in the nested one, so that
         // EIP-6780 SELFDESTRUCT still deletes them.
         for address in &self.inner.tx_created {
@@ -1390,6 +1392,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             evm.ext_mut().replace_while_executing(child.ext().clone());
             merged
         };
+        // The running transaction continues from the nested one's derived state, rebased onto
+        // the merged state.
+        evm.ext_mut().set_preserve_transaction_state(false);
+        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         let mut block = *evm.block();
         block.basefee = outer_basefee;
         evm.set_block(block);

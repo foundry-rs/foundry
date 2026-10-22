@@ -354,8 +354,10 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
+        EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
         db.load_allocs(&allocs, evm).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
 }
@@ -366,8 +368,10 @@ impl Cheatcode for cloneAccountCall {
 
         let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), source);
         let genesis = genesis_account(ccx.evm.state_mut(), source, slots)?;
+        EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
         db.clone_account(&genesis, target, evm)?;
+        EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
         // Cloned account should persist in forked envs.
         ccx.db_mut().add_persistent_account(*target);
         Ok(Default::default())
@@ -778,13 +782,18 @@ impl Cheatcode for getBlobBaseFeeCall {
 impl Cheatcode for dealCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
-        let mut account = ccx.evm.state_mut().account(&address)?;
-        let old_balance = account.balance();
-        // The balance survives reverts of the enclosing calls.
-        account.touch();
-        account.set_balance_untracked(new_balance);
+        EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
+        let old_balance = {
+            let mut account = ccx.evm.state_mut().account(&address)?;
+            let old_balance = account.balance();
+            // The balance survives reverts of the enclosing calls.
+            account.touch();
+            account.set_balance_untracked(new_balance);
+            old_balance
+        };
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
 }

@@ -163,6 +163,11 @@ pub trait FoundryEvmExt<Tx>: SendableExt + Debug + Default + 'static {
         false
     }
 
+    /// Sets whether the next transaction continues the transaction state derived so far, such as
+    /// Monad's reserve-balance tracker, instead of starting its own. Isolated calls continue the
+    /// running transaction's.
+    fn set_preserve_transaction_state(&mut self, _preserve: bool) {}
+
     /// Sets whether transactions from the network's protocol sender execute as protocol
     /// transactions.
     ///
