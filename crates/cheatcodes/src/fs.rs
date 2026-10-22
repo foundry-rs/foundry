@@ -623,9 +623,11 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         &mut ccx.state.deploy_code_create_state_gas,
         if charged_create_state_gas { create_state_gas } else { 0 },
     );
+    let outer_output = ccx.state.deploy_code_output.take();
     let outcome = exec_create(executor, message, ccx);
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
     ccx.state.deploy_code_create_state_gas = outer_create_state_gas;
+    let returned = mem::replace(&mut ccx.state.deploy_code_output, outer_output);
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.
@@ -659,7 +661,8 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     }
 
     if !outcome.is_success() {
-        return Err(crate::Error::from(outcome.output));
+        // As on master, a constructor whose returned code could not be deposited reverts with it.
+        return Err(crate::Error::from(returned.unwrap_or(outcome.output)));
     }
 
     let address = outcome.created_address.ok_or_else(|| fmt_err!("contract creation failed"))?;

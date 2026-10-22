@@ -928,6 +928,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Account-creation state gas the in-flight `deployCode` call already charged its caller for
     /// its create frame.
     pub deploy_code_create_state_gas: u64,
+
+    /// Output the in-flight `deployCode` call's constructor returned, which the EVM drops if
+    /// depositing it fails.
+    pub deploy_code_output: Option<Bytes>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1005,6 +1009,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             in_replay: false,
             deploy_code_depth: None,
             deploy_code_create_state_gas: 0,
+            deploy_code_output: None,
         }
     }
 
@@ -1911,6 +1916,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.pending_gas_price
             || self.pending_emit_failure.is_some()
             || self.has_storage_hooks()
+            || self.deploy_code_depth.is_some()
     }
 
     #[inline(always)]
@@ -2097,6 +2103,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         if !self.has_step_end_hooks() {
             return;
+        }
+
+        // `deployCode`: keep the constructor's output, which master reports if depositing it fails.
+        if let Some(depth) = self.deploy_code_depth
+            && usize::from(interp.message().depth) == depth + 1
+            && interp.message().kind.is_create()
+            && interp.result() == Err(InstrStop::Return)
+        {
+            self.deploy_code_output = Some(Bytes::copy_from_slice(interp.output()));
         }
 
         // `expectEmit`: a mismatched log reverts the frame that emitted it.
