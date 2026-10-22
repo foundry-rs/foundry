@@ -3615,6 +3615,37 @@ contract BoxTest {
     }
 }
 
+// `vm.deployCode` must enforce the configured initcode size limit as a native create.
+#[forgetest]
+fn deploy_code_initcode_size_limit(prj: _, cmd: _) {
+    prj.add_test(
+        "Initcode.t.sol",
+        r#"
+interface Vm {
+    function deployCode(string calldata, bytes calldata) external returns (address);
+}
+
+contract Big {
+    constructor(bytes memory) {}
+}
+
+contract InitcodeTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function testDeployCode() public {
+        vm.deployCode("test/Initcode.t.sol:Big", abi.encode(new bytes(7000)));
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.code_size_limit = Some(3000));
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: vm.deployCode: initcode size limit exceeded] testDeployCode() ([GAS])
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn can_use_absolute_imports(prj: _, cmd: _) {
     prj.initialize_default_contracts();

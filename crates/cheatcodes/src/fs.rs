@@ -17,7 +17,7 @@ use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
 use foundry_evm_traces::CallKind;
 use revm::{
-    context::{Cfg, ContextTr, CreateScheme},
+    context::{Cfg, ContextTr, CreateScheme, JournalTr},
     handler::handle_reservoir_remaining_gas,
     interpreter::CreateInputs,
     primitives::hardfork::SpecId,
@@ -524,29 +524,65 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         bytecode.extend_from_slice(args);
     }
 
+    let depth = ccx.depth();
+
+    // The nested EVM executes the synthetic create one level deeper, so resolve the prank at the
+    // original depth just as the native create inspector would.
+    let prank_changes =
+        ccx.state.get_prank(depth).and_then(|prank| prank.changes_for(depth, ccx.caller));
+    let caller = prank_changes.as_ref().and_then(|changes| changes.caller).unwrap_or(ccx.caller);
+
+    let value = value.unwrap_or(U256::ZERO);
+    let scheme =
+        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
+    let mut inputs = CreateInputs::new(caller, scheme, value, bytecode.into(), 0, 0);
+    let init_code_len = inputs.init_code().len();
+
     // Charge the caller as the CREATE and CREATE2 opcodes would, before changing any state.
     let spec = ccx.spec().into();
     let gas_params = ccx.ecx.cfg().gas_params();
     let mut cost = if salt.is_some() {
-        gas_params.create2_cost(bytecode.len())
+        gas_params.create2_cost(init_code_len)
     } else {
         gas_params.create_cost()
     };
     if spec.is_enabled_in(SpecId::SHANGHAI) {
-        cost = cost.saturating_add(gas_params.initcode_cost(bytecode.len()));
+        if init_code_len > ccx.max_initcode_size() {
+            ccx.gas.spend_all();
+            return Err(fmt_err!("initcode size limit exceeded"));
+        }
+        cost = cost.saturating_add(gas_params.initcode_cost(init_code_len));
     }
+    let create_state_gas = gas_params.create_state_gas();
     if !ccx.gas.record_regular_cost(cost) {
         ccx.gas.spend_all();
         return Err(fmt_err!("out of gas"));
     }
+
+    // EIP-8037: charge the account creation state gas if the creation can proceed and the
+    // destination is empty.
+    if ccx.ecx.cfg().is_amsterdam_eip8037_enabled() {
+        let caller_info = &ccx.ecx.journal_mut().load_account(caller)?.data.info;
+        if caller_info.balance >= value && caller_info.nonce != u64::MAX {
+            let created_address = inputs.created_address(caller_info.nonce);
+            if ccx.ecx.journal_mut().load_account(created_address)?.data.info.is_empty() {
+                if !ccx.gas.record_state_cost(create_state_gas) {
+                    ccx.gas.spend_all();
+                    return Err(fmt_err!("out of gas"));
+                }
+                inputs.set_charged_create_state_gas(true);
+            }
+        }
+    }
+
     let mut gas_limit = ccx.gas.remaining();
     if spec.is_enabled_in(SpecId::TANGERINE) {
-        gas_limit = gas_params.call_stipend_reduction(gas_limit);
+        gas_limit = ccx.ecx.cfg().gas_params().call_stipend_reduction(gas_limit);
     }
     // Forward the gas to the create frame; this cannot fail as it does not exceed `remaining`.
     let _ = ccx.gas.record_regular_cost(gas_limit);
-
-    let depth = ccx.depth();
+    inputs.set_gas_limit(gas_limit);
+    inputs.set_reservoir(ccx.gas.reservoir());
 
     // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
     // depth, as for native creates.
@@ -557,18 +593,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         broadcast.deploy_from_code = true;
     }
 
-    let scheme =
-        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
-
-    // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
-    // original depth just as the native create inspector would.
-    let mut caller = ccx.caller;
-    if let Some(prank) = ccx.state.get_prank(depth)
-        && let Some(changes) = prank.changes_for(depth, caller)
-    {
-        if let Some(new_caller) = changes.caller {
-            caller = new_caller;
-        }
+    if let Some(changes) = prank_changes {
         if let Some(new_origin) = changes.origin {
             ccx.ecx.tx_mut().set_caller(new_origin);
         }
@@ -579,18 +604,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     // Restore the outer marker afterwards, as constructors can call `deployCode` too.
     let outer_deploy_code_depth = ccx.state.deploy_code_depth.replace(depth);
-    let outcome = exec_create(
-        executor,
-        CreateInputs::new(
-            caller,
-            scheme,
-            value.unwrap_or(U256::ZERO),
-            bytecode.into(),
-            gas_limit,
-            0,
-        ),
-        ccx,
-    );
+    let outcome = exec_create(executor, inputs, ccx);
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
@@ -619,6 +633,11 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         ccx.gas.tracker_mut(),
         outcome.result.gas.tracker_mut(),
     );
+    // Refund the upfront state charge if the account was not created, as revm does.
+    let created = outcome.result.result.is_ok() && outcome.address.is_some();
+    if outcome.charged_create_state_gas && !created {
+        ccx.gas.refill_reservoir(create_state_gas);
+    }
 
     if !outcome.result.result.is_ok() {
         return Err(crate::Error::from(outcome.result.output));
