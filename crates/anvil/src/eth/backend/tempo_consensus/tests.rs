@@ -5,6 +5,7 @@ use commonware_cryptography::bls12381::primitives::{
     group::{G1, G2},
     ops,
 };
+use serde_json::{Value, json};
 
 #[test]
 fn zero_depth_unwind_preserves_pending_rotation() {
@@ -365,6 +366,59 @@ fn rejected_heights_and_overflows_leave_state_unchanged() {
     assert_eq!(outcome.epoch, 1);
 }
 
+/// Exports inputs for the independent native Commonware verifier run by CI.
+#[test]
+#[ignore = "requires ANVIL_TEMPO_CONSENSUS_ARTIFACT and the standalone compatibility verifier"]
+fn export_native_compatibility_vectors() {
+    let path = std::env::var("ANVIL_TEMPO_CONSENSUS_ARTIFACT")
+        .expect("set ANVIL_TEMPO_CONSENSUS_ARTIFACT to the output file");
+    let seed =
+        TempoConsensus::default_seed("test test test test test test test test test test test junk");
+    let mut consensus = TempoConsensus::new(seed, NonZeroU64::new(3).unwrap());
+    let identity = consensus.identity().identity;
+    let rotation = (1..=6)
+        .map(|height| {
+            if height == 2 || height == 4 {
+                consensus.rotate().unwrap();
+            }
+            compatibility_header(&mut consensus, height, TempoHardfork::T4)
+        })
+        .collect::<Vec<_>>();
+
+    let epoch_length = 32_768;
+    let mut rounds = [
+        (0, 127),
+        (0, 128),
+        (0, 16_383),
+        (0, 16_384),
+        (127, 128),
+        (128, 129),
+        (16_383, 16_384),
+        (16_384, 16_385),
+    ]
+    .into_iter()
+    .map(|(epoch, view)| {
+        let height = epoch * epoch_length + view - 1;
+        let mut consensus =
+            TempoConsensus::at_height(seed, NonZeroU64::new(epoch_length).unwrap(), height - 1);
+        compatibility_header(&mut consensus, height, TempoHardfork::T4)
+    })
+    .collect::<Vec<_>>();
+    let mut before_t4 = TempoConsensus::new(seed, NonZeroU64::new(3).unwrap());
+    rounds.push(compatibility_header(&mut before_t4, 1, TempoHardfork::T3));
+
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&json!({
+            "identity": identity,
+            "rotation": rotation,
+            "rounds": rounds,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
 fn finalize(consensus: &mut TempoConsensus, height: u64) -> (TempoHeader, TempoFinalization) {
     let mut header = TempoHeader::default();
     header.inner.number = height;
@@ -411,4 +465,25 @@ fn certificate_verifies(
     let public = G2::decode(identity.identity.as_ref()).unwrap();
     ops::verify_message::<MinSig>(&public, b"TEMPO_FINALIZE", &bytes[..proposal_len], &vote).is_ok()
         && ops::verify_message::<MinSig>(&public, b"TEMPO_SEED", &bytes[..round_len], &seed).is_ok()
+}
+
+fn compatibility_header(
+    consensus: &mut TempoConsensus,
+    height: u64,
+    hardfork: TempoHardfork,
+) -> Value {
+    let mut header = TempoHeader::default();
+    header.inner.number = height;
+    header.inner.timestamp = height;
+    header.inner.gas_limit = 30_000_000;
+    header.inner.state_root = B256::repeat_byte(0x42);
+    consensus.prepare_header(&mut header, hardfork).unwrap();
+    let finalization = consensus.finalize(&header, hardfork).unwrap();
+    json!({
+        "header": header,
+        "epoch": finalization.epoch,
+        "view": finalization.view,
+        "digest": finalization.digest,
+        "certificate": finalization.certificate,
+    })
 }
