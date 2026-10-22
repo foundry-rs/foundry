@@ -60,6 +60,10 @@ pub struct Parked<T: EvmTypesHost> {
     /// Accounts created in this context before it was suspended, with the same lifetime as
     /// `loaded`.
     pub(super) created: AddressSet,
+    /// Accounts warm in this context when the running transaction last suspended it, with their
+    /// warm slots. Cleared between transactions, as REVM treats journal entries of earlier
+    /// transactions as cold.
+    pub(super) warm: AddressMap<HashSet<U256>>,
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
@@ -73,6 +77,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             needs_init: false,
             loaded: AddressMap::default(),
             created: AddressSet::default(),
+            warm: AddressMap::default(),
         }
     }
 
@@ -108,6 +113,9 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
     /// context before it first selected a fork. Like REVM's initial journal, loaded storage values
     /// are kept even when a non-created account's info comes from the fork.
     pub(super) fn inherit_local(&mut self, local: &Self) {
+        for (address, slots) in &local.warm {
+            self.warm.entry(*address).or_default().extend(slots);
+        }
         if let Some(cache) = &local.cache {
             self.inherit(&local.loaded, &local.created, cache);
             for (address, slots) in &local.loaded {
@@ -140,6 +148,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
             needs_init: self.needs_init,
             loaded: self.loaded.clone(),
             created: self.created.clone(),
+            warm: self.warm.clone(),
         }
     }
 }

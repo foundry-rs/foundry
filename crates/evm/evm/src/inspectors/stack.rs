@@ -29,7 +29,7 @@ use foundry_evm_core::{
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
         TxResultFor, TypesFor, evm_env, merge_pending_changes, merge_untracked_nested_changes,
-        release_inspector,
+        release_inspector, warm_set,
     },
     precompiles::P256_VERIFY,
 };
@@ -1343,9 +1343,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch)
             || backend.backend().active_fork_id() != source_fork;
         let merged = if replaced {
+            // Across a fork switch the running transaction keeps its warmth, and the nested
+            // transaction's on success. A restored snapshot brings its own.
+            let warmth = (!restored).then(|| warm_set(evm.state_mut()));
             child.commit_source(&executed.pending_state);
             backend.backend().end_frame_evm(evm, child);
-            true
+            if let Some(warmth) = warmth {
+                evm.state_mut().set_prewarm_set(warmth);
+                !result.status || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok()
+            } else {
+                true
+            }
         } else {
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
                 && (!result.status
@@ -2027,6 +2035,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Storage of accounts with arbitrary storage stays warm, so its generated values are kept.
     fn cool_for_static_call(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         let state = interp.host().state_mut();
+        // Warmth carried across fork switches cools too.
+        if let Some(prewarm) =
+            self.backend.as_deref().and_then(|backend| backend.backend().lifecycle().tx_prewarm())
+        {
+            state.set_prewarm_set(prewarm.clone());
+        }
         let arbitrary = self
             .cheatcodes
             .as_deref()
