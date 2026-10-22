@@ -1252,6 +1252,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &MessageFor<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
+        gas: &mut GasTracker,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
         // decode the cheatcode call
@@ -1281,7 +1282,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 evm: interp.host(),
                 backend,
                 tx_env,
-                gas_limit: message.gas_limit,
+                gas,
                 caller,
                 is_static: is_static(message),
                 depth: message.depth.into(),
@@ -1297,6 +1298,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &MessageFor<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
+        gas: &mut GasTracker,
     ) -> Result {
         let caller = message.caller;
 
@@ -1311,7 +1313,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 evm: interp.host(),
                 backend,
                 tx_env,
-                gas_limit: message.gas_limit,
+                gas,
                 caller,
                 is_static: is_static(message),
                 depth: message.depth.into(),
@@ -1337,6 +1339,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             backend.backend_mut().allow_cheatcode_access(created_address);
         }
+    }
+
+    /// Maps the depth of the synthetic `deployCode` create frame, which runs in a nested EVM one
+    /// level deeper, to the depth of the cheatcode call, where a native create would run.
+    fn deploy_code_caller_depth(&self, depth: usize) -> usize {
+        if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth }
     }
 
     /// Sets the `tx.origin` the `ORIGIN` opcode reads, given the transaction's own origin.
@@ -1391,25 +1399,30 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         let target = call.destination;
+        // Cheatcodes return the gas they did not spend, as `message_result` does.
+        let mut gas = GasTracker::new(call.gas_limit);
         if target == CHEATCODE_ADDRESS {
-            return Some(match self.apply_cheatcode(interp, call, backend, executor) {
-                Ok(retdata) => message_result(call, InstrStop::Return, retdata.into()),
-                Err(err) => message_result(call, InstrStop::Revert, err.abi_encode().into()),
-            });
+            let (stop, output) =
+                match self.apply_cheatcode(interp, call, backend, &mut gas, executor) {
+                    Ok(retdata) => (InstrStop::Return, retdata.into()),
+                    Err(err) => (InstrStop::Revert, err.abi_encode().into()),
+                };
+            return Some(MessageResultExt { stop, gas, output, ..Default::default() });
         }
 
         #[cfg(feature = "monad")]
         if crate::monad::is_monad_cheatcode_call(self.extra_cheatcode_addresses, target) {
             let checkpoint = interp.host().state().checkpoint();
-            return Some(match self.apply_monad_cheatcode(interp, call, backend) {
-                Ok(retdata) => message_result(call, InstrStop::Return, retdata.into()),
+            let (stop, output) = match self.apply_monad_cheatcode(interp, call, backend, &mut gas) {
+                Ok(retdata) => (InstrStop::Return, retdata.into()),
                 Err(err) => {
                     let evm = interp.host();
                     let features = evm.version().features;
                     evm.state_mut().rollback(checkpoint, features);
-                    message_result(call, InstrStop::Revert, err.abi_encode().into())
+                    (InstrStop::Revert, err.abi_encode().into())
                 }
-            });
+            };
+            return Some(MessageResultExt { stop, gas, output, ..Default::default() });
         }
 
         if target == HARDHAT_CONSOLE_ADDRESS {
@@ -2174,8 +2187,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
-        let isolated_snapshot_gas_used =
-            self.gas_metering.take_isolated_snapshot_gas_used(curr_depth, &outcome.gas);
+        // Depth at which the caller resumes and applies the region snapshot correction.
+        let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
+            self.deploy_code_caller_depth(curr_depth),
+            &outcome.gas,
+        );
         if self.is_storage_hook_callback(call) {
             return;
         }
@@ -2592,8 +2608,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         _backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
-        let isolated_snapshot_gas_used =
-            self.gas_metering.take_isolated_snapshot_gas_used(curr_depth, &outcome.gas);
+        // Depth at which the caller resumes and applies the region snapshot correction.
+        let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
+            self.deploy_code_caller_depth(curr_depth),
+            &outcome.gas,
+        );
         let tx_origin = interp.tx_env().origin;
 
         self.finish_created_accounts_frame(
@@ -2736,10 +2755,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE message at
     /// `depth`.
     pub fn should_use_create2_factory(&mut self, depth: usize, message: &MessageFor<FEN>) -> bool {
-        // `deployCode` executes its create frame one level deeper, so match it at the depth of the
-        // cheatcode call, as for native creates.
-        let depth =
-            if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth };
+        // Match the synthetic `deployCode` create at the depth of the cheatcode call, as for
+        // native creates.
+        let depth = self.deploy_code_caller_depth(depth);
         let target_depth = if let Some(prank) = &self.get_prank(depth) {
             prank.depth
         } else if let Some(broadcast) = &self.broadcast {
