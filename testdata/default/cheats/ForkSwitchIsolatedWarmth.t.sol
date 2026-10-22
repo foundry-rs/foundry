@@ -24,8 +24,8 @@ contract ForkSwitchIsolatedWarmthTest is Test {
     }
 
     // An isolated call that switches forks replaces the running transaction's state with its own,
-    // so warmth of the running transaction does not survive it, and the call's survives only if it
-    // succeeds.
+    // so warmth of the running transaction does not survive it, and the call's accounts stay warm
+    // only if it succeeds. Slots the call accessed before switching stay warm even if it reverts.
     function testForkRevertedSwitchDropsWarmth() public {
         vm.selectFork(mainnetFork);
         warmUp();
@@ -35,6 +35,7 @@ contract ForkSwitchIsolatedWarmthTest is Test {
         assertTrue(isCold(address(vm)), "reverted call warmth survived");
         assertTrue(isCold(address(this)), "reverted call warmth survived");
         assertTrue(isColdSlot(), "running transaction slot warmth survived");
+        assertTrue(!isWrittenCold(), "reverted call slot warmth was dropped");
     }
 
     function testForkSucceededSwitchKeepsCallWarmth() public {

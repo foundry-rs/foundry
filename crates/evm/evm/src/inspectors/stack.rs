@@ -1367,6 +1367,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             backend.backend().end_frame_evm(evm, child);
             if let Some(warmth) = warmth {
                 evm.state_mut().set_prewarm_set(warmth);
+            } else if fork_changed && !restored {
+                // As on master, persistent slots the call had warmed when it switched forks stay
+                // warm after it fails, without their accounts.
+                let slots = backend.backend().lifecycle().switch_slots().clone();
+                for (address, keys) in slots {
+                    for key in keys {
+                        let _ =
+                            evm.state_mut().storage_slot(&address, key).map(|mut slot| slot.warm());
+                    }
+                }
             }
             restored
                 || !result.status

@@ -159,6 +159,8 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory, C = ()> {
     pending_env: Option<EvmEnv<F::Types>>,
     /// Base warm set of the running transaction from before a fork switch carried warmth into it.
     tx_prewarm: Option<PrewarmSet>,
+    /// Warm slots of persistent accounts the last fork switch carried into the next context.
+    switch_slots: AddressMap<HashSet<U256>>,
 }
 
 impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
@@ -169,6 +171,7 @@ impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
             snapshots: self.snapshots.clone(),
             pending_env: self.pending_env,
             tx_prewarm: self.tx_prewarm.clone(),
+            switch_slots: self.switch_slots.clone(),
         }
     }
 }
@@ -189,6 +192,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             snapshots: StateSnapshots::default(),
             pending_env: None,
             tx_prewarm: None,
+            switch_slots: AddressMap::default(),
         }
     }
 
@@ -847,9 +851,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
                 warm.entry(*address).or_default().extend(slots);
             }
         }
+        self.switch_slots.clear();
         for address in &persistent {
             if let Some(slots) = source_warm.get(address) {
                 warm.entry(*address).or_default().extend(slots);
+                self.switch_slots.insert(*address, slots.clone());
             }
         }
         for (address, slots) in &warm {
@@ -933,6 +939,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             env.set_chain_id(context.env.chain_id());
         }
         context.env = env;
+    }
+
+    /// Returns the warm slots of persistent accounts the last fork switch carried into the next
+    /// context.
+    pub const fn switch_slots(&self) -> &AddressMap<HashSet<U256>> {
+        &self.switch_slots
     }
 
     /// Returns the accounts loaded in the running transaction, including accounts loaded as
