@@ -25,10 +25,11 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER},
     evm::{
-        BackingDb, ChainFor, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor,
-        ExecutedNested, ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, FoundryDatabase,
-        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, Parked, PreparedTx,
-        SpecFor, TxFor, TxResultFor, TypesFor, block_txs, evm_env, merge_untracked_nested_changes,
+        BackingDb, BlockContext, ChainFor, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor,
+        ExecutedNested, ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition,
+        FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork,
+        Parked, PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor, block_txs, evm_env,
+        merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -191,8 +192,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             ExecutionSpecContext::fork(context.source_chain_id, context.hardfork),
         );
 
+        let track = fork.evm_opts.networks.is_monad();
         let mut backend = Self::with_fork_manager(forks, EmptyDB::default(), env);
-        let id = backend.insert_prepared_fork(fork.url, resolved, env);
+        let id = backend.insert_prepared_fork(fork.url, resolved, env, track)?;
         let mut evm = backend.lifecycle.create_evm();
         let _ = backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
         backend.lifecycle.park(evm);
@@ -211,7 +213,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         let mut backend = Self::with_fork_manager(forks, EmptyDB::default(), env);
         if let Some(fork) = fork {
-            let id = backend.insert_fork(fork, Some(env))?;
+            let track = fork.evm_opts.networks.is_monad();
+            let id = backend.insert_fork(fork, Some(env), track)?;
             let mut evm = backend.lifecycle.create_evm();
             let _ = backend.lifecycle.select_fork(&mut evm, Some(id), ExecutionPhase::Boundary)?;
             backend.lifecycle.park(evm);
@@ -386,7 +389,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut evm: FoundryEvmFor<'a, FEN> = self.create_evm();
         evm.set_inspector(inspector);
-        evm.ext_mut().for_transaction(tx);
+        evm.ext_mut().for_next_transaction(tx);
         let executed = evm.transact(tx).map_err(handler_error)?;
         Ok(executed.result().clone())
     }
@@ -399,7 +402,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut evm: FoundryEvmFor<'a, FEN> = self.create_evm();
         evm.set_inspector(inspector);
-        evm.ext_mut().for_transaction(tx);
+        evm.ext_mut().for_next_transaction(tx);
         let result = evm.transact(tx).map_err(handler_error)?.commit();
         evm.clear_inspector();
         self.park(evm);
@@ -707,7 +710,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Creates a fork without selecting it.
     pub fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        self.insert_fork(fork, None)
+        let track = self.tracks_position(&fork);
+        self.insert_fork(fork, None, track)
     }
 
     /// Creates a fork positioned right before `transaction` without selecting it.
@@ -717,11 +721,16 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         transaction: B256,
     ) -> eyre::Result<LocalForkId> {
         trace!(?transaction, "create fork at transaction");
-        let id = self.insert_fork(fork, None)?;
+        // The fork's cursor is derived from the transaction's block below.
+        let id = self.insert_fork(fork, None, false)?;
         let spec = self.evm_env().spec;
-        let (db, env, cache, info) = self.prepare_roll_to_transaction(id, transaction, spec)?;
+        let (db, env, cache, info, cursor) =
+            self.prepare_roll_to_transaction(id, transaction, spec)?;
         self.lifecycle.replace_inactive(Some(id), db, env, cache)?;
         self.set_fork_info(id, info);
+        if let Some((position, cursor)) = cursor {
+            self.retain_cursor(id, position, &cursor, None);
+        }
         Ok(id)
     }
 
@@ -792,13 +801,22 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let ForkResult { id: fork_id, backend, fork: remote } =
             self.forks.roll_fork(info.id.clone(), block_number)?;
         let env = self.fork_env(&options.evm_opts, &remote, &remote.block, evm_env(evm).spec);
+        // Resolve everything fallible before the fork moves.
+        let cursor = if self.tracks_position(&options) {
+            Some(self.block_end_cursor(&backend, &remote, &env)?)
+        } else {
+            None
+        };
         let db = ForkDb::new(backend, remote.context().source_chain_id);
         let transition = self.lifecycle.roll_fork(evm, Some(id), db, env, phase)?;
         let block = Some(remote.number());
         self.set_fork_info(
             id,
-            ForkInfo { id: fork_id, url: info.url, block, remote: Some(remote) },
+            ForkInfo { id: fork_id, url: info.url, block, remote: Some(remote), position: None },
         );
+        if let Some((position, cursor)) = cursor {
+            self.retain_cursor(id, position, &cursor, Some(evm));
+        }
         Ok(transition)
     }
 
@@ -814,10 +832,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<EnvTransition> {
         trace!(?id, ?transaction, "roll fork to transaction");
         let id = self.ensure_fork(id)?;
-        let (db, env, cache, info) =
+        let (db, env, cache, info, cursor) =
             self.prepare_roll_to_transaction(id, transaction, evm_env(evm).spec)?;
         let transition = self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
         self.set_fork_info(id, info);
+        if let Some((position, cursor)) = cursor {
+            self.retain_cursor(id, position, &cursor, Some(evm));
+        }
         Ok(transition)
     }
 
@@ -872,26 +893,56 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut env, source_chain_id);
         env.version.initial_call_depth = depth;
 
-        let ext = if self.networks.is_monad() {
+        // Networks with block-position state only replay the transaction that immediately follows
+        // the fork's canonical position, and advance the position past it.
+        let (ext, next) = if self.networks.is_monad() {
             let index = target
                 .index
                 .ok_or_else(|| eyre::eyre!("transaction {transaction} has no block position"))?;
+            let BlockTransactions::Full(transactions) = &target.block.transactions else {
+                eyre::bail!(
+                    "block {} does not contain full transactions",
+                    target.block.header.number()
+                );
+            };
+            let block = BlockNumHash::new(target.block.header.number(), target.block.header.hash);
+            let next = self
+                .fork_position(id)?
+                .after_transaction(
+                    block,
+                    target.block.header.parent_hash(),
+                    index,
+                    transactions.len(),
+                )
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "transaction {transaction} does not immediately follow the canonical \
+                         position of fork {id}"
+                    )
+                })?;
             let shared = self.shared_backend(id)?;
             let context = block_context::<FEN>(&shared, &target.block)?;
-            let mut ext = self.lifecycle.factory().evm_ext(&env);
+            let factory = self.lifecycle.factory();
+            let cursor = block_cursor::<FEN>(factory, &env, context.clone(), next)?;
+            let mut ext = factory.evm_ext(&env);
             context.prepare(&mut ext, index);
             // The mined transaction is trusted history: a protocol transaction replays as such,
             // and a non-canonical envelope from the protocol sender is rejected.
             ext.set_protocol_replay(true);
-            Some(ext)
+            (Some(ext), Some((next, cursor)))
         } else {
-            None
+            (None, None)
         };
-        let prepared = if active {
+        // The replayed transaction's changes are not the running transaction's execution.
+        self.lifecycle.factory().sync_transaction(evm);
+        let mut prepared = if active {
             self.lifecycle.prepare_nested(evm, tx, Some(env), ext)
         } else {
             self.lifecycle.prepare_on_inactive(evm, Some(id), tx, Some(env), ext)?
         };
+        if let Some((position, cursor)) = next {
+            prepared.set_cursor(id, position, cursor);
+        }
 
         let mut backend = CowBackend::new_borrowed(self);
         if !active {
@@ -935,13 +986,28 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         env: Option<EvmEnvFor<FEN>>,
     ) -> (PreparedTx<TypesFor<FEN>>, CowBackend<'_, FEN>) {
         trace!("execute signed transaction");
+        // The nested transaction's changes are not the running transaction's execution.
+        self.lifecycle.factory().sync_transaction(evm);
         (self.lifecycle.prepare_nested(evm, tx, env, None), CowBackend::new_borrowed(self))
     }
 
     /// Stores the outcome of a transaction prepared with [`Self::prepare_transact`] or
     /// [`Self::prepare_nested`].
-    pub fn store_executed(&mut self, executed: ExecutedNested<TypesFor<FEN>>) -> TxResultFor<FEN> {
-        self.lifecycle.store_executed(executed)
+    ///
+    /// A replayed canonical transaction advances its fork's position; its changes merged into the
+    /// running transaction `evm` are not the running transaction's execution.
+    pub fn store_executed(
+        &mut self,
+        evm: &mut FoundryEvmFor<'_, FEN>,
+        mut executed: ExecutedNested<TypesFor<FEN>>,
+    ) -> TxResultFor<FEN> {
+        let cursor = executed.take_cursor();
+        let result = self.lifecycle.store_executed(executed);
+        match cursor {
+            Some((id, position, cursor)) => self.retain_cursor(id, position, &cursor, Some(evm)),
+            None => self.lifecycle.factory().refresh_transaction(evm),
+        }
+        result
     }
 
     /// Builds the EVM a nested transaction of the running one executes on, such as an isolated
@@ -1199,11 +1265,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     // ---- Internals ----
 
-    /// Registers an RPC fork, with `env` or the environment derived from its block.
+    /// Registers an RPC fork, with `env` or the environment derived from its block, retaining
+    /// its block cursor if `track`.
     fn insert_fork(
         &mut self,
         fork: CreateFork,
         env: Option<EvmEnvFor<FEN>>,
+        track: bool,
     ) -> eyre::Result<LocalForkId> {
         let url = fork.url.clone();
         let opts = fork.evm_opts.clone();
@@ -1212,20 +1280,97 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let remote = &resolved.fork;
             self.fork_env(&opts, remote, &remote.block, self.lifecycle.active().env.spec)
         });
-        Ok(self.insert_prepared_fork(url, resolved, env))
+        self.insert_prepared_fork(url, resolved, env, track)
     }
 
-    /// Registers a resolved fork without refetching its block.
+    /// Registers a resolved fork without refetching its block, retaining its block cursor if
+    /// `track`.
     fn insert_prepared_fork(
         &mut self,
         url: String,
         resolved: ForkResult,
         env: EvmEnvFor<FEN>,
-    ) -> LocalForkId {
+        track: bool,
+    ) -> eyre::Result<LocalForkId> {
         let ForkResult { id, backend, fork: remote } = resolved;
+        let cursor =
+            if track { Some(self.block_end_cursor(&backend, &remote, &env)?) } else { None };
         let db = ForkDb::new(backend, remote.context().source_chain_id);
-        let info = ForkInfo { id, url, block: Some(remote.number()), remote: Some(remote) };
-        self.lifecycle.create_fork(info, db, env)
+        let info = ForkInfo {
+            id,
+            url,
+            block: Some(remote.number()),
+            remote: Some(remote),
+            position: None,
+        };
+        let id = self.lifecycle.create_fork(info, db, env);
+        if let Some((position, cursor)) = cursor {
+            self.retain_cursor(id, position, &cursor, None);
+        }
+        Ok(id)
+    }
+
+    /// Returns whether forks created from `fork` retain their canonical block cursor.
+    const fn tracks_position(&self, fork: &CreateFork) -> bool {
+        self.networks.is_monad() || fork.evm_opts.networks.is_monad()
+    }
+
+    /// Returns the canonical position of fork `id`: the one retained by a replay, or the end of
+    /// its pinned block.
+    fn fork_position(&self, id: LocalForkId) -> eyre::Result<ForkPosition> {
+        let info = self.fork_info(id)?;
+        info.position
+            .or_else(|| info.remote.as_ref().map(|remote| ForkPosition::AfterBlock(remote.block())))
+            .ok_or_else(|| eyre::eyre!("fork `{id}` has no canonical position"))
+    }
+
+    /// Returns the position and block cursor at the end of `remote`'s pinned block.
+    fn block_end_cursor(
+        &self,
+        backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
+        remote: &RemoteFork,
+        env: &EvmEnvFor<FEN>,
+    ) -> eyre::Result<(ForkPosition, ChainFor<FEN>)> {
+        let block = match &remote.block.transactions {
+            BlockTransactions::Full(_) => AnyRpcBlock::clone(&remote.block),
+            _ => backend
+                .get_full_block(remote.hash())
+                .wrap_err_with(|| format!("failed to fetch fork block {}", remote.hash()))?,
+        };
+        eyre::ensure!(
+            block.header.hash == remote.hash() && block.header.number() == remote.number(),
+            "fork block {} ({}) changed",
+            remote.number(),
+            remote.hash()
+        );
+        let position = ForkPosition::AfterBlock(remote.block());
+        let context = block_context::<FEN>(backend, &block)?;
+        Ok((position, block_cursor::<FEN>(self.lifecycle.factory(), env, context, position)?))
+    }
+
+    /// Retains `position` and its block `cursor` as fork `id`'s canonical position.
+    ///
+    /// The active fork's cursor lives in the running EVM: it moves under the running transaction,
+    /// whose network state is rebased onto it. Synthetic transactions never call this.
+    fn retain_cursor(
+        &mut self,
+        id: LocalForkId,
+        position: ForkPosition,
+        cursor: &ChainFor<FEN>,
+        evm: Option<&mut FoundryEvmFor<'_, FEN>>,
+    ) {
+        if self.is_active_fork(id)
+            && let Some(evm) = evm
+        {
+            evm.ext_mut().adopt_cursor(cursor);
+            self.lifecycle.factory().refresh_transaction(evm);
+        } else {
+            let context = self.lifecycle.forks_mut().context_mut(Some(id)).expect("fork exists");
+            let mut ext = context.ext.get();
+            ext.adopt_cursor(cursor);
+            context.ext = StoredExt::new(&ext);
+        }
+        self.lifecycle.forks_mut().get_mut(id).expect("fork exists").info.position = Some(position);
     }
 
     /// Returns the environment of `remote` at `block` with `spec`.
@@ -1313,14 +1458,22 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(TransactionForkTarget { fork_block, transaction: tx, block, mined: true, index })
     }
 
-    /// Resolves the backing database, environment, replayed accepted state and identity of fork
-    /// `id` positioned right before `transaction`.
+    /// Resolves the backing database, environment, replayed accepted state, identity and, for
+    /// networks with block-position state, canonical position and block cursor of fork `id`
+    /// positioned right before `transaction`.
+    #[expect(clippy::type_complexity)]
     fn prepare_roll_to_transaction(
         &self,
         id: LocalForkId,
         transaction: B256,
         spec: SpecFor<FEN>,
-    ) -> eyre::Result<(RpcForkDb, EvmEnvFor<FEN>, Option<Cache>, ForkInfo)> {
+    ) -> eyre::Result<(
+        RpcForkDb,
+        EvmEnvFor<FEN>,
+        Option<Cache>,
+        ForkInfo,
+        Option<(ForkPosition, ChainFor<FEN>)>,
+    )> {
         let info = self.fork_info(id)?.clone();
         let options = self.fork_options(&info.id)?;
         let target = self.transaction_target(id, transaction)?;
@@ -1330,10 +1483,19 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let source_chain_id = remote.context().source_chain_id;
         let env = self.fork_env(&options.evm_opts, &remote, &target.block, spec);
         let db = ForkDb::new(backend, source_chain_id);
+        let mut cursor = None;
         let cache = if target.mined {
             let index = target.index.expect("mined transaction has a block position");
             let context = if self.networks.is_monad() {
-                Some(block_context::<FEN>(db.inner(), &target.block)?)
+                let context = block_context::<FEN>(db.inner(), &target.block)?;
+                let block =
+                    BlockNumHash::new(target.block.header.number(), target.block.header.hash);
+                let position = ForkPosition::BeforeTransaction { block, index };
+                cursor = Some((
+                    position,
+                    block_cursor::<FEN>(self.lifecycle.factory(), &env, context.clone(), position)?,
+                ));
+                Some(context)
             } else {
                 None
             };
@@ -1342,7 +1504,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None
         };
         let block = Some(target.block.header.number());
-        Ok((db, env, cache, ForkInfo { id: fork_id, url: info.url, block, remote: Some(remote) }))
+        let info =
+            ForkInfo { id: fork_id, url: info.url, block, remote: Some(remote), position: None };
+        Ok((db, env, cache, info, cursor))
     }
 
     /// Replays the transactions of `block` before `index` over `db` and returns the resulting
@@ -1357,7 +1521,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         mut env: EvmEnvFor<FEN>,
         block: &AnyRpcBlock,
         index: usize,
-        context: Option<crate::evm::BlockContext<FEN>>,
+        context: Option<BlockContext<FEN>>,
         source_chain_id: ChainId,
     ) -> eyre::Result<Cache> {
         let BlockTransactions::Full(transactions) = &block.transactions else {
@@ -1407,15 +1571,36 @@ pub type StateResult<T> = Result<T, evm2::DatabaseError>;
 fn block_context<FEN: FoundryEvmNetwork>(
     backend: &SharedBackend<AnyNetwork, revm::context::BlockEnv>,
     block: &AnyRpcBlock,
-) -> eyre::Result<crate::evm::BlockContext<FEN>> {
+) -> eyre::Result<BlockContext<FEN>> {
     let parent = parent_block(backend, block)?;
     let grandparent =
         parent.as_ref().map(|parent| parent_block(backend, parent)).transpose()?.flatten();
-    Ok(crate::evm::BlockContext::new(
+    Ok(BlockContext::new(
         grandparent.as_ref().map(block_txs::<FEN>).transpose()?.unwrap_or_default(),
         parent.as_ref().map(block_txs::<FEN>).transpose()?.unwrap_or_default(),
         block_txs::<FEN>(block)?,
     ))
+}
+
+/// Returns network state retaining the block cursor at `position`, whose block's transactions and
+/// ancestors are `context`.
+fn block_cursor<FEN: FoundryEvmNetwork>(
+    factory: &EvmFactoryFor<FEN>,
+    env: &EvmEnvFor<FEN>,
+    mut context: BlockContext<FEN>,
+    position: ForkPosition,
+) -> eyre::Result<ChainFor<FEN>> {
+    let mut ext = factory.evm_ext(env);
+    match position {
+        ForkPosition::AfterBlock(_) => {
+            context.advance_block();
+            context.prepare(&mut ext, 0);
+        }
+        ForkPosition::BeforeTransaction { index, .. } => {
+            context.before_transaction(index)?.prepare(&mut ext, index);
+        }
+    }
+    Ok(ext)
 }
 
 /// Fetches the parent of `block`, or `None` for genesis.

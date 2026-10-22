@@ -1113,7 +1113,7 @@ fn prepare_ext<FEN: FoundryEvmNetwork>(
             context.prepare_next(&mut ext, tx);
             *evm.ext_mut() = ext;
         }
-        None => evm.ext_mut().for_transaction(tx),
+        None => evm.ext_mut().for_next_transaction(tx),
     }
 }
 
@@ -1143,7 +1143,7 @@ fn execute<FEN: FoundryEvmNetwork>(
     install_env::<FEN>(backend.backend(), &mut evm, env);
     match ext {
         Some(ext) => *evm.ext_mut() = ext,
-        None => evm.ext_mut().for_transaction(tx),
+        None => evm.ext_mut().for_next_transaction(tx),
     }
     let executed = {
         let _guard = (sancov_edges || sancov_trace_cmp)

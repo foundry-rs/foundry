@@ -3,8 +3,9 @@
 
 use super::{BackingDb, EvmEnv, SendableExt, StoredExt};
 use crate::fork::{Fork, ForkId};
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{
-    Address, U256,
+    Address, B256, U256,
     map::{AddressMap, AddressSet, HashSet},
 };
 use evm2::{EvmTypesHost, evm::Cache};
@@ -26,13 +27,67 @@ pub struct ForkInfo {
     pub block: Option<u64>,
     /// The remote fork backing the context, if it is RPC-backed.
     pub remote: Option<Fork>,
+    /// Canonical chain position of the fork's accepted state, for networks whose execution
+    /// depends on it, such as Monad.
+    ///
+    /// The matching block cursor is retained in the context's network extension state; both move
+    /// together on canonical replays and are restored together by snapshot reverts. Synthetic
+    /// transactions never advance it.
+    pub position: Option<ForkPosition>,
 }
 
 impl ForkInfo {
     /// Creates the identity of a fork that is not RPC-backed, such as one over an in-memory
     /// database.
     pub fn new(id: ForkId, url: impl Into<String>, block: Option<u64>) -> Self {
-        Self { id, url: url.into(), block, remote: None }
+        Self { id, url: url.into(), block, remote: None, position: None }
+    }
+}
+
+/// Canonical chain position of a fork's accepted state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkPosition {
+    /// The state contains every transaction through `block`.
+    AfterBlock(BlockNumHash),
+    /// The state contains the transactions of `block` before `index`.
+    BeforeTransaction {
+        /// Block whose transactions are partially applied.
+        block: BlockNumHash,
+        /// Index of the next canonical transaction in `block`.
+        index: usize,
+    },
+}
+
+impl ForkPosition {
+    /// Returns the position after the transaction at `index` of `block`, whose parent is
+    /// `parent_hash` and which has `count` transactions, if that transaction immediately follows
+    /// this position.
+    pub fn after_transaction(
+        self,
+        block: BlockNumHash,
+        parent_hash: B256,
+        index: usize,
+        count: usize,
+    ) -> Option<Self> {
+        let is_next = match self {
+            Self::AfterBlock(previous) => {
+                index == 0
+                    && previous.number.checked_add(1) == Some(block.number)
+                    && previous.hash == parent_hash
+            }
+            Self::BeforeTransaction { block: current, index: next } => {
+                current == block && next == index
+            }
+        };
+        let next = index.checked_add(1)?;
+        if !is_next || next > count {
+            return None;
+        }
+        Some(if next == count {
+            Self::AfterBlock(block)
+        } else {
+            Self::BeforeTransaction { block, index: next }
+        })
     }
 }
 

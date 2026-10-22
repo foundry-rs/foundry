@@ -174,6 +174,29 @@ pub trait FoundryEvmExt<Tx>: SendableExt + Debug + Default + 'static {
     /// Enable it only to replay trusted canonical chain history, after preparing the transaction
     /// with [`Self::for_transaction`] or [`Self::for_block`], which disable it.
     fn set_protocol_replay(&mut self, _enabled: bool) {}
+
+    /// Prepares the state for a synthetic transaction appended at the retained block cursor,
+    /// such as a test call or `vm.executeTransaction`.
+    ///
+    /// Networks without block-position state treat it as standalone (see
+    /// [`Self::for_transaction`]). The retained cursor itself does not move: only canonical
+    /// replays advance it, through [`Self::adopt_cursor`].
+    fn for_next_transaction(&mut self, tx: &Recovered<Tx>) {
+        self.for_transaction(tx);
+    }
+
+    /// Moves the retained block cursor to `cursor`'s, keeping the running transaction's own
+    /// position at the new cursor and every other state.
+    fn adopt_cursor(&mut self, _cursor: &Self) {}
+
+    /// Switches an EVM that may be executing to the parked context state `ext`, such as on a fork
+    /// switch.
+    ///
+    /// Networks whose context state is only a block cursor, such as Monad, keep the running
+    /// transaction's own state and adopt the context's cursor.
+    fn resume_context(&mut self, ext: Self) {
+        self.replace_while_executing(ext);
+    }
 }
 
 impl<Tx> FoundryEvmExt<Tx> for () {}

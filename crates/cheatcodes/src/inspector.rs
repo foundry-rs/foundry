@@ -47,9 +47,9 @@ use foundry_evm_core::{
     backend::{LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor,
-        TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
+        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores, SpecFor,
+        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
 };
 use foundry_evm_traces::{
@@ -193,11 +193,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
+        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, tx, env);
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
         // A failed transaction keeps its nonce increment.
         foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        // The nested transaction's changes are not the running transaction's execution.
+        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         Ok(executed.result().clone())
     }
 
@@ -215,7 +218,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> eyre::Result<TxResultFor<FEN>> {
         let (prepared, _) = backend.backend().prepare_transact(fork_id, transaction, evm, 0)?;
         let executed = prepared.execute(evm, None, false)?;
-        let result = backend.backend_mut().store_executed(executed);
+        let result = backend.backend_mut().store_executed(evm, executed);
         result.logs.iter().for_each(|log| cheats.log_hook(log));
         Ok(result)
     }

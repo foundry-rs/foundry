@@ -1,7 +1,7 @@
 use super::*;
 use crate::{backend::RevertStateSnapshotAction, fork::ForkId};
 use alloy_consensus::{Transaction as _, TxEip1559};
-use alloy_eips::Encodable2718;
+use alloy_eips::{BlockNumHash, Encodable2718};
 use alloy_network::{
     AnyTxEnvelope, AnyTxType, TxSignerSync, UnknownTxEnvelope, UnknownTypedTransaction,
 };
@@ -9,11 +9,7 @@ use alloy_primitives::{B256, Bytes, TxKind, U256};
 use alloy_rpc_types::Transaction as RpcTransaction;
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use evm2::{
-    EvmFeatures, SpecId,
-    bytecode::Bytecode,
-    evm::{AccountInfo, InMemoryDB},
-};
+use evm2::{EvmFeatures, SpecId, bytecode::Bytecode, evm::InMemoryDB};
 
 const GWEI: u128 = 1_000_000_000;
 pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
@@ -422,6 +418,79 @@ fn monad_caps_configured_memory_limit() {
     let evm = FoundryEvmFactory::create_evm(&factory, db_with(&[], 0), env);
 
     assert_eq!(evm.version().memory_limit, monad_evm2::MONAD_MEMORY_LIMIT);
+}
+
+#[cfg(feature = "monad")]
+#[test]
+fn monad_block_cursor_excludes_synthetic_and_future_transactions() {
+    let tx = |from: Address| {
+        let request = alloy_rpc_types::TransactionRequest::default()
+            .with_from(from)
+            .with_to(Address::ZERO)
+            .with_nonce(0)
+            .with_chain_id(1)
+            .with_gas_limit(21_000)
+            .with_max_fee_per_gas(GWEI)
+            .with_max_priority_fee_per_gas(GWEI);
+        crate::evm::MonadEvmNetwork::tx_from_request(request).unwrap()
+    };
+    let [parent, replayed, future, synthetic, running] =
+        [1, 2, 3, 4, 5].map(Address::with_last_byte);
+
+    // A cursor before the second transaction of a block excludes the block's later ones.
+    let context = BlockContext::<crate::evm::MonadEvmNetwork>::new(
+        Vec::new(),
+        vec![tx(parent)],
+        vec![tx(replayed), tx(future)],
+    );
+    let mut cursor = monad_evm2::MonadEvmExt::default();
+    context.clone().before_transaction(1).unwrap().prepare(&mut cursor, 1);
+    assert_eq!(cursor.chain.current_block_senders, vec![replayed]);
+
+    // Synthetic transactions are appended at the cursor without extending it.
+    let mut ext = cursor.clone();
+    ext.for_next_transaction(&tx(synthetic));
+    ext.for_next_transaction(&tx(running));
+    assert_eq!(ext.chain.current_block_senders, vec![replayed, running]);
+    assert_eq!(ext.chain.current_tx_index, 1);
+    assert!(!ext.chain.sender_can_dip(replayed, false));
+    assert!(!ext.chain.sender_can_dip(parent, false));
+    assert!(ext.chain.sender_can_dip(future, false));
+    assert!(ext.chain.sender_can_dip(synthetic, false));
+
+    // Adopting another cursor keeps the running transaction's own entry.
+    let mut child = monad_evm2::MonadEvmExt::default();
+    let mut context = context;
+    context.advance_block();
+    context.prepare(&mut child, 0);
+    ext.adopt_cursor(&child);
+    assert_eq!(ext.chain.current_block_senders, vec![running]);
+    assert_eq!(ext.chain.current_tx_index, 0);
+    assert!(!ext.chain.sender_can_dip(future, false));
+    assert!(!ext.chain.sender_can_dip(parent, false));
+    assert!(ext.chain.sender_can_dip(synthetic, false));
+}
+
+#[test]
+fn fork_position_only_advances_to_the_immediate_transaction() {
+    let parent = BlockNumHash::new(9, B256::with_last_byte(9));
+    let block = BlockNumHash::new(10, B256::with_last_byte(10));
+    let after_parent = ForkPosition::AfterBlock(parent);
+
+    assert_eq!(
+        after_parent.after_transaction(block, parent.hash, 0, 2),
+        Some(ForkPosition::BeforeTransaction { block, index: 1 })
+    );
+    assert_eq!(after_parent.after_transaction(block, parent.hash, 1, 2), None);
+    assert_eq!(after_parent.after_transaction(block, B256::ZERO, 0, 2), None);
+
+    let before_last = ForkPosition::BeforeTransaction { block, index: 1 };
+    assert_eq!(
+        before_last.after_transaction(block, parent.hash, 1, 2),
+        Some(ForkPosition::AfterBlock(block))
+    );
+    assert_eq!(before_last.after_transaction(block, parent.hash, 0, 2), None);
+    assert_eq!(before_last.after_transaction(block, parent.hash, 1, 1), None);
 }
 
 #[cfg(feature = "base")]

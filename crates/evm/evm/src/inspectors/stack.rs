@@ -535,6 +535,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth;
+        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, tx, Some(env));
         let previous =
             self.enter_inner_context(InnerRoot { depth, caller: tx.signer(), observe: false });
@@ -558,6 +559,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        // The nested transaction's changes are not the running transaction's execution.
+        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         cheats.snapshot_restores = snapshot_restores;
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
@@ -581,7 +584,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, false);
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
-        Ok(backend.backend_mut().store_executed(executed?))
+        Ok(backend.backend_mut().store_executed(evm, executed?))
     }
 
     fn transact_from_tx(
@@ -598,7 +601,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, true);
         drop(replay);
-        Ok(backend.backend_mut().store_executed(executed?))
+        Ok(backend.backend_mut().store_executed(evm, executed?))
     }
 
     fn console_log(&mut self, msg: &str) {

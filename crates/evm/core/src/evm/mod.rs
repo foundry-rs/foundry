@@ -30,11 +30,13 @@ use alloy_eips::{Decodable2718, Typed2718};
 use alloy_network::{
     AnyRpcTransaction, Network, NetworkTransactionBuilder, TransactionBuilder, TransactionResponse,
 };
-use alloy_primitives::{Address, Signature};
+use alloy_primitives::{Address, Signature, map::AddressMap};
 use alloy_rlp::Decodable;
 use evm2::{
-    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version, env::BlockEnv,
-    evm::precompile::PrecompileProvider, registry::TxRegistry,
+    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version,
+    env::BlockEnv,
+    evm::{AccountInfo, precompile::PrecompileProvider},
+    registry::TxRegistry,
 };
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_evm_hardforks::ExecutionSpec;
@@ -231,6 +233,16 @@ pub trait FoundryEvmFactory: Clone + Debug + Default + Send + Sync + 'static {
     /// change itself is not execution: Monad's reserve-balance tracker recomputes the thresholds
     /// of its tracked accounts without recording debits or credits.
     fn refresh_transaction(&self, _evm: &mut Evm<'_, Self::Types>) {}
+
+    /// Like [`Self::refresh_transaction`], after a fork switch accepted the running transaction's
+    /// changes: `original` holds the transaction-start info of the persistent accounts it carried.
+    fn refresh_switched_transaction(
+        &self,
+        evm: &mut Evm<'_, Self::Types>,
+        _original: &AddressMap<Option<AccountInfo>>,
+    ) {
+        self.refresh_transaction(evm);
+    }
 
     /// Seeds network state into a newly created EVM, such as Tempo genesis or Base sentinels.
     fn initialize_evm(&self, _evm: &mut Evm<'_, Self::Types>, _is_forked: bool) {}
