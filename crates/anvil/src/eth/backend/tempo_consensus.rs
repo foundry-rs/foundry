@@ -72,7 +72,7 @@ impl TempoConsensus {
     /// The local identity is independent of any upstream committee. Only strict successors of
     /// this height can be signed. Reset restores this anchor; unwind cannot cross it.
     pub fn at_height(seed: B256, epoch_length: NonZeroU64, height: u64) -> Self {
-        let epoch = height / epoch_length.get();
+        let epoch = height / epoch_length;
         let initial = Checkpoint {
             height,
             counter: 0,
@@ -97,7 +97,7 @@ impl TempoConsensus {
 
     /// Returns the public development identity.
     pub fn identity(&self) -> TempoConsensusIdentity {
-        self.identity_at(self.state.height / self.epoch_length.get())
+        self.identity_at(self.state.height / self.epoch_length)
     }
 
     /// Installs metadata for the next header before its hash is calculated.
@@ -146,8 +146,8 @@ impl TempoConsensus {
             return Err(TempoConsensusError::InvalidExtraData);
         }
         let height = header.inner.number;
-        let epoch = height / self.epoch_length.get();
-        let parent_view = height % self.epoch_length.get();
+        let epoch = height / self.epoch_length;
+        let parent_view = height % self.epoch_length;
         let view = parent_view + 1;
         let digest = header.hash_slow();
         let committee = self.committee_at(epoch).1;
@@ -206,8 +206,8 @@ impl TempoConsensus {
         height: u64,
         include_context: bool,
     ) -> Result<PreparedHeaderMetadata, TempoConsensusError> {
-        let epoch = height / self.epoch_length.get();
-        let parent_view = height % self.epoch_length.get();
+        let epoch = height / self.epoch_length;
+        let parent_view = height % self.epoch_length;
         let extra_data = if parent_view == self.epoch_length.get() - 1 {
             let next_epoch = epoch.checked_add(1).ok_or(TempoConsensusError::EpochOverflow)?;
             let committee = self.committee_at(next_epoch).1;
@@ -238,7 +238,7 @@ impl TempoConsensus {
     pub fn rotate(&mut self) -> Result<TempoConsensusIdentity, TempoConsensusError> {
         let next_height =
             self.state.height.checked_add(1).ok_or(TempoConsensusError::HeightOverflow)?;
-        let from_epoch = (next_height / self.epoch_length.get())
+        let from_epoch = (next_height / self.epoch_length)
             .checked_add(1)
             .ok_or(TempoConsensusError::EpochOverflow)?;
         let counter =
