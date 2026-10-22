@@ -1425,4 +1425,51 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cache() {
+        use alloy_chains::NamedChain;
+        use foundry_common::provider::get_http_provider;
+        use foundry_config::Config;
+
+        let endpoint = &*foundry_test_utils::rpc::next_http_rpc_endpoint();
+        let provider = get_http_provider(endpoint);
+
+        let block_num = provider.get_block_number().await.unwrap();
+
+        let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.to_string());
+        evm_opts.fork_block_number = Some(block_num);
+
+        let backend = crate::backend::Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), NamedChain::Mainnet as u64, None),
+            evm_opts.local_evm_env::<EthEvmNetwork>(),
+        )
+        .unwrap();
+        let fork = backend.fork().unwrap();
+        let fork_hash = fork.hash();
+        let source_id = fork.source_id();
+        let (evm_env, _) = backend.env(&evm_opts).await.unwrap();
+
+        // some rng contract from etherscan
+        let address = alloy_primitives::address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
+
+        let num_slots = 5;
+        let _account = backend.basic(address);
+        for idx in 0..num_slots {
+            let _ = backend.storage(address, U256::from(idx));
+        }
+        drop(backend);
+
+        let meta = BlockchainDbMeta::new(cache_block_env(&evm_env.block), endpoint.to_string())
+            .with_fork_identity(fork_hash, source_id);
+
+        let db = BlockchainDb::new(
+            meta,
+            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
+        );
+        assert!(db.accounts().read().contains_key(&address));
+        assert!(db.storage().read().contains_key(&address));
+        assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
+    }
 }
