@@ -516,8 +516,8 @@ fn active_chain_build<FEN: FoundryEvmNetwork>(
     if ccx.state.core.config.chain_builds.is_empty() {
         return None;
     }
-    let chain_id = ccx.ecx.db().active_fork_source_chain_id()?;
-    ccx.state.core.config.chain_builds.get(&chain_id).cloned()
+    let rpc = ccx.ecx.db().active_fork_url()?;
+    ccx.state.core.config.chain_builds.get(&rpc).cloned()
 }
 
 /// Helper function to deploy contract from artifact code.

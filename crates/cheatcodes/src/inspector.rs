@@ -792,9 +792,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// RPC urls of the forks whose CREATE2 libraries were deployed.
     pub chain_libraries_deployed: BTreeSet<String>,
-
-    /// Execution spec of the run, saved while a profile build's fork is active.
-    pub run_spec: Option<SpecFor<FEN>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -868,7 +865,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             capture_isolated_snapshot_restore: false,
             deploy_code_depth: None,
             chain_libraries_deployed: Default::default(),
-            run_spec: None,
         }
     }
 
@@ -1923,27 +1919,32 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     /// Returns the broadcaster, salt and CREATE2 libraries to deploy before the first broadcast
-    /// to `rpc`.
+    /// to `rpc`: those of the endpoint's profile build, or the run's libraries, which the runner
+    /// already deploys on the `--rpc-url` endpoint.
     pub fn take_chain_libraries(
         &mut self,
         rpc: &str,
-        chain_id: u64,
         depth: usize,
         caller: Address,
     ) -> Option<ChainLibraries> {
         let config = &self.core.config;
-        let (salt, libraries) = match config.chain_builds.get(&chain_id) {
-            Some(build) => (build.create2_library_salt, &build.create2_libraries),
-            None => (config.create2_library_salt, &config.create2_libraries),
-        };
         let broadcast = self.broadcast.as_ref()?;
-        if libraries.is_empty()
-            || config.evm_opts.fork_url.as_deref() == Some(rpc)
-            || depth < broadcast.depth
+        let depth = self.deploy_code_caller_depth(depth);
+        if depth < broadcast.depth
             || caller != broadcast.original_caller
             || (depth != broadcast.depth && !broadcast.deploy_from_code)
             || self.chain_libraries_deployed.contains(rpc)
         {
+            return None;
+        }
+        let (salt, libraries) = match config.chain_builds.get(rpc) {
+            Some(build) => (build.create2_library_salt, &build.create2_libraries),
+            None if config.evm_opts.fork_url.as_deref() != Some(rpc) => {
+                (config.create2_library_salt, &config.create2_libraries)
+            }
+            None => return None,
+        };
+        if libraries.is_empty() {
             return None;
         }
         self.chain_libraries_deployed.insert(rpc.to_string());
@@ -1979,65 +1980,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable library deployment");
     }
 
-    /// Returns the input of a broadcast call with creation code taken from the build of `chain_id`.
-    pub fn chain_call_input(
+    /// Returns an error if a broadcast create on the fork of `rpc` would deploy the run's build
+    /// of a project contract whose build differs in the profile named by that endpoint.
+    pub fn check_profile_create(
         &self,
-        chain_id: u64,
-        depth: usize,
-        caller: Address,
-        is_static: bool,
-        input: &[u8],
-    ) -> Option<Result<Bytes, String>> {
-        let build = self.core.config.chain_builds.get(&chain_id)?;
-        let broadcast = self.broadcast.as_ref()?;
-        if is_static
-            || depth != broadcast.depth
-            || broadcast.deploy_from_code
-            || caller != broadcast.original_caller
-        {
-            return None;
-        }
-
-        let mut output = None;
-        for (id, data) in self.core.config.artifact_lookup.as_ref()?.iter() {
-            let Some(code) = data.bytecode().filter(|code| !code.is_empty()) else { continue };
-            let mut start = 0;
-            while let Some(offset) = output.as_deref().unwrap_or(input)[start..]
-                .windows(code.len())
-                .position(|window| window == code.as_ref())
-            {
-                let Some(chain_code) = build.artifact(id).and_then(|data| data.bytecode()) else {
-                    return Some(Err(format!(
-                        "no artifact for {} on chain {chain_id}",
-                        id.identifier()
-                    )));
-                };
-                if chain_code.len() != code.len() {
-                    return Some(Err(format!(
-                        "creation code of {} differs in length on chain {chain_id}",
-                        id.identifier()
-                    )));
-                }
-                start += offset;
-                if chain_code != code {
-                    output.get_or_insert_with(|| input.to_vec())[start..start + code.len()]
-                        .copy_from_slice(chain_code);
-                }
-                start += code.len();
-            }
-        }
-        output.map(|output| Ok(output.into()))
-    }
-
-    /// Returns the init code of a broadcast create from the build of `chain_id`.
-    pub fn chain_init_code(
-        &self,
-        chain_id: u64,
+        rpc: &str,
         depth: usize,
         caller: Address,
         init_code: &[u8],
-    ) -> Option<Result<Bytes, String>> {
-        let build = self.core.config.chain_builds.get(&chain_id)?;
+    ) -> Option<String> {
+        let build = self.core.config.chain_builds.get(rpc)?;
         let broadcast = self.broadcast.as_ref()?;
         if depth < broadcast.depth
             || caller != broadcast.original_caller
@@ -2046,43 +1998,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             return None;
         }
-
-        let mut matches = self
-            .core
-            .config
-            .artifact_lookup
-            .as_ref()?
-            .iter()
-            .filter_map(|(id, data)| {
-                let code = data.bytecode()?;
-                (!code.is_empty()
+        let (id, _) = self.core.config.artifact_lookup.as_ref()?.iter().find(|(id, data)| {
+            data.bytecode().is_some_and(|code| {
+                !code.is_empty()
                     && init_code.starts_with(code)
-                    && (init_code.len() - code.len()).is_multiple_of(32))
-                .then_some((id, code.len()))
+                    && build.artifact(id).and_then(|data| data.bytecode()) != Some(code)
             })
-            .collect::<Vec<_>>();
-        let longest = matches.iter().map(|(_, len)| *len).max()?;
-        matches.retain(|(_, len)| *len == longest);
-
-        let mut chain_codes = Vec::new();
-        for (id, _) in matches {
-            let Some(code) = build.artifact(id).and_then(|data| data.bytecode()) else {
-                return Some(Err(format!(
-                    "no artifact for {} on chain {chain_id}",
-                    id.identifier()
-                )));
-            };
-            chain_codes.push(code);
-        }
-        chain_codes.sort_unstable();
-        chain_codes.dedup();
-        let [chain_code] = &chain_codes[..] else {
-            return Some(Err(format!(
-                "init code matches several artifacts with different code on chain {chain_id}"
-            )));
-        };
-        (chain_code.as_ref() != &init_code[..longest])
-            .then(|| Ok([chain_code.as_ref(), &init_code[longest..]].concat().into()))
+        })?;
+        let name = id.name.split('.').next().unwrap_or(&id.name);
+        Some(format!(
+            "the endpoint's profile builds {} differently; deploy its build with \
+             `vm.deployCode(\"{name}\")` instead of `new {name}`",
+            id.identifier()
+        ))
     }
 }
 

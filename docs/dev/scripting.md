@@ -78,9 +78,11 @@ before execution so broadcasts observe the on-chain nonce. This correction is no
 first `vm.broadcast`, `vm.startBroadcast`, or `vm.getNonce` call.
 
 CREATE2 library deployments are made once per fork. The runner covers the `--rpc-url` chain; on any
-other fork, the inspector stack deploys them before the first broadcast to that fork, from the
-broadcaster, through the CREATE2 deployer, skipping libraries that already have code.
-Nonce-addressed library deployments differ per chain and remain unsupported in multichain scripts.
+other fork, and on the `--rpc-url` chain when its endpoint names a profile, the inspector stack
+deploys them before the first broadcast to that fork, from the broadcaster, through the CREATE2
+deployer, skipping libraries that already have code. A missing CREATE2 deployer, or a library
+without code after its deployment, fails the broadcast. Nonce-addressed library deployments differ
+per chain and remain unsupported in multichain scripts.
 
 Script execution protection is installed after deploying the script contract. Alongside the
 `ADDRESS` check, the cheatcode inspector rejects `CALLER` in the main script's broadcasting frame
@@ -250,11 +252,17 @@ reconciled per chain, while new sequences are broadcast in container order. Ther
 atomicity. Recovery must preserve independent per-chain progress and must not infer that one chain's
 completion permits skipping an operation on another.
 
-Endpoints that name a profile get a separate build in `cache/profiles/<settings hash>`, used on
-every fork of the endpoint's chain: broadcast creates and `vm.deployCode`/`vm.getCode` take the
-build's artifact, creation code passed as call data is replaced when its length is unchanged, and
-the profile's execution spec applies while the fork is active. Each per-chain sequence records its
-profile for resume and verification.
+Endpoints that name a profile get a separate build in `cache/profiles/<settings hash>`. Forks of
+that endpoint's URL, including the `--rpc-url` endpoint, use it: `vm.getCode`, `vm.getDeployedCode`
+and `vm.deployCode` take the build's artifact and its CREATE2 libraries are deployed there. The
+script contract, and the creation code it embeds (`new C`, `type(C).creationCode`), come from the
+run's build, so script execution keeps the run's execution spec, while the per-RPC simulation, which
+replays only the broadcast transactions, uses the profile's. Bytecode is never rewritten: a
+broadcast create of a project contract whose build differs in the profile fails and points to
+`vm.deployCode`. Endpoints are mapped to profiles by URL without contacting them, so unused
+endpoints do not affect a run. Each per-chain sequence records its profile for resume and
+verification. Transactions to the CREATE2 deployer require it on chain before broadcasting, since
+simulation forks may carry the local deployer.
 
 ## Known failure windows
 

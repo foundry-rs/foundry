@@ -76,8 +76,8 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
-    /// Profile builds by chain id.
-    pub chain_builds: BTreeMap<u64, Arc<ChainBuild>>,
+    /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
+    pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
     /// CREATE2 libraries to deploy on each fork.
     pub create2_libraries: Vec<(Address, Bytes)>,
     /// CREATE2 salt to use for the library deployment in scripts.
@@ -305,7 +305,7 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
     path
 }
 
-/// Profile build used on forks of a chain.
+/// Profile build used on forks of an `[rpc_endpoints]` entry naming the profile.
 #[derive(Clone, Debug)]
 pub struct ChainBuild {
     /// Linked artifacts of the build.

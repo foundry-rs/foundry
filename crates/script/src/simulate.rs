@@ -35,7 +35,7 @@ use foundry_evm::{
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     mem,
 };
 
@@ -653,6 +653,8 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         let mut new_sequence = VecDeque::new();
         let mut manager = ProvidersManager::<FEN::Network>::default();
         let mut sequences = vec![];
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
+        let mut checked_create2_deployer = HashSet::new();
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
         // [`ScriptSequence`] from all the collected transactions up to this point.
@@ -673,6 +675,17 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
                 tx.set_chain_id(provider_info.chain);
+            }
+
+            // Simulation forks may carry the local CREATE2 deployer, so check the chain itself.
+            if tx.tx().to() == Some(create2_deployer)
+                && checked_create2_deployer.insert(tx_rpc.clone())
+                && provider_info.provider.get_code_at(create2_deployer).await?.is_empty()
+            {
+                eyre::bail!(
+                    "CREATE2 deployer {create2_deployer} is not deployed on chain {}",
+                    provider_info.chain
+                );
             }
 
             if !self.args.skip_simulation {
@@ -728,8 +741,12 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                 continue;
             }
 
-            let sequence =
-                self.create_sequence(is_multi_deployment, provider_info.chain, new_sequence)?;
+            let sequence = self.create_sequence(
+                is_multi_deployment,
+                provider_info.chain,
+                &tx_rpc,
+                new_sequence,
+            )?;
 
             sequences.push(sequence);
 
@@ -778,6 +795,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         &self,
         multi: bool,
         chain: u64,
+        rpc: &str,
         transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
     ) -> Result<ScriptSequence<FEN::Network>> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
@@ -804,7 +822,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             .iter()
             .map(|library| library.address.to_checksum(None))
             .collect::<Vec<_>>();
-        let profile = self.build_data.chain_profiles.get(&chain).cloned();
+        let profile = self.build_data.endpoint_profiles.get(rpc).cloned();
         let profile_build =
             profile.as_ref().map(|profile| self.build_data.profile_build(profile)).transpose()?;
         let libraries = profile_build

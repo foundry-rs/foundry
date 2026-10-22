@@ -111,7 +111,7 @@ impl BuildData {
             )
         };
 
-        let mut profile_builds = self
+        let profile_builds = self
             .profile_builds
             .iter()
             .map(|build| {
@@ -132,43 +132,9 @@ impl BuildData {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let mut chain_profiles = BTreeMap::new();
-        for endpoint in script_config.config.rpc_endpoints.values() {
-            let Some(profile) = endpoint.profile.as_deref() else { continue };
-            let url = endpoint.clone().resolve().url()?;
-            let provider =
-                ProviderBuilder::<FEN::Network>::from_config_with_url(&script_config.config, &url)?
-                    .build()?;
-            let chain_id = provider.get_chain_id().await?;
-            if let Some(other) = chain_profiles.insert(chain_id, profile)
-                && other != profile
-            {
-                eyre::bail!(
-                    "endpoints for chain {chain_id} name different profiles: `{other}` and `{profile}`"
-                );
-            }
-            let build = profile_builds
-                .iter_mut()
-                .find(|build| build.profiles.iter().any(|p| p == profile))
-                .ok_or_eyre("profile build not found")?;
-            if !build.predeploy_libraries.is_empty()
-                && provider.get_code_at(create2_deployer).await?.is_empty()
-            {
-                eyre::bail!(
-                    "CREATE2 deployer {create2_deployer:#x} is not deployed on chain {chain_id}"
-                );
-            }
-            if !build.chain_ids.contains(&chain_id) {
-                build.chain_ids.push(chain_id);
-            }
-        }
-
         let mut linked = LinkedBuildData::new(libraries, predeploy_libs, self)?;
         linked.profile_builds = profile_builds;
-        linked.chain_profiles = chain_profiles
-            .into_iter()
-            .map(|(chain_id, profile)| (chain_id, profile.to_string()))
-            .collect();
+        linked.endpoint_profiles = endpoint_profiles(&script_config.config)?;
         Ok(linked)
     }
 
@@ -199,7 +165,6 @@ impl BuildData {
         .build();
         Ok(LinkedProfileBuild {
             profiles: build.profiles.clone(),
-            chain_ids: Vec::new(),
             config: build.config.clone(),
             artifacts_dir: build.artifacts_dir.clone(),
             known_contracts,
@@ -215,34 +180,36 @@ impl BuildData {
     ) -> Result<LinkedBuildData> {
         let mut libraries = None;
         let mut profile_builds = Vec::<LinkedProfileBuild>::new();
-        let mut chain_profiles = BTreeMap::new();
         for sequence in sequences {
             let recorded = Libraries::parse(&sequence.libraries)?;
             match &sequence.profile {
                 Some(profile) => {
                     if let Some(linked) =
-                        profile_builds.iter_mut().find(|linked| linked.profiles.contains(profile))
+                        profile_builds.iter().find(|linked| linked.profiles.contains(profile))
                     {
                         if linked.libraries != recorded {
                             eyre::bail!(
                                 "sequences of profile `{profile}` record different libraries"
                             );
                         }
-                        linked.chain_ids.push(sequence.chain);
                     } else {
-                        let chain = sequence.chain;
                         let build = self
                             .profile_builds
                             .iter()
                             .find(|build| build.profiles.contains(profile))
-                            .ok_or_eyre(format!(
-                                "no endpoint names profile `{profile}` for chain {chain}"
-                            ))?;
-                        let mut linked = self.link_profile_build(build, recorded, Vec::new())?;
-                        linked.chain_ids.push(sequence.chain);
-                        profile_builds.push(linked);
+                            .ok_or_else(|| {
+                                eyre::eyre!(
+                                    "no `[rpc_endpoints]` entry names profile `{profile}` of the \
+                                     chain {} sequence",
+                                    sequence.chain
+                                )
+                            })?;
+                        profile_builds.push(self.link_profile_build(
+                            build,
+                            recorded,
+                            Vec::new(),
+                        )?);
                     }
-                    chain_profiles.insert(sequence.chain, profile.clone());
                 }
                 None => match &libraries {
                     Some(libraries) if *libraries != recorded => {
@@ -255,9 +222,27 @@ impl BuildData {
         }
         let mut linked = self.link_with_libraries(libraries.unwrap_or_default())?;
         linked.profile_builds = profile_builds;
-        linked.chain_profiles = chain_profiles;
         Ok(linked)
     }
+}
+
+/// Returns the profile named by each `[rpc_endpoints]` entry, by the entry's URL.
+///
+/// Entries whose URL does not resolve are skipped, as forking them fails anyway.
+fn endpoint_profiles(config: &Config) -> Result<BTreeMap<String, String>> {
+    let mut profiles = BTreeMap::new();
+    for endpoint in config.rpc_endpoints.values() {
+        let Some(profile) = &endpoint.profile else { continue };
+        let Ok(url) = endpoint.clone().resolve().url() else { continue };
+        if let Some(other) = profiles.insert(url, profile.clone())
+            && other != *profile
+        {
+            eyre::bail!(
+                "endpoints with the same URL name different profiles: `{other}` and `{profile}`"
+            );
+        }
+    }
+    Ok(profiles)
 }
 
 /// Build of the profiles named by `[rpc_endpoints]` with the same compiler settings.
@@ -315,8 +300,8 @@ pub struct LinkedBuildData {
     pub sources: ContractSources,
     /// Linked builds of the profiles named by `[rpc_endpoints]`.
     pub profile_builds: Vec<LinkedProfileBuild>,
-    /// Profile named by the endpoints of each chain.
-    pub chain_profiles: BTreeMap<u64, String>,
+    /// Profile named by each `[rpc_endpoints]` entry, by the entry's URL.
+    pub endpoint_profiles: BTreeMap<String, String>,
 }
 
 impl LinkedBuildData {
@@ -347,7 +332,7 @@ impl LinkedBuildData {
             predeploy_libraries,
             sources,
             profile_builds: Vec::new(),
-            chain_profiles: BTreeMap::new(),
+            endpoint_profiles: BTreeMap::new(),
         })
     }
 
@@ -372,8 +357,6 @@ impl LinkedBuildData {
 pub struct LinkedProfileBuild {
     /// Profiles with these compiler settings.
     pub profiles: Vec<String>,
-    /// Chain ids of the endpoints naming these profiles.
-    pub chain_ids: Vec<u64>,
     /// Config with these compiler settings.
     pub config: Config,
     /// Artifacts directory of the build.
@@ -554,8 +537,10 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 evm_version: build.config.evm_version,
                 hardfork: build.config.hardfork,
             });
-            for chain_id in &build.chain_ids {
-                script_config.chain_builds.insert(*chain_id, chain_build.clone());
+            for (url, profile) in &build_data.endpoint_profiles {
+                if build.profiles.contains(profile) {
+                    script_config.chain_builds.insert(url.clone(), chain_build.clone());
+                }
             }
         }
 

@@ -13,12 +13,8 @@ use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{
     FoundryContextExt,
     backend::{ContextUpdateFor, ForkAccountField, JournaledState, LocalForkId},
-    evm::{
-        BlockEnvFor, EvmFactoryFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        SpecFor, TxEnvFor,
-    },
+    evm::{BlockEnvFor, EvmFactoryFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
-    opts::{ExecutionSpecContext, resolve_execution_spec},
 };
 use revm::context::ContextTr;
 
@@ -519,28 +515,6 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
-    apply_chain_profile_spec(ccx);
-}
-
-/// Applies the execution spec of the active chain's profile build, or restores the run's spec.
-fn apply_chain_profile_spec<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
-    if !ccx.state.core.config.chain_builds.is_empty()
-        && let Some(chain_id) = ccx.ecx.db().active_fork_source_chain_id()
-        && let Some(build) = ccx.state.core.config.chain_builds.get(&chain_id).cloned()
-    {
-        let mut evm_env = ccx.ecx.evm_clone();
-        ccx.state.run_spec.get_or_insert(evm_env.cfg_env.spec);
-        resolve_execution_spec(
-            build.evm_version,
-            build.hardfork,
-            &mut evm_env,
-            ExecutionSpecContext::fork(chain_id, None),
-            None,
-        );
-        EvmFactoryFor::<FEN>::set_execution_spec(ccx.ecx, evm_env.cfg_env.spec);
-    } else if let Some(spec) = ccx.state.run_spec.take() {
-        EvmFactoryFor::<FEN>::set_execution_spec(ccx.ecx, spec);
-    }
 }
 
 fn record_fork_roll<FEN: FoundryEvmNetwork>(
