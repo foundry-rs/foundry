@@ -1173,12 +1173,12 @@ async fn legacy_blob_call_runs_at_gas_price() {
     assert_eq!(U256::from_be_slice(&traced.output), U256::from(gas_price));
 }
 
-// The receipt's blob gas price must use the active fork's blob parameters. At this excess blob
-// gas, Prague's update fraction gives 7 wei while Cancun's would give 19 wei.
+// Receipts and loaded state must use the active fork's blob parameters. At this excess blob gas,
+// Prague's update fraction gives 7 wei while Cancun's would give 19 wei.
 #[tokio::test(flavor = "multi_thread")]
-async fn receipt_blob_gas_price_uses_active_blob_params() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
-    let (api, handle) = spawn(node_config).await;
+async fn blob_fees_use_active_blob_params() {
+    let node_config = || NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config()).await;
     let provider = http_provider(&handle.http_endpoint());
     let accounts = provider.get_accounts().await.unwrap();
 
@@ -1202,4 +1202,8 @@ async fn receipt_blob_gas_price_uses_active_blob_params() {
         .unwrap();
 
     assert_eq!(receipt.blob_gas_price, Some(7));
+
+    let (loaded, _handle) = spawn(node_config()).await;
+    loaded.anvil_load_state(api.anvil_dump_state(None).await.unwrap()).await.unwrap();
+    assert_eq!(loaded.blob_base_fee().unwrap(), api.blob_base_fee().unwrap());
 }
