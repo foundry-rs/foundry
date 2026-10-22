@@ -35,7 +35,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
-use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
+use foundry_evm_traces::{CallTrace, SparsedTraceArena, TraceRequirements};
 use std::{
     mem,
     ops::{Deref, DerefMut},
@@ -1669,10 +1669,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
     fn log(&mut self, log: &Log, host: &mut FoundryEvmFor<'_, FEN>) {
         let inner = &mut *self.inner;
-        // Network post-transaction hooks, such as Tempo's fee settlement, emit logs after the root
-        // frame has ended, when the tracer has no call to attach them to.
+        // Network transaction hooks emit logs outside the root frame, when the tracer has no call
+        // to attach them to: Tempo's 2D nonce increment before it starts and its fee settlement
+        // after it ends. As on master, where REVM only reports logs of running frames, they stay
+        // out of the trace. Until the root frame starts, the arena's entry node is a placeholder.
         let tracer = inner.tracer.as_mut().filter(|tracer| {
-            tracer.traces().nodes().first().is_none_or(|root| root.trace.status.is_none())
+            tracer.traces().nodes().first().is_none_or(|root| {
+                root.trace.status.is_none() && root.trace != CallTrace::default()
+            })
         });
         call_inspectors!([tracer, &mut inner.log_collector], |inspector| {
             Inspector::<TypesFor<FEN>>::log(&mut **inspector, log, host)
