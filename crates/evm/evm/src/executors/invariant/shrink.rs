@@ -1118,8 +1118,10 @@ pub(crate) fn shrink_max_gas_sequence<FEN: FoundryEvmNetwork>(
                 },
             )?
             .flatten();
+            // Compare against the best gas seen so far, not the recorded target: a removal can
+            // raise the gas of the witness call, and later removals must not trade it away.
             match anchor_gas {
-                Some(anchor_gas) if anchor_gas >= target_gas => {
+                Some(anchor_gas) if anchor_gas >= gas => {
                     gas = anchor_gas;
                     Ok(true)
                 }
