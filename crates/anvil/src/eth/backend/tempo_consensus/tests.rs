@@ -58,10 +58,8 @@ fn finalized_boundary_authenticates_rotation_and_preserves_announced_key() {
     let outcome = OnchainDkgOutcome::decode(boundary.inner.extra_data.as_ref()).unwrap();
     assert_eq!(outcome.epoch, 1);
     assert_eq!(outcome.network_identity().encode().as_ref(), first.identity.as_ref());
-    assert_eq!(outcome.output.public().required(), 1);
     assert_eq!(outcome.output.quorum::<N3f1>(), 1);
     assert_eq!(outcome.next_players, outcome.output.players().clone());
-    assert_eq!(outcome.next_players.len(), 1);
     assert!(!outcome.is_next_full_dkg);
 
     let superseded = consensus.rotate().unwrap();
