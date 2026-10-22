@@ -93,6 +93,12 @@ mod tests {
     }
 
     #[test]
+    fn build_eth_evm_with_extra_precompiles_prague_spec() {
+        let output = call(EthereumHardfork::Prague, Some(Arc::new(CustomPrecompileFactory)));
+        assert_eq!(output, Bytes::from_static(PAYLOAD));
+    }
+
+    #[test]
     fn build_eth_evm_with_extra_precompiles_london_spec() {
         let output = call(EthereumHardfork::London, Some(Arc::new(CustomPrecompileFactory)));
         assert_eq!(output, Bytes::from_static(PAYLOAD));
