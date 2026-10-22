@@ -1159,7 +1159,7 @@ mod tests {
         let mut sequence = forge_script_sequence::ScriptSequence::default();
         sequence.transactions.push_back(transaction);
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
-        SequenceData::Single(sequence)
+        SequenceData::Single(Box::new(sequence))
     }
 
     fn signed_sequence(dir: &Path) -> SequenceData<Ethereum> {
@@ -1176,7 +1176,7 @@ mod tests {
             ..Default::default()
         };
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
-        SequenceData::Single(sequence)
+        SequenceData::Single(Box::new(sequence))
     }
 
     fn delegated_transaction(payload: &[u8]) -> (TransactionRequest, RpcTransaction) {

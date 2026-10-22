@@ -483,7 +483,7 @@ where
         .collect()
 }
 
-/// Returns true if the operation has a receipt for its own hash.
+/// Returns true if the operation has a receipt or a recorded revert for its own hash.
 fn is_operation_completed<N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
@@ -507,7 +507,8 @@ where
             TransactionMaybeSigned::Unsigned(_) => None,
         });
     hash.is_some_and(|hash| {
-        deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+        deployment.reverted.contains(&hash)
+            || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
     })
 }
 
@@ -1088,7 +1089,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     let blocked = blocked_pending(self.sequence.sequences(), i);
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                    progress
+                    let result = progress
                         .wait_for_pending(
                             i,
                             sequence,
@@ -1098,11 +1099,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             (&durable_hashes, &replayable_hashes),
                             &blocked,
                         )
-                        .await?;
-                    self.sequence.ensure_delegated_outcomes_known(i)?;
-
-                    // Checkpoint save
+                        .await;
+                    // Checkpoint save, including reverts recorded before a failure.
                     self.sequence.save(true, false)?;
+                    result?;
+                    self.sequence.ensure_delegated_outcomes_known(i)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }
@@ -1147,10 +1148,25 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
         }
+        // Resume skips recorded reverts, so completing the remaining work is not a success.
+        let reverted = self
+            .sequence
+            .sequences()
+            .iter()
+            .filter(|deployment| !deployment.reverted.is_empty())
+            .map(|deployment| {
+                format!("chain {}: {}", deployment.chain, deployment.reverted.iter().format(", "))
+            })
+            .collect::<Vec<_>>();
         if !unresolved.is_empty() {
             sh_warn!(
                 "ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:\n{}\nAdd `--resume` to your command to check them again and replay dropped signed transactions.",
                 unresolved.join("\n")
+            )?;
+        } else if !reverted.is_empty() {
+            sh_warn!(
+                "ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\n{}",
+                reverted.join("\n")
             )?;
         } else if !shell::is_json() {
             sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
@@ -1331,7 +1347,10 @@ impl BundledState<TempoEvmNetwork> {
             | AttemptKind::Legacy { hash } => Some(*hash),
             AttemptKind::Delegated { .. } => None,
         });
-        if completed_prefix == total_transactions {
+        if completed_prefix == total_transactions
+            || recovered_hash
+                .is_some_and(|hash| self.sequence.sequences()[0].reverted.contains(&hash))
+        {
             sh_println!("No transactions to broadcast in batch mode.")?;
             return Ok(BroadcastedState {
                 args: self.args,
@@ -1663,17 +1682,16 @@ impl BundledState<TempoEvmNetwork> {
         batch_start: usize,
         resumed: bool,
     ) -> Result<()> {
-        if receipt.status() {
-            sh_println!(
-                "Batch transaction confirmed in block {}",
-                receipt.block_number.unwrap_or(0)
-            )?;
-        } else {
-            bail!("Batch transaction failed (reverted)");
-        }
-
         let sequence = sequences.sequences_mut().get_mut(0).unwrap();
         sequence.remove_pending(tx_hash);
+        if !receipt.status() {
+            if !sequence.reverted.contains(&tx_hash) {
+                sequence.reverted.push(tx_hash);
+            }
+            sequences.save(true, false)?;
+            bail!("Batch transaction failed (reverted)");
+        }
+        sh_println!("Batch transaction confirmed in block {}", receipt.block_number.unwrap_or(0))?;
 
         // Receipts are pushed 1:1 with the remaining (not-yet-receipted) transactions.
         let remaining_len = sequence.transactions.len() - batch_start;
