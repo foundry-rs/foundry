@@ -367,9 +367,17 @@ async fn source_plain_and_directory(prj: _, cmd: _) {
         &url,
     ];
     cmd.args(args).assert_success().stdout_eq(format!("{source}\n"));
+    let output =
+        cmd.cast_fuse().arg("--json").args(args).assert_success().get_output().stdout_lossy();
+    let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output["success"], true);
+    assert_eq!(output["data"], source);
     let directory = prj.root().join("sources");
     cmd.cast_fuse().args(args).arg("-d").arg(&directory).assert_empty_stdout();
     assert_eq!(fs::read_to_string(directory.join("Example/Contract.sol")).unwrap(), source);
+    let json_directory = prj.root().join("json-sources");
+    cmd.cast_fuse().arg("--json").args(args).arg("-d").arg(&json_directory).assert_empty_stdout();
+    assert_eq!(fs::read_to_string(json_directory.join("Example/Contract.sol")).unwrap(), source);
     server.abort();
 }
 

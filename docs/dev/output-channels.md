@@ -112,6 +112,7 @@ Each row's status is one of:
 | `cast create2`         | `address\tsalt` (tab-separated); when mining, omitted when stdout is a tty, where the stderr prose already shows the values | n/a                                                            | migrated |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast interface`       | Solidity interface source                            | JSON ABI array                                                 | migrated |
+| `cast source`          | Contract source code (empty with `--directory`)      | Success envelope containing the source string (empty with `--directory`) | migrated |
 | `cast artifact`        | JSON artifact                                        | n/a                                                            | migrated |
 | `cast creation-code`   | Hex bytecode (or disassembly with `--disassemble`)   | n/a                                                            | migrated |
 | `cast constructor-args`| One constructor arg per line                         | n/a                                                            | migrated |

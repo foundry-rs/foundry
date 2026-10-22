@@ -1294,7 +1294,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 value.wrapping_shr(bits.saturating_to())
             })?)?;
         }
-        // TODO(json): multi-line source code or directory expansion, needs structured envelope
         CastSubcommand::Misc(MiscSubcommand::Source {
             address,
             directory,
@@ -1312,7 +1311,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 (Some(dir), false) => {
                     metadata.source_tree().write_to(&dir)?;
                 }
-                (None, false) => sh_println!("{}", metadata.source_code())?,
+                (None, false) => print_scalar(metadata.source_code())?,
                 (dir, true) => {
                     let Some(metadata) = metadata.items.first() else {
                         eyre::bail!("Empty contract source code");
@@ -1329,7 +1328,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         fs::write(&path, flattened)?;
                         sh_status!("Flattened file written at {}", path.display())?
                     } else {
-                        sh_println!("{flattened}")?
+                        print_scalar(flattened)?
                     }
                 }
             }
