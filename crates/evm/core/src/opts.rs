@@ -101,6 +101,10 @@ pub struct EvmOpts {
     #[serde(default)]
     pub no_fork_bal: bool,
 
+    /// Prefetches a new fork block's cache from the keys of an older cached block.
+    #[serde(default)]
+    pub fork_prefetch: bool,
+
     /// The initial balance of each deployed test contract.
     pub initial_balance: U256,
 
@@ -326,6 +330,7 @@ impl Default for EvmOpts {
             no_rpc_rate_limit: false,
             no_storage_caching: false,
             no_fork_bal: false,
+            fork_prefetch: false,
             initial_balance: U256::default(),
             sender: Address::default(),
             ffi: false,

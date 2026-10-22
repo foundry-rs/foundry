@@ -146,19 +146,19 @@ Ran 1 test for test/Value.t.sol:ValueTest
 [PASS] test_arguments() ([GAS])
 Traces:
   [[..]] ValueTest::test_arguments()
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
     │   ├─ [[..]] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
     │   ├─ [[..]] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
     │   ├─ [[..]] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
-    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
     │   ├─ [[..]] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
@@ -1264,7 +1264,7 @@ fn abi_commands_reuse_preprocessed_cache(prj: _, cmd: _) {
         r#"#!/bin/sh
 if [ "$1" = "--version" ]; then
     echo "solc, the solidity compiler commandline interface"
-    echo "Version: 0.8.35+commit.69074fbd"
+    echo "Version: 0.8.38+commit.1835d247"
     exit 0
 fi
 cat > "$0.invoked"
@@ -3165,7 +3165,7 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
   [..] CounterTest::test_Increment()
-    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    ├─ [[..]] VM::deployCode("src/Counter.sol:Counter")
     │   ├─ [[..]] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
@@ -3759,7 +3759,6 @@ contract TargetTest is Test {
 fn preprocess_custom_layout_contract(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
     });
 
     prj.add_source(
@@ -4172,7 +4171,7 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 Traces:
 ...
-    ├─ [0] VM::deployCode("src/Targets.sol:Literal", 0x[..])
+    ├─ [[..]] VM::deployCode("src/Targets.sol:Literal", 0x[..])
 ...
 "#]]);
 }
@@ -4627,7 +4626,7 @@ Ran 1 test for test/Isolation.t.sol:IsolationTest
 [PASS] test_create() ([GAS])
 Traces:
   [[..]] IsolationTest::test_create()
-    ├─ [0] VM::deployCode("src/Target.sol:Target")
+    ├─ [[..]] VM::deployCode("src/Target.sol:Target")
     │   ├─ [[..]] → new Target@[..]
     │   │   ├─ [[..]] IsolationTest::read() [staticcall]
     │   │   │   └─ ← [Return] 0
@@ -5394,7 +5393,7 @@ fn preprocess_codegen_fallback_is_targeted(prj: _, cmd: _) {
         r#"#!/bin/sh
 if [ "$1" = "--version" ]; then
     echo "solc, the solidity compiler commandline interface"
-    echo "Version: 0.8.35+commit.69074fbd"
+    echo "Version: 0.8.38+commit.1835d247"
     exit 0
 fi
 cat > /dev/null
