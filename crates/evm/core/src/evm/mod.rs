@@ -156,13 +156,9 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     }
 }
 
-/// Returns the error for an RPC transaction whose envelope `network` cannot represent.
-pub(crate) fn unknown_transaction_type(tx: &AnyRpcTransaction, network: &str) -> eyre::Report {
-    eyre::eyre!(
-        "cannot convert transaction {} of type {:#04x} to a {network} transaction",
-        tx.tx_hash(),
-        tx.inner.inner.ty()
-    )
+/// Returns the error for an RPC transaction whose envelope `target` cannot represent.
+pub(crate) fn unknown_transaction_type(tx: &AnyRpcTransaction, target: &str) -> eyre::Report {
+    eyre::eyre!("cannot convert unknown transaction type {:#04x} to {target}", tx.inner.inner.ty())
 }
 
 /// Builds Foundry-configured EVMs for one evm2 [`EvmTypesHost`] family.

@@ -90,7 +90,7 @@ impl FoundryEvmNetwork for OpEvmNetwork {
 
     fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<OpConsensusTxEnvelope> {
         OpConsensusTxEnvelope::try_from(tx.clone())
-            .map_err(|err| super::unknown_transaction_type(tx, "OP").wrap_err(err))
+            .map_err(|err| super::unknown_transaction_type(tx, "OpTransaction").wrap_err(err))
     }
 }
 
