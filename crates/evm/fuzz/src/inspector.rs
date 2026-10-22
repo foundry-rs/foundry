@@ -72,15 +72,13 @@ impl<T: EvmTypes> Inspector<T> for Fuzzer {
         }
 
         self.call_depth = self.call_depth.saturating_add(1);
-        if self.should_record_observed_call(message.kind) {
-            self.observed_calls.push(ObservedCall {
-                depth: self.call_depth - 1,
-                caller: message.caller,
-                target: message.destination,
-                calldata: message.input.clone(),
-                value: (!message.value.is_zero()).then_some(message.value),
-            });
-        }
+        self.record_observed_call(
+            message.caller,
+            message.destination,
+            &message.input,
+            message.value,
+            message.kind,
+        );
 
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
@@ -169,13 +167,13 @@ impl Fuzzer {
         std::mem::take(&mut self.observed_calls)
     }
 
-    #[cfg(test)]
+    /// Buffers a sub-call for invariant sequence analysis, dropping a zero value.
     fn record_observed_call(
         &mut self,
         caller: Address,
         target: Address,
-        calldata: Bytes,
-        value: Option<U256>,
+        calldata: &Bytes,
+        value: U256,
         kind: MessageKind,
     ) {
         if self.should_record_observed_call(kind) {
@@ -183,8 +181,8 @@ impl Fuzzer {
                 depth: self.call_depth - 1,
                 caller,
                 target,
-                calldata,
-                value,
+                calldata: calldata.clone(),
+                value: (!value.is_zero()).then_some(value),
             });
         }
     }
@@ -479,8 +477,8 @@ mod tests {
         fuzzer.record_observed_call(
             Address::repeat_byte(0xaa),
             Address::repeat_byte(0x11),
-            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            Some(U256::ONE),
+            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            U256::ONE,
             MessageKind::Call,
         );
 
@@ -495,8 +493,8 @@ mod tests {
         fuzzer.record_observed_call(
             Address::repeat_byte(0xaa),
             Address::repeat_byte(0x11),
-            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            None,
+            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            U256::ZERO,
             MessageKind::Call,
         );
 
@@ -509,14 +507,14 @@ mod tests {
         let caller = Address::repeat_byte(0x11);
         let target = Address::repeat_byte(0x22);
         let calldata = Bytes::from_static(&[0xca, 0xfe, 0xba, 0xbe]);
-        let value = Some(U256::from(7));
+        let value = U256::from(7);
         fuzzer.call_depth = 3;
 
-        fuzzer.record_observed_call(caller, target, calldata.clone(), value, MessageKind::Call);
+        fuzzer.record_observed_call(caller, target, &calldata, value, MessageKind::Call);
 
         assert_eq!(
             fuzzer.take_observed_calls(),
-            vec![ObservedCall { depth: 2, caller, target, calldata, value }]
+            vec![ObservedCall { depth: 2, caller, target, calldata, value: Some(value) }]
         );
     }
 
@@ -528,8 +526,8 @@ mod tests {
         fuzzer.record_observed_call(
             Address::repeat_byte(0x11),
             Address::repeat_byte(0x22),
-            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            None,
+            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            U256::ZERO,
             MessageKind::DelegateCall,
         );
 
@@ -543,12 +541,28 @@ mod tests {
         fuzzer.record_observed_call(
             Address::repeat_byte(0xaa),
             Address::repeat_byte(0x33),
-            Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
-            None,
+            &Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            U256::ZERO,
             MessageKind::Call,
         );
 
         assert_eq!(fuzzer.take_observed_calls().len(), 1);
         assert!(fuzzer.take_observed_calls().is_empty());
+    }
+
+    #[test]
+    fn observed_calls_drop_zero_value() {
+        let mut fuzzer = fuzzer(true);
+        fuzzer.call_depth = 2;
+
+        fuzzer.record_observed_call(
+            Address::repeat_byte(0x11),
+            Address::repeat_byte(0x22),
+            &Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            U256::ZERO,
+            MessageKind::Call,
+        );
+
+        assert_eq!(fuzzer.take_observed_calls()[0].value, None);
     }
 }
