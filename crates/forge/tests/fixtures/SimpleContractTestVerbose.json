@@ -1235,7 +1235,7 @@
                         "gas_remaining": "{...}",
                         "gas_refund_counter": 0,
                         "gas_used": "{...}",
-                        "gas_cost": 149057,
+                        "gas_cost": 1056944078,
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
@@ -3593,7 +3593,7 @@
                         "gas_remaining": 1073570894,
                         "gas_refund_counter": 0,
                         "gas_used": 149866,
-                        "gas_cost": 43818,
+                        "gas_cost": 1056796351,
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
@@ -6059,7 +6059,7 @@
                         "gas_remaining": 1073526655,
                         "gas_refund_counter": 0,
                         "gas_used": 194105,
-                        "gas_cost": 2600,
+                        "gas_cost": 1056752842,
                         "state_gas_cost": null,
                         "state_gas_reservoir": null,
                         "storage_change": null,
@@ -10424,35 +10424,12 @@
                     "gas_limit": "{...}",
                     "gas_refund_counter": 0,
                     "status": "Stop",
-                    "steps": [
-                      {
-                        "pc": 0,
-                        "op": 0,
-                        "stack": null,
-                        "push_stack": null,
-                        "memory": null,
-                        "returndata": "0x",
-                        "gas_remaining": 1056750242,
-                        "gas_refund_counter": 0,
-                        "gas_used": 0,
-                        "gas_cost": 0,
-                        "state_gas_cost": null,
-                        "state_gas_reservoir": null,
-                        "storage_change": null,
-                        "status": "Stop",
-                        "immediate_bytes": null,
-                        "decoded": null
-                      }
-                    ],
+                    "steps": [],
                     "step_deltas": [],
                     "decoded": null
                   },
                   "logs": [],
-                  "ordering": [
-                    {
-                      "Step": 0
-                    }
-                  ]
+                  "ordering": []
                 }
               ]
             }

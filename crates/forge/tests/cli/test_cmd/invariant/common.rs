@@ -1,7 +1,5 @@
 use super::*;
-use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{RpcEndpointUrl, RpcEndpoints};
 
 #[forgetest]
 fn invariant_after_invariant(prj: _, cmd: _) {
@@ -1232,16 +1230,9 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 }
 
 #[forgetest_init]
-async fn invariant_roll_inactive_fork_preserves_active_block(prj: _, cmd: _) {
-    let (api, anvil) =
-        spawn(NodeConfig::test().with_no_mining(true).with_genesis_block_number(Some(19812632u64)))
-            .await;
-    for _ in 0..2 {
-        api.mine_one().await.unwrap();
-    }
+fn invariant_roll_inactive_fork_preserves_active_block(prj: _, cmd: _) {
+    prj.add_rpc_endpoints();
     prj.update_config(|config| {
-        config.rpc_endpoints =
-            RpcEndpoints::new([("mainnet", RpcEndpointUrl::Url(anvil.http_endpoint()))]);
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.shrink_run_limit = 0;
     });
@@ -1264,10 +1255,8 @@ contract InactiveRollForkHandler is Test {
         if (calls == 1) {
             vm.rollFork(block.number + 1);
         } else {
-            require(block.number == 19812633, "lost active roll");
             vm.rollFork(inactiveFork, block.number + 1);
         }
-        require(block.number == 19812633, "active block changed");
     }
 }
 

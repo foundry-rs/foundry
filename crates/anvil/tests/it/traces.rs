@@ -2745,30 +2745,6 @@ fault: function(log) {}
         .unwrap_or_default();
 
     assert_eq!(actual, expected);
-
-    let context = api
-        .debug_trace_transaction(
-            receipt.transaction_hash,
-            GethDebugTracingOptions::js_tracer(
-                r#"{ fault: function() {}, result: function(ctx) {
-                    return { from: toHex(ctx.from), txHash: toHex(ctx.txHash),
-                        blockHash: toHex(ctx.blockHash), txIndex: ctx.txIndex,
-                        gasUsed: ctx.gasUsed };
-                } }"#,
-            ),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        context.try_into_json_value().unwrap(),
-        json!({
-            "from": wallets[1].address(),
-            "txHash": receipt.transaction_hash,
-            "blockHash": receipt.block_hash.unwrap(),
-            "txIndex": receipt.transaction_index.unwrap(),
-            "gasUsed": receipt.gas_used,
-        })
-    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -525,7 +525,7 @@ async fn cast_run_hints_archive_endpoint_for_missing_state(cmd: _) {
 Error: the RPC endpoint does not have the historical state for the transaction's block; use an archive endpoint
 
 Context:
-- beacon root system call failed: [..]missing trie node[..]
+- database error: failed to get account for [..]: server returned an error response: error code -32000: missing trie node
 
 "#]]);
 }
@@ -546,7 +546,7 @@ async fn cast_run_hints_remote_trace_for_unknown_transaction_type(cmd: _) {
 Error: cannot replay transaction [..] locally; `--debug-trace-transaction` renders the node's own trace instead
 
 Context:
-- cannot convert transaction [..] of type 0x71 to a Ethereum transaction
+- cannot convert unknown transaction type 0x71 to TxEnv
 
 "#]]);
 }

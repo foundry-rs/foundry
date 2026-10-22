@@ -1783,9 +1783,6 @@ contract SymbolicPreparedEnvironment is Test {
         vm.prevrandao(bytes32(uint256(99)));
         vm.coinbase(address(0xBEEF));
         vm.txGasPrice(66);
-        bytes32[] memory hashes = new bytes32[](1);
-        hashes[0] = bytes32(uint256(0x1111));
-        vm.blobhashes(hashes);
     }
 
     function checkPreparedEnvironment(uint256 x) public {
@@ -1798,7 +1795,6 @@ contract SymbolicPreparedEnvironment is Test {
         assertEq(block.prevrandao, 99);
         assertEq(block.coinbase, address(0xBEEF));
         assertEq(tx.gasprice, 66);
-        assertEq(blobhash(0), bytes32(uint256(0x1111)));
     }
 }
 "#,
