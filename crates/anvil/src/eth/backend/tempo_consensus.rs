@@ -6,11 +6,13 @@
 //! not production trust anchors. Each rotation derives a fresh sharing, rather than resharing an
 //! existing key.
 //!
-//! For epoch length `L`, height `h` uses epoch `h / L`, view `h % L + 1`, and parent view `h % L`.
-//! This no-skips development convention does not inherit a remote chain's rounds. A boundary at
-//! `h % L == L - 1` announces the next committee in a native [`OnchainDkgOutcome`]. The boundary
-//! is signed by the old committee; the next epoch activates the announced key. The outcome's
-//! `is_next_full_dkg = false` describes the next ceremony, not whether this local key changed.
+//! For epoch length `L`, height `h` uses epoch `h / L`. Signed heights in epoch zero use view `h`,
+//! while later epochs use view `h % L + 1`; the parent view is one less. Genesis and each preceding
+//! epoch boundary serve as view-zero parents. This no-skips development convention does not
+//! inherit a remote chain's rounds. A boundary at `h % L == L - 1` announces the next committee
+//! in a native [`OnchainDkgOutcome`]. The boundary is signed by the old committee; the next epoch
+//! activates the announced key. The outcome's `is_next_full_dkg = false` describes the next
+//! ceremony, not whether this local key changed.
 //!
 //! [`TempoHeader`] owns the full RLP encoding and hash, including all execution fields and the
 //! optional context. Genesis is unsigned and contextless. Context is omitted before T4, following
@@ -21,11 +23,13 @@
 //! codecs.
 //!
 //! Cloning snapshots the complete controller, including pending rotations. Unwind instead restores
-//! the retained height's checkpoint and discards later certificates and rotations. Reset restores
-//! the unsigned initial anchor. Re-signing replacement history can produce valid certificates for
-//! conflicting headers at the same height: this development rewind behavior is not consensus
-//! safety. Callers own canonical commit, execution/body validation, archive pruning, and
-//! persistence; this module has no mining, RPC, CLI, or fork-routing integration.
+//! the retained height's checkpoint and discards later certificates and rotations. Checkpoints
+//! retain only their active and future committees. Callers can bound retained history with
+//! [`TempoConsensus::prune`]; unwind cannot cross the pruning boundary. Reset restores the unsigned
+//! initial anchor, including its original rewind floor. Re-signing replacement history can produce
+//! valid certificates for conflicting headers at the same height: this development rewind behavior
+//! is not consensus safety. Callers own canonical commit, execution/body validation, archive
+//! pruning, and persistence; this module has no mining, RPC, CLI, or fork-routing integration.
 //!
 //! [tip1031]: https://github.com/tempoxyz/tempo/blob/b34e701ecc69d91d72ffb3e77114958bb4f8bc38/crates/commonware-node/src/consensus/application/actor.rs
 
@@ -59,6 +63,7 @@ pub struct TempoConsensus {
     state: Checkpoint,
     checkpoints: BTreeMap<u64, Checkpoint>,
     finalizations: BTreeMap<u64, TempoFinalization>,
+    retained_height: u64,
 }
 
 impl TempoConsensus {
@@ -85,6 +90,7 @@ impl TempoConsensus {
             state: initial,
             checkpoints: BTreeMap::new(),
             finalizations: BTreeMap::new(),
+            retained_height: height,
         }
     }
 
@@ -146,11 +152,9 @@ impl TempoConsensus {
             return Err(TempoConsensusError::InvalidExtraData);
         }
         let height = header.inner.number;
-        let epoch = height / self.epoch_length;
-        let parent_view = height % self.epoch_length;
-        let view = parent_view + 1;
+        let (epoch, view, parent_view) = self.round(height);
         let digest = header.hash_slow();
-        let committee = self.committee_at(epoch).1;
+        let (&from_epoch, committee) = self.committee_at(epoch);
         let certificate = certificate::encode(
             epoch,
             view,
@@ -161,12 +165,14 @@ impl TempoConsensus {
         );
         let finalization = TempoFinalization { epoch, view, digest, certificate };
         self.state.height = height;
+        // Older checkpoints retain the committees needed to replay their own history.
+        self.state.committees.retain(|&epoch, _| epoch >= from_epoch);
         self.finalizations.insert(height, finalization.clone());
         self.checkpoints.insert(height, self.state.clone());
         Ok(finalization)
     }
 
-    /// Returns the certificate for a signed height, excluding the unsigned anchor.
+    /// Returns the certificate for a retained signed height, excluding the unsigned anchor.
     pub fn finalization(&self, height: u64) -> Option<&TempoFinalization> {
         self.finalizations.get(&height)
     }
@@ -206,9 +212,8 @@ impl TempoConsensus {
         height: u64,
         include_context: bool,
     ) -> Result<PreparedHeaderMetadata, TempoConsensusError> {
-        let epoch = height / self.epoch_length;
-        let parent_view = height % self.epoch_length;
-        let extra_data = if parent_view == self.epoch_length.get() - 1 {
+        let (epoch, view, parent_view) = self.round(height);
+        let extra_data = if height % self.epoch_length == self.epoch_length.get() - 1 {
             let next_epoch = epoch.checked_add(1).ok_or(TempoConsensusError::EpochOverflow)?;
             let committee = self.committee_at(next_epoch).1;
             OnchainDkgOutcome {
@@ -226,7 +231,7 @@ impl TempoConsensus {
             let proposer = B256::from(<[u8; 32]>::from(&self.committee_at(epoch).1.proposer))
                 .try_into()
                 .expect("the committee has a valid ed25519 public key");
-            TempoConsensusContext { epoch, view: parent_view + 1, parent_view, proposer }
+            TempoConsensusContext { epoch, view, parent_view, proposer }
         });
         Ok(PreparedHeaderMetadata { consensus_context, extra_data })
     }
@@ -252,10 +257,11 @@ impl TempoConsensus {
     ///
     /// Pending rotations after that checkpoint are discarded. Rewinding zero blocks is a no-op;
     /// use a cloned controller to restore an exact snapshot, including pending rotations.
+    /// Heights below the most recent pruning boundary cannot be restored.
     pub fn unwind(&mut self, height: u64) -> Result<(), TempoConsensusError> {
-        if height < self.initial.height || height > self.state.height {
+        if height < self.retained_height || height > self.state.height {
             return Err(TempoConsensusError::InvalidRewind {
-                anchor: self.initial.height,
+                earliest: self.retained_height,
                 head: self.state.height,
                 requested: height,
             });
@@ -263,7 +269,11 @@ impl TempoConsensus {
         if height == self.state.height {
             return Ok(());
         }
-        self.state = self.checkpoints.get(&height).unwrap_or(&self.initial).clone();
+        self.state = if height == self.initial.height {
+            self.initial.clone()
+        } else {
+            self.checkpoints.get(&height).expect("retained signed heights have checkpoints").clone()
+        };
         self.checkpoints.retain(|&number, _| number <= height);
         self.finalizations.retain(|&number, _| number <= height);
         Ok(())
@@ -274,6 +284,35 @@ impl TempoConsensus {
         self.state = self.initial.clone();
         self.checkpoints.clear();
         self.finalizations.clear();
+        self.retained_height = self.initial.height;
+    }
+
+    /// Returns the epoch, view, and parent view for a non-genesis height.
+    fn round(&self, height: u64) -> (u64, u64, u64) {
+        let epoch = height / self.epoch_length;
+        let view = if epoch == 0 { height } else { height % self.epoch_length + 1 };
+        (epoch, view, view - 1)
+    }
+
+    /// Removes certificates and checkpoints strictly below `below`, advancing the rewind floor.
+    ///
+    /// The current head and pending rotations are unchanged. Any checkpoint and certificate at
+    /// `below` remain available, so pruning at the head retains its finalized state. Requests at
+    /// or below the existing floor are no-ops; requests above the head fail without changing state.
+    /// [`Self::reset`] still restores the original unsigned anchor and clears the pruning boundary.
+    pub fn prune(&mut self, below: u64) -> Result<(), TempoConsensusError> {
+        if below > self.state.height {
+            return Err(TempoConsensusError::InvalidPrune {
+                head: self.state.height,
+                requested: below,
+            });
+        }
+        if below > self.retained_height {
+            self.checkpoints = self.checkpoints.split_off(&below);
+            self.finalizations = self.finalizations.split_off(&below);
+            self.retained_height = below;
+        }
+        Ok(())
     }
 }
 
@@ -341,12 +380,17 @@ pub enum TempoConsensusError {
     /// All development identity derivation counters have been exhausted.
     #[error("Tempo consensus identity counter overflow")]
     CounterOverflow,
-    /// The rewind target is outside this controller's local history.
-    #[error("cannot rewind Tempo consensus from {head} to {requested} with anchor {anchor}")]
-    InvalidRewind { anchor: u64, head: u64, requested: u64 },
+    /// The rewind target is outside this controller's retained history.
+    #[error(
+        "cannot rewind Tempo consensus from {head} to {requested} with earliest retained height {earliest}"
+    )]
+    InvalidRewind { earliest: u64, head: u64, requested: u64 },
     /// A new hardfork requires review of the pinned header, DKG, and certificate formats.
     #[error("unsupported Tempo consensus hardfork {0}")]
     UnsupportedHardfork(TempoHardfork),
+    /// The requested pruning boundary is beyond the current head.
+    #[error("cannot prune Tempo consensus below {requested} beyond head {head}")]
+    InvalidPrune { head: u64, requested: u64 },
 }
 
 struct Committee {

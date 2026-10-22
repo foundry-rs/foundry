@@ -132,7 +132,7 @@ fn nonzero_checkpoint_stays_unsigned_and_bounds_rewinds() {
     for requested in [7, 10] {
         assert_eq!(
             consensus.unwind(requested),
-            Err(TempoConsensusError::InvalidRewind { anchor: 8, head: 9, requested })
+            Err(TempoConsensusError::InvalidRewind { earliest: 8, head: 9, requested })
         );
         assert_eq!(consensus.latest(), Some((9, &certificate)));
         assert_eq!(consensus.identity(), initial);
@@ -359,7 +359,7 @@ fn rejected_heights_and_overflows_leave_state_unchanged() {
         TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(u64::MAX).unwrap(), u64::MAX - 2);
     let identity = largest_view.identity();
     let (header, certificate) = finalize(&mut largest_view, u64::MAX - 1);
-    assert_eq!((certificate.epoch, certificate.view), (0, u64::MAX));
+    assert_eq!((certificate.epoch, certificate.view), (0, u64::MAX - 1));
     assert_certificate(&identity, &header, &certificate);
     let outcome = OnchainDkgOutcome::decode(header.inner.extra_data.as_ref()).unwrap();
     assert_eq!(outcome.epoch, 1);
@@ -411,4 +411,198 @@ fn certificate_verifies(
     let public = G2::decode(identity.identity.as_ref()).unwrap();
     ops::verify_message::<MinSig>(&public, b"TEMPO_FINALIZE", &bytes[..proposal_len], &vote).is_ok()
         && ops::verify_message::<MinSig>(&public, b"TEMPO_SEED", &bytes[..round_len], &seed).is_ok()
+}
+
+#[test]
+fn rounds_start_after_genesis_and_restart_after_boundaries() {
+    for hardfork in [TempoHardfork::T3, TempoHardfork::T4] {
+        let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
+        for (height, round, next_epoch) in [
+            (1, (0, 1, 0), None),
+            (2, (0, 2, 1), Some(1)),
+            (3, (1, 1, 0), None),
+            (4, (1, 2, 1), None),
+            (5, (1, 3, 2), Some(2)),
+            (6, (2, 1, 0), None),
+        ] {
+            let mut header = TempoHeader::default();
+            header.inner.number = height;
+            consensus.prepare_header(&mut header, hardfork).unwrap();
+            if hardfork.is_t4() {
+                let context = header.consensus_context.unwrap();
+                assert_eq!((context.epoch, context.view, context.parent_view), round);
+            } else {
+                assert!(header.consensus_context.is_none());
+            }
+            if let Some(epoch) = next_epoch {
+                let outcome = OnchainDkgOutcome::decode(header.inner.extra_data.as_ref()).unwrap();
+                assert_eq!(outcome.epoch, epoch);
+            } else {
+                assert!(header.inner.extra_data.is_empty());
+            }
+            let certificate = consensus.finalize(&header, hardfork).unwrap();
+            let mut input = certificate.certificate.as_ref();
+            let epoch = u64::from(UInt::<u64>::read(&mut input).unwrap());
+            let view = u64::from(UInt::<u64>::read(&mut input).unwrap());
+            let parent_view = u64::from(UInt::<u64>::read(&mut input).unwrap());
+            assert_eq!((epoch, view, parent_view), round);
+            assert_certificate(&consensus.identity(), &header, &certificate);
+        }
+    }
+}
+
+#[test]
+fn checkpoints_bound_committee_history_and_replay_rotations() {
+    let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
+    let initial = consensus.identity();
+    for height in 1..=6 {
+        finalize(&mut consensus, height);
+        assert_eq!(consensus.identity(), initial);
+    }
+
+    let mut certificates = Vec::new();
+    for height in 7..=18 {
+        consensus.rotate().unwrap();
+        certificates.push(finalize(&mut consensus, height).1);
+        assert!(consensus.state.committees.len() <= 2);
+        assert!(consensus.checkpoints.values().all(|checkpoint| checkpoint.committees.len() <= 2));
+    }
+
+    consensus.unwind(8).unwrap();
+    assert_eq!(consensus.identity(), initial);
+    for (height, expected) in (9..=18).zip(&certificates[2..]) {
+        consensus.rotate().unwrap();
+        assert_eq!(&finalize(&mut consensus, height).1, expected);
+    }
+
+    finalize(&mut consensus, 19);
+    finalize(&mut consensus, 20);
+    finalize(&mut consensus, 21);
+    let last = consensus.identity();
+    for height in 22..=27 {
+        finalize(&mut consensus, height);
+        assert_eq!(consensus.identity(), last);
+        assert_eq!(consensus.state.committees.len(), 1);
+    }
+}
+
+#[test]
+fn pruning_preserves_head_and_retained_rotation_history() {
+    let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
+    for height in 1..=8 {
+        consensus.rotate().unwrap();
+        finalize(&mut consensus, height);
+    }
+    let pending = consensus.rotate().unwrap();
+    let mut unpruned = consensus.clone();
+
+    consensus.prune(5).unwrap();
+    assert_eq!(consensus.checkpoints.keys().copied().collect::<Vec<_>>(), [5, 6, 7, 8]);
+    for height in 1..=4 {
+        assert!(consensus.finalization(height).is_none());
+    }
+    for height in 5..=8 {
+        assert_eq!(consensus.finalization(height), unpruned.finalization(height));
+    }
+    assert_eq!(consensus.latest(), unpruned.latest());
+    assert_eq!(consensus.identity(), unpruned.identity());
+    for height in 9..=12 {
+        assert_eq!(finalize(&mut consensus, height), finalize(&mut unpruned, height));
+    }
+    assert_eq!(consensus.identity(), pending);
+
+    consensus.unwind(5).unwrap();
+    unpruned.unwind(5).unwrap();
+    assert_eq!(consensus.latest(), unpruned.latest());
+    assert_eq!(consensus.identity(), unpruned.identity());
+    for height in 6..=9 {
+        assert_eq!(consensus.rotate().unwrap(), unpruned.rotate().unwrap());
+        assert_eq!(finalize(&mut consensus, height), finalize(&mut unpruned, height));
+    }
+}
+
+#[test]
+fn pruning_bounds_rewinds_and_reset_restores_nonzero_anchor() {
+    let mut consensus = TempoConsensus::at_height(B256::ZERO, NonZeroU64::new(3).unwrap(), 8);
+    let mut fresh = consensus.clone();
+    consensus.prune(8).unwrap();
+    consensus.rotate().unwrap();
+    finalize(&mut consensus, 9);
+    let pending = consensus.rotate().unwrap();
+    let mut unpruned = consensus.clone();
+
+    consensus.prune(9).unwrap();
+    let mut snapshot = consensus.clone();
+    for controller in [&mut consensus, &mut snapshot] {
+        assert_eq!(
+            controller.unwind(8),
+            Err(TempoConsensusError::InvalidRewind { earliest: 9, head: 9, requested: 8 })
+        );
+        assert_eq!(
+            controller.prune(10),
+            Err(TempoConsensusError::InvalidPrune { head: 9, requested: 10 })
+        );
+        for below in [0, 8, 9] {
+            controller.prune(below).unwrap();
+        }
+        assert_eq!(
+            controller.unwind(8),
+            Err(TempoConsensusError::InvalidRewind { earliest: 9, head: 9, requested: 8 })
+        );
+        controller.unwind(9).unwrap();
+        assert_eq!(controller.latest(), unpruned.latest());
+        assert_eq!(controller.identity(), unpruned.identity());
+        assert_eq!(controller.checkpoints.keys().copied().collect::<Vec<_>>(), [9]);
+    }
+    for height in 10..=12 {
+        let expected = finalize(&mut unpruned, height);
+        assert_eq!(finalize(&mut consensus, height), expected);
+        assert_eq!(finalize(&mut snapshot, height), expected);
+    }
+    assert_eq!(consensus.identity(), pending);
+    let next_identity = unpruned.rotate().unwrap();
+    assert_eq!(consensus.rotate().unwrap(), next_identity);
+    assert_eq!(snapshot.rotate().unwrap(), next_identity);
+    let next = finalize(&mut unpruned, 13);
+    assert_eq!(finalize(&mut consensus, 13), next);
+    assert_eq!(finalize(&mut snapshot, 13), next);
+
+    consensus.unwind(9).unwrap();
+    unpruned.unwind(9).unwrap();
+    assert_eq!(consensus.rotate().unwrap(), unpruned.rotate().unwrap());
+    assert_eq!(finalize(&mut consensus, 10), finalize(&mut unpruned, 10));
+
+    consensus.reset();
+    assert!(consensus.latest().is_none());
+    assert_eq!(consensus.identity(), fresh.identity());
+    assert_eq!(consensus.rotate().unwrap(), fresh.rotate().unwrap());
+    assert_eq!(finalize(&mut consensus, 9), finalize(&mut fresh, 9));
+    consensus.unwind(8).unwrap();
+    assert!(consensus.latest().is_none());
+
+    let mut terminal = TempoConsensus::at_height(B256::ZERO, NonZeroU64::MIN, u64::MAX);
+    terminal.prune(u64::MAX).unwrap();
+    terminal.unwind(u64::MAX).unwrap();
+    assert!(terminal.latest().is_none());
+}
+
+#[test]
+fn repeated_pruning_bounds_retained_history() {
+    let mut consensus = TempoConsensus::new(B256::ZERO, NonZeroU64::new(3).unwrap());
+    for height in 1..=24 {
+        consensus.rotate().unwrap();
+        let (_, certificate) = finalize(&mut consensus, height);
+        consensus.prune(height.saturating_sub(2)).unwrap();
+        assert_eq!(consensus.latest(), Some((height, &certificate)));
+        assert!(consensus.checkpoints.len() <= 3);
+        assert!(consensus.finalizations.len() <= 3);
+        assert!(consensus.checkpoints.values().all(|checkpoint| checkpoint.committees.len() <= 2));
+    }
+    assert_eq!(consensus.checkpoints.keys().copied().collect::<Vec<_>>(), [22, 23, 24]);
+    consensus.unwind(22).unwrap();
+    assert_eq!(consensus.latest().unwrap().0, 22);
+    assert_eq!(
+        consensus.unwind(21),
+        Err(TempoConsensusError::InvalidRewind { earliest: 22, head: 22, requested: 21 })
+    );
 }
