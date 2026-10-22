@@ -605,8 +605,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let mut evm = self.backend().create_evm();
         install_env::<FEN>(self.backend(), &mut evm, self.evm_env);
         let pending = evm
-            .system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, parent_beacon_block_root.into()))
-            .map_err(|err| eyre::eyre!("beacon root system call failed: {err:?}"))?
+            .system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, parent_beacon_block_root.into()))?
             .detach()
             .pending_state;
         drop(evm);
