@@ -93,6 +93,13 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub no_fork_bal: bool,
 
+    /// Prefetch a new fork block's cache from the keys of an older cached block on the same chain.
+    ///
+    /// Helps forks of `latest`, which start with an empty cache on each new head.
+    #[arg(long)]
+    #[serde(skip)]
+    pub fork_prefetch: bool,
+
     /// The initial balance of deployed test contracts.
     #[arg(long, value_name = "BALANCE")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,6 +231,11 @@ impl Provider for EvmArgs {
         if self.no_fork_bal {
             // Environment values use the global profile, which overrides the selected profile.
             data.entry(Profile::Global).or_default().insert("no_fork_bal".to_string(), true.into());
+        }
+        if self.fork_prefetch {
+            data.entry(Profile::Global)
+                .or_default()
+                .insert("fork_prefetch".to_string(), true.into());
         }
         Ok(data)
     }
@@ -382,6 +394,28 @@ mod tests {
                             "profile={profile}, configured={configured}, environment={environment:?}, flag={flag}",
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fork_prefetch_cli_preserves_config_unless_explicit() {
+        for profile in ["default", "ci"] {
+            for configured in [false, true] {
+                for flag in [false, true] {
+                    let config = Config { fork_prefetch: configured, ..Default::default() };
+                    let figment = Figment::from(Serialized::defaults(config).profile(profile))
+                        .select(profile);
+                    let args = EvmArgs::parse_from(
+                        ["foundry-cli"].into_iter().chain(flag.then_some("--fork-prefetch")),
+                    );
+                    let merged = Config::from_provider(figment.merge(args)).unwrap();
+                    assert_eq!(
+                        merged.fork_prefetch,
+                        flag || configured,
+                        "profile={profile}, configured={configured}, flag={flag}",
+                    );
                 }
             }
         }

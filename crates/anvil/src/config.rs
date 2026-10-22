@@ -225,7 +225,8 @@ pub struct NodeConfig {
     pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
-    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825). From Amsterdam,
+    /// the cap always applies to regular gas only (EIP-8037).
     pub enable_tx_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
@@ -731,6 +732,18 @@ impl NodeConfig {
             // explicitly supplied a non-zero coinbase.
             evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
         }
+    }
+
+    /// Sets the execution spec, its mainnet gas parameters, and the transaction gas limit cap.
+    ///
+    /// The Amsterdam gas features follow the spec in both directions, so switching to an earlier
+    /// spec disables them. The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except
+    /// under EIP-8037, where the cap divides a transaction's gas into regular gas and the state
+    /// gas reservoir instead of limiting it.
+    pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
+        cfg.set_spec_and_mainnet_gas_params(spec);
+        let is_amsterdam = spec >= SpecId::AMSTERDAM;
+        cfg.tx_gas_limit_cap = (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX);
     }
 
     /// Returns the memory limit of the node
@@ -1467,7 +1480,7 @@ impl NodeConfig {
         // configure the revm environment
 
         let mut cfg = CfgEnv::new();
-        cfg.set_spec_and_mainnet_gas_params(self.get_hardfork().into());
+        self.set_cfg_spec(&mut cfg, self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1476,10 +1489,6 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-
-        if !self.enable_tx_gas_limit {
-            cfg.tx_gas_limit_cap = Some(u64::MAX);
-        }
 
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
@@ -2139,7 +2148,7 @@ latest block number: {latest_block}"
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
-        evm_env.cfg_env.set_spec_and_mainnet_gas_params(effective_spec);
+        self.set_cfg_spec(&mut evm_env.cfg_env, effective_spec);
         fees.set_execution_rules(
             effective_spec,
             self.networks.base_fee_params(block.header.timestamp()),

@@ -56,6 +56,7 @@ base-common-rpc-types = { workspace = true, optional = true, features = ["serde"
 
 # Persisted fork block metadata only; execution and account storage use evm2.
 revm = { workspace = true, features = ["std", "serde"] }
+parking_lot.workspace = true
 op-alloy-consensus = { workspace = true, features = ["alloy-compat", "k256"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }

@@ -257,22 +257,23 @@ contract StateGasTest is Test {
         assertEq(VM_GAS.snapshotGasLastCall("calldataFloorLowGas"), floorGas, "wrong calldata floor gas");
     }
 
-    function testPrankedCreateAtFundedDestination() public {
-        // The CREATE opcode charged the account creation, but the pranked creator's destination
-        // has a balance, so the deployment creates no account and the frame pays only the code.
-        address sender = address(0xB0B);
-        vm.deal(vm.computeCreateAddress(sender, vm.getNonce(sender)), 1);
-        vm.prank(sender);
-        new StateGasTarget();
-        assertEq(
-            VM_GAS.lastFrameGas().gasStateUsed,
-            int64(codeDepositStateGas()),
-            "wrong pranked create state gas"
-        );
-    }
+    /// forge-config: default.isolate = false
+    function testDeployCodeChargesCreateStateGas() public {
+        // Deploy natively with CREATE, which dynamic test linking does not rewrite.
+        bytes memory initCode = type(StateGasTarget).creationCode;
+        VM_GAS.startSnapshotGas("nativeCreate");
+        assembly {
+            pop(create(0, add(initCode, 0x20), mload(initCode)))
+        }
+        uint256 native = VM_GAS.stopSnapshotGas();
 
-    function codeDepositStateGas() internal pure returns (uint64) {
-        return uint64(type(StateGasTarget).runtimeCode.length) * 1530;
+        VM_GAS.startSnapshotGas("deployCodeCreate");
+        vm.deployCode("test/StateGas.t.sol:StateGasTarget");
+        uint256 synthetic = VM_GAS.stopSnapshotGas();
+
+        // The cheatcode call overhead differs from native memory expansion, but the account
+        // creation state gas must be charged to both.
+        assertApproxEqAbs(synthetic, native, 2_000, "deployCode create gas differs");
     }
 
     function snapshotValueTransfer(address to, uint256 gasLimit) internal returns (uint256 section) {

@@ -2155,8 +2155,7 @@ impl TestArgs {
                 }
             }
             TraceOutputKind::EvmProfile(EvmProfileFormat::Speedscope) => {
-                let profile =
-                    speedscope::builder::build(arena, test_name, contract, self.evm.isolate);
+                let profile = speedscope::builder::build(arena, test_name, contract);
                 let profile_json = serde_json::to_vec(&profile)?;
                 let profile_path = format!("cache/evm_profile_{contract}_{test_name}.json");
                 fs::write(&profile_path, &profile_json)?;

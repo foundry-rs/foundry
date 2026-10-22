@@ -1273,6 +1273,26 @@ impl SymbolicExecutor {
                     "symbolic vm.etch",
                 )?;
                 let code = SymCode::from_byte_exprs(&mut self.cx, code);
+                let delegation_prefix = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01]);
+                let delegation = code
+                    .read_bytes(&mut self.cx, 0, delegation_prefix.len())
+                    .prefix_condition(&mut self.cx, &delegation_prefix);
+                if let Some(delegation) = delegation {
+                    let valid = if code.len() == EIP7702_BYTECODE_LEN {
+                        let delegation = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01, 0x00]);
+                        code.read_bytes(&mut self.cx, 0, delegation.len())
+                            .prefix_condition(&mut self.cx, &delegation)
+                            .unwrap_or_else(|| SymBoolExpr::constant(&mut self.cx, false))
+                    } else {
+                        SymBoolExpr::constant(&mut self.cx, false)
+                    };
+                    let invalid = valid.not(&mut self.cx);
+                    let malformed = SymBoolExpr::and(&mut self.cx, vec![delegation, invalid]);
+                    let (_, malformed_sat) = self.constraints_with_condition(state, malformed)?;
+                    if malformed_sat {
+                        return Err(SymbolicError::Unsupported("symbolic vm.etch EIP-7702 code"));
+                    }
+                }
                 state.world.install_code(target, code);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }

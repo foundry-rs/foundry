@@ -1762,31 +1762,31 @@ impl<N: Network> Backend<N> {
         let blob_params = self.blob_params();
         PoolTxGasConfig {
             disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-            enforced_tx_gas_limit_cap: evm_env
-                .cfg_env
-                .tx_gas_limit_cap
-                .is_none()
-                .then(|| self.tx_gas_limit_cap(evm_env)),
+            enforced_tx_gas_limit_cap: self.enforced_tx_gas_limit_cap(evm_env),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
         }
     }
 
-    fn tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> u64 {
+    /// Returns the EIP-7825 cap enforced on a transaction's gas limit, if any.
+    ///
+    /// Under EIP-8037 the cap only bounds regular gas, and gas above it becomes the state gas
+    /// reservoir, so the gas limit itself is not capped.
+    fn enforced_tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> Option<u64> {
+        if evm_env.cfg_env.tx_gas_limit_cap.is_some() || evm_env.cfg_env.spec >= SpecId::AMSTERDAM {
+            return None;
+        }
         #[cfg(feature = "monad")]
         if self.is_monad() {
-            return monad_evm2::MONAD_TX_GAS_LIMIT_CAP;
+            return Some(monad_evm2::MONAD_TX_GAS_LIMIT_CAP);
         }
-        evm_env.cfg_env.tx_gas_limit_cap()
+        Some(evm_env.cfg_env.tx_gas_limit_cap())
     }
 
     pub(crate) fn fallback_tx_gas_limit(&self, evm_env: &EvmEnv) -> u64 {
         let block_gas_limit = evm_env.block_env.gas_limit;
-        if evm_env.cfg_env.tx_gas_limit_cap.is_none() {
-            block_gas_limit.min(self.tx_gas_limit_cap(evm_env))
-        } else {
-            block_gas_limit
-        }
+        self.enforced_tx_gas_limit_cap(evm_env)
+            .map_or(block_gas_limit, |cap| block_gas_limit.min(cap))
     }
 
     fn max_initcode_size(&self, evm_env: &EvmEnv) -> usize {
@@ -9677,8 +9677,8 @@ where
             }
 
             // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
-            if evm_env.cfg_env.tx_gas_limit_cap.is_none()
-                && tx.gas_limit() > self.tx_gas_limit_cap(evm_env)
+            if let Some(cap) = self.enforced_tx_gas_limit_cap(evm_env)
+                && tx.gas_limit() > cap
             {
                 debug!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {

@@ -349,6 +349,9 @@ pub struct MultiForkHandler {
 
     /// Optional periodic interval to flush rpc cache.
     flush_cache_interval: Option<tokio::time::Interval>,
+
+    /// Prefetch workers of the backends created by this handler.
+    prefetches: Vec<super::prefetch::Prefetch>,
 }
 
 impl MultiForkHandler {
@@ -359,6 +362,7 @@ impl MultiForkHandler {
             pending_tasks: Default::default(),
             forks: Default::default(),
             flush_cache_interval: None,
+            prefetches: Default::default(),
         }
     }
 
@@ -515,6 +519,11 @@ impl MultiForkHandler {
                 // We're emptying all fork backends, this way we ensure all caches get flushed.
                 self.forks.clear();
                 self.handlers.clear();
+                // Reads fail once the handlers are gone, so the workers exit promptly, and the
+                // last of them flushes the cache before the shutdown completes.
+                for prefetch in self.prefetches.drain(..) {
+                    prefetch.stop();
+                }
                 let _ = sender.send(());
             }
             Request::GetForkInfo(fork_id, sender) => {
@@ -591,6 +600,19 @@ impl Future for MultiForkHandler {
                                 // Only a new backend loads the disk cache.
                                 let (backend, handler) =
                                     create_backend(&opts, &resolved, &block_env)?;
+                                // Only a fork of `latest` starts cold on each new head; rolls and
+                                // pinned blocks do not prefetch. Prefetching reads older cache
+                                // files, so it follows the disk caching settings.
+                                let evm_opts = &opts.evm_opts;
+                                if evm_opts.fork_prefetch
+                                    && opts.enable_caching
+                                    && !resolved.state_by_number
+                                    && (evm_opts.fork_block_number.is_none()
+                                        || evm_opts.fork_block_number_is_inferred)
+                                {
+                                    this.prefetches
+                                        .extend(super::prefetch::spawn(&resolved, &backend));
+                                }
                                 this.handlers.push((fork_id.clone(), handler));
                                 (fork_id, CreatedFork::new(opts, resolved, backend))
                             };

@@ -1089,6 +1089,55 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 }
 
+#[forgetest_init]
+fn symbolic_vm_etch_rejects_malformed_eip7702_code(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_etch_rejects_malformed_eip7702_code");
+
+    prj.add_test(
+        "SymbolicEtchEip7702.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicEtchEip7702 is Test {
+    function checkEtchRejectsConcreteMalformedDelegation() public {
+        vm.etch(address(0xD00D), hex"ef01010000000000000000000000000000000000000000");
+    }
+
+    function checkEtchRejectsMalformedDelegation(bytes2 version) public {
+        vm.assume(bytes1(version) == hex"01");
+        vm.assume(version != hex"0100");
+        vm.etch(address(0xD00D), abi.encodePacked(hex"ef", version, address(0)));
+    }
+
+    function checkEtchAllowsLegacyPrefix() public {
+        address target = address(0xD00D);
+        vm.etch(target, hex"ef02000000000000000000000000000000000000000000");
+        assertEq(target.code.length, 23);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEtchEip7702",
+        "--match-test",
+        "checkEtch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicEtchEip7702.t.sol:SymbolicEtchEip7702
+[PASS] checkEtchAllowsLegacyPrefix() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.etch EIP-7702 code] checkEtchRejectsConcreteMalformedDelegation() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.etch EIP-7702 code] checkEtchRejectsMalformedDelegation(bytes2) ([METRICS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // EXTCODEHASH, CODECOPY and EXTCODECOPY with symbolic offsets and bounded sizes are modeled.
 #[forgetest_init]
 fn symbolic_code_ops_accept_symbolic_operands(prj: _, cmd: _) {

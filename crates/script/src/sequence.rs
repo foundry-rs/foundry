@@ -66,7 +66,7 @@ pub(crate) fn completed_transaction_prefix<N: Network>(
     )
 )]
 pub(crate) enum SequenceData<N: Network> {
-    Single(ScriptSequence<N>),
+    Single(Box<ScriptSequence<N>>),
     Multi(MultiChainSequence<N>),
 }
 
@@ -83,14 +83,14 @@ where
 
     pub fn sequences(&self) -> &[ScriptSequence<N>] {
         match self {
-            Self::Single(sequence) => std::slice::from_ref(sequence),
+            Self::Single(sequence) => std::slice::from_ref(&**sequence),
             Self::Multi(sequence) => &sequence.deployments,
         }
     }
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence<N>] {
         match self {
-            Self::Single(sequence) => std::slice::from_mut(sequence),
+            Self::Single(sequence) => std::slice::from_mut(&mut **sequence),
             Self::Multi(sequence) => &mut sequence.deployments,
         }
     }
@@ -166,7 +166,7 @@ where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
     pub fn new_single(sequence: ScriptSequence<N>, batch: bool) -> Result<Self> {
-        Self::create(SequenceData::Single(sequence), batch)
+        Self::create(SequenceData::Single(Box::new(sequence)), batch)
     }
 
     pub fn new_multi(sequence: MultiChainSequence<N>, batch: bool) -> Result<Self> {
@@ -187,7 +187,8 @@ where
     {
         let paths = ScriptSequence::<N>::get_paths(config, sig, target, chain, dry_run)?;
         Self::load(paths, batch, || {
-            ScriptSequence::load(config, sig, target, chain, dry_run).map(SequenceData::Single)
+            ScriptSequence::load(config, sig, target, chain, dry_run)
+                .map(|sequence| SequenceData::Single(Box::new(sequence)))
         })
     }
 
@@ -428,7 +429,11 @@ where
                 }
                 DelegatedStatus::Pending { hash } if !batch => {
                     let deployment = &mut self.sequences_mut()[sequence];
-                    if !deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+                    if !deployment.reverted.contains(&hash)
+                        && !deployment
+                            .receipts
+                            .iter()
+                            .any(|receipt| receipt.transaction_hash() == hash)
                     {
                         deployment.add_pending(index, hash);
                     }
@@ -448,6 +453,7 @@ where
             };
             let deployment = &self.sequences()[sequence];
             if deployment.pending.contains(&hash)
+                || deployment.reverted.contains(&hash)
                 || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
             {
                 continue;
@@ -571,7 +577,8 @@ pub(crate) fn operation_ordinal<N: Network>(
 }
 
 /// Returns the pending hashes of `sequence` that cannot be mined yet, because an earlier
-/// transaction on the same chain from the same sender has neither a receipt nor a pending hash.
+/// transaction on the same chain from the same sender has no receipt, recorded revert, or pending
+/// hash.
 pub(crate) fn blocked_pending<N: Network>(
     sequences: &[ScriptSequence<N>],
     sequence: usize,
@@ -591,7 +598,9 @@ pub(crate) fn blocked_pending<N: Network>(
                         blocked.push(hash);
                     }
                 }
-                Some(hash) if deployment.receipts.iter().any(|r| r.transaction_hash() == hash) => {}
+                Some(hash)
+                    if deployment.reverted.contains(&hash)
+                        || deployment.receipts.iter().any(|r| r.transaction_hash() == hash) => {}
                 _ => gap_senders.push(sender),
             }
         }
@@ -692,7 +701,7 @@ mod tests {
         sequence.transactions.push_back(TransactionWithMetadata::from_tx_request(
             TransactionMaybeSigned::Unsigned(Default::default()),
         ));
-        let data = SequenceData::Single(sequence);
+        let data = SequenceData::Single(Box::new(sequence));
 
         let public = dir.path().join("broadcast.json");
         let sensitive = dir.path().join("broadcast-cache.json");

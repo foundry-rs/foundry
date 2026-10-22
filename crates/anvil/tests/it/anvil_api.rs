@@ -21,13 +21,17 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use anvil::{
     NodeConfig,
-    eth::{api::CLIENT_VERSION, fees::INITIAL_BASE_FEE, pool::transactions::PoolTransaction},
+    eth::{
+        api::CLIENT_VERSION, error::BlockchainError, fees::INITIAL_BASE_FEE,
+        pool::transactions::PoolTransaction,
+    },
     spawn,
 };
 use anvil_core::{
     eth::{EthRequest, transaction::PendingTransaction},
     types::{ReorgOptions, TransactionData},
 };
+use anvil_rpc::error::RpcError;
 use foundry_common::{
     provider::redact_url,
     version::{COMMIT_SHA, SEMVER_VERSION},
@@ -2280,4 +2284,36 @@ async fn send_unsigned_transaction_requires_a_sender() {
     let err = err.as_error_resp().unwrap();
     assert_eq!(err.code, -32602);
     assert!(err.message.contains("No Signer available"), "unexpected error: {err}");
+}
+
+// https://github.com/foundry-rs/foundry/issues/17725
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rollback_and_reorg_respect_genesis_block_number() {
+    let (api, _handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(100u64))).await;
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    assert_eq!(api.backend.best_number(), 102);
+
+    // Depth 3 would go below genesis.
+    let err = api.anvil_rollback(Some(3)).await.unwrap_err();
+    let BlockchainError::RpcError(err) = err else { panic!("unexpected rollback error: {err}") };
+    assert_eq!(
+        err,
+        RpcError::invalid_params(
+            "Rollback depth must not exceed current chain height: current height 102, depth 3, genesis 100"
+        )
+    );
+    let err = api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap_err();
+    let BlockchainError::RpcError(err) = err else { panic!("unexpected reorg error: {err}") };
+    assert_eq!(
+        err,
+        RpcError::invalid_params(
+            "Reorg depth must not exceed current chain height: current height 102, depth 3, genesis 100"
+        )
+    );
+
+    // Depth 2 reaches exactly genesis.
+    api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: vec![] }).await.unwrap();
+    assert_eq!(api.backend.best_number(), 102);
+    api.anvil_rollback(Some(2)).await.unwrap();
+    assert_eq!(api.backend.best_number(), 100);
 }
