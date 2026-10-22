@@ -5841,7 +5841,7 @@ Traces:
   [..] CounterScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    ├─ [..] VM::deployCode("src/Counter.sol:Counter")
     │   ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0x5FbDB2315678afecb367f032d93F642f64180aa3]
