@@ -16,6 +16,7 @@ use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
 use foundry_evm_traces::CallKind;
+use itertools::Either;
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     handler::handle_reservoir_remaining_gas,
@@ -702,9 +703,8 @@ fn get_artifact_source<'a>(state: &'a CheatcodesCore, path: &str) -> Result<Arti
         .rsplit_once(':')
         .map(|(source, contract)| (resolve_source(PathBuf::from(source)), contract))
         .filter(|(source, contract)| {
-            artifacts.into_iter().flat_map(|artifacts| artifacts.iter()).any(|(id, _)| {
-                id.source == *source
-                    && id.name.split('.').next().is_some_and(|name| name == *contract)
+            artifacts.is_some_and(|artifacts| {
+                artifacts.find_by_contract_name(contract).any(|(id, _)| id.source == *source)
             })
         });
 
@@ -723,8 +723,17 @@ fn get_artifact_source<'a>(state: &'a CheatcodesCore, path: &str) -> Result<Arti
         let ambiguous_file_profile =
             file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
         let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
-            artifacts
-                .iter()
+            // Every match has this contract name, so only visit the artifacts with it.
+            let name = match &exact_identifier {
+                Some((_, contract)) => Some(*contract),
+                None if treat_ambiguous_as_profile && ambiguous_file_profile => None,
+                None => contract_name,
+            };
+            let candidates = match name {
+                Some(name) => Either::Left(artifacts.find_by_contract_name(name)),
+                None => Either::Right(artifacts.iter()),
+            };
+            candidates
                 .filter(|(id, _)| {
                     if let Some((source, contract)) = &exact_identifier {
                         return id.source == *source
