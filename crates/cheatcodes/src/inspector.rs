@@ -930,8 +930,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub deploy_code_create_state_gas: u64,
 
     /// Output the in-flight `deployCode` call's constructor returned, which the EVM drops if
-    /// depositing it fails.
-    pub deploy_code_output: Option<Bytes>,
+    /// depositing it fails, and whether the constructor ran in an isolated call.
+    pub deploy_code_output: Option<(Bytes, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -2111,7 +2111,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && interp.message().kind.is_create()
             && interp.result() == Err(InstrStop::Return)
         {
-            self.deploy_code_output = Some(Bytes::copy_from_slice(interp.output()));
+            self.deploy_code_output =
+                Some((Bytes::copy_from_slice(interp.output()), self.in_isolation_context));
         }
 
         // `expectEmit`: a mismatched log reverts the frame that emitted it.

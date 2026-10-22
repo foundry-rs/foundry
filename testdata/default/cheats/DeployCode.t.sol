@@ -202,6 +202,16 @@ contract DeployCodeTest is Test {
         }
     }
 
+    // An isolated `deployCode` runs its create as the root of a nested transaction, whose failed
+    // code deposit returns no data.
+    function testDirectDeployCodeDepositOutOfGas() public {
+        (bool success, bytes memory reason) = address(vm).call{gas: 60000}(
+            abi.encodeWithSignature("deployCode(string)", "cheats/DeployCode.t.sol:LargeRuntimeContract")
+        );
+        assertTrue(!success);
+        assertEq(reason, vm.isIsolateMode() ? bytes("") : type(LargeRuntimeContract).runtimeCode);
+    }
+
     function deployTestContract() external {
         vm.deployCode("cheats/DeployCode.t.sol:TestContract");
     }

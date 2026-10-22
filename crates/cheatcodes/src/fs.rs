@@ -627,7 +627,11 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     let outcome = exec_create(executor, message, ccx);
     ccx.state.deploy_code_depth = outer_deploy_code_depth;
     ccx.state.deploy_code_create_state_gas = outer_create_state_gas;
-    let returned = mem::replace(&mut ccx.state.deploy_code_output, outer_output);
+    // A create that runs isolated as the root of its own nested transaction returns no data from
+    // a failed code deposit, as on master.
+    let returned = mem::replace(&mut ccx.state.deploy_code_output, outer_output)
+        .filter(|(_, isolated)| *isolated == ccx.state.in_isolation_context)
+        .map(|(output, _)| output);
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.
