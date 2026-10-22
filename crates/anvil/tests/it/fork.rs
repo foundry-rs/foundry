@@ -5320,3 +5320,17 @@ async fn test_fork_transaction_hash_replay_uses_active_blob_params() {
 
     assert_eq!(U256::from(history.base_fee_per_blob_gas[0]), blob_base_fee);
 }
+
+// A source chain without a public blob schedule must use the hardfork its endpoint reports rather
+// than defaulting to BPO1.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_blob_params_follow_endpoint_hardfork() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    origin_api.mine_one().await.unwrap();
+
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+
+    assert_eq!(api.backend.blob_params(), BlobParams::prague());
+}

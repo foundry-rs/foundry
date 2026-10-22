@@ -49,7 +49,7 @@ use foundry_evm::{
     traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
-        get_blob_params, get_blob_params_by_hardfork,
+        get_blob_params_by_hardfork,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -2183,8 +2183,10 @@ latest block number: {latest_block}"
 
         // Blob rules and fee state belong to the selected fork context even when the target block
         // predates Cancun. Always replace both so a reset cannot retain the previous fork's
-        // schedule or excess gas.
-        let blob_params = get_blob_params(source_chain_id, block.header.timestamp());
+        // schedule or excess gas. The source headers' excess blob gas was produced under the source
+        // chain's rules, so use its hardfork, falling back to the fork's own when it is unknown.
+        let blob_params =
+            get_blob_params_by_hardfork(source_protocol_hardfork.unwrap_or(effective_hardfork));
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
