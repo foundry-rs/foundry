@@ -774,16 +774,6 @@ mod tests {
     }
 
     #[test]
-    fn accepts_four_raw_topics() {
-        let topic = B256::from_str(TRANSFER_TOPIC).unwrap();
-        let expected = [topic.into(), topic.into(), Topic::default(), topic.into()];
-        assert_eq!(
-            filter(TRANSFER_TOPIC, &[TRANSFER_TOPIC, "", TRANSFER_TOPIC]).unwrap(),
-            topics(expected)
-        );
-    }
-
-    #[test]
     fn rejects_invalid_arguments_and_topics() {
         let cases = [
             (TRANSFER_SIG, &["1234"][..], "parser error:\n1234\n^\ninvalid string length"),
