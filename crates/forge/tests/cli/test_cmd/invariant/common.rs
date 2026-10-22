@@ -2652,6 +2652,39 @@ contract InvariantOptimizeTest is Test {
 "#]]);
 }
 
+#[forgetest]
+fn invariant_optimization_reports_raised_shrink_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Handler {
+    bool penalty;
+    bool reward;
+    function penalize() external { penalty = true; }
+    function earn() external { reward = true; }
+    function score() external view returns (int256) { return reward ? (penalty ? int256(12) : int256(22)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 7 calls penalize then earn: the campaign reaches 12, but earn alone reaches 22.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 1, calls: 2)
+...
+"#]]);
+}
+
 // Test that optimization mode works with negative values (finding max of negative range).
 #[forgetest]
 fn invariant_optimization_negative_values(prj: _, cmd: _) {

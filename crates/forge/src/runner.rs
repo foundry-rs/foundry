@@ -4623,9 +4623,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     progress.as_ref(),
                     None,
                 ) {
-                    Ok(ReplayErrorResult { counterexample_sequence: sequence, .. })
-                        if !sequence.is_empty() =>
-                    {
+                    Ok(ReplayErrorResult {
+                        counterexample_sequence: sequence,
+                        optimization_value,
+                        ..
+                    }) if !sequence.is_empty() => {
+                        invariant_result.optimization_best_value =
+                            optimization_value.or(invariant_result.optimization_best_value);
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
                             sequence,

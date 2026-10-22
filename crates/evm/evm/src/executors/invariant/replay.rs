@@ -26,6 +26,8 @@ pub struct ReplayErrorResult {
     pub counterexample_sequence: Vec<BaseCounterExample>,
     pub check_result: Option<CheckSequenceOutcome>,
     pub fork_block_number: Option<u64>,
+    /// Optimization value of the shrunk sequence, which can exceed the campaign best.
+    pub optimization_value: Option<I256>,
 }
 
 /// Replays a call sequence for collecting logs and traces.
@@ -106,7 +108,12 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         logs.extend(after_invariant_result.logs);
     }
 
-    Ok(ReplayErrorResult { counterexample_sequence, check_result: None, fork_block_number })
+    Ok(ReplayErrorResult {
+        counterexample_sequence,
+        check_result: None,
+        fork_block_number,
+        optimization_value: None,
+    })
 }
 
 /// Replays and shrinks a call sequence, collecting logs and traces.
@@ -146,20 +153,18 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     );
 
-    let (calls, check_result) = if let Some(target) = target_value {
-        (
-            shrink_sequence_value(
-                &config,
-                invariant_contract,
-                target_invariant,
-                calls,
-                &executor,
-                target,
-                &shrink_progress,
-                early_exit,
-            )?,
-            None,
-        )
+    let (calls, check_result, optimization_value) = if let Some(target) = target_value {
+        let (calls, value) = shrink_sequence_value(
+            &config,
+            invariant_contract,
+            target_invariant,
+            calls,
+            &executor,
+            target,
+            &shrink_progress,
+            early_exit,
+        )?;
+        (calls, None, Some(value))
     } else {
         let shrunk = shrink_sequence(
             &config,
@@ -172,7 +177,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             &shrink_progress,
             early_exit,
         )?;
-        (shrunk.calls, shrunk.result)
+        (shrunk.calls, shrunk.result, None)
     };
 
     if let Some(sequence) = inner_sequence {
@@ -195,6 +200,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     )?;
 
     replay.check_result = check_result;
+    replay.optimization_value = optimization_value;
     Ok(replay)
 }
 
