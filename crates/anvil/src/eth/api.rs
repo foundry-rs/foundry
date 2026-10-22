@@ -1366,6 +1366,13 @@ impl<N: Network> EthApi<N> {
         // highest and lowest block num in the requested range
         let highest = number;
         let lowest = highest.saturating_sub(block_count.saturating_sub(1));
+        // A local chain starts at its genesis number, so clamp the range to `[genesis, highest]`.
+        // A newest block below genesis keeps failing as not found.
+        let lowest = if fork.is_none() {
+            lowest.max(self.backend.genesis_number().min(highest))
+        } else {
+            lowest
+        };
 
         // only support ranges that are in cache range
         if lowest < self.backend.best_number().saturating_sub(self.fee_history_limit) {
@@ -1871,11 +1878,12 @@ impl EthApi<FoundryNetwork> {
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
+        let genesis = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        let common_height = current_height.checked_sub(depth).filter(|h| *h >= genesis).ok_or(
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}, genesis {genesis}"
+            ))),
+        )?;
 
         // Get the common ancestor block
         let common_block =
@@ -3899,12 +3907,13 @@ impl EthApi<FoundryNetwork> {
 
         // no mined blocks yet
         let latest_block = self.backend.best_number();
-        if latest_block == 0 {
+        let first_block = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        if latest_block <= first_block {
             return Ok(None);
         }
 
         // binary search for the block containing the transaction
-        let mut low = 1u64;
+        let mut low = first_block + 1;
         let mut high = latest_block;
 
         while low <= high {
@@ -4507,11 +4516,12 @@ impl EthApi<FoundryNetwork> {
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
+        let genesis = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        let common_height = current_height.checked_sub(depth).filter(|h| *h >= genesis).ok_or(
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}, genesis {genesis}"
+            ))),
+        )?;
 
         // Get the common ancestor block
         let common_block =

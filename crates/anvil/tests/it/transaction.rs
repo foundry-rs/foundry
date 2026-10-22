@@ -2481,3 +2481,36 @@ async fn instant_mine_configured_coalescing_window_survives_toggle() {
         }
     }
 }
+
+// https://github.com/foundry-rs/foundry/issues/17725
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tx_by_sender_and_nonce_with_genesis_block_number() {
+    let (api, handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(100u64))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // Mine empty blocks first so the transactions land in blocks 104 and 105.
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let mut tx_hashes = Vec::new();
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().from(sender).to(Address::random());
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push((receipt.transaction_hash, receipt.block_number.unwrap()));
+    }
+    assert_eq!(tx_hashes.iter().map(|(_, block)| *block).collect::<Vec<_>>(), [104, 105]);
+
+    for (nonce, (hash, _)) in tx_hashes.into_iter().enumerate() {
+        let tx: Option<AnyRpcTransaction> = provider
+            .client()
+            .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(nonce)))
+            .await
+            .unwrap();
+        assert_eq!(tx.unwrap().tx_hash(), hash, "nonce={nonce}");
+    }
+}
