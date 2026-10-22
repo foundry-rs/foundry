@@ -6242,6 +6242,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
+ "anvil",
  "base-common-consensus",
  "base-common-network",
  "base-common-rpc-types",
