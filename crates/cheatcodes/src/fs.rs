@@ -16,7 +16,12 @@ use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
 use foundry_evm_traces::CallKind;
-use revm::{context::CreateScheme, interpreter::CreateInputs};
+use revm::{
+    context::{Cfg, ContextTr, CreateScheme},
+    handler::handle_reservoir_remaining_gas,
+    interpreter::CreateInputs,
+    primitives::hardfork::SpecId,
+};
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
@@ -515,6 +520,31 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     }
 
     let mut bytecode = get_artifact_code(&ccx.state.core, path, false)?.to_vec();
+    if let Some(args) = constructor_args {
+        bytecode.extend_from_slice(args);
+    }
+
+    // Charge the caller as the CREATE and CREATE2 opcodes would, before changing any state.
+    let spec = ccx.spec().into();
+    let gas_params = ccx.ecx.cfg().gas_params();
+    let mut cost = if salt.is_some() {
+        gas_params.create2_cost(bytecode.len())
+    } else {
+        gas_params.create_cost()
+    };
+    if spec.is_enabled_in(SpecId::SHANGHAI) {
+        cost = cost.saturating_add(gas_params.initcode_cost(bytecode.len()));
+    }
+    if !ccx.gas.record_regular_cost(cost) {
+        ccx.gas.spend_all();
+        return Err(fmt_err!("out of gas"));
+    }
+    let mut gas_limit = ccx.gas.remaining();
+    if spec.is_enabled_in(SpecId::TANGERINE) {
+        gas_limit = gas_params.call_stipend_reduction(gas_limit);
+    }
+    // Forward the gas to the create frame; this cannot fail as it does not exceed `remaining`.
+    let _ = ccx.gas.record_regular_cost(gas_limit);
 
     let depth = ccx.depth();
 
@@ -525,10 +555,6 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         && ccx.caller == broadcast.original_caller
     {
         broadcast.deploy_from_code = true;
-    }
-
-    if let Some(args) = constructor_args {
-        bytecode.extend_from_slice(args);
     }
 
     let scheme =
@@ -551,7 +577,8 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         }
     }
 
-    ccx.state.deploy_code_depth = Some(depth);
+    // Restore the outer marker afterwards, as constructors can call `deployCode` too.
+    let outer_deploy_code_depth = ccx.state.deploy_code_depth.replace(depth);
     let outcome = exec_create(
         executor,
         CreateInputs::new(
@@ -559,12 +586,12 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
             scheme,
             value.unwrap_or(U256::ZERO),
             bytecode.into(),
-            ccx.gas_limit,
+            gas_limit,
             0,
         ),
         ccx,
     );
-    ccx.state.deploy_code_depth = None;
+    ccx.state.deploy_code_depth = outer_deploy_code_depth;
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.
@@ -586,7 +613,12 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         }
     }
 
-    let outcome = outcome?;
+    let mut outcome = outcome?;
+    handle_reservoir_remaining_gas(
+        outcome.result.result,
+        ccx.gas.tracker_mut(),
+        outcome.result.gas.tracker_mut(),
+    );
 
     if !outcome.result.result.is_ok() {
         return Err(crate::Error::from(outcome.result.output));
