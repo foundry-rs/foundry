@@ -96,7 +96,7 @@ A `ScriptSequence` compatibility artifact stores:
 
 - an ordered `transactions` queue containing requests or pre-signed envelopes plus display and
   verification metadata;
-- separate `receipts` and `pending` hash lists;
+- separate `receipts`, `pending`, and `reverted` hash lists;
 - chain ID, libraries, script returns, source commit, and timestamp;
 - each transaction's RPC URL in a separate sensitive-cache file.
 
@@ -142,18 +142,20 @@ existing attempt.
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
 from a multichain deployment are checked concurrently. A confirmed success removes the hash from
-`pending` and appends its receipt. A revert removes the hash and returns an error without appending
-the receipt, which can leave a receipt hole. The revert is not persisted, so a later `--resume`
-rediscovers it from the durable attempt and fails again. Receipt-watcher timeouts keep retrying
-without consuming the retry budget while the selected RPC still returns the transaction, so
-ordinary polling is unbounded; Tempo batches use `transaction_timeout`. If that endpoint
-returns no transaction, the durable attempt remains the source of identity: signed bytes may be
-replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
-while unknown outcomes remain blocked until explicitly resolved. Removing a hash from `pending`
-this way prints an immediate `--resume` warning, so the guidance survives a later batch failure.
-An ordinary broadcast that otherwise succeeds while a submitted operation still lacks a receipt
-exits successfully, since a lagging or load-balanced endpoint can briefly return no transaction,
-but it replaces the success message with a warning on stderr that lists those operations.
+`pending` and appends its receipt. A revert removes the hash, records it in `reverted` rather than
+`receipts`, which consumers treat as successful, and returns an error. A later `--resume` warns
+about each recorded revert, never resubmits it, continues with the remaining operations, and
+replaces the final success message with a warning listing the reverts. Receipt-watcher timeouts
+keep retrying without consuming the retry budget while the selected RPC still returns the
+transaction, so ordinary polling is unbounded; Tempo batches use `transaction_timeout`. If that
+endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes
+may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
+`--resume`, while unknown outcomes remain blocked until explicitly resolved. Removing a hash from
+`pending` this way prints an immediate `--resume` warning, so the guidance survives a later batch
+failure. An ordinary broadcast that otherwise succeeds while a submitted operation still lacks a
+receipt exits successfully, since a lagging or load-balanced endpoint can briefly return no
+transaction, but it replaces the success message with a warning on stderr that lists those
+operations.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path. If its
 hash belongs to a durable attempt, reconciliation fails without removing it from `pending`;
@@ -315,8 +317,8 @@ implemented guarantee.
 
 - Reconcile known submissions before resolving signers, with the exceptions described in
   [Persistence and resume](#persistence-and-resume).
-- Track successful completion per operation or batch by hash, not through receipt counts. Reverted
-  outcomes are not persisted.
+- Track completion per operation or batch by hash, not through receipt counts. A reverted outcome
+  is recorded outside `receipts` and is never resubmitted.
 - Absence from one RPC is not proof that a submission was never accepted. An invisible signed
   submission stays replayable with identical bytes and the run continues with a warning; batch
   disappearance and an invisible delegated submission with a known hash return an error.
