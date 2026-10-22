@@ -223,10 +223,7 @@ impl From<HandlerError> for BlockchainError {
                         }
                     };
                 }
-                // Preserve the native-value call/estimate RPC response, not pool rejection errors.
-                if let Some(err @ TempoInvalidTransaction::ValueTransferNotAllowed) =
-                    err.downcast_ref::<TempoInvalidTransaction>()
-                {
+                if let Some(err) = err.downcast_ref::<TempoInvalidTransaction>() {
                     return Self::Message(format!("tempo transaction error: {err}"));
                 }
                 Self::InvalidTransaction(InvalidTransactionError::Rejected(err.to_string()))
