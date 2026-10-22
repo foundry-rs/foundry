@@ -1120,8 +1120,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .unwrap_or_default()
                 .native_currency_symbol()
                 .unwrap_or("ETH");
+            // Reverted transactions have no stored receipt, so their fees are not included.
+            let excluded = match sequence.reverted.len() {
+                0 => String::new(),
+                1 => ", excluding 1 reverted transaction".to_string(),
+                n => format!(", excluding {n} reverted transactions"),
+            };
             seq_progress.inner.write().set_status(&format!(
-                "Total Paid: {} {} ({} gas * avg {} gwei)\n",
+                "Total Paid: {} {} ({} gas * avg {} gwei{excluded})\n",
                 paid.trim_end_matches('0'),
                 token_symbol,
                 total_gas,
