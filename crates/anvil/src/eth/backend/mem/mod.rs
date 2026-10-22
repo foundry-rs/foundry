@@ -426,8 +426,12 @@ impl StagedForkCacheLeaseInner {
     fn invalidate(&self) -> Result<(), BlockchainError> {
         self.db.db().clear();
         self.db.cache().flush();
+        // Forge can store the block cache as a file, so a child endpoint cache cannot exist.
         if let Err(err) = std::fs::remove_file(&self.cache_path)
-            && err.kind() != std::io::ErrorKind::NotFound
+            && !matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            )
         {
             return Err(BlockchainError::Internal(format!(
                 "failed to invalidate fork cache at {}: {err}",
@@ -1315,11 +1319,6 @@ impl<N: Network> Backend<N> {
         self.blockchain.storage.read().best_number
     }
 
-    /// Sets the block number
-    pub fn set_block_number(&self, number: u64) {
-        self.evm_env.write().block_env.number = U256::from(number);
-    }
-
     /// Returns the client coinbase address.
     pub fn coinbase(&self) -> Address {
         self.evm_env.read().block_env.beneficiary
@@ -1877,11 +1876,7 @@ impl<N: Network> Backend<N> {
         let blob_params = self.blob_params();
         PoolTxGasConfig {
             disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-            enforced_tx_gas_limit_cap: evm_env
-                .cfg_env
-                .tx_gas_limit_cap
-                .is_none()
-                .then(|| self.tx_gas_limit_cap(evm_env)),
+            enforced_tx_gas_limit_cap: self.enforced_tx_gas_limit_cap(evm_env),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
         }
@@ -1900,21 +1895,27 @@ impl<N: Network> Backend<N> {
         )))
     }
 
-    fn tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> u64 {
+    /// Returns the EIP-7825 cap enforced on a transaction's gas limit, if any.
+    ///
+    /// Under EIP-8037 the cap only bounds regular gas, and gas above it becomes the state gas
+    /// reservoir, so the gas limit itself is not capped.
+    fn enforced_tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> Option<u64> {
+        if evm_env.cfg_env.tx_gas_limit_cap.is_some()
+            || evm_env.cfg_env.is_amsterdam_eip8037_enabled()
+        {
+            return None;
+        }
         #[cfg(feature = "monad")]
         if let Some(cfg) = self.monad_cfg_env(evm_env) {
-            return cfg.tx_gas_limit_cap();
+            return Some(cfg.tx_gas_limit_cap());
         }
-        evm_env.cfg_env.tx_gas_limit_cap()
+        Some(evm_env.cfg_env.tx_gas_limit_cap())
     }
 
     pub(crate) fn fallback_tx_gas_limit(&self, evm_env: &EvmEnv) -> u64 {
         let block_gas_limit = evm_env.block_env.gas_limit;
-        if evm_env.cfg_env.tx_gas_limit_cap.is_none() {
-            block_gas_limit.min(self.tx_gas_limit_cap(evm_env))
-        } else {
-            block_gas_limit
-        }
+        self.enforced_tx_gas_limit_cap(evm_env)
+            .map_or(block_gas_limit, |cap| block_gas_limit.min(cap))
     }
 
     fn max_initcode_size(&self, evm_env: &EvmEnv) -> usize {
@@ -2211,7 +2212,15 @@ impl<N: Network> Backend<N> {
 
     /// Returns the block number for the given block id
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
-        let current = self.best_number();
+        self.convert_block_number_at(block, self.best_number())
+    }
+
+    /// Returns the block number for the given block id, resolving head-relative tags against
+    /// `current`.
+    ///
+    /// Callers that compare against or resolve multiple tags from the head should read it once and
+    /// pass the same snapshot, since mining can advance the head between separate reads.
+    pub(crate) fn convert_block_number_at(&self, block: Option<BlockNumber>, current: u64) -> u64 {
         // The chain starts at the configured genesis number, so `earliest` and the epoch-based
         // tags never resolve below it.
         let genesis = self.genesis_number();
@@ -2572,7 +2581,7 @@ impl<N: Network> Backend<N> {
                     .header
                     .number
             }
-            BlockId::Number(num) => self.convert_block_number(Some(num)),
+            BlockId::Number(num) => self.convert_block_number_at(Some(num), current),
         };
 
         if requested > current {
@@ -3182,7 +3191,8 @@ impl<N: Network> Backend<N> {
     ///  - the base fee is zero and its check disabled for a zero-fee call, while a priced call must
     ///    pay at least the base fee
     ///  - the blob base fee is zero for a blob call without a blob fee cap
-    ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
+    ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap, except under
+    ///    EIP-8037
     ///  - `nonce` check is skipped
     fn build_call_env_with_base(
         &self,
@@ -3229,7 +3239,10 @@ impl<N: Network> Backend<N> {
         // we want to disable this in eth_call, since this is common practice used by other node
         // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
         evm_env.cfg_env.disable_block_gas_limit = true;
-        evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+        // Under EIP-8037 the cap stays, because gas above it becomes the state gas reservoir.
+        if !evm_env.cfg_env.is_amsterdam_eip8037_enabled() {
+            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+        }
 
         // Disable nonce check in revm
         evm_env.cfg_env.disable_nonce_check = true;
@@ -3764,16 +3777,6 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    pub fn call_with_state(
-        &self,
-        state: &dyn DatabaseRef,
-        request: WithOtherFields<TransactionRequest>,
-        fee_details: FeeDetails,
-        block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, StateChangeset), BlockchainError> {
-        self.call_with_state_and_context(state, request, fee_details, block_env, None)
-    }
-
     pub(crate) fn call_with_state_and_context(
         &self,
         state: &dyn DatabaseRef,
@@ -3884,16 +3887,6 @@ impl<N: Network> Backend<N> {
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
         Ok((exit_reason, out, gas_used as u128, state))
-    }
-
-    pub fn build_access_list_with_state(
-        &self,
-        state: &dyn DatabaseRef,
-        request: WithOtherFields<TransactionRequest>,
-        fee_details: FeeDetails,
-        block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        self.build_access_list_with_state_and_context(state, request, fee_details, block_env, None)
     }
 
     pub(crate) fn build_access_list_with_state_and_context(
@@ -5413,14 +5406,11 @@ impl<N: Network> Backend<N> {
             if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
         let mut staged_cfg = CfgEnv::new();
-        staged_cfg.set_spec_and_mainnet_gas_params(local_spec);
+        staged_config.set_cfg_spec(&mut staged_cfg, local_spec);
         staged_cfg.chain_id = local_chain_id;
         staged_cfg.limit_contract_code_size = staged_config.code_size_limit;
         staged_cfg.disable_eip3607 = true;
         staged_cfg.disable_block_gas_limit = staged_config.disable_block_gas_limit;
-        if !staged_config.enable_tx_gas_limit {
-            staged_cfg.tx_gas_limit_cap = Some(u64::MAX);
-        }
         if let Some(memory_limit) = staged_config.memory_limit {
             staged_cfg.memory_limit = memory_limit;
         }
@@ -5589,43 +5579,6 @@ impl<N: Network> Backend<N> {
         self.fees.restore(fees);
         Ok(true)
     }
-
-    /// executes the transactions without writing to the underlying database
-    pub async fn inspect_tx(
-        &self,
-        tx: Arc<PoolTransaction<FoundryTxEnvelope>>,
-    ) -> Result<
-        (InstructionResult, Option<Output>, u64, StateChangeset, Vec<revm::primitives::Log>),
-        BlockchainError,
-    > {
-        let db = self.db.read().await;
-        let evm_env = self.next_evm_env(&**db)?;
-        let mut inspector = self.build_inspector();
-        #[cfg(feature = "monad")]
-        let mut monad_context = self
-            .is_monad()
-            .then(|| self.monad_context_for_child_of(self.best_hash()))
-            .transpose()?;
-        #[cfg(not(feature = "monad"))]
-        let mut monad_context = None;
-        let (ResultAndState { result, state }, _) = self
-            .transact_envelope_with_inspector_ref_and_context(
-                &**db,
-                &evm_env,
-                &mut inspector,
-                &tx.pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
-            )?;
-        let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
-
-        inspector.print_logs();
-
-        if self.print_traces {
-            inspector.print_traces(self.call_trace_decoder());
-        }
-
-        Ok((exit_reason, out, gas_used, state, logs))
-    }
 }
 
 impl<N: Network> Backend<N>
@@ -5779,12 +5732,18 @@ where
             self.logs_for_block(filter, hash).await
         } else {
             let best = self.best_number();
-            let to_block =
-                self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
+            let to_block = self
+                .convert_block_number_at(filter.block_option.get_to_block().copied(), best)
+                .min(best);
             let from_block =
-                self.convert_block_number(filter.block_option.get_from_block().copied());
+                self.convert_block_number_at(filter.block_option.get_from_block().copied(), best);
             if from_block > best {
                 return Err(BlockchainError::BlockOutOfRange(best, from_block));
+            }
+            if from_block > to_block {
+                return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                    "invalid block range params",
+                )));
             }
 
             self.logs_for_range(&filter, from_block, to_block).await
@@ -7582,7 +7541,8 @@ where
         if number > best {
             return Err(BlockchainError::BlockOutOfRange(best, number));
         }
-        let Some(parent) = number.checked_sub(1) else {
+        let genesis = if self.is_fork() { 0 } else { self.genesis_number() };
+        let Some(parent) = (number > genesis).then(|| number - 1) else {
             return Err(BlockchainError::Message(
                 "genesis block has no parent state to build a witness from".to_string(),
             ));
@@ -10229,9 +10189,7 @@ where
             }
 
             // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
-            if evm_env.cfg_env.tx_gas_limit_cap.is_none()
-                && tx.gas_limit() > self.tx_gas_limit_cap(evm_env)
-            {
+            if self.enforced_tx_gas_limit_cap(evm_env).is_some_and(|cap| tx.gas_limit() > cap) {
                 debug!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                     detail: String::from("tx.gas_limit > resolved tx gas limit cap"),

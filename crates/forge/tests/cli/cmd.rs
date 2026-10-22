@@ -3543,6 +3543,109 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         );
 }
 
+// Dynamic test linking deploys `new` expressions with `vm.deployCode`, which must charge the
+// caller as a native create.
+// <https://github.com/foundry-rs/foundry/issues/17727>
+#[forgetest]
+fn gas_report_dynamic_test_linking_create(prj: _, cmd: _) {
+    prj.add_source(
+        "Box.sol",
+        r#"
+contract Box {
+    uint256 public value;
+    uint256 internal scratch;
+
+    constructor(uint256 v) {
+        value = v;
+        scratch = 1;
+        scratch = 0;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Box.t.sol",
+        r#"
+import {Box} from "src/Box.sol";
+
+interface Vm {
+    function startSnapshotGas(string calldata name) external;
+    function stopSnapshotGas() external returns (uint256);
+}
+
+contract BoxTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function testDeploy() public {
+        vm.startSnapshotGas("deploy");
+        Box box = new Box(1);
+        vm.stopSnapshotGas();
+        require(box.value() == 1);
+    }
+}
+"#,
+    );
+    for (dynamic_test_linking, snapshot) in [
+        (
+            false,
+            str![[r#"
+{
+  "deploy": "150242"
+}
+"#]],
+        ),
+        (
+            true,
+            str![[r#"
+{
+  "deploy": "151227"
+}
+"#]],
+        ),
+    ] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        cmd.forge_fuse().args(["test", "--gas-report"]).assert_success().stdout_eq(str![[r#"
+...
+| Deployment Cost          | Deployment Size |      |        |      |         |
+|--------------------------+-----------------+------+--------+------+---------|
+|                   137744 |             375 |      |        |      |         |
+...
+"#]]);
+        assert_data_eq!(read_string(prj.root().join("snapshots/BoxTest.json")), snapshot);
+    }
+}
+
+// `vm.deployCode` must enforce the configured initcode size limit as a native create.
+#[forgetest]
+fn deploy_code_initcode_size_limit(prj: _, cmd: _) {
+    prj.add_test(
+        "Initcode.t.sol",
+        r#"
+interface Vm {
+    function deployCode(string calldata, bytes calldata) external returns (address);
+}
+
+contract Big {
+    constructor(bytes memory) {}
+}
+
+contract InitcodeTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function testDeployCode() public {
+        vm.deployCode("test/Initcode.t.sol:Big", abi.encode(new bytes(7000)));
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.code_size_limit = Some(3000));
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: vm.deployCode: initcode size limit exceeded] testDeployCode() ([GAS])
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn can_use_absolute_imports(prj: _, cmd: _) {
     prj.initialize_default_contracts();

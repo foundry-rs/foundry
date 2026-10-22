@@ -78,7 +78,7 @@ fn solady() {
 fn snekmate() {
     ExtTester::new("pcaversaccio", "snekmate", "df2816d6a5ecdb8dcc1257e22089422825fd5e27")
         .fuzz_runs(256)
-        .python_package("git+https://github.com/vyperlang/vyper@v0.5.0a3")
+        .python_package("vyper==0.5.0a3")
         .install_command(&["pnpm", "install", "--frozen-lockfile"])
         .run();
 }

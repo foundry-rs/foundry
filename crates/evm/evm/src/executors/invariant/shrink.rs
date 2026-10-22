@@ -393,6 +393,10 @@ fn build_shrunk_sequence(
 
 /// Shared sequence shrinker. Tries to drop each call; `predicate` decides whether the candidate
 /// should be accepted, rejected, or skipped without spending a replay attempt.
+///
+/// First tries to drop blocks of kept calls, halving the block size down to two calls, then drops
+/// single calls. Stops when every kept call was tried once since the last accepted removal: the
+/// sequence is then a fixpoint and further passes would replay the same rejected candidates.
 pub fn shrink_sequence_by_removing<P, S, A>(
     calls_len: usize,
     run: &mut ShrinkRun,
@@ -406,15 +410,48 @@ where
     A: FnMut(),
 {
     let mut shrinker = SequenceShrink::new(calls_len);
+
+    let mut chunk = calls_len / 2;
+    while chunk >= 2 && run.can_try() && !should_stop() {
+        let kept = shrinker.current().collect::<Vec<_>>();
+        let mut accepted_block = false;
+        for block in kept.chunks(chunk) {
+            if !run.can_try() || should_stop() {
+                break;
+            }
+            for &call_idx in block {
+                shrinker.remove(call_idx);
+            }
+            let decision = run.try_candidate_decision(|| predicate(&shrinker));
+            if decision.is_some() {
+                on_attempt();
+            }
+            if decision == Some(true) {
+                accepted_block = true;
+            } else {
+                for &call_idx in block {
+                    shrinker.restore(call_idx);
+                }
+            }
+        }
+        // The first levels cost a few attempts. Once a level has eight or more blocks and none
+        // can go, the needed calls are dense and single removals are the cheaper path.
+        if !accepted_block && kept.len() / chunk >= 8 {
+            break;
+        }
+        chunk /= 2;
+    }
+
     let mut call_idx = 0;
-    let mut skipped_candidates = 0usize;
+    // Kept calls tried without an accepted removal since the last change.
+    let mut unchanged_candidates = 0usize;
 
     while run.can_try() {
         if should_stop() {
             break;
         }
         let included_count = shrinker.included_count();
-        if included_count == 0 || skipped_candidates >= included_count {
+        if included_count == 0 || unchanged_candidates >= included_count {
             break;
         }
 
@@ -426,21 +463,23 @@ where
 
         shrinker.remove(call_idx);
 
-        let Some(accepted) = run.try_candidate_decision(|| predicate(&shrinker)) else {
-            shrinker.restore(call_idx);
-            skipped_candidates += 1;
-            call_idx = shrinker.next_index(call_idx);
-            continue;
-        };
-
-        on_attempt();
-        skipped_candidates = 0;
-        if accepted {
-            if shrinker.included_count() == 1 {
-                break;
+        match run.try_candidate_decision(|| predicate(&shrinker)) {
+            Some(true) => {
+                on_attempt();
+                unchanged_candidates = 0;
+                if shrinker.included_count() == 1 {
+                    break;
+                }
             }
-        } else {
-            shrinker.restore(call_idx);
+            Some(false) => {
+                on_attempt();
+                shrinker.restore(call_idx);
+                unchanged_candidates += 1;
+            }
+            None => {
+                shrinker.restore(call_idx);
+                unchanged_candidates += 1;
+            }
         }
 
         call_idx = shrinker.next_index(call_idx);
@@ -481,6 +520,13 @@ where
         },
     );
     progress.update(calls, &shrinker, accumulate_warp_roll);
+    let stats = run.finish();
+    trace!(
+        target: "forge::test",
+        attempts = stats.attempts,
+        accepted = stats.accepted,
+        "shrink finished"
+    );
     shrinker
 }
 
@@ -1284,13 +1330,14 @@ mod tests {
     }
 
     #[test]
-    fn shrink_loop_limit_counts_candidate_replays_not_skipped_indices() {
-        let config = InvariantConfig { shrink_run_limit: 4, ..Default::default() };
+    fn shrink_loop_stops_after_full_pass_without_accepted_removal() {
+        let config = InvariantConfig { shrink_run_limit: 100, ..Default::default() };
         let early_exit = EarlyExit::new(false);
-        let calls = vec![tx(None, None), tx(None, None), tx(None, None)];
+        let calls = vec![tx(None, None), tx(None, None), tx(None, None), tx(None, None)];
         let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
         let mut replay_attempts = 0;
 
+        // Only the removal of call 1 keeps the bug.
         let shrinker = run_shrink_loop(
             &config,
             &calls,
@@ -1298,14 +1345,17 @@ mod tests {
             false,
             &early_exit,
             ShrinkErrorPolicy::RestoreRemoved,
-            |_| {
+            |shrinker| {
                 replay_attempts += 1;
-                Ok(matches!(replay_attempts, 1 | 4))
+                Ok(shrinker.current().eq([0, 2, 3]))
             },
         );
 
-        assert_eq!(replay_attempts, 4);
-        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![2]);
+        // Chunk pass: blocks [0, 1] and [2, 3] rejected. Single pass 1: call 0 rejected, call 1
+        // accepted, calls 2 and 3 rejected. Pass 2: call 0 rejected again, which completes a pass
+        // over the three kept calls.
+        assert_eq!(replay_attempts, 7);
+        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![0, 2, 3]);
     }
 
     #[test]
