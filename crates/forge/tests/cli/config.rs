@@ -262,7 +262,6 @@ failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
 check_interval = 1
-track_max_gas = false
 
 [symbolic]
 enabled = false
@@ -2351,8 +2350,7 @@ fn test_default_config(prj: _, cmd: _) {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1,
-    "track_max_gas": false
+    "check_interval": 1
   },
   "symbolic": {
     "enabled": false,

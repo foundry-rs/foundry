@@ -165,13 +165,6 @@ pub struct InvariantMetrics {
     pub reverts: usize,
     // Count of fuzzed selector discards (through assume cheatcodes).
     pub discards: usize,
-    /// Highest gas used by a successful call, without the transaction stipend. Only recorded
-    /// when `track_max_gas` is enabled.
-    #[serde(skip)]
-    pub max_gas: u64,
-    /// Call sequence whose last call used `max_gas`.
-    #[serde(skip)]
-    pub max_gas_sequence: Vec<BasicTxDetails>,
 }
 
 impl InvariantMetrics {
@@ -182,20 +175,6 @@ impl InvariantMetrics {
         } else if reverted {
             self.reverts += 1;
         }
-    }
-
-    /// Records `gas` used by the last call of `inputs`.
-    ///
-    /// Returns `true` if `gas` raised `max_gas`, in which case `inputs` becomes
-    /// `max_gas_sequence`.
-    fn record_gas(&mut self, inputs: &[BasicTxDetails], gas: u64) -> bool {
-        if gas <= self.max_gas {
-            return false;
-        }
-        self.max_gas = gas;
-        self.max_gas_sequence.clear();
-        self.max_gas_sequence.extend_from_slice(inputs);
-        true
     }
 }
 
@@ -657,56 +636,45 @@ impl InvariantTest {
         HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
     }
 
-    /// Update metrics for the fuzzed selector of the last call in `inputs`.
+    /// Update metrics for a fuzzed selector, extracted from tx details.
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
-    ///
-    /// If `gas` is set, also records it. Returns `true` if `gas` raised the selector's max gas.
-    fn record_metrics(
-        &mut self,
-        inputs: &[BasicTxDetails],
-        reverted: bool,
-        discarded: bool,
-        gas: Option<u64>,
-    ) -> bool {
-        let Some(tx_details) = inputs.last() else {
-            return false;
-        };
-        let target = tx_details.call_details.target;
-        let Some(selector) =
-            tx_details.call_details.calldata.get(..4).and_then(|s| Selector::try_from(s).ok())
+    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+        let Some(selector) = tx_details
+            .call_details
+            .calldata
+            .get(..4)
+            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+            .map(Selector::from)
         else {
-            return false;
+            return;
         };
-        // Unresolved keys aren't cached so a tx whose target isn't known yet is re-resolved once
-        // that target is added.
-        let metric_key = match self.test_data.metric_key_cache.entry((target, selector)) {
-            AddressMapEntry::Occupied(entry) => entry.into_mut(),
-            AddressMapEntry::Vacant(entry) => {
-                let Some(metric_key) = self
-                    .targeted_contracts
-                    .targets()
-                    .fuzzed_metric_key_for_selector(target, selector)
-                else {
-                    return false;
-                };
-                entry.insert(metric_key)
+        let cache_key = (tx_details.call_details.target, selector);
+
+        if let Some(metric_key) = self.test_data.metric_key_cache.get(&cache_key) {
+            if let Some(invariant_metrics) = self.test_data.metrics.get_mut(metric_key) {
+                invariant_metrics.record_call(reverted, discarded);
+            } else {
+                self.test_data
+                    .metrics
+                    .entry(metric_key.to_owned())
+                    .or_default()
+                    .record_call(reverted, discarded);
             }
+            return;
         }
-        .as_str();
-        let record = |metrics: &mut InvariantMetrics| {
-            metrics.record_call(reverted, discarded);
-            let raised = gas.is_some_and(|gas| metrics.record_gas(inputs, gas));
-            if raised {
-                debug!(target: "max_gas", selector = metric_key, gas = metrics.max_gas, calls = inputs.len(), "new max gas");
-            }
-            raised
+
+        // Not cached: resolve from the current target set. Unresolved keys aren't cached so a tx
+        // whose target isn't known yet is re-resolved once that target is added.
+        let Some(metric_key) = self
+            .targeted_contracts
+            .targets()
+            .fuzzed_metric_key_for_selector(tx_details.call_details.target, selector)
+        else {
+            return;
         };
-        if let Some(metrics) = self.test_data.metrics.get_mut(metric_key) {
-            record(metrics)
-        } else {
-            record(self.test_data.metrics.entry(metric_key.to_owned()).or_default())
-        }
+        self.test_data.metric_key_cache.insert(cache_key, metric_key.clone());
+        self.test_data.metrics.entry(metric_key).or_default().record_call(reverted, discarded);
     }
 
     /// Drops cached metric keys for the given addresses, keeping the cache coherent when targets
@@ -1101,13 +1069,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             aggregator.finish_campaign()?
         };
         result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
-        Self::shrink_max_gas_witnesses(
-            &self.config,
-            &self.executor,
-            &mut result.metrics,
-            progress,
-            early_exit,
-        );
         persist_campaign_optimization(
             &self.config.corpus,
             result.optimization_best_value,
@@ -1245,18 +1206,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             }
                             call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                             let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
-                            // A call that raises its selector's max gas counts as new coverage,
-                            // so the corpus keeps the sequence that reached it.
-                            let raised_max_gas = (config.show_metrics || config.track_max_gas)
-                                && invariant_test.record_metrics(
-                                    &current_run.inputs,
+                            if config.show_metrics {
+                                invariant_test.record_metrics(
+                                    current_tx,
                                     call_result.reverted,
                                     discarded,
-                                    (config.track_max_gas && !discarded && !call_result.reverted)
-                                        .then(|| {
-                                            call_result.gas_used.saturating_sub(call_result.stipend)
-                                        }),
                                 );
+                            }
                             HitMaps::merge_opt(
                                 &mut current_run.line_coverage,
                                 call_result.line_coverage.take(),
@@ -1266,8 +1222,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             pre_merge_edges_hash = assertion_failure
                                 .then(|| error::snapshot_edge_fingerprint(call_result))
                                 .flatten();
-                            call_new_coverage =
-                                corpus_manager.merge_edge_coverage(call_result) || raised_max_gas;
+                            call_new_coverage = corpus_manager.merge_edge_coverage(call_result);
                             if call_new_coverage {
                                 current_run.new_coverage = true;
                             }
@@ -1768,39 +1723,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 Ok(_) => {}
                 Err(e) => trace!(target: "forge::test", "handler shrink failed: {e}"),
             }
-        }
-    }
-
-    fn shrink_max_gas_witnesses(
-        config: &InvariantConfig,
-        executor: &Executor<FEN>,
-        metrics: &mut Map<String, InvariantMetrics>,
-        progress: Option<&ProgressBar>,
-        early_exit: &EarlyExit,
-    ) {
-        let total = metrics.values().filter(|m| !m.max_gas_sequence.is_empty()).count();
-        for (idx, (name, witness)) in
-            metrics.iter_mut().filter(|(_, m)| !m.max_gas_sequence.is_empty()).enumerate()
-        {
-            if early_exit.should_stop() {
-                break;
-            }
-            let shrink_progress = shrink::ShrinkProgress::new(
-                config,
-                progress,
-                &format!("max gas {name}"),
-                Some((idx + 1, total)),
-                None,
-                false,
-            );
-            (witness.max_gas_sequence, witness.max_gas) = shrink::shrink_max_gas_sequence(
-                config,
-                &witness.max_gas_sequence,
-                witness.max_gas,
-                executor,
-                &shrink_progress,
-                early_exit,
-            );
         }
     }
 

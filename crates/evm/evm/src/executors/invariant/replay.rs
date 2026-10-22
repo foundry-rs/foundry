@@ -1,6 +1,7 @@
 use super::{call_after_invariant_function, call_invariant_function, execute_tx};
 use crate::executors::{
     EarlyExit, Executor,
+    corpus::persist_campaign_optimization,
     invariant::shrink::{
         CheckSequenceOutcome, ShrinkProgress, shrink_sequence, shrink_sequence_value,
     },
@@ -199,6 +200,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         config.show_solidity,
     )?;
 
+    persist_campaign_optimization(&config.corpus, optimization_value, &calls);
     replay.check_result = check_result;
     replay.optimization_value = optimization_value;
     Ok(replay)

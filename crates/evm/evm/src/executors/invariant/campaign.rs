@@ -237,7 +237,6 @@ impl InvariantWorkerOutput {
 /// - handler assertion failures keep the shorter reproducer, with equal lengths preserving the
 ///   earlier logical worker;
 /// - optimization mode keeps the maximum value, with ties preserving the earlier logical worker;
-/// - max gas per selector keeps the highest gas, with ties preserving the earlier logical worker;
 /// - `failed_corpus_replays` is a master-worker-only value from worker `0`;
 /// - run/call counts, reverts, gas traces, selector metrics, and line coverage accumulate into the
 ///   logical campaign result.
@@ -418,10 +417,6 @@ fn merge_metrics(
         entry.calls += metrics.calls;
         entry.reverts += metrics.reverts;
         entry.discards += metrics.discards;
-        if metrics.max_gas > entry.max_gas {
-            entry.max_gas = metrics.max_gas;
-            entry.max_gas_sequence = metrics.max_gas_sequence;
-        }
     }
 }
 
@@ -737,7 +732,7 @@ mod tests {
                 3,
                 0x30,
                 "transfer(address)",
-                InvariantMetrics { calls: 3, reverts: 1, discards: 0, ..Default::default() },
+                InvariantMetrics { calls: 3, reverts: 1, discards: 0 },
                 3,
                 0,
             ),
@@ -748,7 +743,7 @@ mod tests {
                 1,
                 0x10,
                 "transfer(address)",
-                InvariantMetrics { calls: 1, reverts: 0, discards: 2, ..Default::default() },
+                InvariantMetrics { calls: 1, reverts: 0, discards: 2 },
                 1,
                 4,
             ),
@@ -759,7 +754,7 @@ mod tests {
                 2,
                 0x20,
                 "approve(address)",
-                InvariantMetrics { calls: 2, reverts: 1, discards: 1, ..Default::default() },
+                InvariantMetrics { calls: 2, reverts: 1, discards: 1 },
                 2,
                 0,
             ),
@@ -774,15 +769,9 @@ mod tests {
         assert_eq!(result.last_run_inputs[0].sender, Address::repeat_byte(0x30));
 
         let transfer_metrics = result.metrics.get("transfer(address)").unwrap();
-        assert_eq!(
-            transfer_metrics,
-            &InvariantMetrics { calls: 4, reverts: 1, discards: 2, ..Default::default() }
-        );
+        assert_eq!(transfer_metrics, &InvariantMetrics { calls: 4, reverts: 1, discards: 2 });
         let approve_metrics = result.metrics.get("approve(address)").unwrap();
-        assert_eq!(
-            approve_metrics,
-            &InvariantMetrics { calls: 2, reverts: 1, discards: 1, ..Default::default() }
-        );
+        assert_eq!(approve_metrics, &InvariantMetrics { calls: 2, reverts: 1, discards: 1 });
 
         let coverage = result.line_coverage.unwrap();
         assert_eq!(coverage.get(&B256::ZERO).unwrap().get(7).unwrap().get(), 6);

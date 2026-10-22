@@ -11,7 +11,7 @@ use crate::{
     },
     progress::TestsProgress,
     result::{
-        InvariantFailure, InvariantMaxGas, InvariantOutcome, InvariantPredicateResult, SuiteResult,
+        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SuiteResult,
         SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
         SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
         SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
@@ -4611,7 +4611,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Some(best_value) = invariant_result.optimization_best_value {
                 // Optimization mode: replay and shrink to find shortest best sequence.
                 match self.replay_error(
-                    invariant_config.clone(),
+                    evm.config(),
                     self.clone_executor(),
                     &invariant_result.optimization_best_sequence,
                     None,
@@ -4628,12 +4628,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         optimization_value,
                         ..
                     }) if !sequence.is_empty() => {
-                        invariant_result.optimization_best_value =
-                            optimization_value.or(invariant_result.optimization_best_value);
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
                             sequence,
                         ));
+                        // Shrinking can reach a higher value than the campaign did.
+                        if let Some(value) = optimization_value
+                            && value > best_value
+                        {
+                            invariant_result.optimization_best_value = Some(value);
+                        }
                     }
                     Err(err) => {
                         error!(%err, "Failed to replay optimization best sequence");
@@ -4916,27 +4920,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             })
             .collect::<Vec<_>>();
 
-        let max_gas = invariant_result
-            .metrics
-            .iter()
-            .filter(|(_, metrics)| !metrics.max_gas_sequence.is_empty())
-            .map(|(name, metrics)| {
-                let sequence = metrics
-                    .max_gas_sequence
-                    .iter()
-                    .map(|tx| {
-                        BaseCounterExample::from_invariant_call(
-                            tx,
-                            identified_contracts,
-                            None,
-                            invariant_config.show_solidity,
-                        )
-                    })
-                    .collect();
-                (name.clone(), InvariantMaxGas { gas: metrics.max_gas, sequence })
-            })
-            .collect();
-
         let interrupted = success && invariant_result.interrupted;
         self.result.invariant_result(
             TestKind::Invariant {
@@ -4947,7 +4930,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 metrics: invariant_result.metrics,
                 failed_corpus_replays: invariant_result.failed_corpus_replays,
                 optimization_best_value: invariant_result.optimization_best_value,
-                max_gas,
             },
             InvariantOutcome {
                 success,

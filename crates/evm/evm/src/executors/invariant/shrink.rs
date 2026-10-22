@@ -856,10 +856,9 @@ fn assertion_failure_reason<FEN: FoundryEvmNetwork>(
     call_failure_reason(call_result, rd).or_else(|| Some("assertion failed".to_string()))
 }
 
-/// Shrinks an optimization witness to the shortest sequence that keeps the best invariant value.
-///
-/// Warp and roll of removed calls move to the next kept call. Returns the shrunk sequence and its
-/// value, which can exceed `target_value`.
+/// Shrinks an optimization witness while preserving the best value seen during replay.
+/// Warp and roll of removed calls move to the next kept call.
+/// Returns the shrunk sequence and its value, which can exceed `target_value`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
@@ -872,16 +871,63 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     early_exit: &EarlyExit,
 ) -> eyre::Result<(Vec<BasicTxDetails>, I256)> {
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
+
+    let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().into();
-    shrink_to_best(config, calls, target_value, true, progress, early_exit, |sequence| {
-        check_sequence_value(
-            executor.clone(),
-            calls,
-            sequence,
-            invariant_contract.address,
-            calldata.clone(),
-        )
-    })
+
+    // Campaigns score only after a call, so an empty witness must match the target exactly.
+    if check_sequence_value(executor.clone(), calls, &[], target_address, calldata.clone())?
+        == Some(target_value)
+    {
+        return Ok((vec![], target_value));
+    }
+
+    let replay_failed = Cell::new(false);
+    let mut replay_error = None;
+    let mut best = target_value;
+    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
+    let initial = SequenceShrink::new(calls.len());
+    progress.update(calls, &initial, true);
+    let mut sequence = Vec::with_capacity(calls.len());
+
+    let shrinker = shrink_sequence_by_removing(
+        calls.len(),
+        &mut run,
+        || early_exit.should_stop() || replay_failed.get(),
+        || progress.inc(),
+        |shrinker| {
+            progress.update(calls, shrinker, true);
+            sequence.clear();
+            sequence.extend(shrinker.current());
+            if sequence.is_empty() {
+                return Some(false);
+            }
+            match check_sequence_value(
+                executor.clone(),
+                calls,
+                &sequence,
+                target_address,
+                calldata.clone(),
+            ) {
+                Ok(Some(value)) if value >= best => {
+                    best = value;
+                    Some(true)
+                }
+                Ok(_) => Some(false),
+                Err(err) => {
+                    replay_error = Some(err);
+                    replay_failed.set(true);
+                    None
+                }
+            }
+        },
+    );
+    progress.update(calls, &shrinker, true);
+    if let Some(err) = replay_error {
+        return Err(err);
+    }
+
+    Ok((build_shrunk_sequence(calls, &shrinker, true), best))
 }
 
 /// Replays a handler-bug sequence and returns whether the anchor still asserts on the same
@@ -1024,114 +1070,6 @@ fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
     let outcome =
         replay_handler_failure_sequence(executor, calls, sequence, accumulate_warp_roll, None)?;
     Ok(outcome.anchor_asserted && outcome.anchor_fingerprint == expected_fingerprint)
-}
-
-/// Shrinks a max gas witness to the shortest sequence that keeps the best gas of its last call.
-///
-/// Returns the shrunk sequence and the gas its last call used. On a replay error, returns the
-/// witness unchanged.
-pub(crate) fn shrink_max_gas_sequence<FEN: FoundryEvmNetwork>(
-    config: &InvariantConfig,
-    calls: &[BasicTxDetails],
-    target_gas: u64,
-    executor: &Executor<FEN>,
-    progress: &ShrinkProgress<'_>,
-    early_exit: &EarlyExit,
-) -> (Vec<BasicTxDetails>, u64) {
-    let Some(anchor) = calls.len().checked_sub(1) else {
-        return (vec![], target_gas);
-    };
-    let accumulate_warp_roll = config.has_delay();
-    shrink_to_best(
-        config,
-        calls,
-        target_gas,
-        accumulate_warp_roll,
-        progress,
-        early_exit,
-        |sequence| {
-            // The witness call itself must stay last.
-            if sequence.last() != Some(&anchor) {
-                return Ok(None);
-            }
-            Ok(replay_sequence(
-                &mut executor.clone(),
-                calls,
-                sequence,
-                accumulate_warp_roll,
-                |idx, call_result| {
-                    Ok(if idx == anchor {
-                        ReplayDecision::Stop(
-                            (!call_result.reverted)
-                                .then(|| call_result.gas_used.saturating_sub(call_result.stipend)),
-                        )
-                    } else {
-                        ReplayDecision::Continue
-                    })
-                },
-            )?
-            .flatten())
-        },
-    )
-    .unwrap_or_else(|_| (calls.to_vec(), target_gas))
-}
-
-/// Shrinks `calls` to the shortest sequence whose `score` stays at or above the best score seen,
-/// starting from `target`.
-///
-/// A removal can raise the score, for example by dropping a call that warmed a storage slot, and
-/// later removals must keep that gain. Stops at the first replay error and returns it.
-fn shrink_to_best<V: Ord + Copy>(
-    config: &InvariantConfig,
-    calls: &[BasicTxDetails],
-    target: V,
-    accumulate_warp_roll: bool,
-    progress: &ShrinkProgress<'_>,
-    early_exit: &EarlyExit,
-    mut score: impl FnMut(&[usize]) -> eyre::Result<Option<V>>,
-) -> eyre::Result<(Vec<BasicTxDetails>, V)> {
-    // Campaigns score only after a call, so an empty witness must match the target exactly.
-    if score(&[])? == Some(target) {
-        return Ok((vec![], target));
-    }
-
-    let mut best = target;
-    let replay_failed = Cell::new(false);
-    let mut replay_error = None;
-    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
-    progress.update(calls, &SequenceShrink::new(calls.len()), accumulate_warp_roll);
-    let mut sequence = Vec::with_capacity(calls.len());
-    let shrinker = shrink_sequence_by_removing(
-        calls.len(),
-        &mut run,
-        || early_exit.should_stop() || replay_failed.get(),
-        || progress.inc(),
-        |shrinker| {
-            progress.update(calls, shrinker, accumulate_warp_roll);
-            sequence.clear();
-            sequence.extend(shrinker.current());
-            if sequence.is_empty() {
-                return Some(false);
-            }
-            match score(&sequence) {
-                Ok(Some(value)) if value >= best => {
-                    best = value;
-                    Some(true)
-                }
-                Ok(_) => Some(false),
-                Err(err) => {
-                    replay_error = Some(err);
-                    replay_failed.set(true);
-                    None
-                }
-            }
-        },
-    );
-    progress.update(calls, &shrinker, accumulate_warp_roll);
-    if let Some(err) = replay_error {
-        return Err(err);
-    }
-    Ok((build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll), best))
 }
 
 /// Executes a call sequence and returns the optimization value (int256) from the invariant
@@ -1424,24 +1362,5 @@ mod tests {
         assert_eq!(message.matches("sender=").count(), LIVE_SHRINK_SEQUENCE_EDGE_CALLS * 2);
         assert!(message.contains("calldata=0x00 args=[]"));
         assert!(message.contains("calldata=0x22 args=[]"));
-    }
-
-    #[test]
-    fn shrink_to_best_keeps_a_raised_score() {
-        let config = InvariantConfig::default();
-        let early_exit = EarlyExit::new(false);
-        let calls = vec![tx(None, None); 4];
-        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
-
-        // Call 3 is the witness. Dropping call 0 raises the score; calls 1 and 2 each add one.
-        let (sequence, score) =
-            shrink_to_best(&config, &calls, 12, false, &progress, &early_exit, |sequence| {
-                let base = if sequence.contains(&0) { 10 } else { 20 };
-                let bonus = sequence.iter().filter(|idx| matches!(idx, 1 | 2)).count();
-                Ok(sequence.contains(&3).then_some(base + bonus))
-            })
-            .unwrap();
-
-        assert_eq!((sequence.len(), score), (3, 22));
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_test_utils::snapbox::IntoData;
 
 #[forgetest]
 fn invariant_after_invariant(prj: _, cmd: _) {
@@ -2657,6 +2658,7 @@ fn invariant_optimization_reports_raised_shrink_value(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 2;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
     });
     prj.add_test("Optimization.t.sol", r#"
 pragma solidity ^0.8.20;
@@ -2683,6 +2685,25 @@ contract OptimizationTest {
  invariant_optimize() (best: 22, runs: 1, calls: 2)
 ...
 "#]]);
+    assert!(!prj.root().join("opt_corpus/optimization_best.json").exists());
+    let saved =
+        prj.root().join("opt_corpus/OptimizationTest/invariant_optimize/optimization_best.json");
+    assert_data_eq!(
+        std::fs::read_to_string(saved).unwrap().is_json(),
+        str![[r#"
+{
+  "best_value": "22",
+  "best_sequence": [
+    {
+      "sender": "[..]",
+      "target": "[..]",
+      "calldata": "[..]"
+    }
+  ]
+}
+"#]]
+        .is_json()
+    );
 }
 
 // Test that optimization mode works with negative values (finding max of negative range).
