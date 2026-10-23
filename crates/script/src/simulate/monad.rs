@@ -230,6 +230,7 @@ impl PreSimulationState<MonadEvmNetwork> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         &self.build_data,
+                        self.script_config.chain_builds.get(&rpc).map(|build| &build.artifacts),
                     )
                     .build();
                 eyre::Ok((rpc, Some(transaction), is_noop, result.traces))

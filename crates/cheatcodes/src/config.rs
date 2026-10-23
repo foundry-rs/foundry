@@ -1,16 +1,23 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{U256, map::AddressHashMap};
-use foundry_common::{ContractsByArtifact, fs::normalize_path};
-use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
+use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashMap};
+use foundry_common::{
+    ContractData, ContractsByArtifact, compile::ProfileBuild, contracts::matches_contract_creation,
+    fs::normalize_path,
+};
+use foundry_compilers::{
+    ArtifactId, ProjectPathsConfig, artifacts::EvmVersion, utils::canonicalize,
+};
 use foundry_config::{
-    Config, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
-    cache::StorageCachingConfig, fs_permissions::FsAccessKind,
+    Config, FoundryHardfork, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint,
+    RpcEndpointUrl, cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
 use foundry_evm_traces::identifier::ExternalIdentifierConfig;
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -72,6 +79,12 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
+    /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
+    pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
+    /// CREATE2 libraries of the run's build to deploy on each fork.
+    pub create2_libraries: Vec<(Address, Bytes)>,
+    /// CREATE2 salt of the library deployment.
+    pub create2_library_salt: B256,
 }
 
 impl CheatsConfig {
@@ -118,6 +131,9 @@ impl CheatsConfig {
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
+            chain_builds: BTreeMap::new(),
+            create2_libraries: Vec::new(),
+            create2_library_salt: config.create2_library_salt,
         }
     }
 
@@ -131,6 +147,8 @@ impl CheatsConfig {
             self.batch_rewrite_creates,
         );
         cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
+        cloned.chain_builds.clone_from(&self.chain_builds);
+        cloned.create2_libraries.clone_from(&self.create2_libraries);
         cloned
     }
 
@@ -265,6 +283,9 @@ impl Default for CheatsConfig {
             assertions_revert: true,
             seed: None,
             internal_expect_revert: false,
+            chain_builds: BTreeMap::new(),
+            create2_libraries: Vec::new(),
+            create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         }
     }
 }
@@ -287,11 +308,115 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
     path
 }
 
+/// Profile build used on forks of an `[rpc_endpoints]` entry naming the profile.
+#[derive(Clone, Debug)]
+pub struct ChainBuild {
+    /// Resolved compiler and execution configuration for verification.
+    pub config: Config,
+    /// Profiles with the compiler settings of this build.
+    pub profiles: Vec<String>,
+    /// Linked artifacts of the build.
+    pub artifacts: ContractsByArtifact,
+    /// Artifacts directory of the build.
+    pub artifacts_dir: PathBuf,
+    /// CREATE2 libraries to deploy on each fork using this build.
+    pub create2_libraries: Vec<(Address, Bytes)>,
+    /// CREATE2 salt of the library deployment.
+    pub create2_library_salt: B256,
+    /// EVM version of the build.
+    pub evm_version: EvmVersion,
+    /// Hardfork of the profile.
+    pub hardfork: Option<FoundryHardfork>,
+}
+
+impl ChainBuild {
+    /// Creates the build of `build` with its linked `artifacts` and CREATE2 libraries.
+    pub fn new(
+        build: &ProfileBuild,
+        artifacts: ContractsByArtifact,
+        create2_libraries: Vec<(Address, Bytes)>,
+    ) -> Self {
+        Self {
+            config: build.config.clone(),
+            profiles: build.profiles.clone(),
+            artifacts,
+            artifacts_dir: build.artifacts_dir.clone(),
+            create2_libraries,
+            create2_library_salt: build.config.create2_library_salt,
+            evm_version: build.config.evm_version,
+            hardfork: build.config.hardfork,
+        }
+    }
+
+    /// Returns the build of the profile named by each `[rpc_endpoints]` entry of `config`, by the
+    /// entry's URL. Entries whose URL does not resolve are skipped, as forking them fails anyway.
+    pub fn by_endpoint(
+        config: &Config,
+        builds: Vec<Self>,
+    ) -> eyre::Result<BTreeMap<String, Arc<Self>>> {
+        let builds = builds.into_iter().map(Arc::new).collect::<Vec<_>>();
+        let mut by_endpoint = BTreeMap::new();
+        for endpoint in config.rpc_endpoints.values() {
+            if let Some(profile) = &endpoint.profile
+                && let Ok(url) = endpoint.clone().resolve().url()
+            {
+                let build = builds
+                    .iter()
+                    .find(|build| build.profiles.contains(profile))
+                    .ok_or_else(|| eyre::eyre!("no build of profile `{profile}`"))?;
+                if let Some(other) = by_endpoint.insert(url, build.clone())
+                    && !Arc::ptr_eq(&other, build)
+                {
+                    eyre::bail!("endpoints with the same URL name profiles with different builds");
+                }
+            }
+        }
+        Ok(by_endpoint)
+    }
+
+    /// Returns the artifact matching `id` in this build.
+    pub fn artifact(&self, id: &ArtifactId) -> Option<&ContractData> {
+        // name might be in the form of "Counter.0.8.23".
+        let name = id.name.split('.').next()?;
+        let matches = self
+            .artifacts
+            .iter()
+            .filter(|(other, _)| {
+                other.source == id.source
+                    && other.profile == id.profile
+                    && other.name.split('.').next() == Some(name)
+            })
+            .collect::<Vec<_>>();
+        match &matches[..] {
+            [(_, data)] => Some(data),
+            _ => {
+                matches.iter().find(|(other, _)| other.version == id.version).map(|(_, data)| *data)
+            }
+        }
+    }
+
+    /// Returns `init_code` with this build's creation code if it creates an artifact of
+    /// `run_artifacts` that this build compiles differently.
+    pub fn init_code(
+        &self,
+        run_artifacts: &ContractsByArtifact,
+        init_code: &[u8],
+    ) -> Option<Result<Bytes, String>> {
+        let (id, data) =
+            run_artifacts.iter().find(|(_, data)| matches_contract_creation(data, init_code))?;
+        let code = data.bytecode()?;
+        let Some(build_code) = self.artifact(id).and_then(ContractData::bytecode) else {
+            return Some(Err(format!("no artifact for {} in the profile build", id.identifier())));
+        };
+        (build_code != code)
+            .then(|| Ok([build_code.as_ref(), &init_code[code.len()..]].concat().into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use alloy_primitives::Address;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 

@@ -6,11 +6,12 @@ use super::{
 use alloy_consensus::transaction::Recovered;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
-    Address, B256, Bytes, Log, TxKind, U256, keccak256,
+    Address, B256, Bytes, KECCAK256_EMPTY, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressSet},
 };
 use evm2::{
     EvmFeatures, ExecutionError, Inspector,
+    bytecode::Bytecode,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, JournalEntry, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -23,7 +24,9 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryInspectorExt,
     backend::transaction_error,
-    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
+    constants::{
+        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+    },
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested, FoundryEvmExt,
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
@@ -1105,19 +1108,33 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interp: &mut InterpreterFor<'_, '_, FEN>,
         message: &mut MessageFor<FEN>,
     ) -> Option<MessageResultFor<FEN>> {
-        if message.destination == CHEATCODE_ADDRESS {
+        // A create redirected to the CREATE2 factory was handed off as the create, and its result
+        // only becomes the create's result in the frame that redirected it.
+        if message.destination == CHEATCODE_ADDRESS
+            || (message.kind == MessageKind::Call
+                && self.inner.pending_create2_redirects.last() == Some(&message.depth))
+        {
             return None;
         }
         let backend = self.backend.as_deref_mut()?;
         let pending =
             backend.backend().lifecycle().pending_env().map(|env| (env.spec, env.chain_id()));
-        let requested = self.cheatcodes.as_deref().and_then(|cheats| cheats.execution_evm_version);
-        if pending.is_none() && requested.is_none() {
+        let spec_requested = self.cheatcodes.as_deref().is_some_and(|cheats| {
+            cheats.execution_evm_version.is_some() || !cheats.core.config.chain_builds.is_empty()
+        });
+        if pending.is_none() && !spec_requested {
             return None;
         }
         let tx_env = interp.tx_env();
         let evm = interp.host();
         let running = evm_env(evm);
+        let target = match message.kind {
+            MessageKind::Create | MessageKind::Create2 => None,
+            _ => Some(message.code_address),
+        };
+        let requested = self.cheatcodes.as_deref_mut().and_then(|cheats| {
+            cheats.execution_spec(backend.backend(), &running, target, message.depth)
+        });
         // Same precedence as the next transaction's environment: `vm.setEvmVersion` overrides
         // the pending spec.
         let (pending_spec, chain_id) = pending.unwrap_or((running.spec, running.chain_id()));
@@ -1645,7 +1662,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let state = interp.host().state_mut();
         let Ok(mut account) = state.account(&create2_deployer) else { return false };
         let code_hash = account.code_hash();
-        if code_hash == alloy_primitives::KECCAK256_EMPTY {
+        if code_hash == KECCAK256_EMPTY {
             self.inner.pending_create2_error =
                 Some(format!("missing CREATE2 deployer: {create2_deployer}").into_bytes().into());
             return false;
@@ -1684,6 +1701,132 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             let features = evm.version().features;
             let failed = !result.stop.is_success();
             cheats.snapshot_restores.frame_end(evm.state_mut(), message.depth, failed, features);
+        }
+    }
+
+    /// Deploys the CREATE2 libraries of the active fork before the first broadcast from
+    /// `message`'s caller, recording each deployment for broadcast.
+    ///
+    /// Returns the error to revert `message` with if a deployment fails.
+    fn deploy_chain_libraries(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+    ) -> Option<Bytes> {
+        let (cheats, backend, inner) = self.cheats_and_backend()?;
+        let config = &cheats.core.config;
+        if cheats.broadcast.is_none()
+            || (config.chain_builds.is_empty() && config.create2_libraries.is_empty())
+        {
+            return None;
+        }
+        let rpc = backend.backend().active_fork_url()?;
+        let (sender, salt, libraries) =
+            cheats.take_chain_libraries(&rpc, usize::from(message.depth), message.caller)?;
+        let create2_deployer = inner.create2_deployer;
+        let evm = interp.host();
+        let code_hash = |evm: &mut FoundryEvmFor<'_, FEN>, address: Address| {
+            evm.state_mut().account(&address).map(|account| account.code_hash()).map_err(|err| {
+                Bytes::from(
+                    format!("failed to load {address} for CREATE2 library deployment: {err}")
+                        .into_bytes(),
+                )
+            })
+        };
+        // Persistent account handover can leave the deployer without code on a fork. Its
+        // presence on chain is checked before broadcasting.
+        match code_hash(evm, create2_deployer) {
+            Ok(KECCAK256_EMPTY) => match evm.state_mut().account(&create2_deployer) {
+                Ok(mut account) => account
+                    .set_code_slow(Bytecode::new_raw(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE.into())),
+                Err(err) => return Some(Bytes::from(err.to_string().into_bytes())),
+            },
+            Ok(_) => {}
+            Err(err) => return Some(err),
+        }
+        for (address, code) in libraries {
+            match code_hash(evm, address) {
+                Ok(KECCAK256_EMPTY) => {}
+                Ok(_) => continue,
+                Err(err) => return Some(err),
+            }
+            let failed = || {
+                Some(Bytes::from(
+                    format!("CREATE2 deployment of library {address} failed on {rpc}").into_bytes(),
+                ))
+            };
+            let input = Bytes::from([salt.as_slice(), code.as_ref()].concat());
+            let nonce = evm
+                .state_mut()
+                .account_info_untracked(&sender)
+                .ok()
+                .flatten()
+                .map_or(0, |account| account.nonce);
+            cheats.record_library_deployment(
+                Some(rpc.clone()),
+                evm.version().chain_id,
+                sender,
+                nonce,
+                create2_deployer,
+                input.clone(),
+            );
+            let mut env = evm_env(evm);
+            env.block.basefee = U256::ZERO;
+            env.set_feature(EvmFeatures::FEE_CHARGE, false);
+            let mut request = TransactionRequestFor::<FEN>::default()
+                .with_from(sender)
+                .with_to(create2_deployer)
+                .with_input(input)
+                .with_nonce(nonce)
+                .with_chain_id(env.chain_id())
+                .with_gas_limit(env.block.gas_limit.saturating_to());
+            if evm.spec_id() < evm2::SpecId::LONDON {
+                request.set_gas_price(0);
+            } else {
+                request.set_max_fee_per_gas(0);
+                request.set_max_priority_fee_per_gas(0);
+            }
+            let Ok(tx) = FEN::tx_from_request(request) else { return failed() };
+            let deployed = inner
+                .nested_transaction(cheats, backend, evm, message.depth, &tx, Some(env))
+                .is_ok_and(|result| result.status);
+            if !deployed || !matches!(code_hash(evm, address), Ok(hash) if hash != KECCAK256_EMPTY)
+            {
+                return failed();
+            }
+        }
+        None
+    }
+
+    /// On forks of profiled endpoints, gives project contracts the script or test creates the
+    /// profile build's creation code, or records the error to revert the create with.
+    fn apply_profile_init_code(&mut self, message: &mut MessageFor<FEN>) {
+        let depth = usize::from(message.depth);
+        if depth == 0 {
+            return;
+        }
+        let (Some(cheats), Some(backend)) = (self.cheatcodes.as_deref(), self.backend.as_deref())
+        else {
+            return;
+        };
+        let config = &cheats.core.config;
+        if config.chain_builds.is_empty()
+            || !cheats.should_use_profile_init_code(depth, message.caller)
+        {
+            return;
+        }
+        if let Some(run_artifacts) = &config.artifact_lookup
+            && let Some(rpc) = backend.backend().active_fork_url()
+            && let Some(build) = config.chain_builds.get(&rpc)
+        {
+            match build.init_code(run_artifacts, &message.input) {
+                Some(Ok(init_code)) => {
+                    message.code = Bytecode::new_raw(init_code.clone());
+                    message.input = init_code;
+                }
+                Some(Err(err)) => self.inner.pending_create2_error = Some(err.into_bytes().into()),
+                None => {}
+            }
         }
     }
 }
@@ -1831,6 +1974,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         } else {
             0
         };
+        let chain_library_error = if message.destination == CHEATCODE_ADDRESS {
+            None
+        } else {
+            self.deploy_chain_libraries(interp, message)
+        };
         let mut cheatcode_outcome = None;
         if let Some((cheats, backend, inner)) = self.cheats_and_backend() {
             apply_mocked_function(cheats, interp, message);
@@ -1852,6 +2000,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             };
             let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
             node.trace.caller = caller;
+        }
+
+        if let Some(error) = chain_library_error {
+            return Some(message_result(message, InstrStop::Revert, error));
         }
 
         if let Some(output) = cheatcode_outcome {
@@ -1937,8 +2089,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             return Some(result);
         }
 
+        self.apply_profile_init_code(message);
         // A CREATE redirected to the CREATE2 factory is observed as a call to the factory.
-        if self.redirect_create2(interp, message) {
+        if self.inner.pending_create2_error.is_none() && self.redirect_create2(interp, message) {
             return self.call(interp, message);
         }
 
@@ -1984,6 +2137,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         } else {
             0
         };
+        if let Some(error) = self.deploy_chain_libraries(interp, message) {
+            self.inner.pending_create2_error = Some(error);
+        }
         let mut cheatcode_outcome = None;
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
             cheatcode_outcome = cheats.create_hook(interp, message, backend);

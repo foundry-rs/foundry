@@ -58,7 +58,7 @@ use foundry_evm::{
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
-        cheatcodes::{BroadcastableTransactions, Wallets},
+        cheatcodes::{BroadcastableTransactions, ChainBuild, Wallets},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements, Traces},
@@ -66,7 +66,7 @@ use foundry_evm::{
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -1016,6 +1016,10 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub batch: bool,
     /// Tempo transaction options applied to broadcast transactions.
     pub tempo: TempoOpts,
+    /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
+    pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
+    /// CREATE2 libraries to deploy on each fork.
+    pub create2_libraries: Vec<(Address, Bytes)>,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
@@ -1054,6 +1058,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             backend,
             batch,
             tempo,
+            chain_builds: BTreeMap::new(),
+            create2_libraries: Vec::new(),
         })
     }
 
@@ -1115,11 +1121,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     async fn resolve_rpc_execution_spec(&mut self, fork_url: String) -> Result<()> {
         self.evm_opts.set_fork_url(fork_url);
         if !self.prepare_requested_source().await? {
-            self.resolve_execution_env().await?;
+            self.resolve_execution_env(true).await?;
             return Ok(());
         }
         let (mut evm_env, _, fork_context) = self.evm_opts.env_with_fork_context::<FEN>().await?;
-        self.apply_execution_spec(&mut evm_env, fork_context);
+        self.apply_execution_spec(&mut evm_env, fork_context, true);
         Ok(())
     }
 
@@ -1164,7 +1170,9 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         restricted: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (evm_env, mut tx) = self.resolve_execution_env().await?;
+        // The script contract is built by the run's profile, so only runners replaying broadcast
+        // transactions on an endpoint use the endpoint's profile spec.
+        let (evm_env, mut tx) = self.resolve_execution_env(cheats_data.is_none()).await?;
         let db = self.backend.clone();
 
         // We need to enable tracing to decode contract names: local or external.
@@ -1193,6 +1201,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     cheats_config.blocked_cheatcodes =
                         library_deployments::rerun_unsafe_cheatcode_selectors();
                 }
+                cheats_config.chain_builds.clone_from(&self.chain_builds);
+                cheats_config.create2_libraries.clone_from(&self.create2_libraries);
                 stack
                     .cheatcodes(cheats_config.into())
                     .wallets(script_wallets)
@@ -1223,12 +1233,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     /// Builds the execution environment and spec from the selected backend.
+    ///
+    /// With `profile_spec`, the spec of the profile named by the selected endpoint applies.
     async fn resolve_execution_env(
         &mut self,
+        profile_spec: bool,
     ) -> Result<(EvmEnvFor<FEN>, TransactionRequestFor<FEN>)> {
         let (mut evm_env, tx) = self.backend.env(&self.evm_opts).await?;
         let fork_context = self.backend.fork().map(|fork| fork.context());
-        self.apply_execution_spec(&mut evm_env, fork_context);
+        self.apply_execution_spec(&mut evm_env, fork_context, profile_spec);
         Ok((evm_env, tx))
     }
 
@@ -1237,14 +1250,24 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         fork_context: Option<ForkContext>,
+        profile_spec: bool,
     ) {
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
+        let (evm_version, hardfork) = self
+            .evm_opts
+            .fork_url
+            .as_ref()
+            .filter(|_| profile_spec)
+            .and_then(|url| self.chain_builds.get(url))
+            .map_or((self.config.evm_version, self.config.hardfork), |build| {
+                (build.evm_version, build.hardfork)
+            });
         self.hardfork = resolve_execution_spec(
             &EvmFactoryFor::<FEN>::default(),
-            self.config.evm_version,
-            self.config.hardfork,
+            evm_version,
+            hardfork,
             evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
             None,

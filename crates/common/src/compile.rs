@@ -25,6 +25,7 @@ use foundry_compilers::{
         BytecodeObject, Contract, Error as SolcError, Severity, Source,
         output_selection::OutputSelection, remappings::Remapping,
     },
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
@@ -35,7 +36,7 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
-use foundry_config::Config;
+use foundry_config::{Config, figment::Provider};
 use num_format::{Locale, ToFormattedString};
 use solar::{
     ast::{Arena, ContractKind, ItemKind},
@@ -44,7 +45,7 @@ use solar::{
 };
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map::Entry},
     fmt::Display,
     io::IsTerminal,
     path::{Component, Path, PathBuf},
@@ -864,6 +865,66 @@ where
     compile_abi_project(&mut cached_project, compiler)
 }
 
+/// Build of the profiles named by `[rpc_endpoints]` that share compiler settings.
+#[derive(Clone, Debug)]
+pub struct ProfileBuild {
+    /// Profiles with these compiler settings.
+    pub profiles: Vec<String>,
+    /// Config with these compiler settings.
+    pub config: Config,
+    /// Artifacts directory of the build.
+    pub artifacts_dir: PathBuf,
+    /// The compiler output.
+    pub output: ProjectCompileOutput,
+}
+
+/// Compiles each distinct set of compiler settings among the profiles named by `[rpc_endpoints]`
+/// once, with `overrides` applied, and caches it by those settings.
+pub fn compile_endpoint_profiles(
+    config: &Config,
+    overrides: impl Provider + Clone,
+    compiler: impl Fn(&Config) -> ProjectCompiler,
+) -> Result<Vec<ProfileBuild>> {
+    let profiles = config
+        .rpc_endpoints
+        .values()
+        .filter_map(|endpoint| endpoint.profile.as_deref())
+        .collect::<BTreeSet<_>>();
+    let mut builds = Vec::<ProfileBuild>::new();
+    let mut outputs = BTreeMap::<_, (PathBuf, ProjectCompileOutput)>::new();
+    for profile in profiles {
+        let config = config.with_profile_compiler_settings(profile, overrides.clone())?;
+        let cache_path = config.profile_cache_path()?;
+        if let Some(build) = builds.iter_mut().find(|build| {
+            build.artifacts_dir == cache_path.join("artifacts")
+                && build.config.hardfork == config.hardfork
+                && build.config.create2_library_salt == config.create2_library_salt
+        }) {
+            build.profiles.push(profile.to_string());
+            continue;
+        }
+        let (artifacts_dir, output) = match outputs.entry(cache_path) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let mut project = config.project()?;
+                project.paths.cache = entry.key().join(SOLIDITY_FILES_CACHE_FILENAME);
+                project.paths.artifacts = entry.key().join("artifacts");
+                project.paths.build_infos = entry.key().join("build-info");
+                project.paths.slash_paths();
+                let output = compiler(&config).compile(&project)?;
+                entry.insert((project.paths.artifacts, output))
+            }
+        };
+        builds.push(ProfileBuild {
+            profiles: vec![profile.to_string()],
+            config,
+            artifacts_dir: artifacts_dir.clone(),
+            output: output.clone(),
+        });
+    }
+    Ok(builds)
+}
+
 /// Compiles the target contract requesting only ABI output and returns its ABI.
 pub fn compile_target_abi(
     project: &mut Project<MultiCompiler>,
@@ -1197,5 +1258,47 @@ mod tests {
             sanitize_relative_path(Path::new("lib/openzeppelin")),
             Path::new("lib/openzeppelin")
         );
+    }
+
+    #[test]
+    fn endpoint_profiles_share_compilation_but_preserve_runtime_settings() {
+        foundry_config::figment::Jail::expect_with(|jail| {
+            jail.create_dir("src")?;
+            jail.create_file("src/Profile.sol", "pragma solidity >=0.8.0; contract Profile {}")?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+[profile.default]
+evm_version = "cancun"
+[profile.first]
+hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+[profile.second]
+hardfork = "prague"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
+[rpc_endpoints]
+first = { endpoint = "http://127.0.0.1:1", profile = "first" }
+second = { endpoint = "http://127.0.0.1:2", profile = "second" }
+"#,
+            )
+            .unwrap();
+            let config = Config::load().unwrap();
+            let count = std::cell::Cell::new(0);
+            let builds =
+                compile_endpoint_profiles(&config, foundry_config::figment::Figment::new(), |_| {
+                    count.set(count.get() + 1);
+                    ProjectCompiler::new().quiet(true)
+                })
+                .unwrap();
+            assert_eq!(count.get(), 1);
+            assert_eq!(builds.len(), 2);
+            assert_eq!(builds[0].artifacts_dir, builds[1].artifacts_dir);
+            assert_ne!(builds[0].config.hardfork, builds[1].config.hardfork);
+            assert_ne!(
+                builds[0].config.create2_library_salt,
+                builds[1].config.create2_library_salt
+            );
+            Ok(())
+        });
     }
 }

@@ -27,7 +27,7 @@ use foundry_evm_core::{
 };
 
 pub use Vm::ForgeContext;
-pub use config::CheatsConfig;
+pub use config::{ChainBuild, CheatsConfig};
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
