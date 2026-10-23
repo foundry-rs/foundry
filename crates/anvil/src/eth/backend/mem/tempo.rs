@@ -1,0 +1,413 @@
+//! Tempo consensus owned by the canonical in-memory chain.
+//!
+//! Mining prepares all fallible consensus metadata before committing execution, and holds an
+//! exclusive borrow of the prepared header and signer until the final state root is installed.
+//! Database and canonical storage publication share the database lock with snapshots and rewinds.
+
+use crate::eth::{backend::tempo_consensus::TempoConsensus, error::BlockchainError};
+use alloy_consensus::BlockHeader;
+use alloy_primitives::{B256, U256, map::HashMap};
+use anvil_core::eth::block::Block;
+use std::{fmt, num::NonZeroU64};
+use tempo_hardfork::TempoHardfork;
+use tempo_primitives::TempoHeader;
+
+/// Local certificates, key schedule, and exact development snapshots for one canonical chain.
+#[derive(Clone)]
+pub(crate) struct TempoChain {
+    seed: B256,
+    epoch_length: NonZeroU64,
+    consensus: TempoConsensus,
+    snapshots: HashMap<U256, TempoConsensus>,
+}
+
+impl TempoChain {
+    pub(super) fn new(seed: B256, epoch_length: NonZeroU64, height: u64) -> Self {
+        Self {
+            seed,
+            epoch_length,
+            consensus: TempoConsensus::at_height(seed, epoch_length, height),
+            snapshots: Default::default(),
+        }
+    }
+
+    /// Resets local trust at an unsigned imported or replacement chain head.
+    pub(super) fn reanchor(&mut self, height: u64) {
+        self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
+        self.snapshots.clear();
+    }
+
+    pub(super) fn snapshot(&mut self, id: U256) {
+        self.snapshots.insert(id, self.consensus.clone());
+    }
+
+    pub(super) fn restore(&mut self, id: U256) {
+        let snapshot =
+            self.snapshots.remove(&id).expect("the database snapshot has consensus state");
+        self.consensus = snapshot;
+        self.snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+    }
+
+    pub(super) fn unwind(&mut self, block: &Block) -> Result<(), BlockchainError> {
+        self.consensus
+            .unwind(block.header.number())
+            .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Checks every fallible consensus input before execution is committed.
+    pub(super) fn prepare<'a>(
+        &'a mut self,
+        header: &'a mut TempoHeader,
+        hardfork: TempoHardfork,
+    ) -> Result<PreparedTempoHeader<'a>, BlockchainError> {
+        self.consensus
+            .prepare_header(header, hardfork)
+            .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+        Ok(PreparedTempoHeader { consensus: &mut self.consensus, header, hardfork })
+    }
+}
+
+impl fmt::Debug for TempoChain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TempoChain")
+            .field("identity", &self.consensus.identity())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Exclusive access prevents the prepared metadata or committee from changing before completion.
+pub(super) struct PreparedTempoHeader<'a> {
+    consensus: &'a mut TempoConsensus,
+    header: &'a mut TempoHeader,
+    hardfork: TempoHardfork,
+}
+
+impl PreparedTempoHeader<'_> {
+    /// Installs the committed execution root and signs the complete native header.
+    pub(super) fn finalize(self, state_root: B256) {
+        self.header.inner.state_root = state_root;
+        self.consensus.finalize(self.header, self.hardfork).expect(
+            "prepared height, metadata, hardfork and committee remain exclusively borrowed",
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        NodeConfig,
+        eth::{api::EthApi, backend::mem::MiningCommitHook},
+        spawn,
+    };
+    use alloy_primitives::Address;
+    use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, anvil::Forking};
+    use alloy_serde::WithOtherFields;
+    use anvil_core::types::ReorgOptions;
+    use foundry_evm::{
+        backend::RevertStateSnapshotAction,
+        hardfork::{EthereumHardfork, FoundryHardfork},
+    };
+    use foundry_primitives::FoundryNetwork;
+    use std::{sync::Arc, time::Duration};
+    use tokio::{sync::Notify, time::timeout};
+
+    fn consensus(api: &EthApi<FoundryNetwork>) -> TempoConsensus {
+        api.backend.blockchain.storage.read().tempo.as_ref().unwrap().consensus.clone()
+    }
+
+    fn assert_certified_head(api: &EthApi<FoundryNetwork>) {
+        let consensus = consensus(api);
+        let (height, certificate) = consensus.latest().unwrap();
+        let block = api.backend.get_block(height).unwrap();
+        assert_eq!(height, api.backend.best_number());
+        assert_eq!(certificate.digest, block.header.hash_slow());
+        assert_eq!(certificate.digest, api.backend.best_hash());
+    }
+
+    #[tokio::test]
+    async fn mined_tempo_header_contains_consensus_context() {
+        let (api, _handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_no_mining(true)
+                .with_hardfork(Some(TempoHardfork::T4.into())),
+        )
+        .await;
+        api.mine_one().await.unwrap();
+        let block = api.backend.get_block(1).unwrap();
+        assert!(block.header.as_tempo().unwrap().consensus_context.is_some());
+        assert_certified_head(&api);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_snapshot_waits_for_complete_block_publication() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+        let mining_api = api.clone();
+        let mining = tokio::spawn(async move { mining_api.mine_one().await });
+        timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
+        assert_eq!(api.backend.best_number(), 0);
+        let mut snapshot = Box::pin(api.evm_snapshot());
+        assert!(futures::poll!(snapshot.as_mut()).is_pending());
+        hook.resume.notify_one();
+        let snapshot = timeout(Duration::from_secs(10), async {
+            mining.await.unwrap().unwrap();
+            snapshot.await.unwrap()
+        })
+        .await
+        .unwrap();
+        *api.backend.mining_commit_hook.lock() = None;
+        assert_certified_head(&api);
+        api.mine_one().await.unwrap();
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(api.backend.best_number(), 1);
+        assert_certified_head(&api);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejected_consensus_preparation_does_not_commit_execution() {
+        let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::repeat_byte(0x11)),
+        ))
+        .await
+        .unwrap();
+        let previous_hash = api.backend.best_hash();
+        let previous_root = api.backend.db.read().await.maybe_state_root();
+        api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(5);
+        let error = api.mine_one().await.unwrap_err();
+        assert!(matches!(error, BlockchainError::Internal(message)
+            if message == "expected Tempo consensus height 6, got 1"));
+        assert_eq!(api.backend.best_number(), 0);
+        assert_eq!(api.backend.best_hash(), previous_hash);
+        assert_eq!(api.backend.db.read().await.maybe_state_root(), previous_root);
+        assert!(consensus(&api).latest().is_none());
+        api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(0);
+        api.mine_one().await.unwrap();
+        assert_eq!(api.backend.get_block(1).unwrap().body.transactions.len(), 1);
+        assert_certified_head(&api);
+    }
+
+    #[tokio::test]
+    async fn tempo_snapshot_restores_pending_committee_and_counter() {
+        let (api, _handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_no_mining(true)
+                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+        )
+        .await;
+        api.mine_one().await.unwrap();
+        let first = consensus(&api).finalization(1).unwrap().digest;
+        let scheduled = api
+            .backend
+            .blockchain
+            .storage
+            .write()
+            .tempo
+            .as_mut()
+            .unwrap()
+            .consensus
+            .rotate()
+            .unwrap();
+        let snapshot = api.evm_snapshot().await.unwrap();
+        let replaced = api
+            .backend
+            .blockchain
+            .storage
+            .write()
+            .tempo
+            .as_mut()
+            .unwrap()
+            .consensus
+            .rotate()
+            .unwrap();
+        assert_ne!(scheduled, replaced);
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
+        // The exact snapshot retains the pending key and derivation counter.
+        let mut restored = consensus(&api);
+        assert_eq!(restored.rotate().unwrap(), replaced);
+        api.mine_one().await.unwrap();
+        api.mine_one().await.unwrap();
+        assert_eq!(consensus(&api).identity(), scheduled);
+        assert_certified_head(&api);
+    }
+
+    #[tokio::test]
+    async fn tempo_rollback_reorg_and_reset_preserve_lifecycle() {
+        let (api, _handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_no_mining(true)
+                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+        )
+        .await;
+        let initial = consensus(&api).identity();
+        for _ in 0..4 {
+            api.mine_one().await.unwrap();
+        }
+        let first = consensus(&api).finalization(1).unwrap().digest;
+        api.anvil_rollback(Some(3)).await.unwrap();
+        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
+        assert!(consensus(&api).finalization(2).is_none());
+        assert_certified_head(&api);
+        api.anvil_rollback(Some(0)).await.unwrap();
+        assert_certified_head(&api);
+        for _ in 0..2 {
+            api.mine_one().await.unwrap();
+        }
+        let previous = consensus(&api).finalization(3).unwrap().digest;
+        api.evm_set_next_block_timestamp(2_000_000_000).unwrap();
+        api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
+        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
+        assert_ne!(consensus(&api).finalization(3).unwrap().digest, previous);
+        assert_certified_head(&api);
+        api.anvil_reset(None).await.unwrap();
+        assert!(consensus(&api).latest().is_none());
+        assert_eq!(consensus(&api).identity(), initial);
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+    }
+
+    #[tokio::test]
+    async fn tempo_load_state_reanchors_and_invalidates_snapshots() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        let state = api.backend.serialized_state(false).await.unwrap();
+        api.mine_one().await.unwrap();
+        let old_snapshot = api.evm_snapshot().await.unwrap();
+        api.backend.load_state(state).await.unwrap();
+        assert_eq!(api.backend.best_number(), 1);
+        assert!(consensus(&api).latest().is_none());
+        assert!(api.backend.list_state_snapshots().is_empty());
+        assert!(!api.evm_revert(old_snapshot).await.unwrap());
+        assert!(
+            !api.backend
+                .db
+                .write()
+                .await
+                .revert_state(old_snapshot, RevertStateSnapshotAction::RevertRemove)
+        );
+        let snapshot = api.evm_snapshot().await.unwrap();
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(api.backend.best_number(), 1);
+        assert!(consensus(&api).latest().is_none());
+    }
+
+    #[tokio::test]
+    async fn tempo_rejected_import_preserves_certificate_and_snapshot() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        let first = consensus(&api).finalization(1).unwrap().digest;
+        let snapshot = api.evm_snapshot().await.unwrap();
+        let mut invalid = api.backend.serialized_state(false).await.unwrap();
+        invalid.best_block_number = Some(99);
+        let error = api.backend.load_state(invalid).await.unwrap_err();
+        assert!(matches!(error, BlockchainError::RpcError(error)
+            if error.message == "Best hash not found for best number 99"));
+        assert_certified_head(&api);
+        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
+        api.mine_one().await.unwrap();
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_certified_head(&api);
+        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
+    }
+
+    #[tokio::test]
+    async fn tempo_pending_and_native_projection_follow_executed_hardfork() {
+        for hardfork in [
+            TempoHardfork::T3.into(),
+            TempoHardfork::T4.into(),
+            FoundryHardfork::Ethereum(EthereumHardfork::Prague),
+        ] {
+            let (api, _handle) =
+                spawn(NodeConfig::test_tempo().with_no_mining(true).with_hardfork(Some(hardfork)))
+                    .await;
+            for _ in 0..2 {
+                api.block_by_number(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+                api.header_by_number(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+            }
+            assert!(consensus(&api).latest().is_none());
+            api.mine_one().await.unwrap();
+            assert_certified_head(&api);
+            let block = api.backend.get_block(1).unwrap();
+            let native = block.header.as_tempo().unwrap();
+            assert_eq!(native.consensus_context.is_some(), api.backend.tempo_hardfork().is_t4());
+            let by_number = api.block_by_number(1.into()).await.unwrap().unwrap();
+            let projected: TempoHeader =
+                serde_json::from_value(serde_json::to_value(by_number).unwrap()).unwrap();
+            assert_eq!(&projected, native);
+            let by_hash =
+                api.backend.block_by_hash(block.header.hash_slow()).await.unwrap().unwrap();
+            let projected: TempoHeader =
+                serde_json::from_value(serde_json::to_value(by_hash).unwrap()).unwrap();
+            assert_eq!(&projected, native);
+        }
+        let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        assert!(api.backend.blockchain.storage.read().tempo.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tempo_fork_startup_and_reset_sign_only_local_successors() {
+        let config = NodeConfig::test_tempo()
+            .with_no_mining(true)
+            .with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
+        let (source_api, source) = spawn(config.clone()).await;
+        for _ in 0..4 {
+            source_api.mine_one().await.unwrap();
+        }
+        let (api, _handle) = spawn(
+            config
+                .with_eth_rpc_url(Some(source.http_endpoint()))
+                .with_fork_block_number(Some(2u64))
+                .with_tempo_consensus_seed(Some(B256::repeat_byte(0x42))),
+        )
+        .await;
+        assert!(consensus(&api).latest().is_none());
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+        assert_eq!(
+            api.backend.get_block(3).unwrap().header.parent_hash(),
+            source_api.backend.get_block(2).unwrap().header.hash_slow()
+        );
+        assert_eq!(consensus(&api).latest().unwrap().1.epoch, 1);
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(source.http_endpoint()),
+            block_number: Some(4),
+        }))
+        .await
+        .unwrap();
+        assert!(consensus(&api).latest().is_none());
+        assert_eq!(consensus(&api).identity().from_epoch, 1);
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+        assert_eq!(api.backend.best_number(), 5);
+
+        let sender = source.dev_wallets().next().unwrap().address();
+        let hash = source_api
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).to(Address::repeat_byte(0x11)),
+            ))
+            .await
+            .unwrap();
+        source_api.mine_one().await.unwrap();
+        let (replay, _replay_handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_no_mining(true)
+                .with_eth_rpc_url(Some(source.http_endpoint()))
+                .with_fork_transaction_hash(Some(hash)),
+        )
+        .await;
+        assert_eq!(replay.backend.best_number(), 5);
+        assert!(consensus(&replay).latest().is_none());
+        replay.mine_one().await.unwrap();
+        assert_eq!(replay.backend.best_number(), 6);
+        assert_certified_head(&replay);
+    }
+}

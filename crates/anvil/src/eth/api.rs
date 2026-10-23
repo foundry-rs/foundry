@@ -1723,6 +1723,13 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
         let loaded = self.backend.load_state_bytes(buf).await?;
+        if loaded {
+            // Lock before reading the active IDs so a concurrent snapshot cannot insert its pool
+            // state between that read and cleanup.
+            let mut snapshots = self.pool_snapshots.lock();
+            let active = self.backend.list_state_snapshots();
+            snapshots.retain(|id, _| active.contains_key(id));
+        }
         #[cfg(feature = "base")]
         if loaded {
             self.invalidate_base_eip8130_pool();
@@ -5977,5 +5984,31 @@ mod tests {
         assert_eq!(response.blob_gas_used_ratio.len(), 6);
         assert_eq!(response.base_fee_per_blob_gas.len(), 6);
         assert_eq!(rewards.len(), 6);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn loaded_state_releases_only_invalidated_pool_snapshots() {
+        for (config, preserves_snapshots) in
+            [(NodeConfig::test(), true), (NodeConfig::test_tempo(), false)]
+        {
+            let (api, handle) = spawn(config.with_no_mining(true)).await;
+            let sender = handle.dev_wallets().next().unwrap().address();
+            let hash = api
+                .send_transaction(WithOtherFields::new(
+                    TransactionRequest::default().from(sender).to(Address::repeat_byte(0x11)),
+                ))
+                .await
+                .unwrap();
+            let transaction = Arc::downgrade(&api.pool.ready_transactions().next().unwrap());
+            let snapshot = api.evm_snapshot().await.unwrap();
+            let state = api.anvil_dump_state(None).await.unwrap();
+            api.pool.clear();
+            assert!(transaction.upgrade().is_some());
+
+            assert!(api.anvil_load_state(state).await.unwrap());
+            assert_eq!(transaction.upgrade().is_some(), preserves_snapshots);
+            assert_eq!(api.evm_revert(snapshot).await.unwrap(), preserves_snapshots);
+            assert_eq!(api.pool.get_transaction(hash).is_some(), preserves_snapshots);
+        }
     }
 }
