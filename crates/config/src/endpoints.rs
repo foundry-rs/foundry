@@ -285,6 +285,9 @@ pub struct RpcEndpoint {
     /// Token to be used as authentication
     pub auth: Option<RpcAuth>,
 
+    /// Profile used on forks of this endpoint's chain.
+    pub profile: Option<String>,
+
     /// additional configuration
     pub config: RpcEndpointConfig,
 }
@@ -300,6 +303,7 @@ impl RpcEndpoint {
             endpoint: self.endpoint.resolve(),
             extra_endpoints: self.extra_endpoints.into_iter().map(|e| e.resolve()).collect(),
             auth: self.auth.map(|auth| auth.resolve()),
+            profile: self.profile,
             config: self.config,
         }
     }
@@ -307,11 +311,14 @@ impl RpcEndpoint {
 
 impl fmt::Display for RpcEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { endpoint, auth, config, .. } = self;
+        let Self { endpoint, auth, profile, config, .. } = self;
         write!(f, "{endpoint}")?;
         write!(f, "{config}")?;
         if let Some(auth) = auth {
             write!(f, ", auth={auth}")?;
+        }
+        if let Some(profile) = profile {
+            write!(f, ", profile={profile}")?;
         }
         Ok(())
     }
@@ -325,7 +332,8 @@ impl Serialize for RpcEndpoint {
         let has_config = self.config.retries.is_some()
             || self.config.retry_backoff.is_some()
             || self.config.compute_units_per_second.is_some()
-            || self.auth.is_some();
+            || self.auth.is_some()
+            || self.profile.is_some();
 
         if !has_config && self.extra_endpoints.is_empty() {
             // serialize as plain endpoint string if there's no additional config
@@ -344,6 +352,7 @@ impl Serialize for RpcEndpoint {
             map.serialize_entry("retry_backoff", &self.config.retry_backoff)?;
             map.serialize_entry("compute_units_per_second", &self.config.compute_units_per_second)?;
             map.serialize_entry("auth", &self.auth)?;
+            map.serialize_entry("profile", &self.profile)?;
             map.end()
         }
     }
@@ -373,6 +382,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             retry_backoff: Option<u64>,
             compute_units_per_second: Option<u64>,
             auth: Option<RpcAuth>,
+            profile: Option<String>,
         }
 
         let RpcEndpointConfigInner {
@@ -382,6 +392,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             retry_backoff,
             compute_units_per_second,
             auth,
+            profile,
         } = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
         let (primary, extra) = match (endpoint, endpoints) {
@@ -415,6 +426,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             endpoint: primary,
             extra_endpoints: extra,
             auth,
+            profile,
             config: RpcEndpointConfig { retries, retry_backoff, compute_units_per_second },
         })
     }
@@ -433,6 +445,7 @@ impl Default for RpcEndpoint {
             extra_endpoints: vec![],
             config: RpcEndpointConfig::default(),
             auth: None,
+            profile: None,
         }
     }
 }
@@ -444,6 +457,7 @@ pub struct ResolvedRpcEndpoint {
     /// Additional resolved endpoints for multi-endpoint load balancing.
     pub extra_endpoints: Vec<Result<String, UnresolvedEnvVarError>>,
     pub auth: Option<Result<String, UnresolvedEnvVarError>>,
+    pub profile: Option<String>,
     pub config: RpcEndpointConfig,
 }
 
@@ -573,6 +587,7 @@ mod tests {
                     compute_units_per_second: Some(100),
                 },
                 auth: Some(RpcAuth::Raw("Bearer 123".to_string())),
+                profile: None,
             }
         );
 
@@ -589,6 +604,7 @@ mod tests {
                     compute_units_per_second: None,
                 },
                 auth: None,
+                profile: None,
             }
         );
     }
@@ -616,6 +632,7 @@ mod tests {
                     compute_units_per_second: None,
                 },
                 auth: None,
+                profile: None,
             }
         );
 

@@ -3,8 +3,9 @@
 //! A fork of `latest` gets an empty cache on each new head, and every cold account or storage read
 //! then blocks the EVM for one RPC round trip. Earlier runs on the same chain read mostly the same
 //! accounts and slots, so the keys of the newest older cache file predict the reads. The keys are
-//! read again at the new block through the fork backend, which caches each value like an EVM read,
-//! so the cache stays exact for that block. A wrong prediction only costs an RPC request.
+//! read again at the new block through the fork backend, so the cache stays exact for that block.
+//! The cache file keeps only the keys the EVM then reads, so a wrong prediction only costs an RPC
+//! request and does not carry over to the next block.
 
 use super::Fork;
 use alloy_network::Network;
@@ -16,7 +17,6 @@ use foundry_fork_db::{
     cache::{JsonBlockCacheDB, MemDb},
 };
 use parking_lot::Mutex;
-use revm::DatabaseRef;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -25,7 +25,6 @@ use std::{
         mpsc,
     },
 };
-use tracing::subscriber::{NoSubscriber, with_default};
 
 /// Prefetch requests in flight at once. The fork backend sends its own cold reads without a limit;
 /// this bound keeps a large key set from flooding a public endpoint.
@@ -73,25 +72,18 @@ pub(crate) fn spawn<N: Network, B: ForkBlockEnv>(
                 let (keys, stop, done_tx) = (Arc::clone(&keys), Arc::clone(&stop), done_tx.clone());
                 let backend = backend.clone();
                 runtime.spawn_blocking(move || {
-                    // A failed speculative read is not an error: the backend logs one per failure,
-                    // and every remaining read fails once the run ends, so keep
-                    // these reads quiet.
-                    with_default(NoSubscriber::default(), || {
-                        while !stop.load(Ordering::Relaxed) {
-                            let Some(key) = keys.lock().next() else { break };
-                            let read = match key {
-                                Key::Account(address) => backend.basic_ref(address).map(drop),
-                                Key::Slot(address, slot) => {
-                                    backend.storage_ref(address, slot).map(drop)
-                                }
-                            };
-                            // The EVM fetches any key it still needs, so stop at the first
-                            // failure.
-                            if read.is_err() {
-                                break;
-                            }
+                    while !stop.load(Ordering::Relaxed) {
+                        let Some(key) = keys.lock().next() else { break };
+                        // A prefetched key stays out of the cache file until the EVM reads it.
+                        let read = match key {
+                            Key::Account(address) => backend.prefetch_basic(address),
+                            Key::Slot(address, slot) => backend.prefetch_storage(address, slot),
+                        };
+                        // The EVM fetches any key it still needs, so stop at the first failure.
+                        if read.is_err() {
+                            break;
                         }
-                    });
+                    }
                     // Drop the backend clone before reporting done, as below.
                     drop(backend);
                     drop(done_tx);

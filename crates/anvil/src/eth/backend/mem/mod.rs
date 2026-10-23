@@ -135,8 +135,8 @@ use foundry_evm::{
     },
     utils::{
         StateChangeset, apply_chain_specific_tx_replay_env_changes_for_chain,
-        block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_hardfork,
+        block_env_from_header, get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_params_by_hardfork,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
@@ -5992,8 +5992,9 @@ where
             self.fees.set_optimism_base_fee_rules(header.extra_data());
         }
         let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(&header);
+        let blob_params = self.fees.blob_params();
         let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
-            self.fees.blob_params(),
+            blob_params,
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
             header.base_fee_per_gas.unwrap_or_default(),
@@ -6001,7 +6002,7 @@ where
         self.fees.set_base_fee(next_block_base_fee);
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
-            get_blob_base_fee_update_fraction_by_spec_id(*self.evm_env.read().spec_id()),
+            blob_params.update_fraction as u64,
         ));
         self.notify_on_new_block(header.into_inner(), block_hash);
 
@@ -8176,10 +8177,8 @@ where
         let transaction = block.body.transactions[info.transaction_index as usize].clone();
 
         // Cancun specific
-        let excess_blob_gas = block.header.excess_blob_gas();
         let blob_gas_used = transaction.blob_gas_used();
-        let blob_gas_price = blob_gas_used
-            .map(|_| alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default()));
+        let blob_gas_price = blob_gas_used.and_then(|_| block.header.blob_fee(self.blob_params()));
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
@@ -8551,18 +8550,16 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
         let next_fees = selected_header.as_ref().map(|header| {
             let parent_fees = self.fees.get_parent_header_fees(header);
+            let blob_params = self.fees.blob_params();
             let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
-                self.fees.blob_params(),
+                blob_params,
                 header.excess_blob_gas().unwrap_or_default(),
                 header.blob_gas_used().unwrap_or_default(),
                 header.base_fee_per_gas().unwrap_or_default(),
             );
             let blob_excess_gas_and_price = BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
-                get_blob_base_fee_update_fraction(
-                    self.evm_env.read().cfg_env.chain_id,
-                    header.timestamp,
-                ),
+                blob_params.update_fraction as u64,
             );
             (parent_fees, blob_excess_gas_and_price)
         });
@@ -10947,6 +10944,7 @@ mod tests {
             network: None,
             network_profile: None,
             hardfork,
+            blob_params: None,
             instance_id,
             source_fork_block_number: None,
             source_fork_block_hash: None,

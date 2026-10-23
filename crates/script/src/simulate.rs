@@ -35,7 +35,7 @@ use foundry_evm::{
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     mem,
 };
 
@@ -139,7 +139,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         &self,
         decoder_for_rpc: impl Fn(&str) -> &'a CallTraceDecoder,
     ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
-        let address_to_abi = self.build_address_to_abi_map();
+        let mut contracts_by_rpc = HashMap::new();
         let transactions = self
             .execution_result
             .transactions
@@ -153,11 +153,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 let to = tx.transaction.to();
                 let decoder = decoder_for_rpc(&rpc);
 
+                let address_to_abi = contracts_by_rpc
+                    .entry(rpc.clone())
+                    .or_insert_with(|| self.build_address_to_abi_map(&rpc));
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
                 if to.is_some() {
                     builder.set_call(
-                        &address_to_abi,
+                        address_to_abi,
                         decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
@@ -165,7 +168,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     builder.set_create(
                         false,
                         tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
-                        &address_to_abi,
+                        address_to_abi,
                     )?;
                 }
 
@@ -235,6 +238,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         &self.build_data,
+                        self.script_config.chain_builds.get(&rpc).map(|build| &build.artifacts),
                     )
                     .build();
 
@@ -312,8 +316,9 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     }
 
     /// Build mapping from contract address to its ABI, code and contract name.
-    fn build_address_to_abi_map(&self) -> BTreeMap<Address, &ContractData> {
-        self.execution_artifacts
+    fn build_address_to_abi_map(&self, rpc: &str) -> BTreeMap<Address, &ContractData> {
+        let mut contracts: BTreeMap<_, _> = self
+            .execution_artifacts
             .decoder
             .contracts
             .iter()
@@ -325,7 +330,51 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 }
                 None
             })
-            .collect()
+            .collect();
+        // Identify creations from the exact recorded input, not a trace identifier from another
+        // endpoint or a run-profile bytecode length. The same address may exist on several forks.
+        for tx in self
+            .execution_result
+            .transactions
+            .iter()
+            .flatten()
+            .filter(|tx| tx.rpc.as_deref() == Some(rpc))
+        {
+            let Some(input) = tx.transaction.input() else { continue };
+            let creation =
+                if tx.transaction.to() == Some(self.script_config.evm_opts.create2_deployer) {
+                    if input.len() < 32 {
+                        continue;
+                    }
+                    let (salt, code) = input.split_at(32);
+                    Some((
+                        self.script_config
+                            .evm_opts
+                            .create2_deployer
+                            .create2_from_code(alloy_primitives::B256::from_slice(salt), code),
+                        code,
+                    ))
+                } else if tx.transaction.to().is_none() {
+                    tx.contract_address
+                        .or_else(|| Some(tx.transaction.from()?.create(tx.transaction.nonce()?)))
+                        .map(|address| (address, input.as_ref()))
+                } else {
+                    None
+                };
+            if let Some((address, code)) = creation {
+                let profile =
+                    self.script_config.chain_builds.get(rpc).map(|build| &build.artifacts);
+                if let Some(data) = profile
+                    .into_iter()
+                    .chain(std::iter::once(&self.build_data.known_contracts))
+                    .flat_map(|artifacts| artifacts.values())
+                    .find(|data| data.bytecode().is_some_and(|bytecode| code.starts_with(bytecode)))
+                {
+                    contracts.insert(address, data);
+                }
+            }
+        }
+        contracts
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
@@ -641,8 +690,10 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
     pub async fn bundle(mut self) -> Result<BundledState<FEN>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
-        if is_multi_deployment && !self.build_data.libraries.is_empty() {
-            eyre::bail!("Multi-chain deployment is not supported with libraries.");
+        if is_multi_deployment && self.build_data.predeploy_libraries.has_nonce_libraries() {
+            eyre::bail!(
+                "Multi-chain deployment is not supported with libraries deployed at nonce addresses."
+            );
         }
 
         let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::default();
@@ -651,6 +702,8 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         let mut new_sequence = VecDeque::new();
         let mut manager = ProvidersManager::<FEN::Network>::default();
         let mut sequences = vec![];
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
+        let mut checked_create2_deployer = HashSet::new();
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
         // [`ScriptSequence`] from all the collected transactions up to this point.
@@ -671,6 +724,17 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
                 tx.set_chain_id(provider_info.chain);
+            }
+
+            // Simulation forks may carry the local CREATE2 deployer, so check the chain itself.
+            if tx.tx().to() == Some(create2_deployer)
+                && checked_create2_deployer.insert(tx_rpc.clone())
+                && provider_info.provider.get_code_at(create2_deployer).await?.is_empty()
+            {
+                eyre::bail!(
+                    "CREATE2 deployer {create2_deployer} is not deployed on chain {}",
+                    provider_info.chain
+                );
             }
 
             if !self.args.skip_simulation {

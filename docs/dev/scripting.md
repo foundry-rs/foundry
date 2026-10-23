@@ -245,6 +245,30 @@ reconciled per chain, while new sequences are broadcast in container order. Ther
 atomicity. Recovery must preserve independent per-chain progress and must not infer that one chain's
 completion permits skipping an operation on another.
 
+Endpoints that name a profile get a separate build of that profile's compiler settings, cached in
+`cache/profiles/<settings hash>`. Profiles with identical compiler settings share that build while
+retaining their own hardfork and CREATE2 library salt. Endpoints are mapped to profiles by URL
+without contacting them.
+On forks of the endpoint's URL, in scripts and tests:
+
+- `vm.getCode`, `vm.getDeployedCode` and `vm.deployCode` take the build's artifact.
+- Direct script or test `new C()` and `new C{salt: s}()` deploy the build's creation code of a project
+  contract, with the same constructor arguments. A CREATE2 address therefore follows from
+  `vm.getCode`, not from `type(C).creationCode`. Calls into on-chain factories execute their supplied
+  initcode unchanged, so transaction simulation and broadcast reproduce script execution.
+- Frames of non-persistent accounts use the profile's spec. The script or test contract keeps the
+  run's spec, and `vm.setEvmVersion` overrides both.
+
+Scripts link profile builds with CREATE2 libraries and deploy them on each fork before its first
+broadcast, so multichain scripts support libraries unless they are deployed at nonce addresses.
+Tests link profile builds with the run's libraries, which persist across forks, unless the profile
+configures them.
+
+Constructor metadata and verification select artifacts from the endpoint's build and retain its
+compiler settings and linked library addresses. Run-profile deployments, including libraries
+prepared before broadcasting, retain the run build as a verification fallback. Coverage, mutation
+testing, and fuzz corpus replay pass endpoint builds to their test runners as well.
+
 ## Known failure windows
 
 | Window                                                                    | Recovery behavior or remaining limitation                                   |
@@ -333,13 +357,18 @@ implemented guarantee.
 
 ### Transaction semantics
 
-Recovery preserves every field that can change transaction identity or behavior, including:
+For an existing attempt, recovery preserves every field that can change transaction identity or
+behavior, including:
 
 - chain ID, sender, nonce, destination or create form, value, input, and call order;
 - gas limit and legacy or EIP-1559 fee fields;
 - access lists, blobs, authorization lists, and pre-signed envelopes when present;
 - Tempo fee token, nonce key, validity window, calls, access-key metadata, sponsor data, and batch
   membership.
+
+An operation without an attempt is prepared on resume like a new one. Its saved request keeps the
+sender, nonce, destination, value, and input, but fees, gas estimates, Tempo options such as the fee
+token, nonce key, and validity window, and sponsorship can come from the resume invocation.
 
 Reconciliation and rebroadcast of identical locally signed bytes do not request a signer. The
 initial recovery implementation fails closed instead of replacing an existing attempt with changed

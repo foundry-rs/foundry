@@ -5279,3 +5279,71 @@ async fn test_fork_reset_follows_amsterdam_tx_gas_limit_cap() {
         }
     }
 }
+
+// After replaying the fork block's transaction prefix, the next block's blob base fee must use the
+// same blob params as the rest of the fork, so the price the EVM charges matches fee history.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_uses_active_blob_params() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let update_fraction = origin_api.backend.blob_params().update_fraction as u64;
+    origin_api
+        .backend
+        .fees()
+        .set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(10_000_000, update_fraction));
+    origin_api.mine_one().await.unwrap();
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let mut hashes = Vec::new();
+    for nonce in 0..2 {
+        let tx = TransactionRequest::default()
+            .from(sender)
+            .to(Address::random())
+            .value(U256::ONE)
+            .nonce(nonce);
+        hashes.push(
+            *origin_provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().tx_hash(),
+        );
+    }
+    origin_api.mine_one().await.unwrap();
+
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_transaction_hash(Some(hashes[1])),
+    )
+    .await;
+    let blob_base_fee = fork_api.blob_base_fee().unwrap();
+    fork_api.mine_one().await.unwrap();
+    let history = fork_api.fee_history(U256::ONE, BlockNumberOrTag::Latest, vec![]).await.unwrap();
+
+    assert_eq!(U256::from(history.base_fee_per_blob_gas[0]), blob_base_fee);
+}
+
+// Fork blob params must follow the source's active schedule through a nested fork whose middle
+// node executes another hardfork, whether or not the root chain has a public schedule.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_blob_params_follow_source() {
+    let prague = EthereumHardfork::Prague;
+    for chain_id in [31337u64, 1] {
+        let (root_api, root_handle) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain_id))
+                .with_hardfork(Some(prague.into()))
+                .with_genesis_timestamp(prague.mainnet_activation_timestamp()),
+        )
+        .await;
+        root_api.mine_one().await.unwrap();
+        let (middle_api, middle_handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(root_handle.http_endpoint()))
+                .with_hardfork(Some(EthereumHardfork::Cancun.into())),
+        )
+        .await;
+        assert_eq!(middle_api.backend.blob_params(), BlobParams::prague());
+        let (nested_api, _nested_handle) =
+            spawn(NodeConfig::test().with_eth_rpc_url(Some(middle_handle.http_endpoint()))).await;
+        assert_eq!(nested_api.backend.blob_params(), BlobParams::prague(), "chain {chain_id}");
+    }
+}

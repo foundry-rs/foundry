@@ -1264,7 +1264,7 @@ fn abi_commands_reuse_preprocessed_cache(prj: _, cmd: _) {
         r#"#!/bin/sh
 if [ "$1" = "--version" ]; then
     echo "solc, the solidity compiler commandline interface"
-    echo "Version: 0.8.35+commit.69074fbd"
+    echo "Version: 0.8.38+commit.1835d247"
     exit 0
 fi
 cat > "$0.invoked"
@@ -3759,7 +3759,6 @@ contract TargetTest is Test {
 fn preprocess_custom_layout_contract(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
     });
 
     prj.add_source(
@@ -5394,7 +5393,7 @@ fn preprocess_codegen_fallback_is_targeted(prj: _, cmd: _) {
         r#"#!/bin/sh
 if [ "$1" = "--version" ]; then
     echo "solc, the solidity compiler commandline interface"
-    echo "Version: 0.8.35+commit.69074fbd"
+    echo "Version: 0.8.38+commit.1835d247"
     exit 0
 fi
 cat > /dev/null
