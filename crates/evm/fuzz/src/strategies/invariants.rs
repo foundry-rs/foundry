@@ -143,8 +143,8 @@ mod tests {
             if expected == eligible {
                 assert_eq!(targets, vec![eligible; 64]);
             } else {
-                assert!(targets.iter().any(|target| *target == excluded));
-                assert!(targets.iter().any(|target| *target == eligible));
+                assert!(targets.contains(&excluded));
+                assert!(targets.contains(&eligible));
             }
         }
     }
