@@ -2786,6 +2786,101 @@ contract OptimizationTest {
     ]]);
 }
 
+#[forgetest]
+fn invariant_optimization_shrink_rejects_handler_assertions(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+interface Vm { function warp(uint256) external; }
+contract Handler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool penalty;
+    bool reward;
+    bool done;
+    function penalize() external { penalty = true; }
+    function earn() external { vm.warp(1000); assert(penalty); reward = true; }
+    function finish() external { done = true; }
+    function score() external view returns (int256) { return done ? (reward ? int256(12) : int256(block.timestamp)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 7 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
+    // which scores 1000; the campaign would fail on that assertion, so the witness must keep it.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 3, shrunk: 3)
+[..]calldata=penalize() args=[]
+[..]calldata=earn() args=[]
+[..]calldata=finish() args=[]
+ invariant_optimize() (best: 12, runs: 1, calls: 3)
+...
+"#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_legacy_gate_checks_only_targets(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.legacy_assertions = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.fail_on_revert = true;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Dependency {
+    uint256 touches;
+    function touch() external { touches++; }
+    function failed() external pure returns (bool) { return true; }
+}
+contract Handler {
+    Dependency dependency = new Dependency();
+    bool penalty;
+    bool reward;
+    function penalize() external { penalty = true; }
+    function earn() external { dependency.touch(); reward = true; }
+    function score() external view returns (int256) { return reward ? (penalty ? int256(12) : int256(22)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // The campaign checks `failed()` only on targets, so the dependency's flag must not block
+    // shrinking from 12 to 22 or the rerun of the persisted witness.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 1, calls: 2)
+...
+"#]]);
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 1, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 0, calls: 0)
+...
+"#
+    ]]);
+}
+
 // Test that optimization mode works with negative values (finding max of negative range).
 #[forgetest]
 fn invariant_optimization_negative_values(prj: _, cmd: _) {

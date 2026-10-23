@@ -916,6 +916,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     calls: &[BasicTxDetails],
     executor: &Executor<FEN>,
     target_value: I256,
+    targets: &[Address],
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
 ) -> eyre::Result<(Vec<BasicTxDetails>, I256)> {
@@ -934,6 +935,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
         target_address,
         calldata.clone(),
         config.fail_on_revert,
+        targets,
     )? == Some(target_value)
     {
         return Ok((vec![], target_value));
@@ -969,6 +971,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
                 target_address,
                 calldata.clone(),
                 config.fail_on_revert,
+                targets,
             ) {
                 Ok(Some(value)) if value >= best => {
                     best = value;
@@ -1137,9 +1140,13 @@ fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
 /// function. Used during shrinking for optimization mode.
 ///
 /// Returns `None` if the invariant call fails or doesn't return a valid int256, or if the campaign
-/// would not have scored the sequence: a kept call is rejected by `vm.assume` or fails its handler
-/// gate with `fail_on_revert`, or the last kept call fails its handler gate.
+/// would not have scored the sequence or would have failed the test: a kept call is rejected by
+/// `vm.assume`, fails an assertion, or fails its handler gate with `fail_on_revert`, or the last
+/// kept call fails its handler gate.
 /// Unlike `check_sequence`, this applies warp/roll from ALL calls (including removed ones).
+///
+/// `targets` are the campaign's fuzz targets, whose `failed()` the handler gate checks under legacy
+/// assertions.
 pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
@@ -1147,11 +1154,22 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     test_address: Address,
     calldata: Bytes,
     fail_on_revert: bool,
+    targets: &[Address],
 ) -> eyre::Result<Option<I256>> {
     let mut accumulated_warp = U256::ZERO;
     let mut accumulated_roll = U256::ZERO;
     let mut seq_iter = sequence.iter().peekable();
     let mut last_call_scored = true;
+    // Contracts created during a run also become targets; include the ones the sequence calls.
+    let mut gate_targets = Vec::new();
+    if executor.legacy_assertions() {
+        gate_targets.extend_from_slice(targets);
+        for tx in calls {
+            if !gate_targets.contains(&tx.call_details.target) {
+                gate_targets.push(tx.call_details.target);
+            }
+        }
+    }
 
     for (idx, tx) in calls.iter().enumerate() {
         accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
@@ -1165,13 +1183,14 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
             let (kind, call_result) =
                 execute_invariant_replay_tx(&mut executor, &tx_with_accumulated)?;
             // Campaigns sample the score only after a call that passes the handler gate.
-            last_call_scored = handlers_succeeded(&executor, test_address, &call_result);
-            // Campaigns drop rejected calls and stop on a failed gate under `fail_on_revert`; a
-            // handler assertion failure is recorded as a handler bug instead.
+            last_call_scored =
+                handlers_succeeded(&executor, test_address, &gate_targets, &call_result);
+            // Campaigns drop rejected calls. A failed gate stops them under `fail_on_revert`, and
+            // an assertion failure is a handler bug that fails the test in any configuration.
             if kind == CampaignCallKind::AssumptionRejected
                 || (!last_call_scored
-                    && fail_on_revert
-                    && !did_fail_on_assert(&call_result, &call_result.state_changeset))
+                    && (fail_on_revert
+                        || did_fail_on_assert(&call_result, &call_result.state_changeset)))
             {
                 return Ok(None);
             }
@@ -1199,12 +1218,12 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     Ok(None)
 }
 
-/// Mirrors the campaign's handler gate. With legacy assertions the campaign checks `failed()` on
-/// every target, and that check sees only the call's state changeset, so a target can only fail it
-/// when the call touched it; checking every touched account covers each target.
+/// Mirrors the campaign's handler gate, which checks `failed()` on every target, and not the test
+/// contract, under legacy assertions.
 fn handlers_succeeded<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     test_address: Address,
+    targets: &[Address],
     call_result: &RawCallResult<FEN>,
 ) -> bool {
     if call_result.reverted {
@@ -1214,9 +1233,9 @@ fn handlers_succeeded<FEN: FoundryEvmNetwork>(
     if !executor.legacy_assertions() {
         return executor.is_success_handler_gate(test_address, false, Cow::Borrowed(changeset));
     }
-    std::iter::once(test_address)
-        .chain(changeset.keys().copied())
-        .all(|address| executor.is_success_handler_gate(address, false, Cow::Borrowed(changeset)))
+    targets
+        .iter()
+        .all(|&address| executor.is_success_handler_gate(address, false, Cow::Borrowed(changeset)))
 }
 
 #[cfg(test)]
@@ -1326,9 +1345,16 @@ mod tests {
             if let Some(block) = cheatcode_block {
                 executor.inspector_mut().cheatcodes.as_mut().unwrap().block = block;
             }
-            let value =
-                check_sequence_value(executor, &calls, sequence, test_address, Bytes::new(), false)
-                    .unwrap();
+            let value = check_sequence_value(
+                executor,
+                &calls,
+                sequence,
+                test_address,
+                Bytes::new(),
+                false,
+                &[],
+            )
+            .unwrap();
             assert_eq!(value, expected);
         }
     }

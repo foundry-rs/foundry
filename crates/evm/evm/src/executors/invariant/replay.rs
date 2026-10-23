@@ -9,7 +9,7 @@ use crate::executors::{
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Bytes, I256, Log,
+    Address, Bytes, I256, Log,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Result;
@@ -121,6 +121,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 ///
 /// For check mode (target_value=None): shrinks to find shortest failing sequence.
 /// For optimization mode (target_value=Some): shrinks to find shortest sequence producing target.
+/// `targets` are the campaign's fuzz targets, used to score optimization candidates.
 #[expect(clippy::too_many_arguments)]
 pub fn replay_error<FEN: FoundryEvmNetwork>(
     config: InvariantConfig,
@@ -130,6 +131,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     expect_assertion_failure: bool,
     rd: Option<&RevertDecoder>,
     target_value: Option<I256>,
+    targets: &[Address],
     invariant_contract: &InvariantContract<'_>,
     target_invariant: &Function,
     known_contracts: &ContractsByArtifact,
@@ -162,6 +164,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             calls,
             &executor,
             target,
+            targets,
             &shrink_progress,
             early_exit,
         )?;
