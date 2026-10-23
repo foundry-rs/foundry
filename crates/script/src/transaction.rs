@@ -5,7 +5,9 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
-use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
+use foundry_common::{
+    ContractData, ContractsByArtifact, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw,
+};
 use foundry_evm::traces::{CallKind, CallTraceDecoder};
 use itertools::Itertools;
 use std::collections::BTreeMap;
@@ -161,9 +163,20 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
+        profile_contracts: Option<&ContractsByArtifact>,
     ) -> Self {
         let mut created_contracts =
             result.get_created_contracts(&linked_build_data.known_contracts);
+
+        if let Some(contracts) = profile_contracts {
+            for created in &mut created_contracts {
+                if let Some(data) = contracts.values().find(|data| {
+                    data.bytecode().is_some_and(|code| created.init_code.starts_with(code))
+                }) {
+                    created.contract_name = Some(data.name.clone());
+                }
+            }
+        }
 
         // Add the additional contracts created in this transaction, so we can verify them later.
         created_contracts.retain(|contract| {

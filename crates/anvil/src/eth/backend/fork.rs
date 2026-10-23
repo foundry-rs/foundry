@@ -3,7 +3,7 @@
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount};
-use alloy_eips::eip2930::AccessListResult;
+use alloy_eips::{eip2930::AccessListResult, eip7840::BlobParams};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
     primitives::HeaderResponse,
@@ -58,6 +58,8 @@ pub(crate) struct ForkEndpointIdentity {
     pub(crate) network: Option<NetworkVariant>,
     pub(crate) network_profile: Option<NetworkConfigs>,
     pub(crate) hardfork: Option<FoundryHardfork>,
+    /// Blob params an Anvil endpoint prices blobs with, which can differ from its hardfork's.
+    pub(crate) blob_params: Option<BlobParams>,
     pub(crate) instance_id: Option<B256>,
     pub(crate) source_fork_block_number: Option<u64>,
     pub(crate) source_fork_block_hash: Option<B256>,
@@ -76,6 +78,7 @@ impl ForkEndpointIdentity {
             && self.network == other.network
             && self.network_profile == other.network_profile
             && self.hardfork == other.hardfork
+            && self.blob_params == other.blob_params
             && self.source_fork_block_number == other.source_fork_block_number
             && self.source_fork_block_hash == other.source_fork_block_hash
     }
