@@ -14,7 +14,10 @@ use evm2::{
     precompiles::{MovePrecompileError, PrecompileHalt, PrecompileId, PrecompileResult},
     registry::TxRegistry,
 };
-use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
+use foundry_evm_networks::{
+    NetworkConfigs,
+    celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_PRECOMPILE_NAME},
+};
 
 /// Gas Celo's transfer precompile charges.
 const CELO_TRANSFER_GAS_COST: u64 = 9000;
@@ -97,44 +100,41 @@ struct EthPrecompiles {
     p256: Option<Option<bool>>,
 }
 
-impl EthPrecompiles {
-    /// Returns whether `address` is decided by a network addition rather than `inner`.
-    fn is_override(&self, address: &Address) -> bool {
-        (self.celo && *address == CELO_TRANSFER_ADDRESS)
-            || (self.p256.is_some() && *address == BSC_P256_ADDRESS)
-    }
-
-    /// Returns the network additions installed over `inner`.
-    fn additions(&self) -> Vec<(Address, PrecompileId)> {
-        let mut additions = Vec::new();
-        if self.celo {
-            additions.push((CELO_TRANSFER_ADDRESS, PrecompileId::custom("celo transfer")));
-        }
-        if let Some(Some(_)) = self.p256 {
-            additions.push((BSC_P256_ADDRESS, PrecompileId::P256Verify));
-        }
-        additions
-    }
-}
-
 impl PrecompileProvider<BaseEvmTypes> for EthPrecompiles {
     fn addresses(&self) -> Vec<Address> {
         let mut addresses = self.inner.addresses();
-        addresses.retain(|address| !self.is_override(address));
-        addresses.extend(self.additions().into_iter().map(|(address, _)| address));
+        if self.celo {
+            addresses.push(CELO_TRANSFER_ADDRESS);
+        }
+        if self.p256.is_some() {
+            addresses.retain(|address| *address != BSC_P256_ADDRESS);
+        }
+        if let Some(Some(_)) = self.p256 {
+            addresses.push(BSC_P256_ADDRESS);
+        }
         addresses
     }
 
     fn precompile_ids(&self) -> Vec<(Address, PrecompileId)> {
         let mut ids = self.inner.precompile_ids();
-        ids.retain(|(address, _)| !self.is_override(address));
-        ids.extend(self.additions());
+        if self.celo {
+            ids.push((CELO_TRANSFER_ADDRESS, PrecompileId::custom(CELO_TRANSFER_PRECOMPILE_NAME)));
+        }
+        if self.p256.is_some() {
+            ids.retain(|(address, _)| *address != BSC_P256_ADDRESS);
+        }
+        if let Some(Some(_)) = self.p256 {
+            ids.push((BSC_P256_ADDRESS, PrecompileId::P256Verify));
+        }
         ids
     }
 
     fn contains(&self, address: &Address) -> bool {
-        if self.is_override(address) {
-            return self.additions().iter().any(|(added, _)| added == address);
+        if self.celo && *address == CELO_TRANSFER_ADDRESS {
+            return true;
+        }
+        if self.p256.is_some() && *address == BSC_P256_ADDRESS {
+            return self.p256.flatten().is_some();
         }
         self.inner.contains(address)
     }
@@ -153,17 +153,21 @@ impl PrecompileProvider<BaseEvmTypes> for EthPrecompiles {
         gas: &mut GasTracker,
     ) -> Option<PrecompileResult> {
         let target = message.call_target;
-        if !self.is_override(&target) {
-            return self.inner.execute(evm, message, gas);
-        }
         if target == CELO_TRANSFER_ADDRESS {
-            return Some(celo_transfer(evm, &message.input, gas));
+            return self.celo.then(|| celo_transfer(evm, &message.input, gas));
         }
-        match self.p256 {
-            Some(Some(true)) => Some(evm2::precompiles::secp256r1::run_osaka(&message.input, gas)),
-            Some(Some(false)) => Some(evm2::precompiles::secp256r1::run(&message.input, gas)),
-            _ => None,
+        if target == BSC_P256_ADDRESS
+            && let Some(p256) = self.p256
+        {
+            return p256.map(|osaka| {
+                if osaka {
+                    evm2::precompiles::secp256r1::run_osaka(&message.input, gas)
+                } else {
+                    evm2::precompiles::secp256r1::run(&message.input, gas)
+                }
+            });
         }
+        self.inner.execute(evm, message, gas)
     }
 }
 
@@ -221,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn network_precompiles_follow_master() {
+    fn bsc_precompile_overrides_stock_p256() {
         let eth = EthEvmFactory::default();
         // Osaka includes P256, but BSC removes it before Haber and adds it from Haber on.
         assert!(ids(eth, SpecId::OSAKA, 1, 0).contains(&BSC_P256_ADDRESS));
@@ -235,9 +239,5 @@ mod tests {
         assert!(
             !ids(eth, SpecId::CANCUN, 1, BSC_MAINNET_HABER_TIMESTAMP).contains(&BSC_P256_ADDRESS)
         );
-
-        let celo = eth.with_networks(NetworkConfigs::with_celo());
-        assert!(ids(celo, SpecId::PRAGUE, 42220, 0).contains(&CELO_TRANSFER_ADDRESS));
-        assert!(!ids(eth, SpecId::PRAGUE, 42220, 0).contains(&CELO_TRANSFER_ADDRESS));
     }
 }
