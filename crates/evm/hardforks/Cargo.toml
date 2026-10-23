@@ -26,9 +26,9 @@ revm.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tempo-hardfork.workspace = true
 foundry-compilers.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [features]
-default = ["optimism"]
 monad = ["dep:monad-revm"]
 base = ["dep:base-common-genesis", "dep:base-common-evm"]
 optimism = ["dep:alloy-op-hardforks", "dep:op-revm"]

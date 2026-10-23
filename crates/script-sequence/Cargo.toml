@@ -27,9 +27,9 @@ revm-inspectors.workspace = true
 
 alloy-network.workspace = true
 alloy-primitives.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [features]
-default = ["optimism"]
 monad = ["foundry-common/monad", "foundry-config/monad"]
 base = ["foundry-common/base"]
 optimism = ["foundry-common/optimism"]

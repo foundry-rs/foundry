@@ -47,6 +47,7 @@ url.workspace = true
 
 # monad
 monad-revm = { workspace = true, optional = true }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
@@ -54,7 +55,6 @@ foundry-test-utils.workspace = true
 tempfile.workspace = true
 
 [features]
-default = ["optimism"]
 monad = [
     "dep:monad-revm",
     "foundry-common/monad",

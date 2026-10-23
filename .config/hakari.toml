@@ -1,0 +1,51 @@
+# This file contains settings for `cargo hakari`.
+# See https://docs.rs/cargo-hakari/latest/cargo_hakari/config for a full list of options.
+
+hakari-package = "workspace-hack"
+
+# Format version for hakari's output. Version 4 requires cargo-hakari 0.9.22 or above.
+dep-format-version = "4"
+
+resolver = "2"
+
+# Platforms Foundry releases for.
+platforms = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+# Keep optional, feature-gated stacks out of the workspace-hack so that a single binary built with
+# default features does not compile them.
+[traversal-excludes]
+third-party = [
+    { name = "alloy-signer-aws" },
+    { name = "alloy-signer-gcp" },
+    { name = "alloy-signer-turnkey" },
+    { name = "tracing-tracy" },
+    { name = "mimalloc" },
+    { name = "solar-cli", git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" },
+    { name = "monad-revm" },
+    { name = "alloy-monad-evm" },
+    { name = "base-common-chains", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-common-consensus", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-common-evm", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-common-genesis", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-common-network", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-common-precompiles", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-common-rpc-types", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-consensus-upgrades", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-execution-eip8130", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+    { name = "base-protocol", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
+]
+
+# Keep feature-gated features of these packages out of the workspace-hack: foundry-wallets carries the
+# KMS and Turnkey signers, revm-inspectors the JS tracer, and solar's clap support pulls vergen.
+[final-excludes]
+third-party = [
+    { name = "foundry-wallets", git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" },
+    { name = "revm-inspectors" },
+    { name = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" },
+    { name = "solar-config", git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" },
+]

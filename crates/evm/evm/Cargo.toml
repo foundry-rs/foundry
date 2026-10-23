@@ -69,12 +69,12 @@ tokio.workspace = true
 # monad
 alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 tempo-revm.workspace = true
 
 [features]
-default = ["optimism"]
 monad = [
     "dep:monad-revm",
     "dep:alloy-monad-evm",

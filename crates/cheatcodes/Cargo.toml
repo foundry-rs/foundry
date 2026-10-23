@@ -74,13 +74,13 @@ tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
 tempo-precompiles.workspace = true
 tempo-primitives.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile.workspace = true
 tempo-precompiles = { workspace = true, features = ["test-utils"] }
 
 [features]
-default = ["optimism"]
 monad = [
     "dep:monad-revm",
     "foundry-config/monad",

@@ -69,6 +69,7 @@ yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 
 tracing-tracy = { version = "0.12", optional = true, features = ["demangle"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -80,7 +81,6 @@ rustix = { version = "1", features = ["process", "event"] }
 tikv-jemallocator = { workspace = true, optional = true }
 
 [features]
-default = ["optimism"]
 tracy = ["dep:tracing-tracy"]
 tracy-allocator = ["tracy"]
 jemalloc = ["dep:tikv-jemallocator"]

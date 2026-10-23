@@ -33,6 +33,7 @@ members = [
     "crates/test-utils/macros/",
     "crates/cli-markdown/",
     "crates/tui/",
+    "crates/workspace-hack",
 ]
 resolver = "2"
 
@@ -127,6 +128,10 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 unused_must_use = "deny"
 redundant_imports = "warn"
 redundant_lifetimes = "warn"
+
+[workspace.lints.cargo]
+# `workspace-hack` is a dependency of every crate that never references it.
+unused_dependencies = "allow"
 
 [workspace.lints.rustdoc]
 all = "warn"

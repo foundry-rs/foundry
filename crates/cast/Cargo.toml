@@ -102,6 +102,7 @@ tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
 url.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -165,4 +166,7 @@ optimism = [
     "foundry-evm-networks/optimism",
     "foundry-evm/optimism",
     "foundry-cli/optimism",
+    "forge-fmt/optimism",
+    "foundry-debugger/optimism",
+    "foundry-primitives/optimism",
 ]

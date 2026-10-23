@@ -35,8 +35,11 @@ shlex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 wait-timeout.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [features]
-default = ["optimism"]
 base = ["foundry-evm/base"]
-optimism = ["foundry-evm/optimism"]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-common/optimism",
+]

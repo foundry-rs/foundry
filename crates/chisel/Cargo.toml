@@ -54,6 +54,7 @@ time = { version = "0.3", features = ["formatting"] }
 yansi.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 anvil.workspace = true
@@ -86,4 +87,6 @@ optimism = [
     "foundry-common/optimism",
     "foundry-evm/optimism",
     "foundry-cli/optimism",
+    "forge-fmt/optimism",
+    "foundry-evm-networks/optimism",
 ]

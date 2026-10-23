@@ -51,6 +51,7 @@ which.workspace = true
 yansi.workspace = true
 clap = { version = "4", features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2"

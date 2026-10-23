@@ -20,6 +20,7 @@ alloy-primitives = { workspace = true, features = ["rlp"] }
 
 rayon.workspace = true
 thiserror.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 semver.workspace = true

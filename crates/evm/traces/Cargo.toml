@@ -55,6 +55,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 yansi.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 ron.workspace = true
@@ -62,7 +63,6 @@ snapbox.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-default = ["optimism"]
 monad = [
     "dep:monad-revm",
     "foundry-evm-core/monad",
@@ -80,4 +80,5 @@ optimism = [
     "foundry-common/optimism",
     "foundry-evm-core/optimism",
     "foundry-evm-networks/optimism",
+    "foundry-evm-hardforks/optimism",
 ]

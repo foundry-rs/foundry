@@ -40,12 +40,12 @@ tempfile.workspace = true
 ui_test = "0.30.5"
 reqwest.workspace = true
 svm.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 # Pinned dependencies. See /Cargo.toml.
 [target.'cfg(any())'.dependencies]
 idna_adapter.workspace = true
 
 [features]
-default = ["optimism"]
 base = ["foundry-common/base"]
 optimism = ["foundry-common/optimism"]

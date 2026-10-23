@@ -146,6 +146,7 @@ clap_complete = { workspace = true, optional = true }
 chrono.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
@@ -197,6 +198,7 @@ optimism = [
     "foundry-common/optimism",
     "foundry-evm/optimism",
     "foundry-cli?/optimism",
+    "foundry-evm-networks/optimism",
 ]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli?/jemalloc"]

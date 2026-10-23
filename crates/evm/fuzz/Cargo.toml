@@ -50,9 +50,9 @@ rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [features]
-default = ["optimism"]
 monad = ["foundry-evm-core/monad"]
 base = [
     "foundry-common/base",

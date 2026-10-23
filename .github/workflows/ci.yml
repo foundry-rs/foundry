@@ -278,6 +278,27 @@ jobs:
       pin-min-age: 7
       ensure-secure-runner: false
 
+  hakari:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-hakari
+      - run: cargo hakari generate --diff
+      - run: cargo hakari manage-deps --dry-run
+
   ci-success:
     runs-on: ubuntu-latest
     if: always()
@@ -295,6 +316,7 @@ jobs:
       - rustfmt
       - forge-fmt
       - deny
+      - hakari
       - codeql
       - workflow-validation
     timeout-minutes: 30

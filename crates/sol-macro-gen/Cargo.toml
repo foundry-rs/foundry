@@ -29,7 +29,7 @@ rayon.workspace = true
 eyre.workspace = true
 
 heck.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [features]
-default = ["optimism"]
 optimism = ["foundry-common/optimism"]

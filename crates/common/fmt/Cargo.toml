@@ -38,6 +38,7 @@ base-common-rpc-types = { workspace = true, optional = true, features = ["std"] 
 
 # Tempo
 tempo-alloy.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 foundry-macros.workspace = true
@@ -45,6 +46,5 @@ similar-asserts.workspace = true
 proptest.workspace = true
 
 [features]
-default = ["optimism"]
 base = ["dep:base-common-consensus", "dep:base-common-rpc-types"]
 optimism = ["dep:op-alloy-consensus", "dep:op-alloy-rpc-types"]

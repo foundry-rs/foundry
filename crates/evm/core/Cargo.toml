@@ -105,6 +105,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 url.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 alloy-serde.workspace = true
@@ -120,7 +121,6 @@ path = "tests/base_replay.rs"
 required-features = ["base"]
 
 [features]
-default = ["optimism"]
 monad = [
     "anvil/monad",
     "dep:alloy-monad-evm",

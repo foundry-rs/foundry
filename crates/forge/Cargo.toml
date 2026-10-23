@@ -107,6 +107,7 @@ soldeer-commands.workspace = true
 soldeer-core.workspace = true
 quick-junit = "0.7.0"
 tempfile.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }
@@ -177,4 +178,6 @@ optimism = [
     "forge-fmt/optimism",
     "forge-lint/optimism",
     "forge-sol-macro-gen/optimism",
+    "foundry-debugger/optimism",
+    "foundry-evm-symbolic/optimism",
 ]

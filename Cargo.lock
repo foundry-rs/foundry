@@ -1387,6 +1387,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -1413,6 +1414,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -1421,6 +1423,7 @@ version = "1.8.7"
 dependencies = [
  "serde",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -1443,6 +1446,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "url",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3379,6 +3383,7 @@ dependencies = [
  "tracing",
  "url",
  "windows-sys 0.61.2",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -3472,6 +3477,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "walkdir",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -5472,6 +5478,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "which",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -5492,6 +5499,7 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5506,6 +5514,7 @@ dependencies = [
  "snapbox",
  "solar-compiler",
  "toml",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5521,6 +5530,7 @@ dependencies = [
  "solar-compiler",
  "solar-lint",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5570,6 +5580,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -5587,6 +5598,7 @@ dependencies = [
  "serde",
  "serde_json",
  "walkdir",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5604,6 +5616,7 @@ dependencies = [
  "quote",
  "rayon",
  "syn 2.0.119",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5641,6 +5654,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -5671,6 +5685,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5747,6 +5762,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "walkdir",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5758,6 +5774,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5812,6 +5829,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -5821,6 +5839,7 @@ version = "1.8.7"
 dependencies = [
  "clap",
  "pretty_assertions",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5895,6 +5914,7 @@ dependencies = [
  "vergen-gitcl",
  "wait-timeout",
  "walkdir",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -5922,6 +5942,7 @@ dependencies = [
  "serde_json",
  "similar-asserts",
  "tempo-alloy",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -6061,6 +6082,7 @@ dependencies = [
  "unit-prefix",
  "walkdir",
  "which",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -6082,6 +6104,7 @@ dependencies = [
  "revm",
  "serde",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6125,6 +6148,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid 1.27.0",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6137,6 +6161,7 @@ dependencies = [
  "foundry-common-fmt",
  "foundry-macros",
  "itertools 0.15.0",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6204,6 +6229,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6220,6 +6246,7 @@ dependencies = [
  "semver 1.0.28",
  "solar-compiler",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6245,6 +6272,7 @@ dependencies = [
  "solar-compiler",
  "thiserror 2.0.21",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6263,6 +6291,7 @@ dependencies = [
  "revm",
  "serde",
  "tempo-hardfork",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6282,11 +6311,15 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-contracts",
+ "workspace-hack",
 ]
 
 [[package]]
 name = "foundry-evm-sancov"
 version = "1.8.7"
+dependencies = [
+ "workspace-hack",
+]
 
 [[package]]
 name = "foundry-evm-symbolic"
@@ -6311,6 +6344,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "wait-timeout",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6351,6 +6385,7 @@ dependencies = [
  "tempo-precompiles",
  "tokio",
  "tracing",
+ "workspace-hack",
  "yansi",
 ]
 
@@ -6386,6 +6421,7 @@ dependencies = [
  "rayon",
  "semver 1.0.28",
  "thiserror 2.0.21",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6395,6 +6431,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6426,6 +6463,7 @@ dependencies = [
  "tempo-alloy",
  "tempo-primitives",
  "tempo-revm",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6435,6 +6473,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6465,6 +6504,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ui_test",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6473,6 +6513,7 @@ version = "1.8.7"
 dependencies = [
  "crossterm",
  "ratatui",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -12144,6 +12185,7 @@ name = "solar"
 version = "1.8.7"
 dependencies = [
  "solar-cli",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -14671,6 +14713,252 @@ dependencies = [
  "group 0.14.0",
  "hybrid-array",
  "primefield",
+]
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "aho-corasick",
+ "alloy",
+ "alloy-chains",
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-core",
+ "alloy-dyn-abi",
+ "alloy-eip2124",
+ "alloy-eip2930",
+ "alloy-eip7702",
+ "alloy-eip7928",
+ "alloy-eip8141",
+ "alloy-eips",
+ "alloy-ens",
+ "alloy-evm",
+ "alloy-genesis",
+ "alloy-json-abi",
+ "alloy-op-hardforks",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-rpc-types",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-macro-expander",
+ "alloy-sol-macro-input",
+ "alloy-sol-type-parser",
+ "alloy-sol-types",
+ "alloy-trie",
+ "alloy-tx-macros",
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "ark-std 0.6.0",
+ "arrayvec",
+ "aurora-engine-modexp",
+ "aws-lc-rs",
+ "aws-lc-sys",
+ "axum",
+ "base16ct 1.0.0",
+ "bitflags 2.13.2",
+ "bitvec",
+ "blake3",
+ "blst",
+ "bstr",
+ "bumpalo",
+ "bytemuck",
+ "byteorder",
+ "bytes",
+ "c-kzg",
+ "cc",
+ "chrono",
+ "clap",
+ "clap_builder",
+ "comfy-table",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-formatting",
+ "commonware-macros",
+ "commonware-math",
+ "commonware-parallel",
+ "commonware-utils",
+ "console",
+ "const-hex",
+ "const-oid 0.9.6",
+ "constant_time_eq",
+ "crc32fast",
+ "crossterm",
+ "crypto-bigint 0.7.5",
+ "crypto-common 0.2.2",
+ "ctrlc",
+ "dashmap",
+ "der 0.7.10",
+ "der 0.8.2",
+ "derive-where",
+ "derive_more",
+ "derive_more-impl",
+ "digest 0.10.7",
+ "digest 0.11.3",
+ "ecdsa 0.16.9",
+ "ecdsa 0.17.0",
+ "either",
+ "elliptic-curve 0.13.8",
+ "elliptic-curve 0.14.1",
+ "errno",
+ "ff 0.14.0",
+ "figment2",
+ "fixedbitset",
+ "flate2",
+ "foldhash 0.2.0",
+ "form_urlencoded",
+ "foundry-compilers",
+ "foundry-compilers-core",
+ "futures",
+ "futures-channel",
+ "futures-core",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+ "generic-array",
+ "getrandom 0.4.3",
+ "group 0.14.0",
+ "hashbrown 0.14.5",
+ "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
+ "hex",
+ "hybrid-array",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "indexmap 2.14.2",
+ "itertools 0.14.0",
+ "k256",
+ "libc",
+ "linux-raw-sys",
+ "log",
+ "memchr",
+ "mio",
+ "nix 0.31.3",
+ "nonmax",
+ "num",
+ "num-bigint 0.4.8",
+ "num-complex",
+ "num-integer",
+ "num-iter",
+ "num-rational",
+ "num-traits",
+ "num_enum",
+ "num_enum_derive",
+ "nybbles",
+ "once_cell",
+ "op-alloy-consensus",
+ "op-revm",
+ "p256 0.13.2",
+ "p256 0.14.0",
+ "percent-encoding",
+ "phf_shared 0.11.3",
+ "pkcs8 0.10.2",
+ "portable-atomic",
+ "primeorder 0.13.6",
+ "primeorder 0.14.0",
+ "proc-macro2",
+ "proptest",
+ "quote",
+ "rand 0.10.3",
+ "rand 0.8.8",
+ "rand 0.9.5",
+ "rand_chacha 0.10.0",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rand_core 0.9.5",
+ "regex-automata",
+ "reqwest 0.13.5",
+ "reth-ethereum-primitives",
+ "reth-primitives-traits 0.8.2",
+ "revm",
+ "revm-bytecode 43.0.0",
+ "revm-context",
+ "revm-context-interface",
+ "revm-database",
+ "revm-database-interface",
+ "revm-handler",
+ "revm-inspector",
+ "revm-interpreter",
+ "revm-precompile",
+ "revm-primitives 43.0.0",
+ "revm-state 43.0.1",
+ "ripemd 0.2.0",
+ "ruint",
+ "rustc-hash",
+ "rustix",
+ "rustls",
+ "rustls-webpki",
+ "sec1 0.7.3",
+ "sec1 0.8.1",
+ "semver 1.0.28",
+ "serde",
+ "serde_core",
+ "serde_json",
+ "serde_spanned",
+ "serde_with",
+ "sha2 0.10.9",
+ "sha2 0.11.0",
+ "signature 3.0.0",
+ "simd-adler32",
+ "simdutf8",
+ "similar",
+ "slab",
+ "smallvec",
+ "spki 0.7.3",
+ "strum 0.28.0",
+ "subtle",
+ "svm-rs",
+ "syn 2.0.119",
+ "syn 3.0.6",
+ "sync_wrapper",
+ "tempo-chainspec",
+ "tempo-contracts",
+ "tempo-hardfork",
+ "tempo-precompiles",
+ "tempo-primitives",
+ "thiserror 2.0.21",
+ "time",
+ "time-core",
+ "time-macros",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tokio-util",
+ "toml",
+ "toml_edit",
+ "toml_writer",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-core",
+ "tungstenite",
+ "typenum",
+ "url",
+ "vergen-gitcl",
+ "vergen-lib",
+ "winapi",
+ "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
+ "winnow",
+ "yansi",
+ "zerocopy",
+ "zeroize",
+ "zlib-rs",
 ]
 
 [[package]]

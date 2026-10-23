@@ -20,6 +20,7 @@ solar.workspace = true
 
 itertools.workspace = true
 similar = { version = "3", features = ["inline"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 foundry-test-utils.workspace = true
@@ -28,5 +29,4 @@ toml.workspace = true
 snapbox.workspace = true
 
 [features]
-default = ["optimism"]
 optimism = ["foundry-common/optimism"]
