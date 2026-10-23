@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let build_timestamp = build_timestamp()?;
     let build_timestamp_unix = build_timestamp.timestamp();
-    let build_timestamp = build_timestamp.to_rfc3339_opts(SecondsFormat::AutoSi, true);
+    let build_timestamp = build_timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true);
 
     // The SemVer compatible version information for Foundry.
     // - The latest version from Cargo.toml.
