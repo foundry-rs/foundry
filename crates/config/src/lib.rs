@@ -9,7 +9,7 @@
 extern crate tracing;
 
 use crate::{cache::StorageCachingConfig, etherscan::EtherscanEnvProvider};
-use alloy_primitives::{Address, B256, U256, address, map::AddressHashMap};
+use alloy_primitives::{Address, B256, U256, address, keccak256, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
@@ -897,6 +897,59 @@ impl Config {
         Self::from_figment(Figment::from(provider.legacy_labels()))
     }
 
+    /// Returns this config with the compiler settings of `profile`, with `overrides` applied.
+    pub fn with_profile_compiler_settings<T: Provider>(
+        &self,
+        profile: &str,
+        overrides: T,
+    ) -> Result<Self, ExtractConfigError> {
+        let profile = Profile::new(profile);
+        if !self.profiles.contains(&profile) {
+            return Err(ExtractConfigError::new(Error::from(format!(
+                "unknown profile `{profile}`"
+            ))));
+        }
+        let figment = Self::with_root(&self.root)
+            .to_figment_with_profile(FigmentProviders::All, profile.clone())
+            .merge(overrides.rename(Self::selected_profile(), profile));
+        let other = Self::from_figment(figment)?;
+        Ok(Self {
+            solc: other.solc,
+            evm_version: other.evm_version,
+            hardfork: other.hardfork,
+            create2_library_salt: other.create2_library_salt,
+            networks: other.networks,
+            optimizer: other.optimizer,
+            optimizer_runs: other.optimizer_runs,
+            optimizer_details: other.optimizer_details,
+            model_checker: other.model_checker,
+            via_ir: other.via_ir,
+            via_ssa_cfg: other.via_ssa_cfg,
+            experimental: other.experimental,
+            use_literal_content: other.use_literal_content,
+            bytecode_hash: other.bytecode_hash,
+            cbor_metadata: other.cbor_metadata,
+            revert_strings: other.revert_strings,
+            vyper: other.vyper,
+            extra_args: other.extra_args,
+            libraries: other.libraries,
+            additional_compiler_profiles: other.additional_compiler_profiles,
+            compilation_restrictions: other.compilation_restrictions,
+            ..self.clone()
+        })
+    }
+
+    /// Returns the cache dir of the build with this config's compiler settings.
+    pub fn profile_cache_path(&self) -> Result<PathBuf, SolcError> {
+        let settings = serde_json::to_vec(&(
+            self.compiler_settings()?,
+            &self.solc,
+            &self.additional_compiler_profiles,
+            &self.compilation_restrictions,
+        ))?;
+        Ok(self.root.join(&self.cache_path).join("profiles").join(keccak256(settings).to_string()))
+    }
+
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
@@ -1024,6 +1077,15 @@ impl Config {
     /// This will merge various providers, such as env,toml,remappings into the figment if
     /// requested.
     pub fn to_figment(&self, providers: FigmentProviders) -> Figment {
+        self.to_figment_with_profile(providers, Self::selected_profile())
+    }
+
+    /// Returns the populated [Figment] for `profile` using the requested [FigmentProviders] preset.
+    pub fn to_figment_with_profile(
+        &self,
+        providers: FigmentProviders,
+        profile: Profile,
+    ) -> Figment {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
@@ -1031,7 +1093,6 @@ impl Config {
         }
 
         let root = self.root.as_path();
-        let profile = Self::selected_profile();
         let mut figment = Figment::default()
             .merge(DappHardhatDirProvider { root, detect_src: self.uses_default_src() });
 
@@ -1529,6 +1590,14 @@ impl Config {
                     coverage_cache.display()
                 ));
             }
+        }
+
+        let profile_cache = self.root.join(&self.cache_path).join("profiles");
+        if let Err(err) = fs::remove_dir_all(&profile_cache)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            warnings
+                .push(format!("failed to remove profile cache {}: {err}", profile_cache.display()));
         }
 
         let external_cache = self.root.join(&self.cache_path).join("external-compilers");
@@ -4429,6 +4498,7 @@ mod tests {
                                 compute_units_per_second: Some(1000),
                             },
                             auth: None,
+                            profile: None,
                         })
                     ),
                 ]),
@@ -4455,6 +4525,7 @@ mod tests {
                                 compute_units_per_second: Some(1000),
                             },
                             auth: None,
+                            profile: None,
                         })
                     ),
                 ])
@@ -4503,6 +4574,7 @@ mod tests {
                                 compute_units_per_second: Some(1000)
                             },
                             auth: Some(RpcAuth::Env("Bearer ${_CONFIG_AUTH}".to_string())),
+                            profile: None,
                         })
                     ),
                 ]),
@@ -4530,6 +4602,7 @@ mod tests {
                                 compute_units_per_second: Some(1000)
                             },
                             auth: Some(RpcAuth::Raw("Bearer 123456".to_string())),
+                            profile: None,
                         })
                     ),
                 ])
@@ -9787,6 +9860,33 @@ mod tests {
             let config = Config::load_with_root(jail.directory()).unwrap();
             assert!(config.allow_linked_libraries);
             assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn endpoint_profile_keeps_runtime_settings_separate_from_compiler_cache() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+[profile.default]
+evm_version = "cancun"
+[profile.first]
+hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+[profile.second]
+hardfork = "prague"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
+"#,
+            )?;
+            let config = Config::load().unwrap();
+            let first = config.with_profile_compiler_settings("first", Figment::new()).unwrap();
+            let second = config.with_profile_compiler_settings("second", Figment::new()).unwrap();
+            assert_ne!(first.hardfork, second.hardfork);
+            assert_eq!(first.create2_library_salt, B256::with_last_byte(1));
+            assert_eq!(second.create2_library_salt, B256::with_last_byte(2));
+            assert_eq!(first.profile_cache_path().unwrap(), second.profile_cache_path().unwrap());
             Ok(())
         });
     }

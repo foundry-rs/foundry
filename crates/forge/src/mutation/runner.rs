@@ -14,7 +14,11 @@ use crate::{
     workspace,
 };
 use eyre::Result;
-use foundry_common::{compile::ProjectCompiler, fs::canonicalize_path, sh_eprintln, sh_println};
+use foundry_common::{
+    compile::{ProjectCompiler, compile_endpoint_profiles},
+    fs::canonicalize_path,
+    sh_eprintln, sh_println,
+};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
@@ -68,6 +72,7 @@ pub struct MutationEvmConfig<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub backend: Backend<FEN>,
     pub executor_builder: ExecutorBuilder<FEN>,
     pub create2_deployer_available: bool,
+    pub profile_overrides: foundry_config::figment::Figment,
 }
 
 /// Tracks progress, cancellation, and timed-out workers across parallel workers.
@@ -640,9 +645,17 @@ fn compile_and_test<FEN: FoundryEvmNetwork>(
         .allow_linked_libraries(config.allow_linked_libraries)
         .dynamic_test_linking(config.dynamic_test_linking)
         .quiet(true)
-        .files(files);
+        .files(files.clone());
 
     let compile_output = compiler.compile(&config.project()?)?;
+    let profile_builds =
+        Arc::new(compile_endpoint_profiles(config, evm.profile_overrides.clone(), |profile| {
+            ProjectCompiler::new()
+                .external_compilers(profile)
+                .dynamic_test_linking(profile.dynamic_test_linking)
+                .quiet(true)
+                .files(files.clone())
+        })?);
     let inline_config = Arc::new(InlineConfig::new_parsed(&compile_output, config)?);
 
     // Rebuild the per-mutant test filter so `--match-test`, `--match-contract`,
@@ -671,6 +684,7 @@ fn compile_and_test<FEN: FoundryEvmNetwork>(
         // filter so kept/skipped tests stay consistent across baseline and
         // mutant runs.
         let mut runner = MultiContractRunnerBuilder::new(config.clone(), inline_config)
+            .with_profile_builds(profile_builds)
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
@@ -729,6 +743,7 @@ mod tests {
                 backend: Backend::<EthEvmNetwork>::spawn(None).unwrap(),
                 executor_builder: ExecutorBuilder::<EthEvmNetwork>::new(),
                 create2_deployer_available: false,
+                profile_overrides: foundry_config::figment::Figment::new(),
             };
             let shared_state = Arc::new(SharedMutationState::default());
 
