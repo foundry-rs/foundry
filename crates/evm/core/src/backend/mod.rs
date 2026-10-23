@@ -724,7 +724,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         // The fork's cursor is derived from the transaction's block below.
         let id = self.insert_fork(fork, None, false)?;
         let spec = self.evm_env().spec;
-        let (db, env, cache, info, cursor) =
+        let (db, env, cache, info, cursor, _) =
             self.prepare_roll_to_transaction(id, transaction, spec)?;
         self.lifecycle.replace_inactive(Some(id), db, env, cache)?;
         self.set_fork_info(id, info);
@@ -832,12 +832,18 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<EnvTransition> {
         trace!(?id, ?transaction, "roll fork to transaction");
         let id = self.ensure_fork(id)?;
-        let (db, env, cache, info, cursor) =
+        let (db, env, cache, info, cursor, replayed) =
             self.prepare_roll_to_transaction(id, transaction, evm_env(evm).spec)?;
         let transition = self.lifecycle.roll_fork_with(evm, Some(id), db, env, cache, phase)?;
         self.set_fork_info(id, info);
         if let Some((position, cursor)) = cursor {
             self.retain_cursor(id, position, &cursor, Some(evm));
+        }
+        // Replaying the preceding transactions on another fork rebases the running transaction's
+        // loaded accounts onto their results.
+        if replayed && !self.is_active_fork(id) {
+            self.lifecycle.rebase_onto_inactive(evm, Some(id))?;
+            self.lifecycle.factory().refresh_transaction(evm);
         }
         Ok(transition)
     }
@@ -1004,7 +1010,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let cursor = executed.take_cursor();
         let result = self.lifecycle.store_executed(executed);
         match cursor {
-            Some((id, position, cursor)) => self.retain_cursor(id, position, &cursor, Some(evm)),
+            Some((id, position, cursor)) if self.is_active_fork(id) => {
+                self.retain_cursor(id, position, &cursor, Some(evm))
+            }
+            Some((id, position, cursor)) => {
+                self.retain_cursor(id, position, &cursor, None);
+                self.lifecycle.factory().refresh_transaction(evm);
+            }
             None => self.lifecycle.factory().refresh_transaction(evm),
         }
         result
@@ -1458,9 +1470,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(TransactionForkTarget { fork_block, transaction: tx, block, mined: true, index })
     }
 
-    /// Resolves the backing database, environment, replayed accepted state, identity and, for
+    /// Resolves the backing database, environment, replayed accepted state, identity, for
     /// networks with block-position state, canonical position and block cursor of fork `id`
-    /// positioned right before `transaction`.
+    /// positioned right before `transaction`, and whether preceding transactions were replayed.
     #[expect(clippy::type_complexity)]
     fn prepare_roll_to_transaction(
         &self,
@@ -1473,6 +1485,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Option<Cache>,
         ForkInfo,
         Option<(ForkPosition, ChainFor<FEN>)>,
+        bool,
     )> {
         let info = self.fork_info(id)?.clone();
         let options = self.fork_options(&info.id)?;
@@ -1484,6 +1497,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let env = self.fork_env(&options.evm_opts, &remote, &target.block, spec);
         let db = ForkDb::new(backend, source_chain_id);
         let mut cursor = None;
+        let replayed = target.mined && target.index.is_some_and(|index| index > 0);
         let cache = if target.mined {
             let index = target.index.expect("mined transaction has a block position");
             let context = if self.networks.is_monad() {
@@ -1506,7 +1520,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let block = Some(target.block.header.number());
         let info =
             ForkInfo { id: fork_id, url: info.url, block, remote: Some(remote), position: None };
-        Ok((db, env, cache, info, cursor))
+        Ok((db, env, cache, info, cursor, replayed))
     }
 
     /// Replays the transactions of `block` before `index` over `db` and returns the resulting
