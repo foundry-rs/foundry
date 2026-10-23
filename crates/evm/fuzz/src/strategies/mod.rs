@@ -58,4 +58,8 @@ impl WeightedIndices {
             _ => index.index(len),
         }
     }
+
+    fn has_positive_weight(&self) -> bool {
+        self.cumulative.last().is_some_and(|total| *total > 0)
+    }
 }

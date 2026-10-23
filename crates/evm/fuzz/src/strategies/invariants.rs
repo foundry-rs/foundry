@@ -22,25 +22,32 @@ pub fn override_call_strat(
     // Each generated call owns its function-selection strategy. Share the functions so
     // constructing that strategy does not clone the entire target ABI on every call.
     let guidance = fuzz_state.with_dictionary(|dict| Arc::clone(dict.guidance()));
-    let contracts = Arc::new(
-        contracts
-            .into_iter()
-            .map(|(address, identified_functions)| {
-                let weighted_indices = guidance.has_selector_weights().then(|| {
-                    WeightedIndices::from_weights(identified_functions.iter().map(
-                        |(identifier, function)| {
-                            guidance.selector_weight(identifier, function).unwrap_or(1)
-                        },
-                    ))
-                });
-                let functions = identified_functions
-                    .into_iter()
-                    .map(|(_, function)| function)
-                    .collect::<Vec<_>>();
-                (address, Arc::new(functions), weighted_indices)
-            })
-            .collect::<Vec<_>>(),
-    );
+    let mut contracts = contracts
+        .into_iter()
+        .map(|(address, identified_functions)| {
+            let weighted_indices = guidance.has_selector_weights().then(|| {
+                WeightedIndices::from_weights(identified_functions.iter().map(
+                    |(identifier, function)| {
+                        guidance.selector_weight(identifier, function).unwrap_or(1)
+                    },
+                ))
+            });
+            let functions =
+                identified_functions.into_iter().map(|(_, function)| function).collect::<Vec<_>>();
+            (address, Arc::new(functions), weighted_indices)
+        })
+        .collect::<Vec<_>>();
+    // A fully excluded target must not fall back to its zero-weight functions while another
+    // target has eligible calls. Keep uniform fallback only when every target has zero weight.
+    if contracts
+        .iter()
+        .any(|(_, _, weights)| weights.as_ref().is_some_and(WeightedIndices::has_positive_weight))
+    {
+        contracts.retain(|(_, _, weights)| {
+            weights.as_ref().is_some_and(WeightedIndices::has_positive_weight)
+        });
+    }
+    let contracts = Arc::new(contracts);
     let contracts_ref = contracts.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
@@ -94,4 +101,51 @@ pub fn override_call_strat(
             )
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FuzzGuidance;
+    use proptest::{strategy::ValueTree, test_runner::TestRunner};
+
+    #[test]
+    fn override_guidance_excludes_zero_weight_targets() {
+        let excluded = Address::with_last_byte(1);
+        let eligible = Address::with_last_byte(2);
+        let function = Function::parse("poke()").unwrap();
+        for (weights, expected) in [
+            (r#"{"Excluded.poke()": 0}"#, eligible),
+            (r#"{"Excluded.poke()": 0, "Eligible.poke()": 0}"#, excluded),
+        ] {
+            let mut state = EvmFuzzState::test();
+            state.set_guidance(Arc::new(
+                FuzzGuidance::from_json(&format!(
+                    r#"{{"version": 1, "selector_weights": {weights}}}"#
+                ))
+                .unwrap(),
+            ));
+            let strategy = override_call_strat(
+                state,
+                vec![
+                    (excluded, vec![("Excluded".into(), function.clone())]),
+                    (eligible, vec![("Eligible".into(), function.clone())]),
+                ],
+                Arc::new(RwLock::new(excluded)),
+                FuzzFixtures::default(),
+                0,
+                0,
+            );
+            let mut runner = TestRunner::deterministic();
+            let targets = (0..64)
+                .map(|_| strategy.new_tree(&mut runner).unwrap().current().target)
+                .collect::<Vec<_>>();
+            if expected == eligible {
+                assert_eq!(targets, vec![eligible; 64]);
+            } else {
+                assert!(targets.iter().any(|target| *target == excluded));
+                assert!(targets.iter().any(|target| *target == eligible));
+            }
+        }
+    }
 }
