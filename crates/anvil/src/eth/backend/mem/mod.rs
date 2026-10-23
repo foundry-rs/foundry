@@ -10944,6 +10944,7 @@ mod tests {
             network: None,
             network_profile: None,
             hardfork,
+            blob_params: None,
             instance_id,
             source_fork_block_number: None,
             source_fork_block_hash: None,

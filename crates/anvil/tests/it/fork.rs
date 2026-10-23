@@ -5321,35 +5321,29 @@ async fn test_fork_transaction_hash_replay_uses_active_blob_params() {
     assert_eq!(U256::from(history.base_fee_per_blob_gas[0]), blob_base_fee);
 }
 
-// Fork blob params must follow the source: the hardfork reported by an endpoint without a public
-// blob schedule, or the public schedule of the chain behind a nested Anvil fork that executes a
-// different hardfork.
+// Fork blob params must follow the source's active schedule through a nested fork whose middle
+// node executes another hardfork, whether or not the root chain has a public schedule.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_blob_params_follow_source() {
     let prague = EthereumHardfork::Prague;
-    let (local_api, local_handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(prague.into()))).await;
-    local_api.mine_one().await.unwrap();
-    let (api, _handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(local_handle.http_endpoint()))).await;
-    assert_eq!(api.backend.blob_params(), BlobParams::prague());
-
-    let (mainnet_api, mainnet_handle) = spawn(
-        NodeConfig::test()
-            .with_chain_id(Some(1u64))
-            .with_hardfork(Some(prague.into()))
-            .with_genesis_timestamp(prague.mainnet_activation_timestamp()),
-    )
-    .await;
-    mainnet_api.mine_one().await.unwrap();
-    let (cancun_api, cancun_handle) = spawn(
-        NodeConfig::test()
-            .with_eth_rpc_url(Some(mainnet_handle.http_endpoint()))
-            .with_hardfork(Some(EthereumHardfork::Cancun.into())),
-    )
-    .await;
-    assert_eq!(cancun_api.backend.blob_params(), BlobParams::prague());
-    let (nested_api, _nested_handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(cancun_handle.http_endpoint()))).await;
-    assert_eq!(nested_api.backend.blob_params(), BlobParams::prague());
+    for chain_id in [31337u64, 1] {
+        let (root_api, root_handle) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain_id))
+                .with_hardfork(Some(prague.into()))
+                .with_genesis_timestamp(prague.mainnet_activation_timestamp()),
+        )
+        .await;
+        root_api.mine_one().await.unwrap();
+        let (middle_api, middle_handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(root_handle.http_endpoint()))
+                .with_hardfork(Some(EthereumHardfork::Cancun.into())),
+        )
+        .await;
+        assert_eq!(middle_api.backend.blob_params(), BlobParams::prague());
+        let (nested_api, _nested_handle) =
+            spawn(NodeConfig::test().with_eth_rpc_url(Some(middle_handle.http_endpoint()))).await;
+        assert_eq!(nested_api.backend.blob_params(), BlobParams::prague(), "chain {chain_id}");
+    }
 }
