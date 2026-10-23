@@ -38,6 +38,19 @@ contract MissingEventsArithmetic {
         _;
     }
 
+    modifier onlyOwnerViaTupleAlias() {
+        (address caller, bool live) = (msg.sender, true);
+        require(live && caller == owner, "not owner");
+        _;
+    }
+
+    modifier onlyOwnerViaReassignedTupleAlias(address candidate) {
+        address caller = msg.sender;
+        (caller,) = (candidate, false);
+        require(caller == owner, "not owner");
+        _;
+    }
+
     modifier onlyPositive(uint256 value) {
         require(value > 0, "not positive");
         _;
@@ -67,6 +80,10 @@ contract MissingEventsArithmetic {
     }
 
     function setBuyPriceOZStyle(uint256 newBuyPrice) external onlyOwnerViaCheck {
+        buyPrice = newBuyPrice; //~WARN: `buyPrice` is changed without an event but is used in arithmetic
+    }
+
+    function setBuyPriceViaTupleAlias(uint256 newBuyPrice) external onlyOwnerViaTupleAlias {
         buyPrice = newBuyPrice; //~WARN: `buyPrice` is changed without an event but is used in arithmetic
     }
 
@@ -156,6 +173,13 @@ contract MissingEventsArithmetic {
     }
 
     function unprotectedSetBuyPrice(uint256 newBuyPrice) external {
+        buyPrice = newBuyPrice;
+    }
+
+    function setBuyPriceViaReassignedTupleAlias(address candidate, uint256 newBuyPrice)
+        external
+        onlyOwnerViaReassignedTupleAlias(candidate)
+    {
         buyPrice = newBuyPrice;
     }
 

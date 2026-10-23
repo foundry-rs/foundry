@@ -77,6 +77,95 @@ async fn test_can_change_mining_mode() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_pause_interval_mining() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_interval_mining(1).unwrap();
+    assert!(!provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
+    api.anvil_set_mining_paused(true).await.unwrap();
+    assert!(provider.raw_request::<_, bool>("anvil_getMiningPaused".into(), ()).await.unwrap());
+
+    // A transaction sent while paused stays in the pool past the block due after 1 second.
+    let from = handle.dev_accounts().next().unwrap();
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE);
+    let pending = provider.send_transaction(tx.into()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
+
+    // Resuming mines it on a later tick.
+    api.anvil_set_mining_paused(false).await.unwrap();
+    assert!(!api.anvil_get_mining_paused().unwrap());
+    let receipt = tokio::time::timeout(std::time::Duration::from_secs(5), pending.get_receipt())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.block_number, Some(1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_pause_automining_with_mode_changes() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    provider.raw_request::<_, ()>("anvil_setMiningPaused".into(), [true]).await.unwrap();
+
+    // Changing modes must not unpause mining.
+    api.anvil_set_interval_mining(60).unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    let from = handle.dev_accounts().next().unwrap();
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE);
+    let pending = provider.send_transaction(tx.clone().into()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
+
+    // Manual mining remains usable while paused.
+    api.evm_mine(None).await.unwrap();
+    assert_eq!(pending.get_receipt().await.unwrap().block_number, Some(1));
+
+    // Resuming auto mining mines transactions sent while paused.
+    let pending = provider.send_transaction(tx.into()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert_eq!(provider.get_block_number().await.unwrap(), 1);
+    provider.raw_request::<_, ()>("anvil_setMiningPaused".into(), [false]).await.unwrap();
+    let receipt = tokio::time::timeout(std::time::Duration::from_secs(5), pending.get_receipt())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.block_number, Some(2));
+}
+
+#[test]
+fn test_pause_skips_queued_interval_block() {
+    // With a single blocking thread kept busy, the block due at the 1 second mark is selected but
+    // its mining task stays queued until after mining is paused and resumed.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let blocker = tokio::task::spawn_blocking(move || release_rx.recv());
+        api.anvil_set_interval_mining(1).unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+        api.anvil_set_mining_paused(true).await.unwrap();
+        api.anvil_set_mining_paused(false).await.unwrap();
+        release_tx.send(()).unwrap();
+        blocker.await.unwrap().unwrap();
+
+        // The candidate selected before the pause is not mined on resume.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(api.block_number().unwrap(), U256::ZERO);
+
+        // The next block lands on the next tick of the original schedule.
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        assert_eq!(api.block_number().unwrap(), U256::ONE);
+    });
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_default_dev_keys() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -125,17 +214,13 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         api.config().unwrap().current.precompiles.values().find(|&&address| address == P256_VERIFY),
         Some(&P256_VERIFY)
     );
-    for block in [
-        BlockId::Number(BlockNumberOrTag::Latest),
-        BlockId::Number(0_u64.into()),
-        BlockId::pending(),
-    ] {
+    for block in [BlockId::latest(), BlockId::number(0_u64), BlockId::pending()] {
         let output = provider.call(tx.clone().into()).block(block).await.unwrap();
         assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
     }
 
     let caller = Address::random();
-    api.anvil_set_code(caller, P256_CALLER_CODE.to_vec().into()).await.unwrap();
+    api.anvil_set_code(caller, P256_CALLER_CODE.into()).await.unwrap();
     let from = handle.dev_accounts().next().unwrap();
     let receipt = provider
         .send_transaction(
@@ -152,7 +237,7 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         .await
         .unwrap();
     assert!(receipt.status());
-    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::from(1));
+    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::ONE);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -286,6 +371,28 @@ async fn test_can_use_default_genesis_block_number() {
     let provider = handle.http_provider();
 
     assert_eq!(0, provider.get_block(0.into()).await.unwrap().unwrap().header.number);
+}
+
+/// `earliest`, `safe` and `finalized` resolve within the chain when it starts at a non-zero
+/// genesis number.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_tags_respect_genesis_block_number() {
+    let genesis_number = 1000u64;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_genesis_block_number(Some(genesis_number))).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+
+    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    assert_eq!(provider.get_block_number().await.unwrap(), genesis_number + 5);
+
+    let latest = provider.get_balance(account).await.unwrap();
+    for tag in [BlockNumberOrTag::Earliest, BlockNumberOrTag::Safe, BlockNumberOrTag::Finalized] {
+        let balance = provider.get_balance(account).block_id(tag.into()).await.unwrap();
+        assert_eq!(balance, latest, "{tag} should resolve to a block of this chain");
+        let block = provider.get_block(tag.into()).await.unwrap().unwrap();
+        assert_eq!(block.header.number, genesis_number, "{tag} should resolve to genesis");
+    }
 }
 
 /// Verify that genesis block number affects both RPC and EVM execution layer.

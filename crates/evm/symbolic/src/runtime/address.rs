@@ -14,10 +14,11 @@ impl SymExpr {
             format!("concrete-address:{:?}", word_to_address(value))
         } else {
             let expr = self.symbolic_address_canonical();
-            let bytes = expr
-                .address_byte_terms_for_equivalence()
-                .map(|bytes| format!("{bytes:?}"))
-                .unwrap_or_else(|| format!("{expr:?}"));
+            let identity = expr.address_byte_terms_for_equivalence().map_or_else(
+                || ExpressionDigests::identity([expr]),
+                |bytes| ExpressionDigests::identity(&bytes),
+            );
+            let bytes = format!("{identity:?}");
             format!("symbolic-address:{bytes}")
         }
     }
@@ -26,7 +27,9 @@ impl SymExpr {
         if let Some(word) = self.as_const() {
             return SymBoolExpr::constant(cx, word == address_word(address));
         }
-        let Some(terms) = self.address_byte_terms(cx) else {
+        let Some(terms) =
+            (12..32).map(|index| self.byte_term(cx, index)).collect::<Option<Vec<_>>>()
+        else {
             let address = Self::constant(cx, address_word(address));
             return SymBoolExpr::eq(cx, self.clone(), address);
         };
@@ -101,16 +104,12 @@ impl SymExpr {
         }
     }
 
-    fn address_byte_terms(&self, cx: &mut SymCx) -> Option<Vec<Self>> {
-        (12..32).map(|index| self.byte_term(cx, index)).collect()
-    }
-
     fn address_byte_terms_for_equivalence(&self) -> Option<Vec<Self>> {
         (12..32).map(|index| self.extracted_byte_source(index)).collect()
     }
 
     fn is_address_mask(&self) -> bool {
-        self.as_const() == Some((U256::from(1) << 160) - U256::from(1))
+        self.as_const() == Some((U256::ONE << 160) - U256::ONE)
     }
 
     fn is_shift_96(&self) -> bool {
@@ -122,17 +121,17 @@ pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
     if bits >= 256 {
         value
     } else {
-        let mask = (U256::from(1) << bits) - U256::from(1);
+        let mask = (U256::ONE << bits) - U256::ONE;
         value & mask
     }
 }
 
 pub(crate) fn address_word(address: Address) -> U256 {
-    U256::from_be_bytes(address.into_word().0)
+    address.into_word().into()
 }
 
 pub(crate) fn word_to_address(value: U256) -> Address {
-    Address::from_word(value.to_be_bytes::<32>().into())
+    Address::from_word(value.into())
 }
 
 pub(crate) fn stable_symbol(cx: &mut SymCx, prefix: &'static str, input: &[u8]) -> Symbol {

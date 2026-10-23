@@ -72,7 +72,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    db.code_by_hash(v.info.code_hash)?
+                    db.code_by_hash(v.info.code_hash())?
                 };
                 Ok((
                     k,
@@ -107,6 +107,10 @@ impl<N: Network> Db for ForkedDatabase<N> {
         self.revert_state_snapshot(id, action)
     }
 
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        self.state_snapshots().lock().remove_at(id).is_some()
+    }
+
     fn current_state(&self) -> StateDb {
         StateDb::new(self.create_state_snapshot())
     }
@@ -115,6 +119,10 @@ impl<N: Network> Db for ForkedDatabase<N> {
 impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.database().cache.accounts)
+    }
+
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        Some(&mut self.database_mut().cache.accounts)
     }
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {

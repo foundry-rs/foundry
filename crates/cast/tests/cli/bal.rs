@@ -37,7 +37,8 @@ async fn canned_endpoint(upstream: String, result: Value) -> String {
     endpoint
 }
 
-casttest!(bal, async |_prj, cmd| {
+#[casttest]
+async fn bal(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = canned_endpoint(handle.http_endpoint(), block_access_list()).await;
 
@@ -81,9 +82,10 @@ casttest!(bal, async |_prj, cmd| {
 ]
 
 "#]]);
-});
+}
 
-casttest!(bal_raw, async |_prj, cmd| {
+#[casttest]
+async fn bal_raw(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = canned_endpoint(handle.http_endpoint(), block_access_list()).await;
 
@@ -93,9 +95,10 @@ casttest!(bal_raw, async |_prj, cmd| {
 
 "#]
     ]);
-});
+}
 
-casttest!(bal_not_found, async |_prj, cmd| {
+#[casttest]
+async fn bal_not_found(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
 
     cmd.args(["bal", "latest", "--rpc-url", &handle.http_endpoint()]).assert_failure().stderr_eq(
@@ -104,4 +107,4 @@ Error: block access list for latest not found
 
 "#]],
     );
-});
+}

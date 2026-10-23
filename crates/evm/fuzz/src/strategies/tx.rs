@@ -407,7 +407,7 @@ mod tests {
     use crate::invariant::{TargetedContract, TargetedContracts};
     use alloy_json_abi::JsonAbi;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::database::InMemoryDB;
     use serde_json::{Map, json};
     use std::sync::{
         Arc,
@@ -427,7 +427,7 @@ mod tests {
         let contracts = FuzzRunIdentifiedContracts::new(targets, false);
         let state = EvmFuzzState::new(
             &[],
-            &CacheDB::<EmptyDB>::default(),
+            &InMemoryDB::default(),
             FuzzDictionaryConfig::default(),
             None,
         )
@@ -531,7 +531,7 @@ mod tests {
         let contracts = FuzzRunIdentifiedContracts::new(targets, false);
         let state = EvmFuzzState::new(
             &[],
-            &CacheDB::<EmptyDB>::default(),
+            &InMemoryDB::default(),
             FuzzDictionaryConfig::default(),
             None,
         )
@@ -634,13 +634,9 @@ mod tests {
         targets.insert(retained, TargetedContract::new("Retained".into(), abi.clone()));
         targets.insert(removed, TargetedContract::new("Removed".into(), abi));
         let identified = FuzzRunIdentifiedContracts::new(targets, false);
-        let state = EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
-        .into_invariant();
+        let state =
+            EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
+                .into_invariant();
         let generator = TxGenerator::invariant(
             state,
             SenderFilters::default(),

@@ -341,7 +341,7 @@ impl SafeServiceOpts {
             _ => eyre::bail!("invalid nonce returned by Safe Transaction Service"),
         }
         .wrap_err("invalid nonce returned by Safe Transaction Service")?;
-        Ok(std::cmp::max(onchain_nonce, nonce.saturating_add(U256::from(1))))
+        Ok(std::cmp::max(onchain_nonce, nonce.saturating_add(U256::ONE)))
     }
 
     fn next_nonce_endpoint(&self, chain_id: u64, safe: Address) -> Result<Url> {
@@ -613,10 +613,10 @@ mod tests {
     fn rejects_malformed_confirmation_signatures() {
         let owner = Address::repeat_byte(1);
         let mut wrong_offset = vec![0; 97];
-        wrong_offset[32..64].copy_from_slice(&U256::from(66).to_be_bytes::<32>());
+        wrong_offset[32..64].copy_from_slice(B256::with_last_byte(66).as_slice());
         let mut wrong_length = vec![0; 97];
-        wrong_length[32..64].copy_from_slice(&U256::from(65).to_be_bytes::<32>());
-        wrong_length[65..97].copy_from_slice(&U256::from(1).to_be_bytes::<32>());
+        wrong_length[32..64].copy_from_slice(B256::with_last_byte(65).as_slice());
+        wrong_length[65..97].copy_from_slice(B256::with_last_byte(1).as_slice());
 
         for signature in [vec![1; 66], vec![0; 65], wrong_offset, wrong_length] {
             let mut transaction = transaction();

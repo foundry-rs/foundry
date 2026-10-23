@@ -84,7 +84,7 @@ impl SafeCall {
         N: Network + RecommendedFillers,
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: Serialize,
     {
         ensure!(
@@ -126,11 +126,9 @@ impl SafeCall {
             .await?
             .with_code_sig_and_args(None, Some(hex::encode_prefixed(self.data)), Vec::new())
             .await?;
-        let chain = builder.chain();
         let (mut request, _) = builder.build(from).await?;
         let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
-        tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut request, Some(from))
-            .await?;
+        tempo::resolve_and_print_fee_token(fee_provider, &mut request, Some(from)).await?;
 
         let receipt = provider
             .send_transaction(request)

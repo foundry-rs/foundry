@@ -26,7 +26,7 @@ async fn mine_block_with_transfer(handle: &anvil::NodeHandle) -> (B256, u64, B25
             TransactionRequest::default()
                 .with_from(sender)
                 .with_to(Address::repeat_byte(0x11))
-                .with_value(U256::from(1)),
+                .with_value(U256::ONE),
         ))
         .await
         .unwrap()
@@ -121,7 +121,7 @@ async fn pending_transaction_by_block_number_and_index() {
             TransactionRequest::default()
                 .with_from(sender)
                 .with_to(Address::repeat_byte(0x11))
-                .with_value(U256::from(1)),
+                .with_value(U256::ONE),
         ))
         .await
         .unwrap()

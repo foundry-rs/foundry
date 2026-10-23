@@ -763,7 +763,8 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 }
                 true
             }
-            ExprKind::Call(callee, args, options) => {
+            ExprKind::Call(callee, args) => {
+                let (callee, options) = callee.split_call_options();
                 if !(self.analyze_expr(callee)
                     && options
                         .iter()
@@ -807,6 +808,10 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                     return summary.completes;
                 }
                 true
+            }
+            ExprKind::CallOptions(callee, options) => {
+                self.analyze_expr(callee)
+                    && options.args.iter().all(|option| self.analyze_expr(&option.value))
             }
             ExprKind::Binary(lhs, operator, rhs) => {
                 self.analyze_expr(lhs)
@@ -1125,7 +1130,8 @@ impl<'gcx> EntryAnalyzer<'gcx> {
                 roots.extend(self.call_returns[&expression.id].iter().flatten());
             }
             // Any other expression may propagate a slot computed from its operands.
-            ExprKind::Call(callee, args, options) => {
+            ExprKind::Call(callee, args) => {
+                let (callee, options) = callee.split_call_options();
                 self.collect_slot_roots(callee, roots);
                 for option in options.iter().flat_map(|options| options.args) {
                     self.collect_slot_roots(&option.value, roots);

@@ -3,7 +3,8 @@
 use super::*;
 
 // tests that `cast wallet sign --json` wraps signature in envelope
-casttest!(wallet_sign_json, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_json(cmd: _) {
     cmd.args([
         "wallet",
         "sign",
@@ -17,10 +18,11 @@ casttest!(wallet_sign_json, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":"0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c","errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign -v --json` wraps verbose output in envelope
-casttest!(wallet_sign_json_verbose, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_json_verbose(cmd: _) {
     cmd.args([
         "wallet",
         "sign",
@@ -35,10 +37,11 @@ casttest!(wallet_sign_json_verbose, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":{"message":"test","address":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","signature":"fe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c"},"errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign message` outputs the expected signature
-casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_message_utf8_data(cmd: _) {
     let pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
     let address = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
     let msg = "test";
@@ -66,10 +69,11 @@ Validation succeeded. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf signed 
 Error: Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign --json` outputs JSON on stdout regardless of verbosity
-casttest!(wallet_sign_message_json, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_message_json(cmd: _) {
     cmd.args([
         "wallet",
         "sign",
@@ -83,10 +87,11 @@ casttest!(wallet_sign_message_json, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":"0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c","errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
-casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_message_hex_data(cmd: _) {
     cmd.args([
         "wallet",
         "sign",
@@ -97,11 +102,12 @@ casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
 0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10613>
 // tests that `cast wallet sign` and `cast wallet verify` work with the same message as input
-casttest!(wallet_sign_and_verify_message_hex_data, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_and_verify_message_hex_data(cmd: _) {
     //     message="$1"
     //     mnemonic="test test test test test test test test test test test junk"
     //     key=$(cast wallet private-key --mnemonic "$mnemonic")
@@ -157,10 +163,11 @@ Validation succeeded. Address 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 signed 
 Validation succeeded. Address 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 signed this message.
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
-casttest!(wallet_sign_typed_data_string, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_typed_data_string(cmd: _) {
     cmd.args([
         "wallet",
         "sign",
@@ -172,10 +179,11 @@ casttest!(wallet_sign_typed_data_string, |_prj, cmd| {
 0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON file
-casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_typed_data_file(cmd: _) {
     cmd.args([
         "wallet",
         "sign",
@@ -193,11 +201,12 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
 0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign typed-data` passes with type names containing colons
 //  <https://github.com/foundry-rs/foundry/issues/10765>
-casttest!(wallet_sign_typed_data_with_colon_succeeds, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_typed_data_with_colon_succeeds(cmd: _) {
     let typed_data_with_colon = r#"{
         "types": {
             "EIP712Domain": [
@@ -233,11 +242,12 @@ casttest!(wallet_sign_typed_data_with_colon_succeeds, |_prj, cmd| {
 0xf91c67e845a4d468d1f876f457ffa01e65468641fc121453705242d21de39b266c278592b085814ab1e9adc938cc26b1d64bb61f80b437df077777c4283612291b
 
 "#]]);
-});
+}
 
 // tests that the same data without colon works correctly
 // <https://github.com/foundry-rs/foundry/issues/10765>
-casttest!(wallet_sign_typed_data_without_colon_works, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_typed_data_without_colon_works(cmd: _) {
     let typed_data_without_colon = r#"{
         "types": {
             "EIP712Domain": [
@@ -271,10 +281,11 @@ casttest!(wallet_sign_typed_data_without_colon_works, |_prj, cmd| {
         typed_data_without_colon,
     ])
     .assert_success();
-});
+}
 
 // tests that `cast wallet sign-auth message` outputs the expected signature
-casttest!(wallet_sign_auth, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_auth(cmd: _) {
     cmd.args([
         "wallet",
         "sign-auth",
@@ -288,9 +299,10 @@ casttest!(wallet_sign_auth, |_prj, cmd| {
 0xf85a01947e5f4552091a69125d5dfcb7b8c2659029395bdf6401a0ad489ee0314497c3f06567f3080a46a63908edc1c7cdf2ac2d609ca911212086a065a6ba951c8748dd8634740fe498efb61770097d99ff5fdcb9a863b62ea899f6
 
 "#]]);
-});
+}
 
-casttest!(wallet_sign_auth_zero_chain_requires_confirmation, |_prj, cmd| {
+#[casttest]
+fn wallet_sign_auth_zero_chain_requires_confirmation(cmd: _) {
     use alloy_rlp::Decodable;
 
     let delegate = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
@@ -352,9 +364,10 @@ Continue anyway? [y/N] "#]])
         .assert_success()
         .stdout_eq(format!("{confirmed}\n"))
         .stderr_eq(str![""]);
-});
+}
 
-casttest!(wallet_sign_auth_rpc_zero_chain_requires_confirmation, async |_prj, cmd| {
+#[casttest]
+async fn wallet_sign_auth_rpc_zero_chain_requires_confirmation(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(0u64))).await;
 
     cmd.args([
@@ -373,10 +386,11 @@ Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every cha
 Continue anyway? [y/N] Aborted.
 
 "#]]);
-});
+}
 
 // tests that `cast wallet sign-auth --self-broadcast` uses nonce + 1
-casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
+#[casttest]
+async fn wallet_sign_auth_self_broadcast(cmd: _) {
     use alloy_rlp::Decodable;
     use alloy_signer_local::PrivateKeySigner;
 
@@ -452,4 +466,4 @@ casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
         current_nonce + 1,
         "self-broadcast auth should have current nonce + 1"
     );
-});
+}

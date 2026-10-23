@@ -13,7 +13,7 @@ use regex::Regex;
 use semver::Version;
 use soldeer_commands::{Command, Verbosity, commands::install::Install};
 use std::{
-    io::IsTerminal,
+    io::{ErrorKind, IsTerminal},
     path::{Path, PathBuf},
     str,
     sync::LazyLock,
@@ -143,7 +143,34 @@ impl DependencyInstallOpts {
                     // checkout submodules at the revs recorded in `foundry.lock`
                     if let Some(out_of_sync) = &out_of_sync_deps {
                         for (rel_path, dep_id) in out_of_sync {
-                            git.checkout_at(dep_id.checkout_id(), &git.root.join(rel_path))?;
+                            let path = git.root.join(rel_path);
+                            git.checkout_at(dep_id.checkout_id(), &path).wrap_err_with(|| {
+                                let dep = rel_path.display();
+                                // `sync` also creates entries that are not recorded on disk.
+                                let mut on_disk = Lockfile::new(&config.root);
+                                let hint =
+                                    if on_disk.read().is_ok() && on_disk.get(rel_path).is_some() {
+                                        format!(
+                                            "\n`{dep}` is locked to {dep_id} in {FOUNDRY_LOCK}. If \
+                                             that ref is no longer available from the dependency's \
+                                             remote, update the `{dep}` entry in {FOUNDRY_LOCK}."
+                                        )
+                                    } else if let DepIdentifier::Branch { name, .. } = dep_id {
+                                        format!(
+                                            "\nBranch `{name}` comes from the `branch` setting for \
+                                             `{dep}` in .gitmodules. If it no longer exists on the \
+                                             dependency's remote, update .gitmodules; if it does, \
+                                             the local clone may be missing it, for example after \
+                                             a `--shallow` install."
+                                        )
+                                    } else {
+                                        String::new()
+                                    };
+                                format!(
+                                    "Failed to check out `{}` for dependency `{dep}`{hint}",
+                                    dep_id.checkout_id()
+                                )
+                            })?;
                         }
                     }
 
@@ -321,9 +348,14 @@ impl DependencyInstallOpts {
             sh_status!("{msg}")?;
 
             // Check if the dependency has soldeer.lock and install soldeer dependencies
-            if let Err(e) = install_soldeer_deps_if_needed(&path).await {
-                sh_warn!("Failed to install soldeer dependencies for {}: {e}", dep.name)?;
-            }
+            install_soldeer_deps_if_needed(&path).await.map_err(|e| {
+                eyre::eyre!(
+                    "Failed to install soldeer dependencies for {}: {e}\n\
+                     Run `forge soldeer install` in {} to retry.",
+                    dep.name,
+                    path.display()
+                )
+            })?;
         }
 
         // update `libs` in config if not included yet
@@ -432,6 +464,38 @@ impl Drop for NewSubmoduleGuard {
     }
 }
 
+/// Removes a newly created dependency directory if its installation fails.
+struct NewFolderGuard<'a> {
+    path: &'a Path,
+    armed: bool,
+}
+
+impl<'a> NewFolderGuard<'a> {
+    fn new(path: &'a Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        // Claim the destination before cloning so rollback cannot remove an existing path.
+        fs::create_dir(path)?;
+        Ok(Self { path, armed: true })
+    }
+
+    const fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for NewFolderGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed
+            && let Err(err) = std::fs::remove_dir_all(self.path)
+            && err.kind() != ErrorKind::NotFound
+        {
+            warn!(%err, path = %self.path.display(), "failed to remove dependency after installation failure");
+        }
+    }
+}
+
 fn restore_file(path: &Path, contents: Option<&[u8]>) {
     let result = match contents {
         Some(contents) => fs::write(path, contents),
@@ -447,6 +511,7 @@ impl Installer<'_> {
     /// Installs the dependency as an ordinary folder instead of a submodule
     fn install_as_folder(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
         let url = dep.require_url()?;
+        let mut guard = NewFolderGuard::new(path)?;
         Git::clone(dep.tag.is_none(), url, Some(&path))?;
         let mut dep = dep.clone();
 
@@ -475,6 +540,7 @@ impl Installer<'_> {
         // remove git artifacts
         fs::remove_dir_all(path.join(".git"))?;
 
+        guard.disarm();
         Ok(dep.tag)
     }
 
@@ -672,7 +738,10 @@ impl Installer<'_> {
         if let Err(mut e) = res {
             // remove dependency on failed checkout
             fs::remove_dir_all(path)?;
-            if e.to_string().contains("did not match any file(s) known to git") {
+            let error = e.to_string();
+            if error.contains("did not match any file(s) known to git")
+                || error.contains("fatal: invalid reference:")
+            {
                 e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
             }
             return Err(e);

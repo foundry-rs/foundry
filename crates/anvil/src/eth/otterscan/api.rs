@@ -75,6 +75,7 @@ impl EthApi<FoundryNetwork> {
             .backend
             .trace_transaction(hash)
             .await?
+            .unwrap_or_default()
             .into_iter()
             .filter_map(|trace| TraceEntry::from_transaction_trace(&trace.trace))
             .collect();
@@ -278,7 +279,10 @@ impl EthApi<FoundryNetwork> {
     pub async fn ots_get_contract_creator(&self, addr: Address) -> Result<Option<ContractCreator>> {
         node_info!("ots_getContractCreator");
 
-        let from = self.get_fork().map(|f| f.block_number()).unwrap_or_default();
+        let from = self
+            .get_fork()
+            .map(|f| f.block_number())
+            .unwrap_or_else(|| self.backend.genesis_number());
         let to = self.backend.best_number();
 
         // loop in reverse, since we want the latest deploy to the address

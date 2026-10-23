@@ -1,7 +1,12 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
+    TestFunctionExt,
+    external_compiler::{ExternalCompilation, is_builtin_compiler_source},
+    fs::canonicalize_path,
+    preprocessor::DynamicTestLinkingPreprocessor,
+    shell,
+    term::SpinnerReporter,
 };
 use alloy_json_abi::JsonAbi;
 use comfy_table::{
@@ -13,18 +18,20 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
+        BytecodeObject, Contract, Error as SolcError, Severity, Source,
+        output_selection::OutputSelection, remappings::Remapping,
     },
     compilers::{
-        Compiler,
+        CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
-    multi::{MultiCompiler, MultiCompilerSettings},
+    multi::{MultiCompiler, MultiCompilerError, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
+use foundry_config::Config;
 use num_format::{Locale, ToFormattedString};
 use revm::primitives::{eip170, eip3860, hardfork::SpecId};
 use solar::{
@@ -33,10 +40,11 @@ use solar::{
     parse::Parser,
 };
 use std::{
+    any::Any,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Instant,
@@ -78,11 +86,24 @@ pub struct ProjectCompiler {
     /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
+    /// Complete source roots to retry if filtering changed Solidity's inheritance ordering.
+    source_order_fallback: Vec<PathBuf>,
+
+    /// Paths used by external adapters to select compiler-native build units.
+    selected_paths: Vec<PathBuf>,
+
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
 
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
+
+    /// External compiler configuration.
+    external_compilers: Option<Config>,
+
+    /// Preserves the caller's artifact policy when ABI caching enables artifacts on a cloned
+    /// project.
+    external_writes: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -106,8 +127,12 @@ impl ProjectCompiler {
             ignore_eip_3860: false,
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
+            source_order_fallback: Vec::new(),
+            selected_paths: Vec::new(),
             dynamic_test_linking: false,
             abi_cache: false,
+            external_compilers: None,
+            external_writes: true,
         }
     }
 
@@ -168,10 +193,55 @@ impl ProjectCompiler {
         self
     }
 
+    /// Sets paths used by external adapters to select compiler-native build units.
+    pub fn selected_paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.selected_paths.extend(paths);
+        self
+    }
+
+    /// Selects targets for external adapters and built-in sources where applicable.
+    pub fn target_files(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        for path in paths {
+            if is_builtin_compiler_source(&path) {
+                self.files.push(path.clone());
+            }
+            self.selected_paths.push(path);
+        }
+        self
+    }
+
     /// Sets if tests should be dynamically linked.
     #[inline]
     pub const fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
         self.dynamic_test_linking = preprocess;
+        self
+    }
+
+    /// Enables explicitly configured external compilers for this build.
+    pub fn external_compilers(mut self, config: &Config) -> Self {
+        self.external_compilers = Some(config.clone());
+        self
+    }
+
+    /// Controls whether external artifacts and their cache may be published.
+    pub const fn external_artifacts(mut self, write: bool) -> Self {
+        self.external_writes = write;
+        self
+    }
+
+    /// Reuses normal artifacts before consulting the compiler-owned ABI cache.
+    ///
+    /// The project must request ABI output and may include other contract outputs.
+    /// The project's artifact policy controls writes to the secondary cache.
+    pub const fn cache_abi(mut self) -> Self {
+        self.abi_cache = true;
+        self
+    }
+
+    /// Retries once with these roots if compilation fails because a base contract is defined
+    /// after its derived contract. Removing roots can change traversal order in import cycles.
+    pub fn source_order_fallback(mut self, files: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.source_order_fallback.extend(files);
         self
     }
 
@@ -192,32 +262,80 @@ impl ProjectCompiler {
         // breaks compatibility with downstream crates like `foundry-cli`. This would need a
         // broader refactor across the call chain. Leaving it as-is for now until a larger
         // refactor is feasible.
-        if !project.paths.has_input_files() && self.files.is_empty() {
+        if !project.paths.has_input_files()
+            && self.files.is_empty()
+            && self.selected_paths.is_empty()
+            && self
+                .external_compilers
+                .as_ref()
+                .is_none_or(|config| config.external_compilers.is_empty())
+        {
             sh_println!("Nothing to compile")?;
             std::process::exit(0);
         }
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
+        let fallback_files = std::mem::take(&mut self.source_order_fallback);
+        let explicit_selection = !files.is_empty() || !self.selected_paths.is_empty();
+        let selected_paths = std::mem::take(&mut self.selected_paths);
         let preprocess = self.dynamic_test_linking;
         let abi_cache = self.abi_cache;
+        let external_compilers = self.external_compilers.take();
+        let external_writes = self.external_writes && !project.no_artifacts;
         self.compile_with(|| {
-            let sources = if files.is_empty() {
-                project.paths.read_input_files()?
-            } else {
+            let external = external_compilers
+                .as_ref()
+                .map(|config| {
+                    ExternalCompilation::compile(config, &selected_paths, external_writes)
+                })
+                .transpose()?;
+            let sources = if explicit_selection {
                 Source::read_all(files)?
+            } else {
+                project.paths.read_input_files()?
             };
 
-            let mut compiler =
-                foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
-            if preprocess {
-                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+            let preprocessor = DynamicTestLinkingPreprocessor::default();
+            let compile = |preprocess| -> Result<ProjectCompileOutput<C>> {
+                let compile_sources = |sources| {
+                    let mut compiler = foundry_compilers::project::ProjectCompiler::with_sources(
+                        project, sources,
+                    )?;
+                    if preprocess {
+                        compiler = compiler.with_preprocessor(preprocessor.clone());
+                    }
+                    if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
+                };
+                let mut output = compile_sources(sources.clone())?;
+                // Solc error 2449 can be introduced by filtering compilation roots in an import
+                // cycle. Retry before reporting diagnostics or bailing on the filtered output.
+                if !fallback_files.is_empty()
+                    && output.output().errors.iter().any(|error| error.error_code() == Some(2449))
+                {
+                    output = compile_sources(Source::read_all(&fallback_files)?)?;
+                }
+                Ok(output)
+            };
+            let mut output = compile(preprocess)?;
+            // A retry can only help if DTL changed the compiler input.
+            if preprocessor.rewrote_sources()
+                && let Some(reason) = dynamic_test_linking_failure(&output.output().errors)
+            {
+                sh_warn!(
+                    "dynamic test linking failed ({reason}); retrying with native test linking. \
+                     Use --no-dynamic-test-linking to skip the failed attempt."
+                )?;
+                // The preprocessor is part of the cache identity: native compilation cannot
+                // reuse DTL artifacts. Return only this attempt, including any compiler errors.
+                output = compile(false)?;
             }
-            if abi_cache {
-                compiler.compile_abi_cached().map_err(Into::into)
-            } else {
-                compiler.compile().map_err(Into::into)
+            if !output.has_compiler_errors()
+                && let Some(external) = external
+            {
+                external.merge(&mut output)?;
             }
+            Ok(output)
         })
     }
 
@@ -252,30 +370,30 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
-        if !quiet {
-            if !shell::is_json() {
-                if output.is_unchanged() {
-                    sh_println!("No files changed, compilation skipped")?;
-                } else {
-                    // print the compiler output / warnings
-                    sh_println!("{output}")?;
-                }
+        if !quiet && !shell::is_json() {
+            if output.is_unchanged() {
+                sh_println!("No files changed, compilation skipped")?;
+            } else {
+                // print the compiler output / warnings
+                sh_println!("{output}")?;
             }
+        }
 
-            if !(shell::is_json() && output.has_compiler_errors()) {
-                self.handle_output(&output)?;
-            }
+        // Quiet mode suppresses reports, but size limits still apply.
+        if !(shell::is_json() && output.has_compiler_errors()) {
+            self.handle_output(&output)?;
         }
 
         Ok(output)
     }
 
-    /// If configured, this will print sizes or names
+    /// Prints requested reports and checks contract size limits.
     fn handle_output<C: Compiler<CompilerContract = Contract>>(
         &self,
         output: &ProjectCompileOutput<C>,
     ) -> Result<()> {
-        let print_names = self.print_names.unwrap_or(false);
+        let quiet = self.quiet.unwrap_or(false);
+        let print_names = self.print_names.unwrap_or(false) && !quiet;
         let print_sizes = self.print_sizes.unwrap_or(false);
 
         // print any sizes or names
@@ -356,16 +474,12 @@ impl ProjectCompiler {
                     let runtime_size = contract_size(*artifact, false).unwrap_or_default();
                     let init_size = contract_size(*artifact, true).unwrap_or_default();
 
-                    let is_dev_contract = artifact
-                        .abi
-                        .as_ref()
-                        .map(|abi| {
-                            abi.functions().any(|f| {
-                                f.test_function_kind().is_known()
-                                    || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
-                            })
+                    let is_dev_contract = artifact.abi.as_ref().is_some_and(|abi| {
+                        abi.functions().any(|f| {
+                            f.test_function_kind().is_known()
+                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                         })
-                        .unwrap_or(false);
+                    });
 
                     let unique_name = if kept.len() > 1 {
                         format!(
@@ -384,7 +498,9 @@ impl ProjectCompiler {
                 }
             }
 
-            sh_println!("{size_report}")?;
+            if !quiet {
+                sh_println!("{size_report}")?;
+            }
 
             let runtime_eip = match size_report.limits.runtime {
                 CONTRACT_RUNTIME_SIZE_LIMIT => "EIP-170: ",
@@ -715,7 +831,9 @@ where
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
     });
-    compiler.abi_cache |= project.no_artifacts;
+    // Cached ABI artifacts do not retain compiler diagnostics.
+    compiler.abi_cache = (compiler.abi_cache || project.no_artifacts)
+        && project.compiler_severity_filter == Severity::Error;
     compiler.compile(project)
 }
 
@@ -732,12 +850,14 @@ where
     if !project.cached
         || project.build_info
         || project.artifacts.additional_files != Default::default()
+        || project.compiler_severity_filter != Severity::Error
     {
         return compile_abi_project(project, compiler);
     }
     let mut cached_project = project.clone();
     cached_project.no_artifacts = false;
     compiler.abi_cache = true;
+    compiler.external_writes &= !project.no_artifacts;
     compile_abi_project(&mut cached_project, compiler)
 }
 
@@ -747,7 +867,7 @@ pub fn compile_target_abi(
     target_path: &Path,
     target_name: &str,
 ) -> Result<JsonAbi> {
-    let target_path = dunce::canonicalize(target_path)?;
+    let target_path = canonicalize_path(target_path)?;
     let output = compile_abi_project(
         project,
         ProjectCompiler::new().quiet(true).files([target_path.clone()]),
@@ -761,15 +881,19 @@ pub fn compile_target_abi(
 
 /// Creates a [Project] from an Etherscan source.
 pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
-    let target_path = dunce::canonicalize(target_path)?;
+    let target_path = canonicalize_path(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
     let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
+    //
+    // The remappings come from the explorer's copy of the contract's compiler settings, which is
+    // attacker controlled: a target of `../../..` would otherwise point the compiler at sources
+    // outside the checkout and let a verified contract pull arbitrary local files into the build.
     for remapping in &mut settings.remappings {
-        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
+        let new_path = sources_path.join(sanitize_relative_path(remapping.path.as_ref()));
         remapping.path = new_path.display().to_string();
     }
 
@@ -809,6 +933,36 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .ephemeral()
         .no_artifacts()
         .build(compiler)?)
+}
+
+/// Normalizes an untrusted path relative to the source root, discarding leading separators,
+/// drive prefixes, and parent components that would escape that root.
+fn sanitize_relative_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => {}
+        }
+    }
+    normalized
+}
+
+/// Adds `storageLayout` to the compiler output selection for the given project.
+pub fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+) {
+    project.artifacts.additional_values.storage_layout = true;
+    project.update_output_selection(|selection| {
+        for contract_selection in selection.0.values_mut() {
+            for selection in contract_selection.values_mut() {
+                selection.push("storageLayout".to_string());
+            }
+        }
+    })
 }
 
 /// Configures the reporter and runs the given closure.
@@ -908,6 +1062,37 @@ impl std::fmt::Debug for PathOrContractInfo {
     }
 }
 
+/// Recognizes only solc code-generation failures that DTL's source rewrites can introduce.
+/// Unrelated errors (including other languages) must not trigger a retry.
+fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'static str> {
+    let mut reason = None;
+    for error in errors.iter().filter(|error| error.is_error()) {
+        // CompilationError has no structured message/type accessors. Inspect the concrete solc
+        // diagnostic rather than its Display output, which can include source snippets.
+        let error = error as &dyn Any;
+        let error = if let Some(error) = error.downcast_ref::<SolcError>() {
+            error
+        } else if let Some(MultiCompilerError::Solc(error)) =
+            error.downcast_ref::<MultiCompilerError>()
+        {
+            error
+        } else {
+            return None;
+        };
+        reason = Some(match error.r#type.as_str() {
+            "YulException" if error.message.contains("too deep in the stack") => "stack too deep",
+            "CompilerError" if error.message.contains("Stack too deep") => "stack too deep",
+            "InternalCompilerError"
+                if error.message.contains("Tag too large for reserved space") =>
+            {
+                "Tag too large for reserved space"
+            }
+            _ => return None,
+        });
+    }
+    reason
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -984,6 +1169,30 @@ mod tests {
         assert_eq!(
             ContractSizeLimits::for_spec_id(SpecId::AMSTERDAM),
             ContractSizeLimits::new(65_536, 131_072)
+        );
+    }
+
+    #[test]
+    fn sanitized_remapping_paths_stay_inside_the_root() {
+        let root = Path::new("/tmp/sources");
+        for path in ["../../../etc", "a/../../../etc", "/etc", "./a/../b"] {
+            let joined = root.join(sanitize_relative_path(Path::new(path)));
+            assert!(
+                joined.starts_with(root) && !joined.components().any(|c| c == Component::ParentDir),
+                "{path} escaped the root: {}",
+                joined.display()
+            );
+        }
+
+        for (path, expected) in [("src/../lib/", "lib"), ("./a/../b", "b"), ("a/../../lib", "lib")]
+        {
+            assert_eq!(sanitize_relative_path(Path::new(path)), Path::new(expected));
+        }
+
+        // Ordinary relative paths are left alone.
+        assert_eq!(
+            sanitize_relative_path(Path::new("lib/openzeppelin")),
+            Path::new("lib/openzeppelin")
         );
     }
 }

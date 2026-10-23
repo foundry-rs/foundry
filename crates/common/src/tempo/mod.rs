@@ -3,8 +3,7 @@
 pub mod auth;
 
 use crate::FoundryTransactionBuilder;
-use alloy_chains::Chain;
-use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Signature, TxKind, address};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -18,6 +17,7 @@ use tempo_alloy::contracts::precompiles::{
 };
 use tempo_primitives::TempoAddressExt;
 
+mod hardfork;
 mod keystore;
 mod lane;
 mod session;
@@ -28,6 +28,9 @@ mod tip20;
 
 pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
+pub use hardfork::{
+    active_tempo_hardfork, ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+};
 pub use keystore::*;
 pub use lane::{PaymentLane, PaymentLaneClassification, PaymentLaneReason, classify_payment_lane};
 pub use session::*;
@@ -54,6 +57,7 @@ mod tests;
 pub const ALPHA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000001");
 pub const BETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000002");
 pub const THETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000003");
+pub const OUSD_ADDRESS: Address = address!("0x20c0000000000000000000006a37DA5C996874BE");
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
@@ -83,14 +87,13 @@ impl TempoSponsor {
     pub async fn resolve_and_set_fee_token<N>(
         &self,
         provider: Option<&dyn Provider<N>>,
-        chain: Option<Chain>,
         tx: &mut N::TransactionRequest,
     ) -> Result<Option<Address>>
     where
         N: Network,
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        resolve_and_set_fee_token(provider, chain, tx, Some(self.sponsor)).await
+        resolve_and_set_fee_token(provider, tx, Some(self.sponsor)).await
     }
 
     pub async fn attach_and_print<N: Network>(
@@ -258,21 +261,21 @@ fn redacted_debug(value: &str) -> &'static str {
 /// Resolves and applies the Tempo fee token selected by the network.
 ///
 /// This must happen before computing a sponsor digest, because Tempo sponsor signatures commit to
-/// the fee token.
+/// the fee token. The selected network's request type decides whether a fee token applies, so a
+/// local Tempo node is handled the same way as a canonical Tempo chain.
 pub async fn resolve_and_set_fee_token<N>(
     provider: Option<&dyn Provider<N>>,
-    chain: Option<Chain>,
     tx: &mut N::TransactionRequest,
     fee_payer: Option<Address>,
 ) -> Result<Option<Address>>
 where
     N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
     if let Some(fee_token) = tx.fee_token() {
         return Ok(Some(fee_token));
     }
-    if !chain.is_some_and(Chain::is_tempo) {
+    if !tx.supports_fee_token() {
         return Ok(None);
     }
     let fee_payer = fee_payer.or_else(|| tx.from());
@@ -284,7 +287,7 @@ where
     // A stored fee-token preference would classify a contract creation as Tempo AA, but AA
     // transactions require a non-empty call list. Leave CREATE requests as Ethereum transactions;
     // the protocol still applies the account's stored fee-token preference when charging fees.
-    if !has_call_list && calls.iter().any(|(to, _)| matches!(to, TxKind::Create)) {
+    if !has_call_list && calls.iter().any(|(to, _)| to.is_create()) {
         return Ok(None);
     }
 
@@ -317,7 +320,6 @@ async fn stored_user_fee_token<N>(
 ) -> Result<Option<Address>>
 where
     N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
 {
     let call = IFeeManager::userTokensCall { user: fee_payer };
     let tx = N::TransactionRequest::default()
@@ -416,6 +418,7 @@ pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> 
         ALPHA_USD_ADDRESS => Some("AlphaUSD"),
         BETA_USD_ADDRESS => Some("BetaUSD"),
         THETA_USD_ADDRESS => Some("ThetaUSD"),
+        OUSD_ADDRESS => Some("OUSD"),
         _ => None,
     }
 }
@@ -423,7 +426,6 @@ pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> 
 async fn resolve_fee_token_symbol<N, P>(provider: &P, fee_token: Address) -> Option<String>
 where
     N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
     P: Provider<N>,
 {
     if let Some(symbol) = known_fee_token_symbol(fee_token) {
@@ -448,7 +450,6 @@ pub async fn maybe_print_fee_token<N, P>(
 ) -> Result<()>
 where
     N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
     P: Provider<N>,
 {
     if let Some(fee_token) = fee_token {

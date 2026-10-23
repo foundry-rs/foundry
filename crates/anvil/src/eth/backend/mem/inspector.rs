@@ -1,6 +1,7 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::eth::macros::node_info;
+use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use alloy_sol_types::SolValue;
 use foundry_evm::{
@@ -17,8 +18,8 @@ use revm::{
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme,
-        Interpreter, interpreter::EthInterpreter,
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
+        interpreter::EthInterpreter,
     },
 };
 use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector};
@@ -125,8 +126,6 @@ pub struct InspectorTxConfig {
     pub print_traces: bool,
     /// Whether to print logs to stdout.
     pub print_logs: bool,
-    /// Whether to enable step-level tracing (with state diffs).
-    pub enable_steps_tracing: bool,
     /// Decoder for populating trace labels.
     pub call_trace_decoder: Arc<CallTraceDecoder>,
 }
@@ -135,14 +134,27 @@ impl AnvilInspector {
     /// Finish a transaction: print traces/logs, drain the tracer, and reset for the next tx.
     ///
     /// Returns the collected call trace nodes from the finished transaction.
-    pub fn finish_transaction(&mut self, config: &InspectorTxConfig) -> Vec<CallTraceNode> {
+    pub fn finish_transaction(
+        &mut self,
+        config: &InspectorTxConfig,
+        precompiles: &PrecompilesMap,
+    ) -> Vec<CallTraceNode> {
         // Print before draining so the tracer is still populated.
         if config.print_traces {
             self.print_traces(config.call_trace_decoder.clone());
         }
         self.print_logs();
 
-        let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
+        let mut traces =
+            self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
+        // Record inclusion using the executing EVM's map, while retaining the full Geth graph.
+        for node in &mut traces {
+            if node.parent.is_some() && !node.trace.kind.is_any_create() {
+                node.trace.maybe_precompile = Some(
+                    node.trace.value.is_zero() && precompiles.get(&node.trace.address).is_some(),
+                );
+            }
+        }
 
         self.reset_transaction(config);
 
@@ -157,12 +169,7 @@ impl AnvilInspector {
     /// Resets per-transaction collectors for the next transaction.
     fn reset_transaction(&mut self, config: &InspectorTxConfig) {
         // Reinstall tracer for next tx.
-        let tracing_config = if config.enable_steps_tracing {
-            TracingInspectorConfig::all().with_state_diffs()
-        } else {
-            TracingInspectorConfig::all().set_steps(false)
-        };
-        self.tracer = Some(TracingInspector::new(tracing_config));
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
 
         // Reset log collector for next tx.
         self.log_collector = config.print_logs.then(|| LogCollector::Capture { logs: Vec::new() });
@@ -201,12 +208,6 @@ impl AnvilInspector {
     /// Configures the `TracingInspector` [`revm::Inspector`]
     pub fn with_tracing_config(mut self, config: TracingInspectorConfig) -> Self {
         self.tracer = Some(TracingInspector::new(config));
-        self
-    }
-
-    /// Enables steps recording for `Tracer`.
-    pub fn with_steps_tracing(mut self) -> Self {
-        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 
@@ -334,7 +335,7 @@ where
         if let Some(collector) = &mut self.simulation_logs {
             collector.sync_journal_logs(ecx.journal().logs());
             collector.frame_start();
-            if matches!(inputs.scheme, CallScheme::Call)
+            if inputs.scheme.is_call()
                 && let Some(value) = inputs.transfer_value()
             {
                 collector.push_transfer(inputs.transfer_from(), inputs.transfer_to(), value);

@@ -74,6 +74,7 @@ dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
 globset = "0.4"
+heck.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
@@ -93,7 +94,6 @@ watchexec-events = "6.0"
 watchexec-signals = "5.0"
 which.workspace = true
 clearscreen = "4.0"
-evm-disassembler.workspace = true
 path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
@@ -112,6 +112,7 @@ tempfile.workspace = true
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
+alloy-rpc-types.workspace = true
 async-lsp.workspace = true
 tokio-util.workspace = true
 futures = { workspace = true, features = ["executor"] }
@@ -127,6 +128,7 @@ svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true
+base-common-consensus = { workspace = true, features = ["serde", "std"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 rexpect.workspace = true

@@ -7,7 +7,7 @@ use op_revm::{
 };
 use revm::{
     context::{
-        BlockEnv, Journal,
+        BlockEnv, ContextTr, Journal,
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EthFrame, EvmTr, FrameResult, instructions::EthInstructions},
@@ -16,7 +16,7 @@ use revm::{
 };
 
 use crate::{
-    FoundryChain, FoundryContextExt, FoundryInspectorExt,
+    FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     backend::{DatabaseExt, JournaledState},
     evm::{
         FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
@@ -41,7 +41,11 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
     PrecompilesMap,
 >;
 
-impl FoundryChain<OpTx> for L1BlockInfo {}
+impl FoundryChain<OpTx> for L1BlockInfo {
+    fn clear_transaction_fee_cache(&mut self) {
+        self.clear_tx_l1_cost();
+    }
+}
 
 impl IntoInstructionResult for OpHaltReason {
     fn into_instruction_result(self) -> InstructionResult {
@@ -117,6 +121,11 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
+        if self.ctx().cfg().disable_fee_charge
+            && tx.enveloped_tx().is_some_and(|enveloped| enveloped.is_empty())
+        {
+            self.ctx_mut().chain_mut().clear_transaction_fee_cache();
+        }
         self.ctx().set_tx(tx);
 
         let mut handler = OpEvmHandler::<I>::new();
@@ -149,14 +158,10 @@ fn map_op_error(e: EVMError<DatabaseError, OpTransactionError>) -> EVMError<Data
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backend::Backend, evm::EvmEnvFor};
-    use alloy_primitives::{Address, TxKind, U256};
+    use crate::backend::Backend;
+    use alloy_primitives::{Address, Bytes, TxKind, U256};
     use op_revm::constants::L1_FEE_RECIPIENT;
-    use revm::{
-        context::{ContextTr, TxEnv},
-        inspector::NoOpInspector,
-        state::AccountInfo,
-    };
+    use revm::{context::TxEnv, inspector::NoOpInspector, state::AccountInfo};
 
     #[test]
     fn constructors_allow_restoring_l1_block_context() {
@@ -171,7 +176,7 @@ mod tests {
         {
             let mut evm = factory.create_foundry_evm_with_inspector(
                 &mut db,
-                EvmEnvFor::<OpEvmNetwork>::default(),
+                EvmEnv::<OpSpecId>::default(),
                 NoOpInspector,
             );
             *evm.chain_mut() = chain.clone();
@@ -181,7 +186,7 @@ mod tests {
         }
         let mut evm = factory.create_nested_evm_with_inspector(
             &mut db,
-            EvmEnvFor::<OpEvmNetwork>::default(),
+            EvmEnv::<OpSpecId>::default(),
             NoOpInspector,
         );
         *evm.chain_mut() = chain.clone();
@@ -198,7 +203,7 @@ mod tests {
         let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
         db.insert_account_info(caller, AccountInfo { balance: U256::MAX, ..Default::default() });
 
-        let mut evm_env = EvmEnvFor::<OpEvmNetwork>::default();
+        let mut evm_env = EvmEnv::<OpSpecId>::default();
         evm_env.cfg_env.spec = OpSpecId::REGOLITH;
         evm_env.cfg_env.disable_fee_charge = false;
         let mut evm = OpEvmFactory::default().create_nested_evm(&mut db, evm_env);
@@ -222,5 +227,39 @@ mod tests {
 
         assert!(result.result.is_success());
         assert_eq!(result.state[&L1_FEE_RECIPIENT].info.balance, l1_cost);
+    }
+
+    #[test]
+    fn nested_execution_skips_cached_l1_cost_when_fees_disabled() {
+        let caller = Address::with_last_byte(0x42);
+        let recipient = Address::with_last_byte(0x43);
+        let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
+        db.insert_account_info(caller, AccountInfo { balance: U256::MAX, ..Default::default() });
+
+        let mut evm_env = EvmEnv::<OpSpecId>::default();
+        evm_env.cfg_env.spec = OpSpecId::REGOLITH;
+        evm_env.cfg_env.disable_fee_charge = true;
+        let mut evm = OpEvmFactory::default().create_nested_evm(&mut db, evm_env);
+        *evm.chain_mut() = L1BlockInfo {
+            l2_block: Some(U256::ZERO),
+            tx_l1_cost: Some(U256::from(456)),
+            ..Default::default()
+        };
+        let tx = OpTx(op_revm::OpTransaction {
+            base: TxEnv {
+                caller,
+                gas_limit: 21_000,
+                kind: TxKind::Call(recipient),
+                ..Default::default()
+            },
+            enveloped_tx: Some(Bytes::new()),
+            deposit: Default::default(),
+        });
+
+        let result = evm.transact_raw(tx).unwrap();
+
+        assert!(result.result.is_success());
+        assert_eq!(result.state[&caller].info.balance, U256::MAX);
+        assert_eq!(result.state[&L1_FEE_RECIPIENT].info.balance, U256::ZERO);
     }
 }

@@ -177,8 +177,8 @@ mod tests {
     #[test]
     fn parse_scope_variants() {
         let target = address!("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D");
-        let recipient = address!("0x1111111111111111111111111111111111111111");
-        let recipient2 = address!("0x2222222222222222222222222222222222222222");
+        let recipient = Address::repeat_byte(0x11);
+        let recipient2 = Address::repeat_byte(0x22);
         // (input, expected selectors, expected recipients per rule)
         let cases = [
             ("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D", vec![]),

@@ -1,17 +1,13 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, str, util::OutputExt};
+use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
 
-use super::symbolic_helpers::{assert_symbolic, z3_available};
 use crate::skip_unless_z3;
 
-forgetest_init!(symbolic_mload_accepts_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_mload_accepts_symbolic_offset because z3 is not available"
-        );
-        return;
-    }
+// MLOAD, MSTORE and MSIZE with symbolic offsets are modeled instead of reported as Stuck.
+#[forgetest_init]
+fn symbolic_memory_word_ops_accept_symbolic_offsets(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_memory_word_ops_accept_symbolic_offsets");
 
     prj.add_test(
         "SymbolicMload.t.sol",
@@ -35,22 +31,112 @@ contract SymbolicMload {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicMload"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    prj.add_test(
+        "SymbolicMstoreConstrained.t.sol",
+        r#"
+import "forge-std/Test.sol";
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicMload(uint16,uint256)
-"#]],
+contract SymbolicMstoreConstrained is Test {
+    function checkConstrainedMstore(uint16 offset, uint256 marker) public {
+        vm.assume(offset == 0x80);
+
+        uint256 loaded;
+        assembly {
+            mstore(offset, marker)
+            loaded := mload(0x80)
+        }
+
+        assertEq(loaded, marker);
+    }
+}
+"#,
     );
-    assert!(!stdout.contains("symbolic MLOAD offset"), "{stdout}");
-});
 
-forgetest_init!(symbolic_fixed_memory_access_rejects_oversized_offset, |prj, cmd| {
+    prj.add_test(
+        "SymbolicMsizeAfterWrite.t.sol",
+        r#"
+contract SymbolicMsizeAfterWrite {
+    function checkSymbolicMsize(uint16 offset, uint256 marker) public pure {
+        uint256 size;
+        assembly {
+            mstore(offset, marker)
+            size := msize()
+        }
+
+        assert(size != 0);
+    }
+}
+"#,
+    );
+
+    // Dynamic-offset memory read must respect write-epoch ordering: if a later
+    // concrete MSTORE has written to an offset, a subsequent symbolic-offset MLOAD
+    // that aliases that offset must see the later value, not the stale earlier
+    // symbolic write. If epoch ordering regressed, Z3 could pick `symKey == 0x80`
+    // and the symbolic MLOAD would surface `0xdeadbeef` instead of `0x1234`,
+    // flipping the assertion below into a counterexample.
+    prj.add_test(
+        "SymbolicMemoryEpochOrdering.t.sol",
+        r#"
+contract SymbolicMemoryEpochOrdering {
+    function checkLaterConcreteWriteWins(uint256 symKey, uint256 readKey) public pure {
+        uint256 v;
+        assembly {
+            // Earlier symbolic-offset write.
+            mstore(symKey, 0xdeadbeef)
+            // Later concrete-offset write — must be visible at slot 0x80
+            // regardless of what `symKey` was.
+            mstore(0x80, 0x1234)
+            // Dynamic-offset read.
+            v := mload(readKey)
+        }
+        if (readKey == 0x80) {
+            assert(v == 0x1234);
+        }
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkSymbolicMload|checkConstrainedMstore|checkSymbolicMsize|checkLaterConcreteWriteWins)\\(",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMsizeAfterWrite.t.sol:SymbolicMsizeAfterWrite
+[PASS] checkSymbolicMsize(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicMemoryEpochOrdering.t.sol:SymbolicMemoryEpochOrdering
+[PASS] checkLaterConcreteWriteWins(uint256,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicMstoreConstrained.t.sol:SymbolicMstoreConstrained
+[PASS] checkConstrainedMstore(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicMload.t.sol:SymbolicMload
+[PASS] checkSymbolicMload(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in [
+        "symbolic MLOAD offset",
+        "symbolic MSIZE after symbolic memory write",
+        "symbolic MSTORE offset",
+    ] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_fixed_memory_access_rejects_oversized_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_fixed_memory_access_rejects_oversized_offset because z3 is not available"
@@ -130,50 +216,41 @@ contract SymbolicOversizedMemoryOffset is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "check.*Oversized"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkOversizedFixedMemoryAccesses()
-[PASS] checkConstrainedOversizedMemoryAccess(uint256)
-[PASS] checkOversizedCreateRanges()
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check.*Oversized"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicOversizedMemoryOffset.t.sol:SymbolicOversizedMemoryOffset
+[PASS] checkConstrainedOversizedMemoryAccess(uint256) ([METRICS])
+[PASS] checkOversizedCreateRanges() ([METRICS])
+[PASS] checkOversizedFixedMemoryAccesses() ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse();
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMixedMemoryOffsetExploresValidSibling"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMixedMemoryOffsetExploresValidSibling",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicOversizedMemoryOffset.t.sol:SymbolicOversizedMemoryOffset
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] calldata=0x8ba9bb5b0000000000000000000000000000000000000000000000000000000000000000 args=[0]] checkMixedMemoryOffsetExploresValidSibling(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMixedMemoryOffsetExploresValidSibling(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[0]
-"#]],
-    );
     assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_variable_memory_access_rejects_oversized_ranges, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_variable_memory_access_rejects_oversized_ranges(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_variable_memory_access_rejects_oversized_ranges because z3 is not available"
@@ -279,33 +356,39 @@ contract SymbolicOversizedMemoryRange {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--match-test", "testOversizedVariableMemoryRanges"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[PASS] testOversizedVariableMemoryRanges()
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--match-test",
+        "testOversizedVariableMemoryRanges",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicOversizedMemoryRange.t.sol:SymbolicOversizedMemoryRange
+[PASS] testOversizedVariableMemoryRanges() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse();
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkOversizedVariableMemoryRanges"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[PASS] checkOversizedVariableMemoryRanges()
-"#]],
-    );
-});
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkOversizedVariableMemoryRanges",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicOversizedMemoryRange.t.sol:SymbolicOversizedMemoryRange
+[PASS] checkOversizedVariableMemoryRanges() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest_init!(symbolic_fixed_memory_access_respects_memory_limit, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_fixed_memory_access_respects_memory_limit(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_fixed_memory_access_respects_memory_limit because z3 is not available"
@@ -394,70 +477,24 @@ contract SymbolicMemoryLimit {
     cmd.args(["test", "--match-test", "checkMemoryLimitNestedCall"]).assert_success();
 
     cmd.forge_fuse();
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMemoryLimit"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[PASS] checkMemoryLimitExactBoundaries()
-[PASS] checkMemoryLimitFirstInvalidBoundaries()
-[PASS] checkMemoryLimitNestedCall()
-[PASS] checkMemoryLimitCallInputExpansion()
-[PASS] checkMemoryLimitSymbolicCallSize(bool)
-[PASS] checkMemoryLimitRejectsWrappingCallRanges()
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_mstore_accepts_constrained_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_mstore_accepts_constrained_symbolic_offset because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicMstoreConstrained.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicMstoreConstrained is Test {
-    function checkConstrainedMstore(uint16 offset, uint256 marker) public {
-        vm.assume(offset == 0x80);
-
-        uint256 loaded;
-        assembly {
-            mstore(offset, marker)
-            loaded := mload(0x80)
-        }
-
-        assertEq(loaded, marker);
-    }
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkMemoryLimit"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicMemoryLimit.t.sol:SymbolicMemoryLimit
+[PASS] checkMemoryLimitCallInputExpansion() ([METRICS])
+[PASS] checkMemoryLimitExactBoundaries() ([METRICS])
+[PASS] checkMemoryLimitFirstInvalidBoundaries() ([METRICS])
+[PASS] checkMemoryLimitNestedCall() ([METRICS])
+[PASS] checkMemoryLimitRejectsWrappingCallRanges() ([METRICS])
+[PASS] checkMemoryLimitSymbolicCallSize(bool) ([METRICS])
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
-"#,
-    );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkConstrainedMstore"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkConstrainedMstore(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic MSTORE offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_mstore_accepts_unconstrained_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mstore_accepts_unconstrained_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mstore_accepts_unconstrained_symbolic_offset because z3 is not available"
@@ -482,22 +519,28 @@ contract SymbolicMstoreUnconstrained {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicMstore"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicMstore",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMstoreUnconstrained.t.sol:SymbolicMstoreUnconstrained
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicMstore(uint16,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL: panic: assertion failed
-"#]],
-    );
     assert!(!stdout.contains("symbolic MSTORE offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_mstore8_accepts_unconstrained_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mstore8_accepts_unconstrained_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mstore8_accepts_unconstrained_symbolic_offset because z3 is not available"
@@ -522,62 +565,28 @@ contract SymbolicMstore8Unconstrained {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicMstore8"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicMstore8",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMstore8Unconstrained.t.sol:SymbolicMstore8Unconstrained
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicMstore8(uint16,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL: panic: assertion failed
-"#]],
-    );
     assert!(!stdout.contains("symbolic MSTORE8 offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_msize_after_symbolic_write_is_modeled, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_msize_after_symbolic_write_is_modeled because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicMsizeAfterWrite.t.sol",
-        r#"
-contract SymbolicMsizeAfterWrite {
-    function checkSymbolicMsize(uint16 offset, uint256 marker) public pure {
-        uint256 size;
-        assembly {
-            mstore(offset, marker)
-            size := msize()
-        }
-
-        assert(size != 0);
-    }
 }
-"#,
-    );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicMsize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicMsize(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic MSIZE after symbolic memory write"), "{stdout}");
-});
-
-forgetest_init!(symbolic_msize_tracks_read_only_memory_expansion, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_msize_tracks_read_only_memory_expansion(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_msize_tracks_read_only_memory_expansion");
 
     prj.add_test(
@@ -618,22 +627,25 @@ contract SymbolicMsizeAfterRead {
     cmd.args(["test", "--match-test", "check.*ReadOnlyExpansion"]).assert_success();
 
     cmd.forge_fuse();
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "check.*ReadOnlyExpansion"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "check.*ReadOnlyExpansion",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicMsizeAfterRead.t.sol:SymbolicMsizeAfterRead
+[PASS] checkReadOnlyExpansion() ([METRICS])
+[PASS] checkSymbolicReadOnlyExpansion(uint16) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkReadOnlyExpansion()
-[PASS] checkSymbolicReadOnlyExpansion(uint16)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_msize_respects_zero_symbolic_copy_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_msize_respects_zero_symbolic_copy_size(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_msize_respects_zero_symbolic_copy_size");
 
     prj.add_test(
@@ -659,25 +671,23 @@ contract SymbolicMsizeAfterCopy {
     let stdout =
         assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkZeroLengthCopy"]))
             .failure()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMsizeAfterCopy.t.sol:SymbolicMsizeAfterCopy
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xac831bba0000000000000000000000000000000000000000000000000000000000000000 args=[0]] checkZeroLengthCopy(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
             .get_output()
             .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[FAIL: panic: assertion failed
-"#]],
-    );
     assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_sha3_accepts_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_sha3_accepts_symbolic_offset because z3 is not available"
-        );
-        return;
-    }
+// SHA3 over a symbolic offset or a constrained or bounded symbolic size is modeled.
+#[forgetest_init]
+fn symbolic_sha3_accepts_symbolic_operands(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_sha3_accepts_symbolic_operands");
 
     prj.add_test(
         "SymbolicSha3.t.sol",
@@ -699,29 +709,6 @@ contract SymbolicSha3 {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicSha3"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicSha3(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic SHA3 offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_sha3_accepts_constrained_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_sha3_accepts_constrained_symbolic_size because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicSha3ConstrainedSize.t.sol",
@@ -746,29 +733,6 @@ contract SymbolicSha3ConstrainedSize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkConstrainedSha3Size"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkConstrainedSha3Size(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic SHA3 size"), "{stdout}");
-});
-
-forgetest_init!(symbolic_sha3_accepts_bounded_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_sha3_accepts_bounded_symbolic_size because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicSha3BoundedSize.t.sol",
         r#"
@@ -792,28 +756,42 @@ contract SymbolicSha3BoundedSize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBoundedSha3Size"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkSymbolicSha3|checkConstrainedSha3Size|checkBoundedSha3Size)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicSha3BoundedSize.t.sol:SymbolicSha3BoundedSize
+[PASS] checkBoundedSha3Size(uint8,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBoundedSha3Size(uint8,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic SHA3 size"), "{stdout}");
-});
+Ran 1 test for test/SymbolicSha3ConstrainedSize.t.sol:SymbolicSha3ConstrainedSize
+[PASS] checkConstrainedSha3Size(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-forgetest_init!(symbolic_log_accepts_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_log_accepts_symbolic_offset because z3 is not available"
-        );
-        return;
+Ran 1 test for test/SymbolicSha3.t.sol:SymbolicSha3
+[PASS] checkSymbolicSha3(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic SHA3 offset", "symbolic SHA3 size"] {
+        assert!(!stdout.contains(reason), "{stdout}");
     }
+}
+
+// LOG with a symbolic offset or a bounded symbolic size is modeled.
+#[forgetest_init]
+fn symbolic_log_accepts_symbolic_operands(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_log_accepts_symbolic_operands");
 
     prj.add_test(
         "SymbolicLogOffset.t.sol",
@@ -838,29 +816,6 @@ contract SymbolicLogOffset is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicLogOffset"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicLogOffset(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic LOG offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_log_accepts_bounded_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_log_accepts_bounded_symbolic_size because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicLogSize.t.sol",
         r#"
@@ -879,28 +834,38 @@ contract SymbolicLogSize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicLogSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkSymbolicLogOffset|checkSymbolicLogSize)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicLogSize.t.sol:SymbolicLogSize
+[PASS] checkSymbolicLogSize(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicLogSize(uint8)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic LOG size"), "{stdout}");
-});
-
-forgetest_init!(symbolic_returndatacopy_accepts_constrained_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_returndatacopy_accepts_constrained_symbolic_offset because z3 is not available"
-        );
-        return;
+Ran 1 test for test/SymbolicLogOffset.t.sol:SymbolicLogOffset
+[PASS] checkSymbolicLogOffset(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic LOG offset", "symbolic LOG size"] {
+        assert!(!stdout.contains(reason), "{stdout}");
     }
+}
+
+// RETURNDATACOPY with symbolic offsets, destination or bounded size is modeled.
+#[forgetest_init]
+fn symbolic_returndatacopy_accepts_symbolic_operands(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_returndatacopy_accepts_symbolic_operands");
 
     prj.add_test(
         "SymbolicReturndataCopyConstrained.t.sol",
@@ -941,29 +906,6 @@ contract SymbolicReturndataCopyConstrained is Test {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkConstrainedReturndataCopy"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkConstrainedReturndataCopy(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic RETURNDATACOPY offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_returndatacopy_accepts_bounded_symbolic_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_returndatacopy_accepts_bounded_symbolic_offset because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicReturndataCopyOffset.t.sol",
@@ -1008,29 +950,6 @@ contract SymbolicReturndataCopyOffset is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicReturndataCopyOffset"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicReturndataCopyOffset(uint8,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic RETURNDATACOPY offset"), "{stdout}");
-});
-
-forgetest_init!(symbolic_returndatacopy_accepts_symbolic_dest, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_returndatacopy_accepts_symbolic_dest because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicReturndataCopyDest.t.sol",
         r#"
@@ -1062,29 +981,6 @@ contract SymbolicReturndataCopyDest {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicReturndataCopyDest"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicReturndataCopyDest(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic RETURNDATACOPY dest"), "{stdout}");
-});
-
-forgetest_init!(symbolic_returndatacopy_accepts_bounded_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_returndatacopy_accepts_bounded_symbolic_size because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicReturndataCopySize.t.sol",
@@ -1129,34 +1025,55 @@ contract SymbolicReturndataCopySize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicReturndataCopySize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkConstrainedReturndataCopy|checkSymbolicReturndataCopyOffset|checkSymbolicReturndataCopyDest|checkSymbolicReturndataCopySize)\\(",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicReturndataCopySize.t.sol:SymbolicReturndataCopySize
+[PASS] checkSymbolicReturndataCopySize(uint8,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicReturndataCopySize(uint8,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic RETURNDATACOPY size"), "{stdout}");
-});
+Ran 1 test for test/SymbolicReturndataCopyOffset.t.sol:SymbolicReturndataCopyOffset
+[PASS] checkSymbolicReturndataCopyOffset(uint8,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-forgetest_init!(
-    symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size,
-    |prj, cmd| {
-        if !z3_available() {
-            let _ = sh_eprintln!(
-                "skipping symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size because z3 is not available"
-            );
-            return;
-        }
+Ran 1 test for test/SymbolicReturndataCopyDest.t.sol:SymbolicReturndataCopyDest
+[PASS] checkSymbolicReturndataCopyDest(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-        prj.add_test(
-            "SymbolicReturndataCopyOobOffset.t.sol",
-            r#"
+Ran 1 test for test/SymbolicReturndataCopyConstrained.t.sol:SymbolicReturndataCopyConstrained
+[PASS] checkConstrainedReturndataCopy(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in [
+        "symbolic RETURNDATACOPY dest",
+        "symbolic RETURNDATACOPY offset",
+        "symbolic RETURNDATACOPY size",
+    ] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicReturndataCopyOobOffset.t.sol",
+        r#"
 import "forge-std/Test.sol";
 
 contract SymbolicReturndataCopyOobOffsetHelper {
@@ -1210,30 +1127,27 @@ contract SymbolicReturndataCopyOobOffset is Test {
 
 }
 "#,
-        );
+    );
 
-        let stdout = cmd
-            .args([
-                "test",
-                "--symbolic",
-                "--match-test",
-                "checkOutOfBoundsOffsetForcedZeroSizeReverts|checkOutOfBoundsClearsReturnData",
-            ])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkOutOfBoundsOffsetForcedZeroSizeReverts|checkOutOfBoundsClearsReturnData",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicReturndataCopyOobOffset.t.sol:SymbolicReturndataCopyOobOffset
+[PASS] checkOutOfBoundsClearsReturnData(uint256) ([METRICS])
+[PASS] checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-        assert_relevant_lines(
-            &stdout,
-            foundry_test_utils::str![[r#"
-[PASS] checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256)
-[PASS] checkOutOfBoundsClearsReturnData(uint256)
-"#]],
-        );
-    }
-);
-
-forgetest_init!(symbolic_return_revert_accept_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_return_revert_accept_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_return_revert_accept_symbolic_offset because z3 is not available"
@@ -1286,35 +1200,32 @@ contract SymbolicReturnRevertOffset {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicReturnRevertOffset"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicReturnRevertOffset",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicReturnRevertOffset.t.sol:SymbolicReturnRevertOffset
+[PASS] checkSymbolicReturnOffset(uint16,uint256) ([METRICS])
+[PASS] checkSymbolicRevertOffset(uint16,uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicReturnOffset(uint16,uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicRevertOffset(uint16,uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic RETURN offset"), "{stdout}");
     assert!(!stdout.contains("symbolic REVERT offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_mcopy_accepts_symbolic_source_offset, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_mcopy_accepts_symbolic_source_offset because z3 is not available"
-        );
-        return;
-    }
+// MCOPY with a symbolic source and RETURN / REVERT with a bounded symbolic size are modeled.
+#[forgetest_init]
+fn symbolic_mcopy_return_revert_accept_symbolic_operands(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_mcopy_return_revert_accept_symbolic_operands");
 
     prj.add_test(
         "SymbolicMcopy.t.sol",
@@ -1335,29 +1246,6 @@ contract SymbolicMcopy {
 }
 "#,
     );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicMcopy"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicMcopy(uint16,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic MCOPY src"), "{stdout}");
-});
-
-forgetest_init!(symbolic_return_accepts_bounded_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_return_accepts_bounded_symbolic_size because z3 is not available"
-        );
-        return;
-    }
 
     prj.add_test(
         "SymbolicReturnSize.t.sol",
@@ -1396,29 +1284,6 @@ contract SymbolicReturnSize {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicReturnSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicReturnSize(uint8,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic RETURN size"), "{stdout}");
-});
-
-forgetest_init!(symbolic_revert_accepts_bounded_symbolic_size, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_revert_accepts_bounded_symbolic_size because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicRevertSize.t.sol",
         r#"
@@ -1456,64 +1321,66 @@ contract SymbolicRevertSize {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicRevertSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkSymbolicMcopy|checkSymbolicReturnSize|checkSymbolicRevertSize)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicRevertSize.t.sol:SymbolicRevertSize
+[PASS] checkSymbolicRevertSize(uint8,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicRevertSize(uint8,uint256)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic REVERT size"), "{stdout}");
-});
+Ran 1 test for test/SymbolicReturnSize.t.sol:SymbolicReturnSize
+[PASS] checkSymbolicReturnSize(uint8,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-// Dynamic-offset memory read must respect write-epoch ordering: if a later
-// concrete MSTORE has written to an offset, a subsequent symbolic-offset MLOAD
-// that aliases that offset must see the later value, not the stale earlier
-// symbolic write. If epoch ordering regressed, Z3 could pick `symKey == 0x80`
-// and the symbolic MLOAD would surface `0xdeadbeef` instead of `0x1234`,
-// flipping the assertion below into a counterexample.
-forgetest_init!(symbolic_dynamic_mload_respects_later_concrete_overwrite, |prj, cmd| {
-    skip_unless_z3!("symbolic_dynamic_mload_respects_later_concrete_overwrite");
+Ran 1 test for test/SymbolicMcopy.t.sol:SymbolicMcopy
+[PASS] checkSymbolicMcopy(uint16,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic MCOPY src", "symbolic RETURN size", "symbolic REVERT size"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+// A chain of hashes over the previous hash shares every earlier preimage. Naming and searching such
+// expressions must stay linear in the chain length; before the fix, six rounds ran out of memory.
+#[forgetest_init]
+fn symbolic_chained_keccak_stays_linear(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_chained_keccak_stays_linear");
 
     prj.add_test(
-        "SymbolicMemoryEpochOrdering.t.sol",
+        "SymbolicKeccakChain.t.sol",
         r#"
-contract SymbolicMemoryEpochOrdering {
-    function checkLaterConcreteWriteWins(uint256 symKey, uint256 readKey) public pure {
-        uint256 v;
-        assembly {
-            // Earlier symbolic-offset write.
-            mstore(symKey, 0xdeadbeef)
-            // Later concrete-offset write — must be visible at slot 0x80
-            // regardless of what `symKey` was.
-            mstore(0x80, 0x1234)
-            // Dynamic-offset read.
-            v := mload(readKey)
+contract SymbolicKeccakChain {
+    uint256 public sink;
+
+    function checkKeccakChain(uint256 seed) external {
+        uint256 s = seed;
+        for (uint256 i; i < 16; ++i) {
+            s = uint256(keccak256(abi.encode(s))) + 1;
         }
-        if (readKey == 0x80) {
-            assert(v == 0x1234);
-        }
+        sink = s;
     }
 }
 "#,
     );
 
-    assert_symbolic(cmd.args([
-        "test",
-        "--symbolic",
-        "--match-test",
-        "checkLaterConcreteWriteWins",
-    ]))
-    .success()
-    .stdout_eq(str![[r#"
+    cmd.args(["test", "--symbolic", "--match-test", "checkKeccakChain"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/SymbolicMemoryEpochOrdering.t.sol:SymbolicMemoryEpochOrdering
-[PASS] checkLaterConcreteWriteWins(uint256,uint256) ([METRICS])
+[PASS] checkKeccakChain(uint256) [..]
 ...
 "#]]);
-});
+}

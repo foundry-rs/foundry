@@ -13,6 +13,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(all(feature = "optimism", not(feature = "base")))]
+use alloy_chains::NamedChain;
 #[cfg(feature = "optimism")]
 use op_revm::OpSpecId;
 
@@ -92,11 +94,17 @@ impl FromStr for FoundryHardfork {
             "op" | "optimism" => OpHardfork::from_str(&fork)
                 .map(Self::Optimism)
                 .map_err(|_| format!("unknown optimism hardfork '{fork_raw}'")),
+            #[cfg(not(feature = "optimism"))]
+            "op" | "optimism" => {
+                Err(format!("hardfork namespace '{ns}' requires the `optimism` feature"))
+            }
 
             #[cfg(feature = "base")]
             "base" => BaseUpgrade::from_str(&fork)
                 .map(Self::Base)
                 .map_err(|_| format!("unknown base hardfork '{fork_raw}'")),
+            #[cfg(not(feature = "base"))]
+            "base" => Err(format!("hardfork namespace '{ns}' requires the `base` feature")),
 
             "t" | "tempo" => TempoHardfork::from_str(&fork)
                 .map(Self::Tempo)
@@ -106,9 +114,10 @@ impl FromStr for FoundryHardfork {
             "m" | "monad" => MonadHardfork::from_str(&fork)
                 .map(Self::Monad)
                 .map_err(|_| format!("unknown monad hardfork '{fork_raw}'")),
-            _ => EthereumHardfork::from_str(&fork)
-                .map(Self::Ethereum)
-                .map_err(|_| format!("unknown hardfork '{raw}'")),
+            #[cfg(not(feature = "monad"))]
+            "m" | "monad" => Err(format!("hardfork namespace '{ns}' requires the `monad` feature")),
+
+            _ => Err(format!("unknown hardfork namespace '{ns}'")),
         }
     }
 }
@@ -332,10 +341,11 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
         EthereumHardfork::Cancun => SpecId::CANCUN,
         EthereumHardfork::Prague => SpecId::PRAGUE,
         EthereumHardfork::Osaka => SpecId::OSAKA,
-        EthereumHardfork::Bpo1 | EthereumHardfork::Bpo2 => SpecId::OSAKA,
-        EthereumHardfork::Bpo3 | EthereumHardfork::Bpo4 | EthereumHardfork::Bpo5 => {
-            unimplemented!()
-        }
+        EthereumHardfork::Bpo1
+        | EthereumHardfork::Bpo2
+        | EthereumHardfork::Bpo3
+        | EthereumHardfork::Bpo4
+        | EthereumHardfork::Bpo5 => SpecId::OSAKA,
         EthereumHardfork::Amsterdam => SpecId::AMSTERDAM,
         f => unreachable!("unimplemented {}", f),
     }
@@ -517,6 +527,30 @@ impl ExecutionSpec for OpSpecId {
         }
     }
 
+    fn fork_hardfork(
+        chain_id: u64,
+        timestamp: u64,
+        endpoint_hardfork: Option<FoundryHardfork>,
+    ) -> Option<FoundryHardfork> {
+        let endpoint_hardfork =
+            endpoint_hardfork.filter(|&hardfork| Self::from_foundry_hardfork(hardfork).is_some());
+        if endpoint_hardfork.is_some() {
+            return endpoint_hardfork;
+        }
+
+        // Base uses its own upgrade schedule. Without native Base support, retain the configured
+        // EVM version instead of applying the incompatible OP schedule.
+        #[cfg(not(feature = "base"))]
+        if matches!(
+            Chain::from_id(chain_id).named(),
+            Some(NamedChain::Base | NamedChain::BaseSepolia)
+        ) {
+            return None;
+        }
+
+        Self::historical_hardfork(chain_id, timestamp)
+    }
+
     fn historical_hardfork(chain_id: u64, timestamp: u64) -> Option<FoundryHardfork> {
         OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
             .map(FoundryHardfork::Optimism)
@@ -685,14 +719,35 @@ mod tests {
 
     #[test]
     fn test_ethereum_spec_id_mapping() {
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Frontier), SpecId::FRONTIER);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Homestead), SpecId::HOMESTEAD);
-
-        // Test latest hardforks
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Cancun), SpecId::CANCUN);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Prague), SpecId::PRAGUE);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Osaka), SpecId::OSAKA);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Amsterdam), SpecId::AMSTERDAM);
+        for (hardfork, expected) in [
+            (EthereumHardfork::Frontier, SpecId::FRONTIER),
+            (EthereumHardfork::Homestead, SpecId::HOMESTEAD),
+            (EthereumHardfork::Dao, SpecId::HOMESTEAD),
+            (EthereumHardfork::Tangerine, SpecId::TANGERINE),
+            (EthereumHardfork::SpuriousDragon, SpecId::SPURIOUS_DRAGON),
+            (EthereumHardfork::Byzantium, SpecId::BYZANTIUM),
+            (EthereumHardfork::Constantinople, SpecId::PETERSBURG),
+            (EthereumHardfork::Petersburg, SpecId::PETERSBURG),
+            (EthereumHardfork::Istanbul, SpecId::ISTANBUL),
+            (EthereumHardfork::MuirGlacier, SpecId::ISTANBUL),
+            (EthereumHardfork::Berlin, SpecId::BERLIN),
+            (EthereumHardfork::London, SpecId::LONDON),
+            (EthereumHardfork::ArrowGlacier, SpecId::LONDON),
+            (EthereumHardfork::GrayGlacier, SpecId::LONDON),
+            (EthereumHardfork::Paris, SpecId::MERGE),
+            (EthereumHardfork::Shanghai, SpecId::SHANGHAI),
+            (EthereumHardfork::Cancun, SpecId::CANCUN),
+            (EthereumHardfork::Prague, SpecId::PRAGUE),
+            (EthereumHardfork::Osaka, SpecId::OSAKA),
+            (EthereumHardfork::Bpo1, SpecId::OSAKA),
+            (EthereumHardfork::Bpo2, SpecId::OSAKA),
+            (EthereumHardfork::Bpo3, SpecId::OSAKA),
+            (EthereumHardfork::Bpo4, SpecId::OSAKA),
+            (EthereumHardfork::Bpo5, SpecId::OSAKA),
+            (EthereumHardfork::Amsterdam, SpecId::AMSTERDAM),
+        ] {
+            assert_eq!(spec_id_from_ethereum_hardfork(hardfork), expected, "{hardfork}");
+        }
     }
 
     #[test]
@@ -725,6 +780,44 @@ mod tests {
     }
 
     #[test]
+    fn test_hardfork_namespace_parsing() {
+        let cases = [
+            ("prague", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+            ("eth:prague", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+            ("ethereum:Osaka", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Osaka))),
+            (" ETH : Prague ", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+            ("t:T5", Ok(FoundryHardfork::Tempo(TempoHardfork::T5))),
+            ("tempo:t5", Ok(FoundryHardfork::Tempo(TempoHardfork::T5))),
+            #[cfg(feature = "optimism")]
+            ("op:Isthmus", Ok(FoundryHardfork::Optimism(OpHardfork::Isthmus))),
+            #[cfg(feature = "optimism")]
+            ("optimism:jovian", Ok(FoundryHardfork::Optimism(OpHardfork::Jovian))),
+            #[cfg(not(feature = "optimism"))]
+            ("op:prague", Err("hardfork namespace 'op' requires the `optimism` feature")),
+            #[cfg(feature = "base")]
+            ("base:azul", Ok(FoundryHardfork::Base(BaseUpgrade::Azul))),
+            #[cfg(not(feature = "base"))]
+            ("base:prague", Err("hardfork namespace 'base' requires the `base` feature")),
+            #[cfg(feature = "monad")]
+            ("m:MonadTen", Ok(FoundryHardfork::Monad(MonadHardfork::MonadTen))),
+            #[cfg(feature = "monad")]
+            ("monad:monadnine", Ok(FoundryHardfork::Monad(MonadHardfork::MonadNine))),
+            #[cfg(not(feature = "monad"))]
+            ("monad:prague", Err("hardfork namespace 'monad' requires the `monad` feature")),
+            ("foo:prague", Err("unknown hardfork namespace 'foo'")),
+            ("Foo:Prague", Err("unknown hardfork namespace 'foo'")),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                input.parse::<FoundryHardfork>(),
+                expected.map_err(str::to_string),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
     #[cfg(feature = "monad")]
     fn test_monad_hardfork_serialization() {
         assert_eq!(
@@ -751,11 +844,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
         );
 
         assert_eq!(
@@ -896,6 +989,8 @@ mod tests {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T8"), Some(TempoHardfork::T8));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T13"), Some(TempoHardfork::T13));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T13"), Some(TempoHardfork::T13));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T14"), Some(TempoHardfork::T14));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T14"), Some(TempoHardfork::T14));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
 
         #[cfg(feature = "monad")]

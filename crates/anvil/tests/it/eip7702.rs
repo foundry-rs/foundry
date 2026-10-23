@@ -1,11 +1,12 @@
 use crate::utils::http_provider;
 use alloy_consensus::{SignableTransaction, transaction::TxEip7702};
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{U256, bytes};
+use alloy_primitives::{U256, address, bytes};
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::{Signature, SignerSync};
+use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 
@@ -222,4 +223,44 @@ async fn eip7702_authorization_bypass() {
     assert_eq!(log.address(), from);
     assert_eq!(log.topics().len(), 0);
     assert_eq!(log.data().data, log_data);
+}
+
+// EIP-7702 refunds part of the 25000 charged per authorization only when the authority already
+// exists, so authorizing a fresh account costs the full amount.
+#[tokio::test(flavor = "multi_thread")]
+async fn eip7702_refunds_only_existing_authorities() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+
+    // 21000 base, 64 for the four calldata bytes and 25000 for the authorization. An existing
+    // authority is refunded 12500, capped at a fifth of the gas used.
+    for (authority, gas_used) in
+        [(PrivateKeySigner::random(), 46_064), (wallets[1].clone(), 46_064 - 46_064 / 5)]
+    {
+        let authorization = Authorization {
+            chain_id: U256::from(31337u64),
+            address: address!("0x000000000000000000000000000000000000dEaD"),
+            nonce: provider.get_transaction_count(authority.address()).await.unwrap(),
+        };
+        let signature = authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+        let tx = TransactionRequest {
+            authorization_list: Some(vec![authorization.into_signed(signature)]),
+            ..Default::default()
+        }
+        .with_from(wallets[0].address())
+        .with_to(address!("0x0000000000000000000000000000000000001234"))
+        .with_input(bytes!("12345678"));
+
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used(), gas_used, "authority {}", authority.address());
+    }
 }

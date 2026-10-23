@@ -1,6 +1,6 @@
 use alloy_json_abi::Function;
 use clap::Parser;
-use foundry_common::{TestFilter, TestFunctionKind};
+use foundry_common::{TestFilter, TestFunctionKind, fs::canonicalize_path};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{Config, filter::GlobMatcher};
 use serde::{Deserialize, Serialize};
@@ -219,8 +219,8 @@ impl ProjectPathsAwareFilter {
                 return path.to_path_buf();
             }
             if path.is_absolute()
-                && let Ok(root) = dunce::canonicalize(&self.paths.root)
-                && let Ok(path) = dunce::canonicalize(path)
+                && let Ok(root) = canonicalize_path(&self.paths.root)
+                && let Ok(path) = canonicalize_path(path)
                 && let Ok(path) = path.strip_prefix(root)
             {
                 return path.to_path_buf();

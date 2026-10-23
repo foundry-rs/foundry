@@ -234,7 +234,7 @@ mod tests {
             DynSolValue::String("hello".to_string()),
             DynSolValue::Bytes(vec![0xaa, 0xbb, 0xcc]),
             DynSolValue::FixedArray(vec![
-                DynSolValue::Uint(U256::from(1), 64),
+                DynSolValue::Uint(U256::ONE, 64),
                 DynSolValue::Uint(U256::from(2), 64),
             ]),
         ];

@@ -15,6 +15,7 @@ use alloy_evm::{
         BalIndexedDatabase, BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB,
         TxResult,
     },
+    precompiles::PrecompilesMap,
 };
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::B256;
@@ -82,6 +83,7 @@ pub(crate) struct ExecutedHistoricalReplay {
 pub(crate) fn prepare_fork_transaction_replay(
     replay: ForkTransactionReplay,
     #[cfg_attr(not(feature = "monad"), allow(unused_variables))] trust_monad_protocol_sender: bool,
+    allow_cip64: bool,
 ) -> Result<PreparedForkTransactionReplay> {
     let source_hash = replay.source_block.header().hash;
     let source_number = replay.source_block.header().number;
@@ -105,7 +107,9 @@ pub(crate) fn prepare_fork_transaction_replay(
             // Those carry no EVM semantics anvil could apply, so the prefix skips them instead of
             // failing the whole replay. The requested transaction itself must still be executable,
             // otherwise the resulting fork would not be the state the caller asked for.
-            if FoundryTxType::try_from(source_transaction.ty()).is_err() {
+            if FoundryTxType::try_from(source_transaction.ty()).is_err()
+                || (source_transaction.ty() == foundry_primitives::CIP64_TX_TYPE && !allow_cip64)
+            {
                 eyre::ensure!(
                     source_index != target_index,
                     "fork transaction {source_transaction_hash} in block {source_hash} \
@@ -175,6 +179,7 @@ where
     E: Evm<
             DB: StateDB + BalIndexedDatabase,
             Inspector = AnvilInspector,
+            Precompiles = PrecompilesMap,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,
     E::HaltReason: Clone + IntoInstructionResult,
@@ -200,6 +205,7 @@ where
     E: Evm<
             DB: StateDB + BalIndexedDatabase,
             Inspector = AnvilInspector,
+            Precompiles = PrecompilesMap,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,
     E::HaltReason: Clone + IntoInstructionResult,
@@ -247,7 +253,8 @@ where
         let gas_used = execution_result.tx_gas_used();
         executor.commit_transaction(result);
 
-        let traces = executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
+        let (_, inspector, precompiles) = executor.evm_mut().components_mut();
+        let traces = inspector.finish_transaction(inspector_config, precompiles);
         let (exit_reason, out) = match execution_result {
             ExecutionResult::Success { reason, output, .. } => (reason.into(), Some(output)),
             ExecutionResult::Revert { output, .. } => {
@@ -277,7 +284,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_network::AnyRpcBlock;
+    use alloy_primitives::{Signature, U256};
+    use alloy_rpc_types::BlockTransactions;
+    use foundry_primitives::TxCip64;
 
     /// A real signed legacy transaction, so signer recovery and the hash check pass.
     const LEGACY_TX: &str = r#"{
@@ -349,7 +360,7 @@ mod tests {
 
     #[test]
     fn skips_unsupported_prefix_transactions() {
-        let prepared = prepare_fork_transaction_replay(replay_for(1), false).unwrap();
+        let prepared = prepare_fork_transaction_replay(replay_for(1), false, false).unwrap();
 
         // The Arbitrum-typed transaction at index 0 is dropped, and the standard one keeps its
         // position in the source block.
@@ -359,9 +370,32 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_target_transaction() {
-        let Err(err) = prepare_fork_transaction_replay(replay_for(0), false) else {
+        let Err(err) = prepare_fork_transaction_replay(replay_for(0), false, false) else {
             panic!("expected the unsupported target transaction to be rejected");
         };
         assert!(err.to_string().contains("0x6a"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn fork_replay_cip64_requires_celo_mode() {
+        let envelope = FoundryTxEnvelope::Celo(
+            TxCip64 { inner: TxEip1559 { chain_id: 1, ..Default::default() }, fee_currency: None }
+                .into_signed(Signature::new(U256::ONE, U256::from(2), false)),
+        );
+        let mut transaction = serde_json::to_value(&envelope).unwrap();
+        transaction["from"] = serde_json::to_value(envelope.recover_signer().unwrap()).unwrap();
+        let mut block = source_block();
+        block.transactions = BlockTransactions::Full(vec![
+            serde_json::from_value(transaction).unwrap(),
+            serde_json::from_str(LEGACY_TX).unwrap(),
+        ]);
+        let replay =
+            |target_index| ForkTransactionReplay { source_block: block.clone(), target_index };
+        let prepared = prepare_fork_transaction_replay(replay(1), false, false).unwrap();
+        assert_eq!(prepared.transactions.len(), 1);
+        assert_eq!(prepared.transactions[0].source_index, 1);
+        assert!(prepare_fork_transaction_replay(replay(0), false, false).is_err());
+        let prepared = prepare_fork_transaction_replay(replay(0), false, true).unwrap();
+        assert_eq!(prepared.transactions[0].transaction.tx(), &envelope);
     }
 }

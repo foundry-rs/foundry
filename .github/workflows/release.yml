@@ -27,7 +27,7 @@ jobs:
   prepare:
     name: Prepare release
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write
@@ -207,7 +207,7 @@ jobs:
       - name: Build changelog
         id: build_changelog
         if: ${{ steps.existing_release.outputs.skip_assets != 'true' }}
-        uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c # v6.3.0
+        uses: mikepenz/release-changelog-builder-action@aa013739bbc8e7067dbbecd4525ff11aeb51a84b # v6.4.0
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
@@ -285,7 +285,7 @@ jobs:
 
   release-docker-metadata:
     name: Record Docker digest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare, release-docker]
     permissions:
       contents: read
@@ -300,7 +300,7 @@ jobs:
           fi
           printf '%s\n' "$DIGEST" > release-docker-digest.txt
       - name: Upload release Docker digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-docker-digest
           path: release-docker-digest.txt
@@ -351,7 +351,8 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: alpine
             arch: arm64
-          - runner: macos-14-large
+          # Cross-compiled on Apple Silicon, which builds faster than the Intel runner.
+          - runner: macos-15-xlarge
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
@@ -368,15 +369,21 @@ jobs:
             arch: amd64
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
+        with:
+          # Disable the pre-job hook too; a step condition alone does not skip it.
+          disable-enforcement: ${{ runner.os == 'macOS' }}
+      - name: Install Aegis on macOS
+        if: runner.os == 'macOS'
+        uses: tempoxyz/gh-actions/actions/aegis@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
 
       # Include locked workspace dependencies not reached by the --bins build.
       - name: Fetch locked dependencies
@@ -389,18 +396,25 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: rustup component add llvm-tools-preview
 
-      - name: Apple Silicon setup
-        if: matrix.target == 'aarch64-apple-darwin'
+      - name: macOS setup
+        if: runner.os == 'macOS'
         run: |
           {
             printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)"
-            # Apple Silicon and the Touch ID shim require macOS 11 or newer.
-            printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n'
+            if [[ '${{ matrix.target }}' == 'x86_64-apple-darwin' ]]; then
+              printf 'MACOSX_DEPLOYMENT_TARGET=10.12\n'
+            else
+              # Apple Silicon and the Touch ID shim require macOS 11 or newer.
+              printf 'MACOSX_DEPLOYMENT_TARGET=11.0\n'
+            fi
             # Keep the release independent of Homebrew's libusb installation.
             printf 'LIBUSB_STATIC=1\n'
-            # The ARM64 runner has less memory than the Intel large runner.
+            # Limit parallel fat-LTO jobs to fit in the ARM64 runner's 14 GB of memory.
             printf 'CARGO_BUILD_JOBS=2\n'
           } >> "$GITHUB_ENV"
+          xcrun --find clang
+          xcrun --find ld
+          xcrun -sdk macosx --show-sdk-version
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
@@ -453,10 +467,22 @@ jobs:
             bin="$OUT_DIR/$name$ext"
             printf '\n'
             file "$bin" || true
+            if [[ "$TARGET" == "x86_64-apple-darwin" ]]; then
+              [[ "$(lipo -archs "$bin")" == 'x86_64' ]]
+              minos=$(otool -l "$bin" | awk '
+                $1 == "cmd" && ($2 == "LC_BUILD_VERSION" || $2 == "LC_VERSION_MIN_MACOSX") { found = 1; next }
+                found && ($1 == "minos" || $1 == "version") { print $2; exit }
+              ')
+              echo "$name minimum macOS version: $minos"
+              [[ "$minos" == '10.12' || "$minos" == '10.12.0' ]]
+            fi
             du -h "$bin" || true
             ldd "$bin" || true
             if [[ "$TARGET" == "$host_target" ]]; then
               "$bin" --version
+            elif [[ "$TARGET" == "x86_64-apple-darwin" ]]; then
+              # Run the Intel binary through Rosetta 2 on the Apple Silicon runner.
+              arch -x86_64 "$bin" --version
             else
               echo "Skipping execution of $name: target $TARGET differs from host $host_target"
             fi
@@ -509,7 +535,7 @@ jobs:
           cat "$FOUNDRY_CHECKSUM"
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       - name: Generate SBOM (SPDX)
         env:
@@ -524,7 +550,7 @@ jobs:
             -o spdx-json="$FOUNDRY_SBOM"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: 1
           name: ${{ steps.artifacts.outputs.file_name }}
@@ -628,7 +654,7 @@ jobs:
   # left as drafts for the protected finalization workflow.
   publish-nightly:
     name: Publish nightly release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare, release-docker, release-docker-metadata, release]
     if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.result == 'success' && needs.release-docker.result == 'success' && needs.release-docker-metadata.result == 'success' && (needs.release.result == 'success' || (needs.prepare.outputs.skip_assets == 'true' && needs.release.result == 'skipped')) }}
     concurrency:
@@ -660,7 +686,7 @@ jobs:
   # If any of the jobs fail, this will create a high-priority issue to signal so.
   issue:
     name: Open an issue
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [
       prepare,
       release-docker,

@@ -213,29 +213,7 @@ pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     tx: &mut BasicTxDetails,
 ) -> Result<RawCallResult<FEN>> {
-    let warp = tx.warp.unwrap_or_default();
-    let roll = tx.roll.unwrap_or_default();
-    if warp > 0 || roll > 0 {
-        let needs_cheatcode_block = executor
-            .inspector()
-            .cheatcodes
-            .as_ref()
-            .is_some_and(|cheatcodes| cheatcodes.block.is_none());
-        let block_env = {
-            let block_env = &mut executor.evm_env_mut().block_env;
-            block_env.set_timestamp(block_env.timestamp() + warp);
-            block_env.set_number(block_env.number() + roll);
-            needs_cheatcode_block.then(|| block_env.clone())
-        };
-        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
-            if let Some(block) = cheatcodes.block.as_mut() {
-                block.set_timestamp(block.timestamp() + warp);
-                block.set_number(block.number() + roll);
-            } else {
-                cheatcodes.block = Some(block_env.unwrap());
-            }
-        }
-    }
+    apply_block_delay(executor, tx.warp.unwrap_or_default(), tx.roll.unwrap_or_default());
     let value = match tx.call_details.value {
         Some(requested) if !requested.is_zero() => requested.min(executor.get_balance(tx.sender)?),
         _ => U256::ZERO,
@@ -246,4 +224,35 @@ pub(super) fn execute_invariant_tx<FEN: FoundryEvmNetwork>(
     executor
         .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
         .map_err(|error| eyre!("Could not make raw evm call: {error}"))
+}
+
+/// Advances the execution block environment and the cheatcode block override by an invariant
+/// call's warp and roll delays.
+pub(super) fn apply_block_delay<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    warp: U256,
+    roll: U256,
+) {
+    if warp.is_zero() && roll.is_zero() {
+        return;
+    }
+    let needs_cheatcode_block = executor
+        .inspector()
+        .cheatcodes
+        .as_ref()
+        .is_some_and(|cheatcodes| cheatcodes.block.is_none());
+    let block_env = {
+        let block_env = &mut executor.evm_env_mut().block_env;
+        block_env.set_timestamp(block_env.timestamp() + warp);
+        block_env.set_number(block_env.number() + roll);
+        needs_cheatcode_block.then(|| block_env.clone())
+    };
+    if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
+        if let Some(block) = cheatcodes.block.as_mut() {
+            block.set_timestamp(block.timestamp() + warp);
+            block.set_number(block.number() + roll);
+        } else {
+            cheatcodes.block = Some(block_env.unwrap());
+        }
+    }
 }

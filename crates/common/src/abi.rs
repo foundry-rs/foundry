@@ -1,7 +1,7 @@
 //! ABI related helper functions.
 
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_dyn_abi::{DecodedEvent, DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
 use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
@@ -108,6 +108,25 @@ pub fn get_event(sig: &str) -> Result<Event> {
     Event::parse(sig).wrap_err("could not parse event signature")
 }
 
+/// ABI-decodes the non-indexed parameters (the log data) of an event.
+///
+/// Indexed parameters are stored in the log topics rather than in the data, so they are skipped.
+/// This allows decoding the data of a log without knowing its topics.
+pub fn abi_decode_event_data(event: &Event, data: &[u8]) -> Result<Vec<DynSolValue>> {
+    let body = DynSolType::Tuple(
+        event
+            .inputs
+            .iter()
+            .filter(|input| !input.indexed)
+            .map(|input| input.resolve())
+            .collect::<Result<_, _>>()?,
+    );
+    Ok(match body.abi_decode_sequence(data)? {
+        DynSolValue::Tuple(values) => values,
+        _ => unreachable!("body is a tuple"),
+    })
+}
+
 /// Given an error signature string, it tries to parse it as a `Error`
 pub fn get_error(sig: &str) -> Result<Error> {
     Error::parse(sig).wrap_err("could not parse error signature")
@@ -135,6 +154,28 @@ pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
     event
 }
 
+/// Restore the order of the params of a decoded event,
+/// as Alloy returns the indexed and unindexed params separately.
+pub fn reconstruct_event_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue> {
+    let mut indexed = 0;
+    let mut unindexed = 0;
+    let mut inputs = vec![];
+    for input in &event.inputs {
+        // Prevent panic of event `Transfer(from, to)` decoded with a signature
+        // `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` by making
+        // sure the event inputs is not higher than decoded indexed / un-indexed values.
+        if input.indexed && indexed < decoded.indexed.len() {
+            inputs.push(decoded.indexed[indexed].clone());
+            indexed += 1;
+        } else if unindexed < decoded.body.len() {
+            inputs.push(decoded.body[unindexed].clone());
+            unindexed += 1;
+        }
+    }
+
+    inputs
+}
+
 /// Given a function name, address, and args, tries to parse it as a `Function` by fetching the
 /// abi from etherscan. If the address is a proxy, fetches the ABI of the implementation contract.
 pub async fn get_func_etherscan(
@@ -146,7 +187,11 @@ pub async fn get_func_etherscan(
     etherscan_api_url: Option<&str>,
 ) -> Result<Function> {
     let client = if let Some(api_url) = etherscan_api_url {
-        Client::builder().with_api_key(etherscan_api_key).with_api_url(api_url)?.build()?
+        Client::builder()
+            .with_api_key(etherscan_api_key)
+            .with_api_url(api_url)?
+            .with_url(api_url)?
+            .build()?
     } else {
         Client::new(chain, etherscan_api_key)?
     };
@@ -184,15 +229,16 @@ pub fn find_source(
             )?;
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,
-                Err(e) => {
-                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
-                    if e.to_string() == err {
-                        error!(%err);
-                        Ok(source)
-                    } else {
-                        Err(e)
-                    }
+                Err(e)
+                    if matches!(
+                        e.downcast_ref::<EtherscanError>(),
+                        Some(EtherscanError::ContractCodeNotVerified(address)) if *address == implementation
+                    ) =>
+                {
+                    error!(%e);
+                    Ok(source)
                 }
+                Err(e) => Err(e),
             }
         } else {
             if metadata.proxy != 0 {
@@ -342,6 +388,36 @@ mod tests {
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
         assert_eq!(parsed.indexed[2], DynSolValue::Address(Address::from_word(param2)));
+    }
+
+    #[test]
+    fn test_abi_decode_event_data_ignores_indexed() {
+        let event =
+            get_event("event Ev(uint256 indexed a, string b, address indexed c, uint256 d)")
+                .unwrap();
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::String("hello".into()),
+            DynSolValue::Uint(U256::from(42), 256),
+        ])
+        .abi_encode_params();
+
+        let decoded = abi_decode_event_data(&event, &data).unwrap();
+        assert_eq!(
+            decoded,
+            vec![DynSolValue::String("hello".into()), DynSolValue::Uint(U256::from(42), 256)]
+        );
+    }
+
+    #[test]
+    fn test_abi_decode_event_data_without_indexed() {
+        let event = get_event("event Ev(uint256 a, address b)").unwrap();
+        let addr = Address::random();
+        let data =
+            DynSolValue::Tuple(vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)])
+                .abi_encode_params();
+
+        let decoded = abi_decode_event_data(&event, &data).unwrap();
+        assert_eq!(decoded, vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)]);
     }
 
     #[test]

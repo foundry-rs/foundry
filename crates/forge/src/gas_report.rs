@@ -2,7 +2,7 @@
 
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
+    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode},
 };
 use alloy_primitives::{Address, map::HashSet};
 use comfy_table::{
@@ -85,12 +85,33 @@ impl GasReport {
         arenas: impl IntoIterator<Item = &CallTraceArena>,
         decoder: &CallTraceDecoder,
     ) {
-        for node in arenas.into_iter().flat_map(|arena| arena.nodes()) {
-            self.analyze_node(node, decoder).await;
+        for arena in arenas {
+            let nodes = arena.nodes();
+            for node in nodes {
+                // `vm.deployCode` runs its create one level below the cheatcode call.
+                let deploy_code = match node.parent.map(|parent| &nodes[parent].trace) {
+                    Some(parent)
+                        if node.trace.kind.is_any_create()
+                            && parent.address == CHEATCODE_ADDRESS =>
+                    {
+                        decoder
+                            .decode_function_signature(parent)
+                            .await
+                            .is_some_and(|signature| signature.starts_with("deployCode("))
+                    }
+                    _ => false,
+                };
+                self.analyze_node(node, deploy_code, decoder).await;
+            }
         }
     }
 
-    async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
+    async fn analyze_node(
+        &mut self,
+        node: &CallTraceNode,
+        deploy_code: bool,
+        decoder: &CallTraceDecoder,
+    ) {
         let trace = &node.trace;
         if self.is_internal_address(trace.address) {
             return;
@@ -110,16 +131,16 @@ impl GasReport {
 
         // Only include top-level calls which account for calldata and base (21.000) cost.
         // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1 && (trace.kind == CallKind::Call || is_create_call) {
+        // Report a `vm.deployCode` create at the depth of the cheatcode call, as a native create.
+        let depth = trace.depth - usize::from(deploy_code);
+        if depth > 1 && (trace.kind == CallKind::Call || is_create_call) {
             return;
         }
 
         if is_create_call {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
-        } else if let Some(DecodedCallData { signature, .. }) =
-            decoder.decode_function(trace).await.call_data
-        {
+        } else if let Some(signature) = decoder.decode_function_signature(trace).await {
             let name = signature.split('(').next().unwrap();
             // Ignore any test/setup functions.
             if self.include_tests || !name.test_function_kind().is_known() {

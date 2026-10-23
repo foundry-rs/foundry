@@ -12,8 +12,9 @@ use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
 use foundry_common::fmt::format_token;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use foundry_evm_traces::debug::{
-    DebugSourceScope, DebugVariable, decode_step_parameters, function_signature,
+use foundry_evm_traces::{
+    CallKind, DecodedInternalCall, DecodedTraceStep,
+    debug::{DebugSourceScope, DebugVariable, decode_step_parameters, function_signature},
 };
 use ratatui::{
     Frame,
@@ -23,7 +24,6 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use revm::interpreter::InstructionResult;
-use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -1454,7 +1454,11 @@ mod tests {
     use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
     use foundry_evm_core::{Breakpoints, buffer::BufferKind};
-    use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
+    use foundry_evm_traces::{
+        CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
+        DecodedTraceStep, StorageChange, StorageChangeReason,
+        debug::{ContractSources, DebugSourceScope, DebugVariable},
+    };
     use ratatui::{
         Terminal,
         backend::TestBackend,
@@ -1463,10 +1467,6 @@ mod tests {
         text::Line,
     };
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::{
-        CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
-        DecodedTraceStep, StorageChange, StorageChangeReason,
-    };
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans.iter().map(|span| span.content.as_ref()).collect()
@@ -1679,7 +1679,7 @@ mod tests {
         }));
         let mut second = trace_step(Vec::new());
         second.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(0xbeef),
             had_value: None,
             reason: StorageChangeReason::SSTORE,
@@ -1888,7 +1888,7 @@ mod tests {
         let mut calldata = Vec::new();
         calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
         calldata.extend_from_slice(&abi_word(U256::from(42)));
-        calldata.extend_from_slice(&abi_word(U256::from(1)));
+        calldata.extend_from_slice(&abi_word(U256::ONE));
 
         let values = super::decode_external_parameter_values(&scope, &calldata).unwrap();
 
@@ -1917,7 +1917,7 @@ mod tests {
         calldata.extend_from_slice(&abi_word(U256::from(42)));
         let mut returndata = Vec::new();
         returndata.extend_from_slice(&abi_word(U256::from(99)));
-        returndata.extend_from_slice(&abi_word(U256::from(1)));
+        returndata.extend_from_slice(&abi_word(U256::ONE));
 
         let values = super::decode_external_return_values(&scope, &calldata, &returndata).unwrap();
 
@@ -1942,7 +1942,7 @@ mod tests {
             }],
         );
         node.calldata = Bytes::from(calldata);
-        node.returndata = Bytes::from(abi_word(U256::from(123)).to_vec());
+        node.returndata = abi_word(U256::from(123)).into();
         let mut context = context_with_arena(vec![node]);
         let mut tui = TUIContext::new(&mut context);
         tui.current_step = 1;
@@ -1959,7 +1959,7 @@ mod tests {
         calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
         let mut node = debug_node(0, 0, vec![trace_step(Vec::new()), trace_step(Vec::new())]);
         node.calldata = Bytes::from(calldata);
-        node.returndata = Bytes::from(abi_word(U256::from(123)).to_vec());
+        node.returndata = abi_word(U256::from(123)).into();
         let mut context = context_with_arena(vec![node]);
         let mut tui = TUIContext::new(&mut context);
 
@@ -1991,7 +1991,7 @@ mod tests {
 
     #[test]
     fn decode_step_parameters_reads_static_values_from_stack() {
-        let step = trace_step(vec![U256::from(42), U256::from(1)]);
+        let step = trace_step(vec![U256::from(42), U256::ONE]);
         let parameters = Parameters::parse("(uint256 amount, bool ok)").unwrap();
         let values = super::decode_step_parameters(&parameters, &step, None).unwrap();
 
@@ -2183,7 +2183,7 @@ mod tests {
     fn storage_lines_format_sload_and_label() {
         let mut step = trace_step(Vec::new());
         step.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: None,
             reason: StorageChangeReason::SLOAD,
@@ -2205,7 +2205,7 @@ mod tests {
     fn storage_access_line_formats_sstore_with_previous_value() {
         let mut step = trace_step(Vec::new());
         step.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: Some(U256::from(7)),
             reason: StorageChangeReason::SSTORE,
@@ -2221,7 +2221,7 @@ mod tests {
 
     #[test]
     fn current_storage_access_line_uses_next_stack_snapshot_for_warm_sload() {
-        let mut step = trace_step(vec![U256::from(1)]);
+        let mut step = trace_step(vec![U256::ONE]);
         step.op = OpCode::SLOAD;
         step.storage_change = None;
         let next_step = trace_step(vec![U256::from(42)]);
@@ -2236,7 +2236,7 @@ mod tests {
 
     #[test]
     fn current_storage_access_line_uses_next_stack_snapshot_for_tload() {
-        let mut step = trace_step(vec![U256::from(1)]);
+        let mut step = trace_step(vec![U256::ONE]);
         step.op = OpCode::TLOAD;
         let next_step = trace_step(vec![U256::from(42)]);
         let mut context = context_with_arena(vec![debug_node(0, 0, vec![step, next_step])]);
@@ -2301,7 +2301,7 @@ mod tests {
     #[test]
     fn op_list_title_includes_gas_and_subcall_stats() {
         let stats = DebuggerStats { session_trace_gas_used: 789_012, session_subcalls: 3 };
-        let address = Address::from([0x42; 20]);
+        let address = Address::repeat_byte(0x42);
         let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, Some(stats));
 
         assert!(title.contains("pc: 0x2a (42)"));
@@ -2315,7 +2315,7 @@ mod tests {
 
     #[test]
     fn op_list_title_omits_aggregate_stats_when_unavailable() {
-        let title = super::op_list_title(&Address::from([0x42; 20]), 0x2a, 123_456, 42, 7, None);
+        let title = super::op_list_title(&Address::repeat_byte(0x42), 0x2a, 123_456, 42, 7, None);
 
         assert!(!title.contains("sessionTraceGasUsed"));
         assert!(!title.contains("sessionSubcalls"));

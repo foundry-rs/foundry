@@ -1,3 +1,4 @@
+use self::ContractArtifactField as Caf;
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
 use comfy_table::{
@@ -18,11 +19,12 @@ use foundry_compilers::{
     artifacts::{
         StorageLayout,
         output_selection::{
-            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection, OutputSelection,
+            BytecodeOutputSelection, ContractOutputSelection, ContractOutputSelection as Cos,
+            DeployedBytecodeOutputSelection, EvmOutputSelection, EvmOutputSelection as Eos,
+            EwasmOutputSelection, OutputSelection,
         },
     },
-    solc::SolcLanguage,
+    solc::{SolcCompiler, SolcLanguage},
 };
 use path_slash::PathExt;
 use regex::Regex;
@@ -76,9 +78,6 @@ impl InspectArgs {
             build.compiler.optimize
         };
 
-        // Get the solc version if specified
-        let solc_version = build.use_solc.clone();
-
         // Build modified Args
         let modified_build_args = BuildOpts {
             compiler: CompilerOpts { extra_output: cos, optimize: optimized, ..build.compiler },
@@ -102,8 +101,29 @@ impl InspectArgs {
                 "linearization inspection is only supported for Solidity contracts (.sol targets)"
             );
         }
-        let compiler = ProjectCompiler::new().quiet(true);
-        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
+        let mut compiler = ProjectCompiler::new()
+            .external_compilers(&config)
+            .external_artifacts(false)
+            .target_files([target_path.clone()])
+            .quiet(true);
+        if project.no_artifacts
+            && project.cached
+            && !config.force
+            && is_solidity_source(&target_path)
+            && project.artifacts.additional_files == Default::default()
+            // Cached artifacts do not retain compiler diagnostics.
+            && !config.deny.warnings()
+        {
+            project.no_artifacts = false;
+            if field != ContractOutputSelection::Abi {
+                project.update_output_selection(|selection| {
+                    *selection =
+                        std::mem::take(selection).with_output("*", "*", ["abi".to_string()]);
+                });
+            }
+            compiler = compiler.cache_abi();
+        }
+        let mut output = compiler.compile(&project)?;
 
         // Find the artifact
         let artifact = find_matching_contract_artifact(&mut output, &target_path, contract.name())?;
@@ -161,7 +181,8 @@ impl InspectArgs {
                 print_json(&artifact.userdoc)?;
             }
             ContractArtifactField::Ewasm => {
-                print_json_str(&artifact.ewasm, None)?;
+                let ewasm = artifact.ewasm.as_ref().ok_or_else(|| missing_error("EWASM output"))?;
+                print_json_str(ewasm, None)?;
             }
             ContractArtifactField::Errors => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);
@@ -172,8 +193,15 @@ impl InspectArgs {
                 print_errors_events(&out, false, wrap)?;
             }
             ContractArtifactField::StandardJson => {
-                let standard_json = if let Some(version) = solc_version {
-                    let version = version.parse()?;
+                let version = match &project.compiler.solc {
+                    Some(SolcCompiler::Specific(solc)) => Some(solc.version.clone()),
+                    _ => artifact
+                        .metadata
+                        .as_ref()
+                        .map(|metadata| metadata.compiler.version.parse())
+                        .transpose()?,
+                };
+                let standard_json = if let Some(version) = version {
                     let mut standard_json =
                         project.standard_json_input(&target_path)?.normalize_evm_version(&version);
                     standard_json.settings.sanitize(&version, SolcLanguage::Solidity);
@@ -685,7 +713,6 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
     type Error = eyre::Error;
 
     fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
-        type Caf = ContractArtifactField;
         match field {
             Caf::Artifact => Err(eyre!("Artifact is not supported for ContractOutputSelection")),
             Caf::Abi => Ok(Self::Abi),
@@ -722,8 +749,6 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
 
 impl PartialEq<ContractOutputSelection> for ContractArtifactField {
     fn eq(&self, other: &ContractOutputSelection) -> bool {
-        type Cos = ContractOutputSelection;
-        type Eos = EvmOutputSelection;
         matches!(
             (self, other),
             (Self::Abi | Self::Events | Self::Errors, Cos::Abi)

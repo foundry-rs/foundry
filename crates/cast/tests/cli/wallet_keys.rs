@@ -3,7 +3,8 @@
 use super::*;
 
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
-casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
+#[casttest]
+fn wallet_mnemonic_from_entropy(cmd: _) {
     cmd.args([
         "wallet",
         "new-mnemonic",
@@ -37,10 +38,11 @@ Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 "#]]
         .raw(),
     );
-});
+}
 
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic (verbose variant)
-casttest!(wallet_mnemonic_from_entropy_verbose, |_prj, cmd| {
+#[casttest]
+fn wallet_mnemonic_from_entropy_verbose(cmd: _) {
     cmd.args([
         "wallet",
         "new-mnemonic",
@@ -78,10 +80,11 @@ Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 "#]]
         .raw(),
     );
-});
+}
 
 // tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic
-casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
+#[casttest]
+fn wallet_mnemonic_from_entropy_json(cmd: _) {
     cmd.args([
         "wallet",
         "new-mnemonic",
@@ -121,10 +124,11 @@ casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic (verbose variant)
-casttest!(wallet_mnemonic_from_entropy_json_verbose, |_prj, cmd| {
+#[casttest]
+fn wallet_mnemonic_from_entropy_json_verbose(cmd: _) {
     cmd.args([
         "wallet",
         "new-mnemonic",
@@ -166,10 +170,11 @@ casttest!(wallet_mnemonic_from_entropy_json_verbose, |_prj, cmd| {
 
 "#]]
 .is_json());
-});
+}
 
 // tests that `cast wallet derive` outputs the addresses of the accounts derived from the mnemonic
-casttest!(wallet_derive_mnemonic, |_prj, cmd| {
+#[casttest]
+fn wallet_derive_mnemonic(cmd: _) {
     cmd.args([
         "wallet",
         "derive",
@@ -190,11 +195,12 @@ casttest!(wallet_derive_mnemonic, |_prj, cmd| {
 
 
 "#]]);
-});
+}
 
 // tests that `cast wallet derive` with insecure flag outputs the addresses and private keys of the
 // accounts derived from the mnemonic
-casttest!(wallet_derive_mnemonic_insecure, |_prj, cmd| {
+#[casttest]
+fn wallet_derive_mnemonic_insecure(cmd: _) {
     cmd.args([
         "wallet",
         "derive",
@@ -219,11 +225,12 @@ casttest!(wallet_derive_mnemonic_insecure, |_prj, cmd| {
 
 
 "#]]);
-});
+}
 
 // tests that `cast wallet derive` with json flag outputs the addresses of the accounts derived from
 // the mnemonic in JSON format
-casttest!(wallet_derive_mnemonic_json, |_prj, cmd| {
+#[casttest]
+fn wallet_derive_mnemonic_json(cmd: _) {
     cmd.args([
         "wallet",
         "derive",
@@ -256,11 +263,12 @@ casttest!(wallet_derive_mnemonic_json, |_prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests that `cast wallet derive` with insecure and json flag outputs the addresses and private
 // keys of the accounts derived from the mnemonic in JSON format
-casttest!(wallet_derive_mnemonic_insecure_json, |_prj, cmd| {
+#[casttest]
+fn wallet_derive_mnemonic_insecure_json(cmd: _) {
     cmd.args([
         "wallet",
         "derive",
@@ -297,10 +305,11 @@ casttest!(wallet_derive_mnemonic_insecure_json, |_prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests that `cast wallet private-key` with arguments outputs the private key
-casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
+#[casttest]
+fn wallet_private_key_from_mnemonic_arg(cmd: _) {
     cmd.args([
         "wallet",
         "private-key",
@@ -312,10 +321,11 @@ casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
 "#]]);
-});
+}
 
 // tests that `cast wallet private-key` with options outputs the private key
-casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
+#[casttest]
+fn wallet_private_key_from_mnemonic_option(cmd: _) {
     cmd.args([
         "wallet",
         "private-key",
@@ -329,10 +339,11 @@ casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
 "#]]);
-});
+}
 
 // tests that `cast wallet public-key` correctly derives and outputs the public key
-casttest!(wallet_public_key_with_private_key, |_prj, cmd| {
+#[casttest]
+fn wallet_public_key_with_private_key(cmd: _) {
     cmd.args([
         "wallet",
         "public-key",
@@ -344,10 +355,11 @@ casttest!(wallet_public_key_with_private_key, |_prj, cmd| {
 0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4
 
 "#]]);
-});
+}
 
 // tests that `cast wallet private-key` with derivation path outputs the private key
-casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
+#[casttest]
+fn wallet_private_key_with_derivation_path(cmd: _) {
     cmd.args([
         "wallet",
         "private-key",
@@ -361,4 +373,4 @@ casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
 "#]]);
-});
+}

@@ -1,8 +1,10 @@
 {
-  "name": "solar-lsp",
-  "displayName": "Solar LSP",
-  "description": "Solidity language support powered by forge lsp and forge fmt",
+  "name": "forge-lsp",
+  "displayName": "Foundry Solidity",
+  "description": "Solidity language support powered by the Foundry toolchain: diagnostics, hover, references and CodeLens from forge lsp, formatting with forge fmt, and linting with forge lint",
   "version": "0.1.0",
+  "publisher": "paradigm",
+  "icon": "icon.png",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
@@ -16,6 +18,15 @@
   "engines": {
     "vscode": "^1.93.0"
   },
+  "keywords": [
+    "solidity",
+    "foundry",
+    "forge",
+    "ethereum",
+    "evm",
+    "smart contracts",
+    "lsp"
+  ],
   "categories": [
     "Formatters",
     "Programming Languages"
@@ -61,7 +72,7 @@
     ],
     "configuration": {
       "type": "object",
-      "title": "Solar LSP Configuration",
+      "title": "Foundry Solidity",
       "properties": {
         "solarLsp.enable": {
           "type": "boolean",
@@ -91,7 +102,7 @@
             "verbose"
           ],
           "default": "messages",
-          "description": "Server execution trace detail. Set the Solar LSP output channel log level to Trace to enable tracing."
+          "description": "Server execution trace detail. Set the Foundry Solidity output channel log level to Trace to enable tracing."
         },
         "solarLsp.codeLens.enable": {
           "type": "boolean",
@@ -188,17 +199,17 @@
       {
         "command": "solarLsp.formatDocument",
         "title": "Format Document",
-        "category": "Solar"
+        "category": "Foundry"
       },
       {
         "command": "solar.clearCache",
         "title": "Clear Analysis Cache",
-        "category": "Solar"
+        "category": "Foundry"
       },
       {
         "command": "solar.reindex",
         "title": "Reindex Workspace",
-        "category": "Solar"
+        "category": "Foundry"
       }
     ]
   },
@@ -210,10 +221,9 @@
     "bundle": "node scripts/bundle.mjs",
     "bundle:check": "node scripts/bundle.mjs --check",
     "test": "npm run compile && node --test test/*.test.cjs",
-    "package": "vsce package --out bundle/solar-lsp.vsix",
+    "package": "npm run bundle:check && node scripts/package.mjs",
     "test:host": "npm run compile && node scripts/test-host.cjs",
-    "test:launcher": "node scripts/test-host.cjs --launcher",
-    "prepackage": "node -e \"require('node:fs').mkdirSync('bundle', { recursive: true })\""
+    "test:launcher": "node scripts/test-host.cjs --launcher"
   },
   "devDependencies": {
     "@types/node": "26.x",
@@ -221,9 +231,13 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "0.28.2",
+    "ovsx": "^1.2.0",
     "typescript": "^7.0.2"
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.1"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.12"
   }
 }

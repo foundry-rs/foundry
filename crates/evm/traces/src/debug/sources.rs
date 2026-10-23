@@ -1,5 +1,8 @@
 use eyre::{Context, Result};
-use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
+use foundry_common::{
+    compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
+    strip_bytecode_placeholders,
+};
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{
@@ -86,8 +89,7 @@ impl SourceData {
                     let source_map = compiler.sess().source_map();
                     for item in source.ast.as_ref()?.items.iter() {
                         if let solar::ast::ItemKind::Contract(contract) = &item.kind {
-                            let Some(contract_range) = source_map.span_to_range(item.span).ok()
-                            else {
+                            let Some(contract_range) = span_to_range(source_map, item.span) else {
                                 continue;
                             };
                             contract_definitions
@@ -395,6 +397,7 @@ impl ContractSources {
 
         let artifacts: Vec<_> = output
             .artifact_ids()
+            .filter(|(id, _)| !is_external_artifact(&id.build_id))
             .collect::<Vec<_>>()
             .par_iter()
             .map(|(id, artifact)| {
@@ -430,7 +433,10 @@ impl ContractSources {
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
                 if !path.exists() {
-                    removed_files.insert(path);
+                    // Preprocessor deploy helpers are compiled from memory and never exist on disk.
+                    if !is_deploy_helper_path(path) {
+                        removed_files.insert(path);
+                    }
                     continue;
                 }
 

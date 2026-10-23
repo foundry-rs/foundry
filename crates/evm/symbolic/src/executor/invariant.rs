@@ -8,7 +8,11 @@ fn record_candidate_limitation(
         error,
         SymbolicError::Timeout(_) | SymbolicError::Solver(_) | SymbolicError::SolverQueryLimit(_)
     );
-    limitation.get_or_insert_with(|| error.into());
+    if search_exhausted {
+        *limitation = Some(error.into());
+    } else {
+        limitation.get_or_insert_with(|| error.into());
+    }
     search_exhausted
 }
 
@@ -64,11 +68,12 @@ impl SymbolicExecutor {
     fn prepare_invariant_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        state: PathState,
+        mut state: PathState,
         invariant_address: Address,
         sender: Address,
         invariant: &Function,
     ) -> Result<SequenceCall, SymbolicError> {
+        state.invariant_predicate = true;
         let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
         let call_data = calldata.call_data(&mut self.cx);
         let constraints = calldata.into_constraints();

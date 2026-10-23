@@ -1,7 +1,10 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
     config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
-    eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
+    eth::{
+        EthApi, backend::db::SerializableState, miner::INSTANT_COALESCE_WINDOW,
+        pool::transactions::TransactionOrder,
+    },
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
@@ -102,6 +105,11 @@ pub struct NodeArgs {
     /// Block time in seconds for interval mining.
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
     pub block_time: Option<Duration>,
+
+    /// Time in milliseconds to group ready transactions into one auto-mined block.
+    /// Defaults to 0 (no delay). Set a positive value to enable transaction coalescing.
+    #[arg(long, value_name = "MILLISECONDS", default_value_t = INSTANT_COALESCE_WINDOW.as_millis() as u64)]
+    pub transaction_coalescing_window: u64,
 
     /// Slots in an epoch
     #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
@@ -297,6 +305,9 @@ impl NodeArgs {
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
+            .with_transaction_coalescing_window(Duration::from_millis(
+                self.transaction_coalescing_window,
+            ))
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
             .with_account_generator(self.account_generator())?
@@ -317,6 +328,7 @@ impl NodeArgs {
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
             .with_no_fork_node_info(self.evm.no_fork_node_info)
+            .with_no_bal(self.evm.no_bal)
             .with_fork_state_by_number(self.evm.fork_state_by_number)
             .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm.fork_request_retries)
@@ -592,6 +604,14 @@ pub struct AnvilEvmArgs {
     #[arg(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_fork_node_info: bool,
 
+    /// Disable pre-filling the fork cache with block access list (BAL) post-state.
+    ///
+    /// By default, eligible Ethereum forks briefly try fetching a BAL at the fork block.
+    /// Missing or invalid BALs fall back to ordinary state reads. This setting also applies
+    /// to subsequent resets and does not disable serving BAL RPC methods.
+    #[arg(long, help_heading = "Fork config")]
+    pub no_bal: bool,
+
     /// Read fork state by block number instead of by block hash.
     ///
     /// Use this for RPCs that cannot serve `eth_getBalance`, `eth_getCode`, `eth_getStorageAt` or
@@ -655,6 +675,9 @@ pub struct AnvilEvmArgs {
     pub disable_block_gas_limit: bool,
 
     /// Enable the transaction gas limit check as imposed by EIP-7825 (Osaka hardfork).
+    ///
+    /// From Amsterdam, the cap always applies to regular gas only, and gas above it becomes the
+    /// EIP-8037 state gas reservoir.
     #[arg(long, visible_alias = "tx-gas-limit", help_heading = "Environment config")]
     pub enable_tx_gas_limit: bool,
 
@@ -694,6 +717,10 @@ pub struct AnvilEvmArgs {
     pub chain_id: Option<Chain>,
 
     /// Enable steps tracing used for debug calls returning geth-style traces
+    ///
+    /// Steps are recorded by replaying the transaction from its parent block's state, so they
+    /// are unavailable once that state is pruned or when loading a state dump created without
+    /// `--preserve-historical-states`.
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
@@ -800,9 +827,11 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N
         Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
-    async fn dump(&self) {
-        if let Some(state) = self.dump_state.clone() {
-            Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
+    async fn dump(mut self) {
+        // Shutdown no longer polls the periodic future, so release its locks first.
+        self.in_progress_dump = None;
+        if let Some(state) = self.dump_state {
+            Self::dump_state(self.api, state, self.preserve_historical_states).await
         }
     }
 
@@ -968,6 +997,36 @@ mod tests {
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
 
+    #[tokio::test]
+    async fn final_dump_cancels_suspended_periodic_dump() {
+        for queued_for_mining in [false, true] {
+            let (api, _handle) = crate::spawn(NodeConfig::test().with_no_mining(true)).await;
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("state.json");
+            let mining =
+                if queued_for_mining { Some(api.backend.lock_mining().await) } else { None };
+            let db = api.backend.get_db().write().await;
+            let mut dumper = PeriodicStateDumper::new(
+                api.clone(),
+                Some(path.clone()),
+                Duration::from_secs(60),
+                false,
+            );
+            dumper.in_progress_dump =
+                Some(Box::pin(PeriodicStateDumper::dump_state(api.clone(), path.clone(), false)));
+            assert!(futures::poll!(&mut dumper).is_pending());
+
+            // Shutdown stops polling the periodic dumper before starting the final dump.
+            drop(db);
+            drop(mining);
+            tokio::time::timeout(Duration::from_secs(2), dumper.dump())
+                .await
+                .expect("final dump waited for a suspended periodic dump");
+            let state = foundry_common::fs::read_json_file::<SerializableState>(&path).unwrap();
+            assert_eq!(state.best_block_number, Some(0));
+        }
+    }
+
     #[cfg(feature = "base")]
     #[test]
     fn base_chain_ids_select_native_base_unless_overridden() {
@@ -982,6 +1041,16 @@ mod tests {
                     .unwrap();
             assert!(config.networks.execution_network().is_ethereum());
         }
+    }
+
+    #[test]
+    fn fork_bal_can_be_disabled() {
+        let args =
+            NodeArgs::try_parse_from(["anvil", "--fork-url", "http://localhost:8545", "--no-bal"]);
+        let config = args.unwrap().into_node_config().unwrap();
+        assert!(config.no_bal);
+        assert!(!NodeArgs::parse_from(["anvil"]).into_node_config().unwrap().no_bal);
+        assert!(NodeArgs::parse_from(["anvil", "--no-bal"]).into_node_config().unwrap().no_bal);
     }
 
     #[test]
@@ -1588,5 +1657,20 @@ mod tests {
             let result = NodeArgs::try_parse_from(args);
             assert!(result.is_err(), "expected error when using {:?} without --fork-url", args[1]);
         }
+    }
+
+    #[test]
+    fn transaction_coalescing_window_cli() {
+        for (args, expected) in [
+            (vec!["anvil"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "0"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "20"], 20),
+        ] {
+            let config = NodeArgs::parse_from(args).into_node_config().unwrap();
+            assert_eq!(config.transaction_coalescing_window, Duration::from_millis(expected));
+        }
+        assert!(
+            NodeArgs::try_parse_from(["anvil", "--transaction-coalescing-window", "-1"]).is_err()
+        );
     }
 }

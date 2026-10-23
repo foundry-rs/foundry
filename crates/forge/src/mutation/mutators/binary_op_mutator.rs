@@ -23,10 +23,11 @@ impl Mutator for BinaryOpMutator {
             BinOpKind::And,
         ];
 
+        // `>>>` is parsed but not implemented for integer types in Solidity, so a `Sar` mutant
+        // never compiles and only costs a build per mutation site.
         let operations_num_bitwise = vec![
             BinOpKind::Shr,
             BinOpKind::Shl,
-            BinOpKind::Sar,
             BinOpKind::BitAnd,
             BinOpKind::BitOr,
             BinOpKind::BitXor,
