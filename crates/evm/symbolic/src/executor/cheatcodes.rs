@@ -216,9 +216,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn deploy_code_cheatcode_if_needed<FEN: FoundryEvmNetwork>(
+    pub(super) fn deploy_code_cheatcode_if_needed(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -271,9 +271,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn deploy_code_cheatcode_call<FEN: FoundryEvmNetwork>(
+    pub(super) fn deploy_code_cheatcode_call(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -583,9 +583,9 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    pub(super) fn handle_foundry_cheatcode<FEN: FoundryEvmNetwork>(
+    pub(super) fn handle_foundry_cheatcode(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         selector: [u8; 4],
         in_offset: &SymExpr,
@@ -1421,7 +1421,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![exists]))
             }
             activeForkCall::SELECTOR => {
-                let id = executor.backend().active_fork_id().ok_or(SymbolicError::Unsupported(
+                let id = executor.active_fork_id().ok_or(SymbolicError::Unsupported(
                     "symbolic vm.activeFork requires an active forked executor",
                 ))?;
                 let id = SymExpr::constant(&mut self.cx, id);
@@ -1435,7 +1435,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.selectFork id",
                 )?;
-                if executor.backend().is_active_fork(id) {
+                if executor.is_active_fork(id) {
                     return Ok(CheatcodeOutcome::Continue(Vec::new()));
                 }
                 Err(SymbolicError::Unsupported(
@@ -1445,7 +1445,7 @@ impl SymbolicExecutor {
             rollFork_0Call::SELECTOR | rollFork_2Call::SELECTOR => {
                 let with_id = selector == rollFork_2Call::SELECTOR;
                 let active_fork = !with_id
-                    || executor.backend().is_active_fork(read_abi_constrained_word_arg(
+                    || executor.is_active_fork(read_abi_constrained_word_arg(
                         &mut self.cx,
                         state,
                         args_offset,
@@ -1702,12 +1702,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             isIsolateModeCall::SELECTOR => {
-                let isolate = executor
-                    .inspector()
-                    .cheatcodes
-                    .as_ref()
-                    .is_some_and(|cheats| cheats.core.config.isolate);
-                let isolate = SymExpr::constant(&mut self.cx, U256::from(isolate));
+                let isolate = SymExpr::constant(&mut self.cx, U256::from(executor.isolate));
                 Ok(CheatcodeOutcome::Continue(vec![isolate]))
             }
             isContextCall::SELECTOR => {

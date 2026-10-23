@@ -179,9 +179,9 @@ impl SymbolicExecutor {
         SymCalldata::from_bytes(&mut self.cx, bytes)
     }
 
-    fn invoke_storage_hook<FEN: FoundryEvmNetwork>(
+    fn invoke_storage_hook(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -291,15 +291,15 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    fn guard_fixed_memory_access<FEN: FoundryEvmNetwork>(
+    fn guard_fixed_memory_access(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         offset: &SymExpr,
         size: usize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let memory_limit = executor.evm_env().cfg_env.memory_limit();
+        let memory_limit = executor.memory_limit();
         let host_max_offset = (usize::MAX & !31usize).checked_sub(size);
         let constrained_offset = state.constrained_usize_checked(&mut self.cx, offset);
         if constrained_offset.as_ref().is_some_and(|offset| match offset {
@@ -379,15 +379,15 @@ impl SymbolicExecutor {
         }
     }
 
-    pub(super) fn guard_memory_range<FEN: FoundryEvmNetwork>(
+    pub(super) fn guard_memory_range(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         offset: &SymExpr,
         size: &SymExpr,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let memory_limit = executor.evm_env().cfg_env.memory_limit();
+        let memory_limit = executor.memory_limit();
         if let (Some(offset_value), Some(size_value)) = (offset.as_const(), size.as_const()) {
             let valid = size_value.is_zero()
                 || usize::try_from(offset_value)
@@ -445,9 +445,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn step<FEN: FoundryEvmNetwork>(
+    pub(super) fn step(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         code: &SymCode,
         jumpdests: &JumpTable,
         state: &mut PathState,
@@ -457,7 +457,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         state.pc += 1;
 
-        if Into::<SpecId>::into(executor.spec_id()) < opcode_activation(op) {
+        if executor.spec_id() < opcode_activation(op) {
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::ExceptionalHalt);
         }
@@ -1248,7 +1248,7 @@ impl SymbolicExecutor {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
-                let spec_id: SpecId = executor.spec_id().into();
+                let spec_id: SpecId = executor.spec_id();
                 let (beneficiary_word, beneficiary) =
                     state.pop_address_word_or_symbolic_slot(&mut self.cx)?;
                 if spec_id < SpecId::CANCUN

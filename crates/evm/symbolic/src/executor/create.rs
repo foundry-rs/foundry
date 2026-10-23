@@ -1,9 +1,9 @@
 use super::*;
 
 impl SymbolicExecutor {
-    pub(super) fn create<FEN: FoundryEvmNetwork>(
+    pub(super) fn create(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -119,10 +119,10 @@ impl SymbolicExecutor {
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
             let runtime = &outcome.state.frame.return_data;
-            let spec_id: SpecId = executor.spec_id().into();
+            let spec_id: SpecId = executor.spec_id();
             let mut rejected_runtime = false;
             if matches!(outcome.status, CallStatus::Success) {
-                if runtime_exceeds_code_size_limit(&executor.evm_env().cfg_env, spec_id, runtime) {
+                if runtime_exceeds_code_size_limit(executor.max_code_size(), spec_id, runtime) {
                     outcome.status = CallStatus::Revert;
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
                 } else if runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)? {
@@ -179,9 +179,9 @@ impl SymbolicExecutor {
         Ok(self.resume_parent_paths(state, worklist, parents))
     }
 
-    pub(super) fn execute_external_call<FEN: FoundryEvmNetwork>(
+    pub(super) fn execute_external_call(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         initial: PathState,
         code: &SymCode,
         completed_paths: &mut usize,
@@ -200,13 +200,13 @@ impl SymbolicExecutor {
 }
 
 fn runtime_exceeds_code_size_limit(
-    cfg: &impl Cfg,
+    max_code_size: usize,
     spec_id: SpecId,
     runtime: &SymReturnData,
 ) -> bool {
     spec_id >= SpecId::SPURIOUS_DRAGON
         && runtime.len_word.as_const().is_some()
-        && runtime.len() > cfg.max_code_size()
+        && runtime.len() > max_code_size
 }
 
 fn runtime_has_rejected_prefix(

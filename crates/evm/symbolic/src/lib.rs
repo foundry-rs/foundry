@@ -54,7 +54,7 @@ mod executor;
 mod runtime;
 
 pub(crate) use consts::*;
-pub use runtime::{SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
+pub use runtime::{ExecutorView, SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SymbolicVmCheatcode {
@@ -192,9 +192,9 @@ pub struct SymbolicInvariantTarget {
 }
 
 /// Input for best-effort invariant candidate search after one symbolic handler call.
-pub struct SymbolicInvariantCandidateInput<'a, FEN: FoundryEvmNetwork> {
+pub struct SymbolicInvariantCandidateInput<'a> {
     /// Concrete Foundry executor containing the replayed invariant frontier prefix.
-    pub executor: &'a Executor<FEN>,
+    pub executor: ExecutorView<'a>,
     /// Address of the deployed invariant test contract.
     pub invariant_address: Address,
     /// Invariant functions checked independently after the handler call.
@@ -246,9 +246,9 @@ pub struct SymbolicInvariantCandidateSearchResult {
 }
 
 /// Input for bounded symbolic invariant execution.
-pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
+pub struct SymbolicInvariantRunInput<'a> {
     /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
-    pub executor: &'a Executor<FEN>,
+    pub executor: ExecutorView<'a>,
     /// Address of the deployed invariant test contract.
     pub invariant_address: Address,
     /// Default sender used when invariant targeting does not configure senders.
