@@ -7,7 +7,7 @@ use crate::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::{DynSolType, JsonAbiExt};
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::Function;
 use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
@@ -17,7 +17,6 @@ use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
 };
-use std::iter;
 
 /// A neutral borrowed view of one corpus entry.
 #[derive(Clone, Copy)]
@@ -580,25 +579,21 @@ impl SequenceMutator {
         if hints.is_empty() || tx.call_details.calldata.len() <= 4 {
             return Ok(false);
         }
-        let Ok(types) = function
-            .inputs
-            .iter()
-            .map(|input| input.selector_type().parse())
-            .collect::<Result<Vec<DynSolType>, _>>()
-        else {
+        let Ok(types) = function.inputs.iter().map(|input| input.resolve()).collect() else {
             return Ok(false);
         };
+        let ty = DynSolType::Tuple(types);
         let start = runner.rng().random_range(0..hints.len());
         for offset in 0..hints.len() {
             if let Some(calldata) = cmp_mutated_calldata(
                 tx.call_details.calldata.as_ref(),
                 hints[(start + offset) % hints.len()],
                 runner,
-            ) && let Ok(inputs) = function.abi_decode_input(&calldata[4..])
+            ) && let Ok(DynSolValue::Tuple(inputs)) =
+                ty.abi_decode_sequence_checked(&calldata[4..])
                 && inputs.iter().zip(&function.inputs).all(|(value, input)| {
                     constrain_enum_value(value.clone(), input, fixtures) == *value
                 })
-                && has_valid_words(&types, &calldata[4..], 0)
             {
                 tx.call_details.calldata = calldata.into();
                 return Ok(true);
@@ -675,73 +670,6 @@ fn replace_operand(
     None
 }
 
-/// Returns whether every value word of the ABI-encoded `types` sequence at `data[base..]` is one
-/// that Solidity's ABI decoder accepts.
-///
-/// Solidity rejects dirty value words, such as a `bool` other than 0 or 1, but accepts any
-/// in-bounds offset, length, and `bytes` or `string` payload, so those are not checked. Nested
-/// value words are always checked, which is conservative for `calldata` parameters: Solidity
-/// validates those only when accessed, but the ABI does not record data locations.
-fn has_valid_words<'a>(
-    types: impl IntoIterator<Item = &'a DynSolType>,
-    data: &[u8],
-    base: usize,
-) -> bool {
-    let mut head = base;
-    types.into_iter().all(|ty| {
-        let (valid, words) = if ty.is_dynamic() {
-            let valid = abi_usize(data, head)
-                .and_then(|offset| base.checked_add(offset))
-                .is_some_and(|pos| has_valid_value(ty, data, pos));
-            (valid, 1)
-        } else {
-            (has_valid_value(ty, data, head), ty.minimum_words())
-        };
-        head = head.saturating_add(words.saturating_mul(32));
-        valid
-    })
-}
-
-/// Returns whether every value word of the ABI-encoded `ty` value at `data[pos..]` is one that
-/// Solidity's ABI decoder accepts.
-fn has_valid_value(ty: &DynSolType, data: &[u8], pos: usize) -> bool {
-    let is_zero = |bytes: &[u8]| bytes.iter().all(|byte| *byte == 0);
-    match ty {
-        DynSolType::Bytes | DynSolType::String => true,
-        // Zero-sized elements have no words, and decoding does not bound their count.
-        DynSolType::Array(ty) => abi_usize(data, pos).is_some_and(|len| {
-            ty.minimum_words() == 0 || has_valid_words(iter::repeat_n(&**ty, len), data, pos + 32)
-        }),
-        DynSolType::FixedArray(ty, len) => has_valid_words(iter::repeat_n(&**ty, *len), data, pos),
-        DynSolType::Tuple(types) | DynSolType::CustomStruct { tuple: types, .. } => {
-            has_valid_words(types, data, pos)
-        }
-        _ => abi_word(data, pos).is_some_and(|word| match ty {
-            DynSolType::Bool => is_zero(&word[..31]) && word[31] <= 1,
-            DynSolType::Address => is_zero(&word[..12]),
-            DynSolType::Function => is_zero(&word[24..]),
-            DynSolType::Uint(bits) => is_zero(&word[..32 - bits / 8]),
-            DynSolType::Int(bits) => {
-                let padding = 32 - bits / 8;
-                let fill = if word[padding] & 0x80 == 0 { 0 } else { 0xff };
-                word[..padding].iter().all(|byte| *byte == fill)
-            }
-            DynSolType::FixedBytes(size) => is_zero(&word[*size..]),
-            _ => true,
-        }),
-    }
-}
-
-/// Returns the ABI word at `data[pos..]`, if in bounds.
-fn abi_word(data: &[u8], pos: usize) -> Option<&[u8]> {
-    data.get(pos..pos.checked_add(32)?)
-}
-
-/// Returns the ABI word at `data[pos..]` as a `usize`, if in bounds and small enough.
-fn abi_usize(data: &[u8], pos: usize) -> Option<usize> {
-    U256::from_be_slice(abi_word(data, pos)?).try_into().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,9 +678,8 @@ mod tests {
         invariant::{TargetedContract, TargetedContracts},
         strategies::EvmFuzzState,
     };
-    use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
-    use alloy_primitives::{Address, B256, Bytes, I256};
+    use alloy_primitives::{Address, Bytes, I256};
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{prelude::Just, strategy::Strategy};
     use revm::database::InMemoryDB;
@@ -992,45 +919,6 @@ mod tests {
                 "{signature}"
             );
             assert_eq!(input.call_details.calldata.as_ref(), expected, "{signature}");
-        }
-    }
-
-    #[test]
-    fn valid_words_follow_abi_layout() {
-        let types = ["(bool,string)[]", "(bool,int8)[2]", "(bytes,bool)[2]", "bytes4"]
-            .map(|ty| ty.parse::<DynSolType>().unwrap());
-        let static_tuple =
-            DynSolValue::Tuple(vec![DynSolValue::Bool(false), DynSolValue::Int(I256::ZERO, 8)]);
-        let bytes_tuple =
-            DynSolValue::Tuple(vec![DynSolValue::Bytes(b"ab".to_vec()), DynSolValue::Bool(false)]);
-        let data = DynSolValue::Tuple(vec![
-            DynSolValue::Array(vec![DynSolValue::Tuple(vec![
-                DynSolValue::Bool(false),
-                DynSolValue::String("abcd".into()),
-            ])]),
-            DynSolValue::FixedArray(vec![static_tuple; 2]),
-            DynSolValue::FixedArray(vec![bytes_tuple; 2]),
-            DynSolValue::FixedBytes(B256::right_padding_from(&[0x12, 0x34, 0x56, 0x78]), 4),
-        ])
-        .abi_encode_params();
-        // Words: 0 a offset, 1-4 b, 5 d offset, 6 c, 7 a length, 8 a[0] offset, 9 a[0] bool,
-        // 10 a[0] string offset, 11 string length, 12 string data, 13-14 d offsets,
-        // 15-18 d[0], 19-22 d[1] (bytes offset, bool, bytes length, bytes data).
-        assert_eq!(data.len(), 23 * 32);
-        assert!(has_valid_words(&types, &data, 0));
-        for (word, byte, value, valid) in [
-            (9, 31, 2, false),    // Bool in a dynamic array of dynamic tuples.
-            (3, 31, 2, false),    // Bool after a multiword static tuple.
-            (4, 0, 1, false),     // `int8` without sign extension.
-            (20, 31, 2, false),   // Bool in a fixed array of dynamic tuples.
-            (6, 31, 1, false),    // Dirty `bytes4` padding.
-            (7, 31, 0, true),     // Shortened array; trailing elements are ignored.
-            (12, 31, 0xff, true), // Dirty `string` padding.
-            (22, 31, 0xff, true), // Dirty `bytes` padding.
-        ] {
-            let mut data = data.clone();
-            data[word * 32 + byte] = value;
-            assert_eq!(has_valid_words(&types, &data, 0), valid, "word {word}");
         }
     }
 
