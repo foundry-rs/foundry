@@ -7,7 +7,7 @@ use crate::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::JsonAbiExt;
+use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
 use alloy_json_abi::Function;
 use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
@@ -579,20 +579,17 @@ impl SequenceMutator {
         if hints.is_empty() || tx.call_details.calldata.len() <= 4 {
             return Ok(false);
         }
+        let config = AbiDecoderConfig::new().validate_words(true);
         let start = runner.rng().random_range(0..hints.len());
         for offset in 0..hints.len() {
             if let Some(calldata) = cmp_mutated_calldata(
                 tx.call_details.calldata.as_ref(),
                 hints[(start + offset) % hints.len()],
                 runner,
-            ) && let Ok(inputs) = function.abi_decode_input(&calldata[4..])
-                && inputs
-                    .iter()
-                    .cloned()
-                    .zip(&function.inputs)
-                    .map(|(value, input)| constrain_enum_value(value, input, fixtures))
-                    .zip(&inputs)
-                    .all(|(constrained, input)| constrained == *input)
+            ) && let Ok(inputs) = function.abi_decode_input_with_config(&calldata[4..], config)
+                && inputs.iter().zip(&function.inputs).all(|(value, input)| {
+                    constrain_enum_value(value.clone(), input, fixtures) == *value
+                })
             {
                 tx.call_details.calldata = calldata.into();
                 return Ok(true);
@@ -679,7 +676,7 @@ mod tests {
     };
     use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
-    use alloy_primitives::{Address, Bytes};
+    use alloy_primitives::{Address, Bytes, I256};
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{prelude::Just, strategy::Strategy};
     use revm::database::InMemoryDB;
@@ -817,6 +814,109 @@ mod tests {
         let decoded = function.abi_decode_input(&input.call_details.calldata[4..]).unwrap();
         assert_eq!(decoded[0].as_uint().unwrap().0, U256::from(42));
         assert_eq!((input.warp, input.roll, input.sender, input.call_details.value), metadata);
+    }
+
+    #[test]
+    fn cmp_mutation_rejects_dirty_value_words() {
+        let mut runner = TestRunner::deterministic();
+        for (signature, value, lhs, rhs) in [
+            ("test(bool)", DynSolValue::Bool(true), U256::from(1), U256::from(4)),
+            ("test(bool)", DynSolValue::Bool(false), U256::ZERO, U256::from(4)),
+            (
+                "test(bool[2])",
+                DynSolValue::FixedArray(vec![DynSolValue::Bool(false); 2]),
+                U256::ZERO,
+                U256::from(4),
+            ),
+            ("test(uint8)", DynSolValue::Uint(U256::from(7), 8), U256::from(7), U256::from(0x107)),
+            (
+                "test(address)",
+                DynSolValue::Address(Address::with_last_byte(1)),
+                U256::from(1),
+                (U256::from(1) << 160) | U256::from(1),
+            ),
+        ] {
+            let function = Function::parse(signature).unwrap();
+            let original = function.abi_encode_input(&[value]).unwrap();
+            let mut input = tx(7);
+            input.call_details.calldata = original.clone().into();
+            for _ in 0..100 {
+                assert!(
+                    !SequenceMutator::cmp_mutate(
+                        &mut input,
+                        &function,
+                        &[ComparisonHint { lhs, rhs }],
+                        &mut runner,
+                        &FuzzFixtures::default(),
+                    )
+                    .unwrap(),
+                    "{signature}"
+                );
+                assert_eq!(input.call_details.calldata.as_ref(), original);
+            }
+        }
+    }
+
+    #[test]
+    fn cmp_mutation_accepts_values_solidity_accepts() {
+        let mut runner = TestRunner::deterministic();
+        let encode = |signature, value| {
+            Function::parse(signature).unwrap().abi_encode_input(&[value]).unwrap()
+        };
+        let replace_byte = |mut calldata: Vec<u8>, index: usize, byte| {
+            calldata[index] = byte;
+            calldata
+        };
+        let bytes = encode("test(bytes)", DynSolValue::Bytes(vec![0xaa; 40]));
+        let string = encode("test(string)", DynSolValue::String("abcd".into()));
+        for (signature, original, lhs, rhs, expected) in [
+            (
+                "test(bool)",
+                encode("test(bool)", DynSolValue::Bool(false)),
+                U256::ZERO,
+                U256::from(1),
+                encode("test(bool)", DynSolValue::Bool(true)),
+            ),
+            (
+                "test(int8)",
+                encode("test(int8)", DynSolValue::Int(I256::ZERO, 8)),
+                U256::ZERO,
+                U256::MAX,
+                encode("test(int8)", DynSolValue::Int(I256::MINUS_ONE, 8)),
+            ),
+            // Shortened `bytes` length; the stale payload stays in the padding.
+            (
+                "test(bytes)",
+                bytes.clone(),
+                U256::from(40),
+                U256::from(5),
+                replace_byte(bytes, 67, 5),
+            ),
+            // Non-UTF-8 `string` payload.
+            (
+                "test(string)",
+                string.clone(),
+                U256::from(0x61),
+                U256::from(0xff),
+                replace_byte(string, 68, 0xff),
+            ),
+        ] {
+            let function = Function::parse(signature).unwrap();
+            let mut input = tx(7);
+            input.call_details.calldata = original.into();
+            assert!(
+                SequenceMutator::cmp_mutate(
+                    &mut input,
+                    &function,
+                    &[ComparisonHint { lhs, rhs }],
+                    &mut runner,
+                    &FuzzFixtures::default(),
+                )
+                .unwrap(),
+                "{signature}"
+            );
+            assert_eq!(input.call_details.calldata.as_ref(), expected, "{signature}");
+        }
     }
 
     #[test]
