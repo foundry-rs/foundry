@@ -10,12 +10,12 @@ use alloy_primitives::{
     map::{B256Map, IndexMap},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use evm2::interpreter::opcode::OpCode;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::{CallKind, CallTraceStep, debug::SourceData};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
-use revm::bytecode::opcode::OpCode;
 use std::{fmt::Write, ops::ControlFlow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1722,6 +1722,7 @@ mod tests {
     use super::*;
     use crate::tui::storage::storage_values;
     use alloy_primitives::{Bytes, keccak256, map::AddressHashMap};
+    use evm2::interpreter::InstrStop;
     use foundry_common::slot_identifier::{ENCODING_BYTES, SlotIdentifier};
     use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType, sourcemap::Parser};
     use foundry_evm_core::{Breakpoints, ic::PcIcMap};
@@ -1729,7 +1730,6 @@ mod tests {
         StorageChange, StorageChangeReason,
         debug::{ArtifactData, ContractSources},
     };
-    use revm::interpreter::InstructionResult;
     use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
     fn step(pc: usize) -> CallTraceStep {
@@ -1761,7 +1761,7 @@ mod tests {
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: Some(InstructionResult::Stop),
+            status: Some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }
@@ -2595,7 +2595,7 @@ mod tests {
     fn command_prompt_ignores_failed_sstore_stack_snapshot() {
         let address = Address::repeat_byte(1);
         let mut store = step_with_stack(42, OpCode::SSTORE, &[42, 1]);
-        store.status = Some(InstructionResult::StateChangeDuringStaticCall);
+        store.status = Some(InstrStop::StateChangeDuringStaticCall);
         let mut context = context_with_arena(vec![DebugNode::new(
             address,
             CallKind::Call,
@@ -2625,7 +2625,7 @@ mod tests {
             had_value: Some(U256::ZERO),
             reason: StorageChangeReason::SSTORE,
         }));
-        store.status = Some(InstructionResult::OutOfGas);
+        store.status = Some(InstrStop::OutOfGas);
         let mut context = context_with_arena(vec![DebugNode::new(
             address,
             CallKind::Call,

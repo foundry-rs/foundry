@@ -154,3 +154,46 @@ contract CopyStorageTest is Test {
         assertEq(value4, value6);
     }
 }
+
+/// Setup-only slots stay excluded after snapshot materialization.
+contract CopyStorageLoadedSlotsTest is Test {
+    address constant source = address(0x10000);
+
+    function setUp() public {
+        vm.etch(source, hex"6000");
+        vm.store(source, bytes32(uint256(7)), bytes32(uint256(17)));
+        vm.store(source, bytes32(uint256(8)), bytes32(uint256(29)));
+    }
+
+    function test_copy_storage_loaded_slots() public {
+        copyLoadedSlots();
+    }
+
+    function test_copy_storage_loaded_slots_after_snapshot() public {
+        vm.snapshotState();
+        copyLoadedSlots();
+
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_copy_storage_loaded_slots.json");
+        vm.dumpState(path);
+        string memory json = vm.readFile(path);
+        vm.removeFile(path);
+        string memory key = string.concat(".", vm.toString(source), ".storage");
+        assertEq(vm.parseJsonKeys(json, key).length, 2);
+        assertEq(
+            vm.parseJsonBytes32(json, string.concat(key, ".", vm.toString(bytes32(uint256(9))))), bytes32(uint256(31))
+        );
+        assertTrue(!vm.keyExistsJson(json, string.concat(key, ".", vm.toString(bytes32(uint256(8))))));
+    }
+
+    function copyLoadedSlots() internal {
+        assertEq(vm.load(source, bytes32(uint256(7))), bytes32(uint256(17)));
+        vm.store(source, bytes32(uint256(9)), bytes32(uint256(31)));
+        vm.copyStorage(source, address(0x20000));
+        vm.cloneAccount(source, address(0x30000));
+        for (uint160 target = 0x20000; target <= 0x30000; target += 0x10000) {
+            assertEq(vm.load(address(target), bytes32(uint256(7))), bytes32(uint256(17)));
+            assertEq(vm.load(address(target), bytes32(uint256(9))), bytes32(uint256(31)));
+            assertEq(vm.load(address(target), bytes32(uint256(8))), bytes32(0));
+        }
+    }
+}

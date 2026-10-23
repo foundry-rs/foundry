@@ -12,8 +12,6 @@ use std::{
     sync::Arc,
 };
 
-pub mod database;
-
 mod multi;
 pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};
 

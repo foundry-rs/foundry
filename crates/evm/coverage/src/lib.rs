@@ -31,6 +31,12 @@ use std::{
 pub mod analysis;
 pub mod anchors;
 
+mod edge;
+pub use edge::{
+    CmpOperands, EdgeCovConfig, EdgeCovHit, EdgeCovInspector, EdgeCovKind, EdgeCoverage,
+    EdgeIndexMap, EdgeKey, MAX_EDGE_COUNT,
+};
+
 mod inspector;
 pub use inspector::LineCoverageCollector;
 

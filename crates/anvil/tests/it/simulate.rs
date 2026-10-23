@@ -9,16 +9,11 @@ use alloy_eips::{
     eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_TYPE},
     eip7251::{CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_TYPE},
     eip7685::{EMPTY_REQUESTS_HASH, Requests},
+    eip7825::MAX_TX_GAS_LIMIT_OSAKA as TX_GAS_LIMIT_CAP,
     eip7928::{
         AccountChanges, BlockAccessIndex, NonceChange, SlotChanges, StorageChange,
         compute_block_access_list_hash,
     },
-};
-use alloy_evm::{
-    block::system_calls::{
-        BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS,
-    },
-    precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, TxKind, U256, address};
@@ -31,13 +26,16 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolEvent, sol};
-use anvil::{EthereumHardfork, NodeConfig, PrecompileFactory, spawn};
+use anvil::{
+    EthereumHardfork, NodeConfig, PrecompileFactory,
+    evm::{
+        DynPrecompile, GasTracker, PrecompileError, PrecompileId, PrecompileInput,
+        PrecompileOutput, PrecompileResult,
+    },
+    spawn,
+};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
-use revm::{
-    precompile::{PrecompileError, PrecompileOutput, PrecompileStatus},
-    primitives::eip7825::TX_GAS_LIMIT_CAP,
-};
 use serde_json::{Value, json};
 use std::{
     sync::{
@@ -458,52 +456,18 @@ async fn test_simulate_v1_validates_precompile_moves_rpc() {
     assert_eq!(response["error"]["code"], -32000, "{response}");
 }
 
-#[derive(Clone, Copy, Debug)]
-struct LookupOnlyPrecompileFactory(Address);
+/// The address of the EIP-8282 builder deposit requests predeploy.
+const BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS: Address =
+    address!("0x0000BFF46984E3725691FA540A8C7589300D8282");
 
-impl PrecompileFactory for LookupOnlyPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
-        Vec::new()
-    }
+/// The address of the EIP-8282 builder exit requests predeploy.
+const BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS: Address =
+    address!("0x000064D678505AD48F8CCB093BC65613800E8282");
 
-    fn install(&self, precompiles: &mut PrecompilesMap) {
-        let lookup_address = self.0;
-        precompiles.set_precompile_lookup(move |address: &Address| {
-            (*address == lookup_address).then(|| {
-                DynPrecompile::from(|input: PrecompileInput<'_>| {
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::copy_from_slice(input.data),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        state_gas_spilled: 0,
-                        reservoir: input.reservoir,
-                    })
-                })
-            })
-        });
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_v1_rejects_lookup_only_precompile_move_rpc() {
-    let source = address!("0xdead000000000000000000000000000000000071");
-    let (_, handle) =
-        spawn(NodeConfig::test().with_precompile_factory(LookupOnlyPrecompileFactory(source)))
-            .await;
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{"blockStateCalls": [{"stateOverrides": {
-            (source.to_string()): {
-                "movePrecompileToAddress": "0x0000000000000000000000000000000000123456"
-            }
-        }}]}, "latest"]),
-    )
-    .await;
-
-    assert_eq!(response["error"]["code"], -32000, "{response}");
+fn dyn_precompile(
+    f: impl Fn(PrecompileInput<'_>, &mut GasTracker) -> PrecompileResult + Send + Sync + 'static,
+) -> DynPrecompile {
+    Arc::new(f)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1235,34 +1199,20 @@ async fn test_simulate_preserves_beacon_root_override_rpc() {
 struct RequestOutputPrecompileFactory;
 
 impl PrecompileFactory for RequestOutputPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         vec![
             (
                 WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-                DynPrecompile::from(|input: PrecompileInput<'_>| {
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::from_static(&[0xaa]),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        state_gas_spilled: 0,
-                        reservoir: input.reservoir,
-                    })
+                PrecompileId::custom("request"),
+                dyn_precompile(|_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                    Ok(PrecompileOutput::new(Bytes::from_static(&[0xaa])))
                 }),
             ),
             (
                 CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-                DynPrecompile::from(|input: PrecompileInput<'_>| {
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::from_static(&[0xbb]),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        state_gas_spilled: 0,
-                        reservoir: input.reservoir,
-                    })
+                PrecompileId::custom("request"),
+                dyn_precompile(|_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                    Ok(PrecompileOutput::new(Bytes::from_static(&[0xbb])))
                 }),
             ),
         ]
@@ -1273,21 +1223,14 @@ impl PrecompileFactory for RequestOutputPrecompileFactory {
 struct PerBlockRequestPrecompileFactory(Arc<AtomicUsize>);
 
 impl PrecompileFactory for PerBlockRequestPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         let calls = Arc::clone(&self.0);
         vec![(
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            DynPrecompile::from(move |input: PrecompileInput<'_>| {
+            PrecompileId::custom("request"),
+            dyn_precompile(move |_input: PrecompileInput<'_>, _gas: &mut GasTracker| {
                 let value = calls.fetch_add(1, Ordering::SeqCst) as u8 + 1;
-                Ok(PrecompileOutput {
-                    status: PrecompileStatus::Success,
-                    bytes: Bytes::from(vec![value]),
-                    gas_used: 0,
-                    gas_refunded: 0,
-                    state_gas_used: 0,
-                    state_gas_spilled: 0,
-                    reservoir: input.reservoir,
-                })
+                Ok(PrecompileOutput::new(Bytes::from(vec![value])))
             }),
         )]
     }
@@ -1466,11 +1409,12 @@ const SIMULATION_POST_BLOCK_ERROR: &str = "simulation post-block sentinel";
 struct FailingWithdrawalPrecompileFactory;
 
 impl PrecompileFactory for FailingWithdrawalPrecompileFactory {
-    fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+    fn precompiles(&self) -> Vec<(Address, PrecompileId, DynPrecompile)> {
         vec![(
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            DynPrecompile::from(|_: PrecompileInput<'_>| {
-                Err(PrecompileError::Fatal(SIMULATION_POST_BLOCK_ERROR.to_string()))
+            PrecompileId::custom("request"),
+            dyn_precompile(|_: PrecompileInput<'_>, _gas: &mut GasTracker| {
+                Err(PrecompileError::fatal(std::io::Error::other(SIMULATION_POST_BLOCK_ERROR)))
             }),
         )]
     }
@@ -2145,49 +2089,6 @@ async fn test_simulate_tracks_amsterdam_gas_dimensions_separately() {
     let cumulative_gas_used = block.calls.iter().map(|call| call.gas_used).sum::<u64>();
     assert!(cumulative_gas_used > gas_limit);
     assert!(block.inner.header.gas_used <= gas_limit);
-}
-
-// <https://github.com/foundry-rs/foundry/issues/17716>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_simulate_amsterdam_state_gas_reservoir() {
-    let (api, _) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
-    let sender = address!("0xc000000000000000000000000000000000000000");
-    let contract = address!("0xc200000000000000000000000000000000000000");
-    let payload = SimulatePayload {
-        block_state_calls: vec![SimBlock {
-            block_overrides: None,
-            state_overrides: Some(
-                StateOverridesBuilder::with_capacity(1)
-                    .append(
-                        contract,
-                        AccountOverride {
-                            // Stores and returns `gasleft()`, which reports only regular gas.
-                            code: Some(Bytes::from_static(&[
-                                0x5a, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60,
-                                0x00, 0xf3,
-                            ])),
-                            ..Default::default()
-                        },
-                    )
-                    .build(),
-            ),
-            calls: vec![TransactionRequest {
-                from: Some(sender),
-                to: Some(TxKind::Call(contract)),
-                gas: Some(30_000_000),
-                ..Default::default()
-            }],
-        }],
-        ..Default::default()
-    };
-
-    let blocks = api.simulate_v1(payload, None).await.unwrap();
-    let call = &blocks[0].calls[0];
-
-    assert!(call.status);
-    // The cap bounds regular gas, out of which the call pays 15,000 intrinsic gas and 2 for `GAS`.
-    assert_eq!(U256::from_be_slice(&call.return_data), U256::from(TX_GAS_LIMIT_CAP - 15_002));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2969,4 +2870,47 @@ async fn spawn_hash_aware_rpc_proxy(
 
 fn quantity(value: &Value) -> u64 {
     u64::from_str_radix(value.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17716>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_amsterdam_state_gas_reservoir() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let sender = address!("0xc000000000000000000000000000000000000000");
+    let contract = address!("0xc200000000000000000000000000000000000000");
+    let payload = SimulatePayload {
+        block_state_calls: vec![SimBlock {
+            block_overrides: None,
+            state_overrides: Some(
+                StateOverridesBuilder::with_capacity(1)
+                    .append(
+                        contract,
+                        AccountOverride {
+                            // Stores and returns `gasleft()`, which reports only regular gas.
+                            code: Some(Bytes::from_static(&[
+                                0x5a, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60,
+                                0x00, 0xf3,
+                            ])),
+                            ..Default::default()
+                        },
+                    )
+                    .build(),
+            ),
+            calls: vec![TransactionRequest {
+                from: Some(sender),
+                to: Some(TxKind::Call(contract)),
+                gas: Some(30_000_000),
+                ..Default::default()
+            }],
+        }],
+        ..Default::default()
+    };
+
+    let blocks = api.simulate_v1(payload, None).await.unwrap();
+    let call = &blocks[0].calls[0];
+
+    assert!(call.status);
+    // The cap bounds regular gas, out of which the call pays 15,000 intrinsic gas and 2 for `GAS`.
+    assert_eq!(U256::from_be_slice(&call.return_data), U256::from(TX_GAS_LIMIT_CAP - 15_002));
 }

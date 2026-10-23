@@ -570,6 +570,7 @@ contract DecodeDelegatecallStorageTest is Test {
         Implementation implementation = new Implementation();
         Proxy proxy = new Proxy(address(implementation));
 
+        vm.chainId(42);
         vm.startStateDiffRecording();
         Implementation(address(proxy)).setValue(42);
         string memory diff = vm.getStateDiffJson();
@@ -2212,6 +2213,44 @@ contract TransientTest is Test {
     );
 
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+}
+
+// An isolated call restarts the call-depth limit at its nested transaction.
+#[forgetest_init]
+fn can_test_call_depth_limit_with_isolation(prj: _, cmd: _) {
+    prj.add_test(
+        "CallDepth.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Descender {
+    function descend(uint256 remaining) external returns (uint256) {
+        if (remaining == 0) return 0;
+        (bool ok, bytes memory out) = address(this).call(abi.encodeCall(this.descend, (remaining - 1)));
+        return ok ? abi.decode(out, (uint256)) + 1 : 0;
+    }
+}
+
+contract CallDepthTest is Test {
+    /// forge-config: default.isolate = true
+    function testIsolatedCallDepth() public {
+        assertEq(new Descender().descend(1025), 1024);
+    }
+
+    /// forge-config: default.isolate = false
+    function testCallDepth() public {
+        assertEq(new Descender().descend(1025), 1023);
+    }
+}
+   "#,
+    );
+    // Leave enough gas after the 63/64 rule at every depth.
+    prj.update_config(|config| {
+        config.gas_limit = (1u64 << 60).into();
+        config.block_gas_limit = Some((1u64 << 60).into());
+    });
+
+    cmd.args(["test", "--evm-version", "cancun"]).assert_success();
 }
 
 #[forgetest_init]

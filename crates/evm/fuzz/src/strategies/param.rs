@@ -554,13 +554,13 @@ mod tests {
     };
     use alloy_dyn_abi::{DynSolType, DynSolValue};
     use alloy_primitives::{B256, U256};
+    use evm2::evm::InMemoryDB;
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{
         strategy::{Strategy, ValueTree},
         test_runner::TestRunner,
     };
-    use revm::database::InMemoryDB;
     use std::collections::HashSet;
 
     #[test]

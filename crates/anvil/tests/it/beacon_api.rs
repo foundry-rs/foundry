@@ -7,7 +7,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_rpc_types_beacon::{genesis::GenesisResponse, sidecar::GetBlobsResponse};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use ssz::Decode;
 
 #[tokio::test(flavor = "multi_thread")]

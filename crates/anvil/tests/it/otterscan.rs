@@ -11,7 +11,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolError, SolValue, sol};
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_hardforks::EthereumHardfork;
 use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]

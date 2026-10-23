@@ -19,9 +19,9 @@ use tempo_primitives::TEMPO_TX_TYPE_ID;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Receipt;
+use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
-use base_common_evm::EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::Eip8130Receipt;
 
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{

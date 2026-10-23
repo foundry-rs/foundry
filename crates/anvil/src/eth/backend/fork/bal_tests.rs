@@ -1,7 +1,10 @@
 //! Tests for BAL source eligibility, validation and fork cache insertion.
 
 use super::*;
-use crate::mem::in_memory_db::MemDb;
+use crate::{
+    eth::backend::{db::BlockchainDbMeta, env::BlockEnv},
+    mem::in_memory_db::MemDb,
+};
 use alloy_eips::eip7928::{
     AccountChanges, BalanceChange, BlockAccessIndex, CodeChange, NonceChange, SlotChanges,
     StorageChange, compute_block_access_list_hash,
@@ -11,9 +14,8 @@ use alloy_primitives::bytes;
 use alloy_provider::ProviderBuilder;
 use alloy_rpc_types::Block;
 use alloy_transport::mock::Asserter;
-use foundry_evm::{backend::BlockchainDbMeta, hardfork::EthereumHardfork};
+use foundry_evm_hardforks::EthereumHardfork;
 use futures::executor::block_on;
-use revm::{context::BlockEnv, state::AccountInfo};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -296,8 +298,13 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
             vec![StorageChange::new(index(1), U256::from(22))],
         ));
     let db = database(hash);
-    let cached_account = AccountInfo { balance: U256::from(99), ..Default::default() };
-    db.accounts().write().insert(address, cached_account.clone());
+    // The fork cache stores REVM-typed accounts, so the entry is edited in place.
+    let cached_account = {
+        let mut accounts = db.accounts().write();
+        let account = accounts.entry(address).or_default();
+        account.balance = U256::from(99);
+        account.clone()
+    };
     db.storage().write().insert(
         address,
         [(U256::ONE, U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
@@ -333,7 +340,7 @@ fn fork_bal_seed_keeps_final_account_code() {
         let account = &accounts[&address];
         assert_eq!(account.balance, U256::from(42));
         assert_eq!(account.nonce, 3);
-        assert_eq!(account.code_hash(), alloy_primitives::keccak256(&code));
+        assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
         assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
         assert_eq!(
             account.code.as_ref().unwrap().is_eip7702(),

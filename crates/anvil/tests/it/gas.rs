@@ -3,6 +3,7 @@
 use crate::utils::http_provider_with_signer;
 use alloy_chains::NamedChain;
 use alloy_consensus::Transaction;
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA as TX_GAS_LIMIT_CAP;
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
@@ -15,16 +16,14 @@ use alloy_serde::WithOtherFields;
 use anvil::{
     EthereumHardfork, NodeConfig,
     eth::{
+        backend::env::BlobExcessGasAndPrice,
         error::{BlockchainError, InvalidTransactionError},
         fees::INITIAL_BASE_FEE,
     },
     spawn,
 };
-use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
 use foundry_evm_networks::arbitrum;
-use revm::{
-    context_interface::block::BlobExcessGasAndPrice, primitives::eip7825::TX_GAS_LIMIT_CAP,
-};
 
 const GAS_TRANSFER: u64 = 21_000;
 

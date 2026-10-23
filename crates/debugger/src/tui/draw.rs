@@ -10,6 +10,7 @@ use super::{
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
+use evm2::interpreter::InstrStop;
 use foundry_common::fmt::format_token;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::{
@@ -23,7 +24,6 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm::interpreter::InstructionResult;
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -930,10 +930,7 @@ impl TUIContext<'_> {
         }
 
         if self.current_step + 1 < self.debug_steps().len()
-            || !matches!(
-                self.current_step().status,
-                Some(InstructionResult::Return | InstructionResult::Stop)
-            )
+            || !matches!(self.current_step().status, Some(InstrStop::Return | InstrStop::Stop))
         {
             return None;
         }
@@ -1453,6 +1450,7 @@ mod tests {
     };
     use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
+    use evm2::interpreter::{InstrStop, opcode::OpCode};
     use foundry_evm_core::{Breakpoints, buffer::BufferKind};
     use foundry_evm_traces::{
         CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
@@ -1466,7 +1464,6 @@ mod tests {
         style::{Color, Style},
         text::Line,
     };
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans.iter().map(|span| span.content.as_ref()).collect()
@@ -1513,7 +1510,7 @@ mod tests {
             state_gas_reservoir: None,
             state_gas_spent: 0,
             storage_change: None,
-            status: Some(InstructionResult::Stop),
+            status: Some(InstrStop::Stop),
             immediate_bytes: None,
             decoded: None,
         }
@@ -1937,7 +1934,7 @@ mod tests {
             vec![trace_step(Vec::new()), {
                 let mut step = trace_step(Vec::new());
                 step.op = OpCode::RETURN;
-                step.status = Some(InstructionResult::Return);
+                step.status = Some(InstrStop::Return);
                 step
             }],
         );

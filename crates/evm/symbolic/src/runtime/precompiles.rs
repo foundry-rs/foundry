@@ -26,27 +26,23 @@ pub(crate) fn execute_precompile(
     input: &[u8],
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
+    let gas = &mut GasTracker::new(u64::MAX);
     let output = match precompile_number_for_spec(address, spec_id) {
-        Some(1) => secp256k1::ec_recover_run(input, u64::MAX),
-        Some(2) => hash::sha256_run(input, u64::MAX),
-        Some(3) => hash::ripemd160_run(input, u64::MAX),
-        Some(4) => identity::identity_run(input, u64::MAX),
-        Some(5) => modexp::berlin_run(input, u64::MAX),
-        Some(6) => bn254::run_add(input, bn254::add::ISTANBUL_ADD_GAS_COST, u64::MAX),
-        Some(7) => bn254::run_mul(input, bn254::mul::ISTANBUL_MUL_GAS_COST, u64::MAX),
-        Some(8) => bn254::run_pair(
-            input,
-            bn254::pair::ISTANBUL_PAIR_PER_POINT,
-            bn254::pair::ISTANBUL_PAIR_BASE,
-            u64::MAX,
-        ),
-        Some(9) => blake2::run(input, u64::MAX),
-        Some(10) => kzg_point_evaluation::run(input, u64::MAX),
+        Some(1) => secp256k1::run(input, gas),
+        Some(2) => hash::run_sha256(input, gas),
+        Some(3) => hash::run_ripemd160(input, gas),
+        Some(4) => identity::run(input, gas),
+        Some(5) => modexp::run_berlin(input, gas),
+        Some(6) => bn254::add::run_istanbul(input, gas),
+        Some(7) => bn254::mul::run_istanbul(input, gas),
+        Some(8) => bn254::pair::run_istanbul(input, gas),
+        Some(9) => blake2::run(input, gas),
+        Some(10) => kzg_point_evaluation::run(input, gas),
         _ => return Err(SymbolicError::Unsupported("unsupported precompile")),
     };
 
     match output {
-        Ok(output) => Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes.to_vec()))),
+        Ok(output) => Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes().to_vec()))),
         Err(_) => Ok(None),
     }
 }

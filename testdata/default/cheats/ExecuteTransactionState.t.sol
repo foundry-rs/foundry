@@ -9,6 +9,10 @@ contract ExecuteTransactionStateTest is Test {
     address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
     bytes constant RAW_TX =
         hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
+    address constant CREATOR = 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
+    // Deploys runtime code `602a60005260206000f3` from `CREATOR` at nonce 0 on chain 1.
+    bytes constant CREATE_TX =
+        hex"f862806483030d40808096600a600c600039600a6000f3602a60005260206000f326a0aa15e60239616b411e2ad4409d0017b52ec731ca00100bf59a2d73e3f692123ca07d7aec8bdb1d2202e5c618a6542e889b3e4ab352606232fb40d7b67521791366";
     uint256 public parentValue;
 
     function test_execute_success_preserves_parent_state() public {
@@ -41,6 +45,23 @@ contract ExecuteTransactionStateTest is Test {
             );
         }
         if (revertParent) revert("parent reverted");
+    }
+
+    function executeCreateThenRevert() external {
+        vm.executeTransaction(CREATE_TX);
+        revert("parent reverted");
+    }
+
+    function test_execute_create_survives_parent_revert() public {
+        vm.chainId(1);
+        vm.deal(CREATOR, 1 ether);
+        try this.executeCreateThenRevert() {
+            revert("expected parent revert");
+        } catch Error(string memory reason) {
+            assertEq(reason, "parent reverted");
+        }
+        assertEq(vm.getNonce(CREATOR), 1);
+        assertEq(vm.computeCreateAddress(CREATOR, 0).code, hex"602a60005260206000f3");
     }
 
     function checkState(bytes memory code, string memory expectedError, bool revertParent) internal {

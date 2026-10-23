@@ -1,5 +1,6 @@
 //! Regression tests for specific GitHub issues
 
+use alloy_primitives::{U256, address, bytes};
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::str;
 
@@ -1267,6 +1268,71 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 }
 
+// A frame that fails after a callee restored a snapshot and selected another fork reinstates the
+// source fork's state the restoration replaced, while the other fork stays selected, as with REVM.
+#[forgetest]
+async fn snapshot_restore_unwinds_across_fork_switch(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    prj.add_test(
+        "RestoreForkSwitch.t.sol",
+        &r#"
+interface Vm {
+    function activeFork() external view returns (uint256);
+    function createFork(string calldata) external returns (uint256);
+    function deal(address, uint256) external;
+    function revertToState(uint256) external returns (bool);
+    function selectFork(uint256) external;
+    function snapshotState() external returns (uint256);
+}
+
+/// forge-config: default.isolate = false
+contract RestoreForkSwitchTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address payable constant TARGET = payable(address(0x777));
+
+    function testRestoreThenForkSwitchInRevertedCall() public {
+        uint256 source = vm.createFork("<rpc>");
+        uint256 other = vm.createFork("<rpc>");
+        vm.selectFork(other);
+        vm.deal(TARGET, 200);
+        vm.selectFork(source);
+        vm.deal(TARGET, 50);
+        vm.deal(address(this), 1000);
+        uint256 snapshotId = vm.snapshotState();
+
+        (bool ok,) = address(this).call(abi.encodeCall(this.run, (snapshotId, other)));
+        require(!ok, "runner succeeded");
+        require(vm.activeFork() == other, "selected fork changed");
+        require(TARGET.balance == 50, "restoration was not undone");
+    }
+
+    function run(uint256 snapshotId, uint256 fork) external {
+        this.restoreAndSwitch(snapshotId, fork);
+        revert("runner reverted");
+    }
+
+    function restoreAndSwitch(uint256 snapshotId, uint256 fork) external {
+        TARGET.transfer(10);
+        require(vm.revertToState(snapshotId), "restore failed");
+        vm.selectFork(fork);
+        TARGET.transfer(17);
+    }
+}
+
+/// forge-config: default.isolate = true
+contract RestoreForkSwitchIsolatedTest is RestoreForkSwitchTest {}
+"#
+        .replace("<rpc>", &handle.http_endpoint()),
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+}
+
 // Regression: `revertToState` / `revertToStateAndDelete` taken before any
 // `vm.blobhashes` override must exercise the `None` arm of
 // `sync_tx_after_env_override_restore` (pre_override_blob_hashes path).
@@ -1433,6 +1499,135 @@ Ran 1 test for test/Issue16197.t.sol:Issue16197Test
 Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+}
+
+#[forgetest_init]
+async fn fork_replay_rejects_context_changes(prj: _, cmd: _) {
+    let (api, handle) = spawn(
+        NodeConfig::test().with_chain_id(Some(1u64)).with_base_fee(Some(1)).with_no_mining(true),
+    )
+    .await;
+    api.anvil_set_balance(
+        address!("5316812db67073c4d4af8bb3000c5b86c2877e94"),
+        U256::from(10).pow(U256::from(18)),
+    )
+    .await
+    .unwrap();
+    let raw = bytes!(
+        "f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+    );
+    let transaction = api.send_raw_transaction(raw).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    prj.add_test(
+        "ReplayFork.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+
+contract ReplayForkTarget {
+    bytes operation;
+    bytes expectedError;
+    uint256 public observedBlock;
+    uint256 public observedChain;
+    uint256 public observedBasefee;
+
+    function configure(bytes memory data, bytes memory reason) external {
+        operation = data;
+        expectedError = reason;
+        observedBlock = 0;
+    }
+
+    fallback() external payable {
+        (bool ok, bytes memory reason) = address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).call(operation);
+        require(!ok, "fork operation succeeded in replay");
+        require(keccak256(reason) == keccak256(expectedError), "unexpected cheatcode error");
+        observedBlock = block.number;
+        observedChain = block.chainid;
+        observedBasefee = block.basefee;
+    }
+}
+
+/// forge-config: default.isolate = true
+contract ReplayForkTest is Test {
+    function test_rawReplay() public { check(false); }
+    function test_fork_transactReplay() public { check(true); }
+
+    function check(bool mined) internal {
+        uint256 fork = vm.createFork("<rpc>", uint256(0));
+        if (mined) vm.selectFork(fork);
+        uint256 chain = mined ? 99 : 1;
+        uint256 fee = mined ? 123 : 23;
+        vm.chainId(chain);
+        vm.fee(fee);
+        vm.roll(50);
+        address sender = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+        address target = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+        vm.deal(sender, 1 ether);
+        vm.etch(target, address(new ReplayForkTarget()).code);
+        vm.allowCheatcodes(target);
+        uint256 snapshot = vm.snapshotState();
+        bytes[] memory operations = new bytes[](3);
+        operations[0] = abi.encodeWithSignature("selectFork(uint256)", fork);
+        operations[1] = abi.encodeWithSignature("rollFork(uint256,uint256)", fork, 0);
+        operations[2] = abi.encodeWithSignature("createSelectFork(string,uint256)", "<rpc>", 0);
+        for (uint256 i; i < operations.length; ++i) {
+            string memory name = i == 0 ? "selectFork" : i == 1 ? "rollFork" : "createSelectFork";
+            ReplayForkTarget(payable(target)).configure(operations[i], abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                string.concat("vm.", name, ": cannot select or roll forks in a replayed transaction")
+            ));
+            vm.setNonceUnsafe(sender, 0);
+            if (mined) {
+                vm.transact(<tx>);
+            } else {
+                vm.broadcastRawTransaction(hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856");
+            }
+            assertEq(ReplayForkTarget(payable(target)).observedBlock(), mined ? 1 : 50);
+            assertEq(ReplayForkTarget(payable(target)).observedChain(), mined ? 1 : chain);
+            assertEq(ReplayForkTarget(payable(target)).observedBasefee(), mined ? 1 : fee);
+            assertEq(block.number, 50);
+            assertEq(block.chainid, chain);
+            assertEq(block.basefee, fee);
+            if (mined) assertEq(vm.activeFork(), fork);
+            else {
+                (bool active,) = address(vm).call(abi.encodeWithSignature("activeFork()"));
+                require(!active, "replay selected an outer fork");
+            }
+        }
+        if (mined) {
+            vm.deal(sender, 0);
+            try vm.transact(<tx>) {
+                revert("replayed an unfunded transaction");
+            } catch (bytes memory reason) {
+                assertEq(reason, abi.encodeWithSignature(
+                    "CheatcodeError(string)",
+                    "vm.transact: transaction validation error: insufficient funds"
+                ));
+            }
+            assertEq(block.chainid, chain);
+            assertEq(block.basefee, fee);
+        }
+        vm.chainId(77);
+        vm.fee(29);
+        assertTrue(vm.revertToStateAndDelete(snapshot));
+        assertEq(block.chainid, chain);
+        assertEq(block.basefee, fee);
+        vm.selectFork(fork);
+    }
+}
+
+/// forge-config: default.isolate = false
+contract ReplayForkNonIsolatedTest is ReplayForkTest {}
+"#
+        .replace("<rpc>", &handle.http_endpoint())
+        .replace("<tx>", &format!("bytes32({transaction})")),
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
 }

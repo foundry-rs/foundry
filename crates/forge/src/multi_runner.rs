@@ -26,7 +26,7 @@ use foundry_compilers::{
 use foundry_config::{Config, FoundryHardfork, InlineConfig};
 use foundry_evm::{
     backend::Backend,
-    core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    core::evm::{EvmEnvFor, EvmFactoryFor, FoundryEvmNetwork, SpecFor, TransactionRequestFor},
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fuzz::{
@@ -441,8 +441,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub executor_builder: ExecutorBuilder<FEN>,
     /// EVM environment.
     pub evm_env: EvmEnvFor<FEN>,
-    /// Transaction environment.
-    pub tx_env: TxEnvFor<FEN>,
+    /// Transaction defaults.
+    pub tx: TransactionRequestFor<FEN>,
     /// EVM version.
     pub spec_id: SpecFor<FEN>,
     /// Exact network hardfork selected for the execution environment.
@@ -497,13 +497,14 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
         self.hardfork = resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             config.evm_version,
             config.hardfork,
             &mut self.evm_env,
             ExecutionSpecContext::local_or_fork(self.fork_chain_id, self.fork_hardfork),
             None,
         );
-        self.spec_id = self.evm_env.cfg_env.spec;
+        self.spec_id = self.evm_env.spec;
         self.isolation = config.isolate;
         // `line_coverage`, `debug`, `decode_internal` and `record_all_steps` are Forge-specific
         // and not present in the config.
@@ -569,7 +570,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.evm_env.clone(), self.tx_env.clone(), db, self.evm_opts.networks)
+            .build(self.evm_env, self.tx.clone(), db, self.evm_opts.networks)
     }
 
     fn trace_requirements(&self) -> TraceRequirements {
@@ -631,7 +632,7 @@ impl MultiContractRunnerBuilder {
         backend: &Backend<FEN>,
     ) -> bool {
         self.create2_deployer_available.unwrap_or_else(|| {
-            !backend.is_in_forking_mode()
+            !backend.is_forked_mode()
                 && evm_opts.fork_url.is_none()
                 && evm_opts.create2_deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
         })
@@ -749,7 +750,7 @@ impl MultiContractRunnerBuilder {
         self,
         output: &ProjectCompileOutput,
         mut evm_env: EvmEnvFor<FEN>,
-        tx_env: TxEnvFor<FEN>,
+        tx: TransactionRequestFor<FEN>,
         evm_opts: EvmOpts,
         backend: Backend<FEN>,
         executor_builder: ExecutorBuilder<FEN>,
@@ -935,17 +936,18 @@ impl MultiContractRunnerBuilder {
             literals(invariant_max_literals)
         };
 
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
+        let fork_context = backend.fork().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         let hardfork = resolve_execution_spec(
+            &EvmFactoryFor::<FEN>::default(),
             self.config.evm_version,
             self.config.hardfork,
             &mut evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
             None,
         );
-        let spec_id = evm_env.cfg_env.spec;
+        let spec_id = evm_env.spec;
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -964,7 +966,7 @@ impl MultiContractRunnerBuilder {
                 evm_opts,
                 executor_builder,
                 evm_env,
-                tx_env,
+                tx,
                 spec_id,
                 hardfork,
                 fork_chain_id,
@@ -1147,7 +1149,9 @@ mod tests {
         let config = Arc::new(Config::default());
         let builder = MultiContractRunnerBuilder::new(config, Arc::new(InlineConfig::new()));
         let mut evm_opts = EvmOpts::default();
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let backend =
+            Backend::<EthEvmNetwork>::spawn(None, evm_opts.local_evm_env::<EthEvmNetwork>())
+                .unwrap();
         assert!(builder.create2_deployer_available(&evm_opts, &backend));
 
         evm_opts.fork_url = Some("http://localhost:8545".into());

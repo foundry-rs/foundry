@@ -1,5 +1,5 @@
 use super::{IdentifiedAddress, TraceIdentifier};
-use crate::debug::ContractSources;
+use crate::{CallTraceNode, debug::ContractSources};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
     Address,
@@ -15,7 +15,6 @@ use futures::{
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
-use revm_inspectors::tracing::types::CallTraceNode;
 use serde::Deserialize;
 use std::{
     borrow::Cow,
