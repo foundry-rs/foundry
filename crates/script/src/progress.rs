@@ -1,4 +1,6 @@
-use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_receipt};
+use crate::receipts::{
+    PendingReceiptError, TxStatus, check_tx_status, check_tx_status_once, format_receipt,
+};
 use alloy_chains::Chain;
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{
@@ -134,6 +136,10 @@ impl SequenceProgressState {
     /// Hides transactions and receipts progress bar, leaving only top line with the latest set
     /// status.
     pub fn finish(&self) {
+        // Polling can stop before every pending transaction is checked.
+        for spinner in self.tx_spinners.values() {
+            spinner.finish_and_clear();
+        }
         self.top_spinner.finish();
         self.txs.finish_and_clear();
         self.receipts.finish_and_clear();
@@ -190,7 +196,10 @@ impl ScriptProgress {
     /// node's mempool, we wait for its receipt to be available. If the transaction
     /// has not confirmed, and cannot be found in the mempool, we remove it from
     /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
-    /// later steps.
+    /// later steps, stop polling, and check every remaining hash once. `blocked_hashes`
+    /// cannot be mined until an earlier transaction is replayed, so they are only checked
+    /// once.
+    #[allow(clippy::too_many_arguments)]
     pub async fn wait_for_pending<N: Network>(
         &self,
         sequence_idx: usize,
@@ -199,6 +208,7 @@ impl ScriptProgress {
         timeout: u64,
         confirmations: u64,
         submission_hashes: (&[B256], &[B256]),
+        blocked_hashes: &[B256],
     ) -> Result<()> {
         let (durable_hashes, replayable_hashes) = submission_hashes;
         if deployment_sequence.pending.is_empty() {
@@ -212,17 +222,47 @@ impl ScriptProgress {
 
         trace!("Checking status of {count} pending transactions");
 
-        let futs = deployment_sequence
-            .pending
-            .clone()
-            .into_iter()
-            .map(|tx| check_tx_status(provider, tx, timeout, confirmations));
-        let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
+        // Poll in operation order, so that no transaction waits on an earlier one left unpolled.
+        let mut pending = deployment_sequence.pending.clone();
+        pending.sort_by_cached_key(|hash| {
+            deployment_sequence.transactions.iter().position(|tx| tx.hash == Some(*hash))
+        });
+
+        let futs = pending
+            .iter()
+            .filter(|hash| !blocked_hashes.contains(hash))
+            .map(|&tx| check_tx_status(provider, tx, timeout, confirmations));
+        let mut tasks = Some(futures::stream::iter(futs).buffer_unordered(10));
+        let mut polled = Vec::with_capacity(count);
+        let mut unpolled = None;
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
 
-        while let Some((tx_hash, result)) = tasks.next().await {
+        loop {
+            let (tx_hash, result) = if let Some(tasks) = &mut tasks
+                && let Some((tx_hash, result)) = tasks.next().await
+            {
+                polled.push(tx_hash);
+                (tx_hash, result)
+            } else {
+                // Polling stopped, so check every hash left unpolled once.
+                tasks = None;
+                let unpolled = unpolled.get_or_insert_with(|| {
+                    pending
+                        .iter()
+                        .rev()
+                        .filter(|hash| !polled.contains(hash))
+                        .copied()
+                        .collect::<Vec<_>>()
+                });
+                let Some(tx_hash) = unpolled.pop() else { break };
+                let Some(status) = check_tx_status_once(provider, tx_hash, confirmations).await
+                else {
+                    continue;
+                };
+                (tx_hash, Ok(status))
+            };
             match result {
                 Err(err) => {
                     // Check if this is a retry error for pending receipts
@@ -266,6 +306,10 @@ impl ScriptProgress {
                         "Transaction {tx_hash:?} is not currently visible to the RPC endpoint."
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+
+                    // A later nonce can stay visible indefinitely behind this transaction, so
+                    // stop polling and check every remaining hash once instead.
+                    tasks = None;
                 }
                 Ok(TxStatus::Success(receipt)) => {
                     trace!(tx_hash=?tx_hash, "received tx receipt");
@@ -281,11 +325,11 @@ impl ScriptProgress {
                     deployment_sequence.add_receipt(receipt);
                 }
                 Ok(TxStatus::Revert(receipt)) => {
-                    // consider:
-                    // if this is not removed from pending, then the script becomes
-                    // un-resumable. Is this desirable on reverts?
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
                     deployment_sequence.remove_pending(receipt.transaction_hash());
+                    if !deployment_sequence.reverted.contains(&tx_hash) {
+                        deployment_sequence.reverted.push(tx_hash);
+                    }
 
                     let msg = format_receipt(
                         deployment_sequence.chain.into(),

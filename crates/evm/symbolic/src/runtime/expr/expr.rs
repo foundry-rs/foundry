@@ -1457,11 +1457,9 @@ impl SymExpr {
     }
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit(&mut |expr| {
-            if let Some(var) = expr.kind().get_eval_var() {
-                vars.insert(var);
-            }
-            ControlFlow::<()>::Continue(())
+        let _ = self.visit::<()>(&mut |expr| {
+            vars.extend(expr.kind().get_eval_var());
+            ControlFlow::Continue(())
         });
     }
 
@@ -1926,47 +1924,20 @@ impl SymExpr {
         difference
     }
 
-    /// Visits this expression and all child expressions.
+    /// Visits each distinct word expression once, in depth-first, left-to-right order.
     pub(crate) fn visit<B>(
         &self,
         visitor: &mut impl FnMut(&Self) -> ControlFlow<B>,
     ) -> ControlFlow<B> {
-        visitor(self)?;
-        match self.kind() {
-            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {}
-            SymExprKind::Keccak { len, bytes, .. } => {
-                len.visit(visitor)?;
-                for byte in bytes.iter() {
-                    byte.visit(visitor)?;
-                }
-            }
-            SymExprKind::Hash { bytes, .. } => {
-                for byte in bytes.iter() {
-                    byte.visit(visitor)?;
-                }
-            }
-            SymExprKind::Not(value) => value.visit(visitor)?,
-            SymExprKind::BinOp(_, left, right) => {
-                left.visit(visitor)?;
-                right.visit(visitor)?;
-            }
-            SymExprKind::TernOp(_, left, right, modulus) => {
-                left.visit(visitor)?;
-                right.visit(visitor)?;
-                modulus.visit(visitor)?;
-            }
-            SymExprKind::Ite(cond, left, right) => {
-                cond.visit_exprs(visitor)?;
-                left.visit(visitor)?;
-                right.visit(visitor)?;
-            }
-        }
-        ControlFlow::Continue(())
+        visit_unique(Some(self), None, visitor)
     }
 
     /// Returns whether any node satisfies `visitor`, visiting each distinct node once.
-    pub(crate) fn visit_bool(&self, visitor: impl FnMut(&Self) -> bool) -> bool {
-        visit_unique(Vec::new(), vec![self.clone()], visitor)
+    pub(crate) fn visit_bool(&self, mut visitor: impl FnMut(&Self) -> bool) -> bool {
+        self.visit(&mut |expr| {
+            if visitor(expr) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+        })
+        .is_break()
     }
 
     /// Rewrites each distinct word or nested Boolean node once in bottom-up order.
@@ -2473,4 +2444,48 @@ fn deployer_identity(concrete: Option<Address>, deployer: &SymExpr) -> String {
     concrete
         .map(|deployer| format!("address:{deployer:?}"))
         .unwrap_or_else(|| format!("address_expr:{:?}", ExpressionDigests::identity([deployer])))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Each level reuses the previous node twice, so a walk without memoization visits 2^64 nodes.
+    #[test]
+    fn collect_vars_visits_shared_nodes_once() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let mut expr = x.clone();
+        for _ in 0..64 {
+            let product = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Mul, expr.clone(), y.clone()),
+            );
+            expr = SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Add, expr, product));
+        }
+        let condition = SymBoolExpr::eq_word_const(&mut cx, &expr, U256::from(7));
+
+        let mut vars = SymbolicVars::default();
+        expr.collect_eval_vars(&mut vars);
+        condition.collect_vars(&mut vars);
+        assert_eq!(
+            vars.iter().copied().collect::<Vec<_>>(),
+            [x.kind().get_var().unwrap(), y.kind().get_var().unwrap(),]
+        );
+
+        let mut visited = HashSet::<SymExpr>::default();
+        let result = condition.visit_exprs::<()>(&mut |node| {
+            assert!(visited.insert(node.clone()), "shared node visited twice");
+            ControlFlow::Continue(())
+        });
+        assert!(result.is_continue());
+        let mut visits = 0;
+        let result = expr.visit(&mut |_| {
+            visits += 1;
+            if visits == 2 { ControlFlow::Break(42) } else { ControlFlow::Continue(()) }
+        });
+        assert_eq!(result, ControlFlow::Break(42));
+        assert_eq!(visits, 2);
+    }
 }

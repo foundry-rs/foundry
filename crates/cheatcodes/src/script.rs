@@ -1,6 +1,6 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatcodesCore, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Authorization;
@@ -192,6 +192,11 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     auth: SignedAuthorization,
 ) -> Result<()> {
+    ensure!(
+        ccx.spec().into() >= SpecId::PRAGUE,
+        "delegations are not supported before the Prague hard fork; \
+         see EIP-7702: https://eips.ethereum.org/EIPS/eip-7702"
+    );
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let account_nonce = {
         let authority_acc = ccx.ecx.journal_mut().load_account(authority)?;
@@ -276,8 +281,8 @@ impl Cheatcode for stopBroadcastCall {
 }
 
 impl Cheatcode for getWalletsCall {
-    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let wallets = ccx.state.core.wallets().signers().unwrap_or_default();
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let wallets = state.wallets().signers()?;
         Ok(wallets.abi_encode())
     }
 }

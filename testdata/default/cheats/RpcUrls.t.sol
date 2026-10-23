@@ -16,6 +16,13 @@ contract RpcUrlTest is Test {
         string memory url = vm.rpcUrl("rpcUrlEnv");
     }
 
+    // errors are not prefixed with the cheatcode name, forge-std relies on this
+    function testErrorIsNotPrefixed() public {
+        (bool success, bytes memory data) = address(vm).call(abi.encodeCall(vm.rpcUrl, ("rpcUrlEnv")));
+        assertTrue(!success);
+        assertEq(data, abi.encodeWithSignature("CheatcodeError(string)", "invalid rpc url: rpcUrlEnv"));
+    }
+
     // can set env and return correct url
     function testCanSetAndGetURLAndAllUrls() public {
         // this will fail because alias is not set

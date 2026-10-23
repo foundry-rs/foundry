@@ -1,9 +1,10 @@
-use super::span_to_range;
+use super::{deps::ConstructorContext, span_to_range};
+use alloy_primitives::keccak256;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
 use solar::sema::{
     Gcx,
-    hir::{Contract, ContractId},
+    hir::{ContractId, SourceId},
     interface::source_map::FileName,
 };
 use std::{
@@ -49,12 +50,12 @@ impl ContractData {
     fn new(
         gcx: Gcx<'_>,
         contract_id: ContractId,
-        contract: &Contract<'_>,
         path: &Path,
-        source: &solar::sema::hir::Source<'_>,
         reserved_identifiers: &str,
         source_units: &[PathBuf],
     ) -> Self {
+        let contract = gcx.hir.contract(contract_id);
+        let source = gcx.hir.source(contract.source);
         let artifact =
             solidity_string_content(&format!("{}:{}", path.to_slash_lossy(), contract.name));
 
@@ -64,7 +65,7 @@ impl ContractData {
             .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
-                let contract_id = contract_id.index();
+                let contract_id = keccak256(format!("{}:{}", path.to_slash_lossy(), contract.name));
                 let mut abi_encode_args = vec![];
                 let mut struct_fields = vec![];
                 let mut arg_index = 0;
@@ -91,7 +92,7 @@ impl ContractData {
                     struct_fields: struct_fields.join("; "),
                     helper_contract: unique_identifier(
                         reserved_identifiers,
-                        format!("DeployHelper{contract_id}"),
+                        format!("DeployHelper{contract_id:x}"),
                     ),
                     args_struct: unique_identifier(
                         reserved_identifiers,
@@ -99,9 +100,9 @@ impl ContractData {
                     ),
                     encode_function: unique_identifier(
                         reserved_identifiers,
-                        format!("encodeArgs{contract_id}"),
+                        format!("encodeArgs{contract_id:x}"),
                     ),
-                    helper_path: deploy_helper_path(contract_id, source_units),
+                    helper_path: deploy_helper_path(&format!("{contract_id:x}"), source_units),
                 }
             });
 
@@ -156,7 +157,7 @@ impl ContractData {
     /// ```solidity
     /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs({name: name, symbol: symbol})))
     /// ```
-    pub fn build_helper(&self) -> Option<String> {
+    pub fn build_helper(&self, abi_pragma: &str) -> Option<String> {
         let Self { path, name, constructor_data, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };
@@ -171,6 +172,7 @@ impl ContractData {
             r#"
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.4.0;
+{abi_pragma}
 
 import "{path}";
 
@@ -188,6 +190,22 @@ function {encode_function}({helper_contract}.{args_struct} memory args) pure ret
 
         Some(helper)
     }
+}
+
+/// Reserves names only in the source's import closure, which is stable across compiler jobs.
+pub(super) fn reserved_identifiers(gcx: Gcx<'_>, source: SourceId) -> String {
+    let mut visited = HashSet::new();
+    let mut pending = vec![source];
+    let mut identifiers = String::new();
+    while let Some(id) = pending.pop() {
+        if visited.insert(id) {
+            let source = gcx.hir.source(id);
+            identifiers.push_str(source.file.src.as_str());
+            identifiers.push('\n');
+            pending.extend(source.imports.iter().map(|(_, id)| *id));
+        }
+    }
+    identifiers
 }
 
 fn unique_identifier(source: &str, mut identifier: String) -> String {
@@ -219,12 +237,6 @@ pub(crate) fn collect_preprocessor_data(
     source_units: &[PathBuf],
 ) -> PreprocessorData {
     let mut data = PreprocessorData::default();
-    let reserved_identifiers = gcx
-        .hir
-        .source_ids()
-        .map(|source_id| gcx.hir.source(source_id).file.src.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
     for contract_id in referenced_contracts {
         let contract = gcx.hir.contract(*contract_id);
         let source = gcx.hir.source(contract.source);
@@ -238,10 +250,8 @@ pub(crate) fn collect_preprocessor_data(
         let contract_data = ContractData::new(
             gcx,
             *contract_id,
-            contract,
             path,
-            source,
-            &reserved_identifiers,
+            &reserved_identifiers(gcx, contract.source),
             source_units,
         );
         data.insert(*contract_id, contract_data);
@@ -252,10 +262,22 @@ pub(crate) fn collect_preprocessor_data(
 /// Creates helper libraries for contracts with a non-empty constructor.
 ///
 /// See [`ContractData::build_helper`] for more details.
-pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -> Sources {
+pub(crate) fn create_deploy_helpers(
+    gcx: Gcx<'_>,
+    constructor_context: ConstructorContext,
+    data: &BTreeMap<ContractId, ContractData>,
+) -> Sources {
     let mut deploy_helpers = Sources::new();
-    for contract in data.values() {
-        if let Some(code) = contract.build_helper() {
+    for (id, contract) in data {
+        // Helpers need their own pragma only when the compiler defaults to ABI coder v1.
+        let abi_pragma = if !constructor_context.abi_coder_v2
+            && constructor_context.for_source(gcx, gcx.hir.contract(*id).source).abi_coder_v2
+        {
+            "pragma experimental ABIEncoderV2;"
+        } else {
+            ""
+        };
+        if let Some(code) = contract.build_helper(abi_pragma) {
             let path = contract.constructor_data.as_ref().unwrap().helper_path.clone();
             deploy_helpers.insert(path, Source::new(code));
         }
@@ -267,7 +289,7 @@ pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -
 const DEPLOY_HELPERS_DIR: &str = "foundry-pp";
 
 /// Returns a generated helper path that cannot overwrite an existing source unit.
-pub(crate) fn deploy_helper_path(contract_id: usize, source_units: &[PathBuf]) -> PathBuf {
+pub(crate) fn deploy_helper_path(contract_id: &str, source_units: &[PathBuf]) -> PathBuf {
     let mut stem = format!("DeployHelper{contract_id}");
     loop {
         let path = PathBuf::from(format!("{DEPLOY_HELPERS_DIR}/{stem}.sol"));
@@ -301,7 +323,7 @@ mod tests {
         ];
 
         assert_eq!(
-            deploy_helper_path(7, &source_units),
+            deploy_helper_path("7", &source_units),
             PathBuf::from("foundry-pp/DeployHelper7__.sol")
         );
     }

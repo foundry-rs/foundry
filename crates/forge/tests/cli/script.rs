@@ -43,6 +43,8 @@ use std::{
 use tempo_alloy::TempoNetwork;
 
 #[cfg(unix)]
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
 #[forgetest]
@@ -1114,6 +1116,383 @@ Error: submission outcome for delegated operation 0 is unknown; refusing to risk
     assert_eq!(submissions.load(Ordering::Relaxed), 1);
 }
 
+// Polling must not wait forever on transactions queued behind one the endpoint stopped returning,
+// even when that one was answered last, and resume must replay it before waiting on them.
+#[forgetest_init]
+async fn broadcast_stops_polling_after_invisible_transaction(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "InvisibleSubmission.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InvisibleSubmissionTarget {}
+
+contract InvisibleSubmission is Script {
+    function run() external {
+        vm.startBroadcast();
+        for (uint256 i; i < 12; i++) {
+            new InvisibleSubmissionTarget();
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let path = prj.root().join("broadcast/InvisibleSubmission.s.sol/31337/run-latest.json");
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    // A load-balanced endpoint forgets the first transaction while returning its successors, either
+    // only temporarily or after the node really dropped it.
+    for dropped in [false, true] {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        api.anvil_set_auto_mine(false).await.unwrap();
+        // The first transaction is returned once, confirming its failed submission, and then
+        // forgotten.
+        let forgotten = Arc::new(AtomicBool::new(true));
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let rpc =
+            spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+                let forgotten = forgotten.clone();
+                move |_, result| {
+                    if result["nonce"] == "0x0"
+                        && lookups.fetch_add(1, Ordering::SeqCst) > 0
+                        && forgotten.load(Ordering::SeqCst)
+                    {
+                        Value::Null
+                    } else {
+                        result
+                    }
+                }
+            })
+            .await;
+        // The first submission is answered last, so its hash is pending after ten successors.
+        let (rpc, submissions, reached, release) =
+            spawn_rpc_proxy_blocking_first_submission(rpc, "eth_sendRawTransaction", true).await;
+
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--tc",
+            "InvisibleSubmission",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            private_key,
+            "--broadcast",
+        ]);
+        let mut child = KillOnDrop::spawn(cmd.cmd());
+        tokio::time::timeout(Duration::from_secs(30), async {
+            reached.notified().await;
+            while foundry_common::fs::read_json_file::<Value>(&path)
+                .ok()
+                .and_then(|sequence| sequence["pending"].as_array().map(Vec::len))
+                != Some(11)
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("successors of the first transaction were not checkpointed");
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while child.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("forge did not finish");
+        let output = child.kill_and_wait();
+        assert!(output.status.success());
+        assert_data_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+...
+"#]]
+        );
+        let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+        let hashes = sequence["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tx| tx["hash"].clone())
+            .collect::<Vec<_>>();
+        // The invisible transaction is removed so that resume can replay it, while its visible
+        // successors stay pending.
+        let mut pending = sequence["pending"].as_array().unwrap().clone();
+        pending.sort_by_key(|hash| hashes.iter().position(|h| h == hash));
+        assert_eq!(pending, hashes[1..]);
+        assert!(sequence["receipts"].as_array().unwrap().is_empty());
+        let original = submissions.lock().unwrap().clone();
+
+        // Resume records every receipt. Transactions that only looked dropped are not submitted
+        // again, and a dropped one is replayed with the identical signed bytes before its
+        // successors are waited on.
+        if dropped {
+            let first_hash = hashes[0].as_str().unwrap().parse().unwrap();
+            api.anvil_drop_transaction(first_hash).await.unwrap();
+            // The node drops the successors too, so they are added back to stay visible but
+            // unmineable.
+            for payload in original.iter().filter(|payload| **payload != original[0]) {
+                let payload = hex::decode(payload[0].as_str().unwrap()).unwrap();
+                api.send_raw_transaction(payload.into()).await.unwrap();
+            }
+            api.anvil_set_auto_mine(true).await.unwrap();
+        } else {
+            api.mine_one().await.unwrap();
+        }
+        forgotten.store(false, Ordering::SeqCst);
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--tc",
+            "InvisibleSubmission",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            private_key,
+            "--resume",
+        ]);
+        cmd.assert_success().stderr_eq(str![""]);
+        let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+        assert_eq!(sequence["receipts"].as_array().unwrap().len(), 12);
+        assert!(sequence["pending"].as_array().unwrap().is_empty());
+        let submissions = submissions.lock().unwrap();
+        if dropped {
+            assert!(submissions.len() > original.len());
+            assert!(submissions[original.len()..].iter().all(|payload| original.contains(payload)));
+        } else {
+            assert_eq!(submissions.len(), original.len());
+        }
+    }
+}
+
+// After polling stops early, receipts of the unpolled transactions are still recorded and a mined
+// revert among them still fails the broadcast.
+#[forgetest_init]
+async fn broadcast_checks_unpolled_receipts_once(prj: _, cmd: _) {
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    let script = prj.add_script(
+        "UnpolledReceipts.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract UnpolledReceipts is Script {
+    function run() external {
+        vm.startBroadcast();
+        for (uint256 i; i < 12; i++) {
+            (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+            require(success);
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let path = prj.root().join("broadcast/UnpolledReceipts.s.sol/31337/run-latest.json");
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    for revert in [false, true] {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        // Runtime that reverts once storage slot 0 is set.
+        api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
+        api.anvil_set_auto_mine(false).await.unwrap();
+        // Until the transactions are mined, receipts are withheld so that polling keeps waiting.
+        let mined = Arc::new(AtomicBool::new(false));
+        let hidden = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        // Hidden transactions only disappear once mined, so none can look dropped earlier.
+        let is_hidden = {
+            let mined = mined.clone();
+            let hidden = hidden.clone();
+            move |params: &Value| {
+                mined.load(Ordering::SeqCst)
+                    && params.get(0).is_some_and(|hash| hidden.lock().unwrap().contains(hash))
+            }
+        };
+        let rpc =
+            spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+                let is_hidden = is_hidden.clone();
+                move |params, result| if is_hidden(params) { Value::Null } else { result }
+            })
+            .await;
+        let rpc = spawn_rpc_proxy_mapping_method(rpc, "eth_getTransactionReceipt", {
+            let mined = mined.clone();
+            move |params, result| {
+                if !mined.load(Ordering::SeqCst) || is_hidden(params) {
+                    Value::Null
+                } else {
+                    result
+                }
+            }
+        })
+        .await;
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--tc",
+            "UnpolledReceipts",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--broadcast",
+        ]);
+        let mut child = KillOnDrop::spawn(cmd.cmd());
+        let hashes = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                    && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 12)
+                {
+                    break sequence["transactions"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|tx| tx["hash"].clone())
+                        .collect::<Vec<_>>();
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("submitted transactions were not checkpointed");
+
+        // The first ten fill every polling slot and look dropped, so the rest are only checked
+        // once after polling stops.
+        *hidden.lock().unwrap() = hashes[..10].to_vec();
+        if revert {
+            api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+        }
+        api.mine_one().await.unwrap();
+        mined.store(true, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while child.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("forge did not finish");
+        let output = child.kill_and_wait();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+        let mut receipts = sequence["receipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|receipt| receipt["transactionHash"].clone())
+            .collect::<Vec<_>>();
+        if revert {
+            assert!(!output.status.success());
+            assert_eq!(
+                stderr,
+                format!(
+                    "Error: Transaction Failure: {}\nTransaction Failure: {}\n\nAdd `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC.\n",
+                    hashes[10].as_str().unwrap(),
+                    hashes[11].as_str().unwrap()
+                )
+            );
+            assert!(receipts.is_empty());
+        } else {
+            assert!(output.status.success());
+            assert_data_eq!(
+                stderr,
+                str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+...
+"#]]
+            );
+            receipts.sort_by_key(|hash| hashes.iter().position(|h| h == hash));
+            assert_eq!(receipts, hashes[10..]);
+        }
+        // The invisible transactions are removed so that resume can replay them.
+        assert!(sequence["pending"].as_array().unwrap().is_empty());
+    }
+}
+
+// A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
+// continues with the operations after it.
+#[forgetest_init]
+async fn resume_skips_recorded_revert(prj: _, cmd: _) {
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    let script = prj.add_script(
+        "RevertedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract RevertedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+        require(success);
+        payable(address(0xdEaD)).transfer(1);
+        payable(address(0xdEaD)).transfer(1);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let path = prj.root().join("broadcast/RevertedResume.s.sol/31337/run-latest.json");
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // Runtime that reverts once storage slot 0 is set.
+    api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let args = [
+        "--tc",
+        "RevertedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--slow",
+    ];
+
+    // The gate call passes simulation, then reverts on chain before later calls are sent.
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--broadcast");
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let reverted = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && let Some(hash) = sequence["pending"].get(0)
+            {
+                break hash.as_str().unwrap().to_string();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the gate call was not checkpointed");
+    api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("Error: Transaction Failure: {reverted}\n")
+    );
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+
+    // Every resume skips the revert; the first submits the remaining calls, the second nothing.
+    let provider = handle.http_provider();
+    for _ in 0..2 {
+        cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
+        cmd.assert_success().stderr_eq(format!(
+            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\nWarning: ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\nchain 31337: {reverted}\n"
+        ));
+        let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+        assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
+        let receipts = sequence["receipts"].as_array().unwrap();
+        assert_eq!(receipts.len(), 2);
+        assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+    }
+}
+
 #[forgetest_init]
 async fn resume_replays_dropped_signed_checkpoint(prj: _, cmd: _) {
     let script = prj.add_script(
@@ -1230,6 +1609,150 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
+async fn broadcast_reports_submission_without_receipt(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "InvisibleSubmission.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InvisibleSubmissionTarget {}
+
+contract InvisibleSubmission is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InvisibleSubmissionTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    // A load-balanced endpoint can briefly forget a transaction that later mines.
+    let hidden = Arc::new(AtomicBool::new(true));
+    let rpc = spawn_rpc_proxy_mapping_method(rpc, "eth_getTransactionByHash", {
+        let hidden = hidden.clone();
+        move |_, result| if hidden.load(Ordering::SeqCst) { Value::Null } else { result }
+    })
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let path = prj.root().join("broadcast/InvisibleSubmission.s.sol/31337/run-latest.json");
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    // The submitted transaction has no receipt, so the broadcast is incomplete rather than
+    // successful.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InvisibleSubmission",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    cmd.assert_success()
+        .stdout_eq(str![[r#"
+...
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+Warning: ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:
+chain 31337: 0x[..]
+Add `--resume` to your command to check them again and replay dropped signed transactions.
+
+"#]]);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let hash = sequence["transactions"][0]["hash"].clone();
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+
+    // Once it mines and the endpoint returns it again, resume records its receipt without
+    // submitting anything.
+    hidden.store(false, Ordering::SeqCst);
+    api.mine_one().await.unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InvisibleSubmission",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"][0]["transactionHash"], hash);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+}
+
+#[forgetest_init]
+async fn broadcast_reports_submission_without_receipt_before_later_failure(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "InvisibleSubmission.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InvisibleSubmissionTarget {}
+
+contract InvisibleSubmission is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InvisibleSubmissionTarget();
+        new InvisibleSubmissionTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = spawn_rpc_proxy_mapping_method(
+        handle.http_endpoint(),
+        "eth_getTransactionByHash",
+        |_, _| Value::Null,
+    )
+    .await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    // The second batch fails after the first hash lost visibility, so the guidance must already
+    // be on stderr.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InvisibleSubmission",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--slow",
+        "--json",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+Error: After 5 attempts, provider nonce (0) is still behind expected nonce (1).
+
+"#]]);
 }
 
 #[forgetest]
@@ -3629,6 +4152,71 @@ Script ran successfully.
 "#]]);
 }
 
+#[cfg(unix)]
+#[forgetest_init]
+fn get_script_wallets_interactive_keystore_errors(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "WalletScript",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract WalletScript is Script {
+    function run(uint256 count) public view {
+        address[] memory wallets = vm.getWallets();
+        require(wallets.length == count, "unexpected wallet count");
+        if (count != 0) {
+            require(wallets[0] == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2, "unexpected wallet");
+        }
+    }
+}"#,
+    );
+    cmd.args(["script", "--sig", "run(uint256)"])
+        .arg(&script)
+        .arg("0")
+        .assert_success()
+        .stderr_eq(str![""]);
+
+    let keystore = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2",
+    );
+    for (password, exit_code) in [("wrong-password", 1), ("keystorepassword", 0)] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_forge"));
+        command
+            .current_dir(prj.root())
+            .env_remove("CI")
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .args(["script", "--sig", "run(uint256)"])
+            .arg(&script)
+            .arg("1")
+            .arg("--keystore")
+            .arg(&keystore);
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+        session.exp_string("Enter keystore password:").unwrap();
+        session.send_line(password).unwrap();
+        if exit_code != 0 {
+            session
+                .exp_string("vm.getWallets: Failed to decrypt keystore: incorrect password")
+                .unwrap();
+        } else {
+            session.exp_string("Script ran successfully.").unwrap();
+        }
+        let output = session.exp_eof().unwrap();
+        assert!(
+            matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, code) if code == exit_code),
+            "unexpected script exit: {output}"
+        );
+    }
+}
+
 #[forgetest_init]
 fn can_remember_keys(prj: _, cmd: _) {
     let script = prj
@@ -4060,6 +4648,78 @@ contract UnusedLibraries is Script {
     assert_eq!(names, ["Lib1", "ContractUsingLib1"]);
     assert_eq!(sequence.libraries.len(), 1);
     assert!(sequence.libraries[0].contains(":Lib1:"));
+}
+
+#[forgetest]
+#[cfg(unix)]
+fn wallet_signing_reports_unlock_errors(prj: _, cmd: _) {
+    prj.add_source(
+        "WalletSigning.sol",
+        r#"
+interface Vm {
+    function sign(bytes32 digest) external returns (uint8, bytes32, bytes32);
+    function sign(address signer, bytes32 digest) external returns (uint8, bytes32, bytes32);
+    function signCompact(bytes32 digest) external returns (bytes32, bytes32);
+    function signCompact(address signer, bytes32 digest) external returns (bytes32, bytes32);
+}
+contract WalletSigning {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    function run(uint256 overload) public {
+        bytes32 digest = keccak256("digest");
+        address signer = address(bytes20(hex"ec554aeafe75601aaab43bd4621a22284db566c2"));
+        bytes32 r;
+        if (overload == 0) (, r,) = vm.sign(digest);
+        else if (overload == 1) (, r,) = vm.sign(signer, digest);
+        else if (overload == 2) (r,) = vm.signCompact(digest);
+        else (r,) = vm.signCompact(signer, digest);
+        require(r != bytes32(0));
+    }
+}
+"#,
+    );
+    let keystore = prj.root().join("test-keystore");
+    fs::write(&keystore, include_str!("../../../cast/tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2")).unwrap();
+    cmd.args(["build"]).assert_success();
+    for overload in 0..4 {
+        for correct_password in [false, true] {
+            let mut command = prj.forge_bin();
+            command
+                .env("TERM", "dumb")
+                .args(["script", "WalletSigning", "--sig", "run(uint256)"])
+                .arg(overload.to_string())
+                .arg("--keystore")
+                .arg(&keystore);
+            let mut session = spawn_with_options(
+                command,
+                Options {
+                    timeout_ms: Some(30_000),
+                    strip_ansi_escape_codes: true,
+                    encoding: Encoding::UTF8,
+                },
+            )
+            .unwrap();
+            session.exp_string("Enter keystore password:").unwrap();
+            session
+                .send_line(if correct_password {
+                    "keystorepassword"
+                } else {
+                    "incorrect-test-password"
+                })
+                .unwrap();
+            session
+                .exp_string(if correct_password {
+                    "Script ran successfully."
+                } else {
+                    "Failed to decrypt keystore: incorrect password"
+                })
+                .unwrap();
+            let output = session.exp_eof().unwrap();
+            assert!(
+                matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, code) if code == i32::from(!correct_password)),
+                "{output}"
+            );
+        }
+    }
 }
 
 #[forgetest_init]
@@ -5181,7 +5841,7 @@ Traces:
   [..] CounterScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    ├─ [..] VM::deployCode("src/Counter.sol:Counter")
     │   ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0x5FbDB2315678afecb367f032d93F642f64180aa3]
@@ -5975,6 +6635,95 @@ async fn tempo_batch_resume_reuses_signed_payload(prj: _, cmd: _) {
         U256::from_be_slice(deployed[0].as_slice())
     );
     assert_eq!(provider.get_storage_at(deployed[2], U256::ZERO).await.unwrap(), U256::from(0x1234));
+}
+
+// A reverted batch is recorded outside `receipts`, and resume warns about it without resubmitting.
+#[forgetest_init]
+async fn tempo_batch_resume_skips_recorded_revert(prj: _, cmd: _) {
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    let script = prj.add_script(
+        "RevertedBatch.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract RevertedBatch is Script {
+    function run() external {
+        vm.startBroadcast();
+        for (uint256 i; i < 2; i++) {
+            (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+            require(success);
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    // Runtime that reverts once storage slot 0 is set.
+    api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_accounts().next().unwrap();
+    let args = [
+        "--tc",
+        "RevertedBatch",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--batch",
+        "--network",
+        "tempo",
+    ];
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--broadcast");
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let (path, reverted) = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(path) =
+                foundry_common::fs::json_files(&prj.root().join("broadcast")).find(|file| {
+                    file.ends_with("run-latest.json") && !file.to_string_lossy().contains("dry-run")
+                })
+                && let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && let Some(hash) = sequence["pending"].get(0)
+            {
+                break (path, hash.as_str().unwrap().to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the batch was not checkpointed");
+    api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not finish");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)\nError: Batch transaction failed (reverted)\n"
+    );
+
+    let provider = handle.http_provider();
+    for _ in 0..2 {
+        let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+        assert_eq!(sequence["reverted"], serde_json::json!([reverted]));
+        assert!(sequence["receipts"].as_array().unwrap().is_empty());
+        assert!(sequence["pending"].as_array().unwrap().is_empty());
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+
+        cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
+        cmd.assert_success().stderr_eq(format!(
+            "Warning: Transaction {reverted} on chain 31337 reverted; resume will not resubmit it.\n"
+        ));
+    }
 }
 
 #[forgetest_init]
@@ -7227,6 +7976,7 @@ async fn script_check_contract_sizes_uses_amsterdam_code_size_limit(prj: _, cmd:
     write_large_runtime_deploy_script(&prj, 50_000);
     prj.update_config(|config| {
         config.evm_version = EvmVersion::Amsterdam;
+        config.experimental = true;
     });
 
     let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000_000))).await;
@@ -7266,6 +8016,7 @@ async fn script_check_contract_sizes_uses_network_specific_spec(prj: _, cmd: _) 
     ] {
         prj.update_config(|config| {
             config.evm_version = EvmVersion::Amsterdam;
+            config.experimental = true;
             config.networks = networks;
             config.hardfork = hardfork.map(|hardfork| hardfork.parse().unwrap());
         });
@@ -7287,7 +8038,7 @@ async fn script_check_contract_sizes_uses_network_specific_spec(prj: _, cmd: _) 
         let assert = cmd.assert_success();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
         assert!(
-            stderr.contains("above the contract size limit (50308 > 24576)"),
+            stderr.contains("above the contract size limit (50322 > 24576)"),
             "missing size warning for {hardfork:?}: {stderr}"
         );
     }

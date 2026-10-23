@@ -101,6 +101,10 @@ pub struct EvmOpts {
     #[serde(default)]
     pub no_fork_bal: bool,
 
+    /// Prefetches a new fork block's cache from the keys of an older cached block.
+    #[serde(default)]
+    pub fork_prefetch: bool,
+
     /// The initial balance of each deployed test contract.
     pub initial_balance: U256,
 
@@ -331,6 +335,7 @@ impl Default for EvmOpts {
             no_rpc_rate_limit: false,
             no_storage_caching: false,
             no_fork_bal: false,
+            fork_prefetch: false,
             initial_balance: U256::default(),
             sender: Address::default(),
             ffi: false,
@@ -2828,7 +2833,7 @@ mod tests {
 
     // Regression test for https://github.com/foundry-rs/foundry/issues/13576
     // On Arbitrum, `block_env.number` is remapped to the L1 block number by
-    // `apply_chain_and_block_specific_env_changes`. The fork block number returned
+    // `apply_chain_and_block_specific_env_changes_for_chain`. The fork block number returned
     // by `env_with_fork_context()` must be the actual L2 block number, not the remapped L1 value.
     #[tokio::test(flavor = "multi_thread")]
     async fn flaky_get_fork_uses_l2_block_number_on_arbitrum() {

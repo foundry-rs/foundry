@@ -12,10 +12,13 @@ contract Foo {
 contract ResetNonce is Test {
     Foo public fooContract;
     address barEOA;
+    address delegatedEOA;
 
     function setUp() public {
         fooContract = new Foo();
         barEOA = address(0x42);
+        delegatedEOA = address(0x43);
+        vm.etch(delegatedEOA, abi.encodePacked(hex"ef0100", address(fooContract)));
     }
 
     function testResetNonceContract() public {
@@ -37,5 +40,12 @@ contract ResetNonce is Test {
         assertEq(vm.getNonce(address(barEOA)), 10);
         vm.resetNonce(address(barEOA));
         assertEq(vm.getNonce(address(barEOA)), 0);
+    }
+
+    function testResetNonceDelegatedEOA() public {
+        vm.setNonce(delegatedEOA, 10);
+        vm.resetNonce(delegatedEOA);
+        assertEq(vm.getNonce(delegatedEOA), 0);
+        assertEq(delegatedEOA.code, abi.encodePacked(hex"ef0100", address(fooContract)));
     }
 }

@@ -1,7 +1,10 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
     config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
-    eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
+    eth::{
+        EthApi, backend::db::SerializableState, miner::INSTANT_COALESCE_WINDOW,
+        pool::transactions::TransactionOrder,
+    },
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
@@ -104,8 +107,8 @@ pub struct NodeArgs {
     pub block_time: Option<Duration>,
 
     /// Time in milliseconds to group ready transactions into one auto-mined block.
-    /// Set to 0 to disable the coalescing delay.
-    #[arg(long, value_name = "MILLISECONDS", default_value = "5")]
+    /// Defaults to 0 (no delay). Set a positive value to enable transaction coalescing.
+    #[arg(long, value_name = "MILLISECONDS", default_value_t = INSTANT_COALESCE_WINDOW.as_millis() as u64)]
     pub transaction_coalescing_window: u64,
 
     /// Slots in an epoch
@@ -672,6 +675,9 @@ pub struct AnvilEvmArgs {
     pub disable_block_gas_limit: bool,
 
     /// Enable the transaction gas limit check as imposed by EIP-7825 (Osaka hardfork).
+    ///
+    /// From Amsterdam, the cap always applies to regular gas only, and gas above it becomes the
+    /// EIP-8037 state gas reservoir.
     #[arg(long, visible_alias = "tx-gas-limit", help_heading = "Environment config")]
     pub enable_tx_gas_limit: bool,
 
@@ -1656,7 +1662,7 @@ mod tests {
     #[test]
     fn transaction_coalescing_window_cli() {
         for (args, expected) in [
-            (vec!["anvil"], 5),
+            (vec!["anvil"], 0),
             (vec!["anvil", "--transaction-coalescing-window", "0"], 0),
             (vec!["anvil", "--transaction-coalescing-window", "20"], 20),
         ] {

@@ -66,7 +66,7 @@ pub(crate) fn completed_transaction_prefix<N: Network>(
     )
 )]
 pub(crate) enum SequenceData<N: Network> {
-    Single(ScriptSequence<N>),
+    Single(Box<ScriptSequence<N>>),
     Multi(MultiChainSequence<N>),
 }
 
@@ -83,14 +83,14 @@ where
 
     pub fn sequences(&self) -> &[ScriptSequence<N>] {
         match self {
-            Self::Single(sequence) => std::slice::from_ref(sequence),
+            Self::Single(sequence) => std::slice::from_ref(&**sequence),
             Self::Multi(sequence) => &sequence.deployments,
         }
     }
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence<N>] {
         match self {
-            Self::Single(sequence) => std::slice::from_mut(sequence),
+            Self::Single(sequence) => std::slice::from_mut(&mut **sequence),
             Self::Multi(sequence) => &mut sequence.deployments,
         }
     }
@@ -166,7 +166,7 @@ where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
     pub fn new_single(sequence: ScriptSequence<N>, batch: bool) -> Result<Self> {
-        Self::create(SequenceData::Single(sequence), batch)
+        Self::create(SequenceData::Single(Box::new(sequence)), batch)
     }
 
     pub fn new_multi(sequence: MultiChainSequence<N>, batch: bool) -> Result<Self> {
@@ -187,7 +187,8 @@ where
     {
         let paths = ScriptSequence::<N>::get_paths(config, sig, target, chain, dry_run)?;
         Self::load(paths, batch, || {
-            ScriptSequence::load(config, sig, target, chain, dry_run).map(SequenceData::Single)
+            ScriptSequence::load(config, sig, target, chain, dry_run)
+                .map(|sequence| SequenceData::Single(Box::new(sequence)))
         })
     }
 
@@ -428,7 +429,11 @@ where
                 }
                 DelegatedStatus::Pending { hash } if !batch => {
                     let deployment = &mut self.sequences_mut()[sequence];
-                    if !deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+                    if !deployment.reverted.contains(&hash)
+                        && !deployment
+                            .receipts
+                            .iter()
+                            .any(|receipt| receipt.transaction_hash() == hash)
                     {
                         deployment.add_pending(index, hash);
                     }
@@ -448,6 +453,7 @@ where
             };
             let deployment = &self.sequences()[sequence];
             if deployment.pending.contains(&hash)
+                || deployment.reverted.contains(&hash)
                 || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
             {
                 continue;
@@ -570,10 +576,44 @@ pub(crate) fn operation_ordinal<N: Network>(
     sequences[..sequence].iter().map(|sequence| sequence.transactions.len()).sum::<usize>() + index
 }
 
+/// Returns the pending hashes of `sequence` that cannot be mined yet, because an earlier
+/// transaction on the same chain from the same sender has no receipt, recorded revert, or pending
+/// hash.
+pub(crate) fn blocked_pending<N: Network>(
+    sequences: &[ScriptSequence<N>],
+    sequence: usize,
+) -> Vec<B256> {
+    let chain = sequences[sequence].chain;
+    let mut gap_senders = Vec::new();
+    let mut blocked = Vec::new();
+    for (index, deployment) in sequences[..=sequence].iter().enumerate() {
+        if deployment.chain != chain {
+            continue;
+        }
+        for tx in &deployment.transactions {
+            let sender = tx.tx().from();
+            match tx.hash {
+                Some(hash) if deployment.pending.contains(&hash) => {
+                    if index == sequence && gap_senders.contains(&sender) {
+                        blocked.push(hash);
+                    }
+                }
+                Some(hash)
+                    if deployment.reverted.contains(&hash)
+                        || deployment.receipts.iter().any(|r| r.transaction_hash() == hash) => {}
+                _ => gap_senders.push(sender),
+            }
+        }
+    }
+    blocked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
+    use alloy_primitives::Address;
+    use alloy_rpc_types::TransactionRequest;
     use foundry_common::TransactionMaybeSigned;
 
     #[test]
@@ -606,6 +646,35 @@ mod tests {
         assert_eq!(operation_ordinal(&sequences, 2, 0), 3);
     }
 
+    #[test]
+    fn pending_behind_a_missing_transaction_is_blocked_only_on_its_chain_and_sender() {
+        let (sender, other) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let tx = |from, hash| {
+            let mut tx = TransactionWithMetadata::from_tx_request(
+                TransactionMaybeSigned::<Ethereum>::Unsigned(
+                    TransactionRequest::default().from(from),
+                ),
+            );
+            tx.hash = Some(B256::repeat_byte(hash));
+            tx
+        };
+        let sequence = |chain, transactions: Vec<_>, pending: &[u8]| ScriptSequence {
+            chain,
+            transactions: transactions.into(),
+            pending: pending.iter().copied().map(B256::repeat_byte).collect(),
+            ..Default::default()
+        };
+        // The first transaction is neither pending nor confirmed.
+        let sequences = [
+            sequence(1, vec![tx(sender, 1), tx(sender, 2)], &[2]),
+            sequence(2, vec![tx(sender, 3)], &[3]),
+            sequence(1, vec![tx(other, 4), tx(sender, 5)], &[4, 5]),
+        ];
+        assert_eq!(blocked_pending(&sequences, 0), [B256::repeat_byte(2)]);
+        assert!(blocked_pending(&sequences, 1).is_empty());
+        assert_eq!(blocked_pending(&sequences, 2), [B256::repeat_byte(5)]);
+    }
+
     fn unknown_delegated_sequence() -> (tempfile::TempDir, ScriptSequenceKind<Ethereum>, B256) {
         let dir = tempfile::tempdir().unwrap();
         let mut deployment = ScriptSequence::<Ethereum> {
@@ -632,7 +701,7 @@ mod tests {
         sequence.transactions.push_back(TransactionWithMetadata::from_tx_request(
             TransactionMaybeSigned::Unsigned(Default::default()),
         ));
-        let data = SequenceData::Single(sequence);
+        let data = SequenceData::Single(Box::new(sequence));
 
         let public = dir.path().join("broadcast.json");
         let sensitive = dir.path().join("broadcast-cache.json");

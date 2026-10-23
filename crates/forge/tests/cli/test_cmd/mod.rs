@@ -4365,6 +4365,75 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 }
 
+#[forgetest]
+async fn fork_setup_error_containing_skipped_fails(prj: _, cmd: _) {
+    let (_, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let router = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let upstream = upstream.clone();
+            let client = client.clone();
+            async move {
+                let error = match request["method"].as_str() {
+                    // Force the separate account requests even when Anvil supports account info.
+                    Some("eth_getAccountInfo") => Some((-32601, "method not found")),
+                    Some("eth_getBalance") => Some((-32603, "account lookup skipped by provider")),
+                    _ => None,
+                };
+                if let Some((code, message)) = error {
+                    return axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "error": { "code": code, "message": message },
+                    }));
+                }
+                let response = client.post(upstream).json(&request).send().await.unwrap();
+                axum::Json(response.json::<serde_json::Value>().await.unwrap())
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    prj.add_test(
+        "ForkSetup.t.sol",
+        r#"
+contract ForkSetup {
+    function test_shouldRun() public pure {}
+}
+"#,
+    );
+
+    cmd.env("RUST_LOG", "off");
+    cmd.args(["test", "--fork-url", &endpoint, "--no-storage-caching"])
+        .assert_failure()
+        .stderr_eq(str![""])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/16197>
 #[forgetest_init]
 fn skip_setup_after_caught_revert(prj: _, cmd: _) {
@@ -6077,8 +6146,8 @@ fn should_show_state_changes(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6119,8 +6188,8 @@ fn tracing_verbosity_shows_state_changes_independently(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] ConfiguredCounter::setNumber(0)
     │   └─ ← [Stop]
@@ -6413,8 +6482,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6466,8 +6535,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -7374,8 +7443,8 @@ Logs:
   test non contract call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7396,8 +7465,8 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7416,8 +7485,8 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7499,8 +7568,8 @@ No files changed, compilation skipped
 Ran 1 test for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: call reverted as expected, but without data] test_revert_data_exact_diagnostic() ([GAS])
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7620,10 +7689,10 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [350661] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350673] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [286918] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code

@@ -34,7 +34,10 @@ use alloy_sol_types::{SolEvent, sol};
 use anvil::{EthereumHardfork, NodeConfig, PrecompileFactory, spawn};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
-use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
+use revm::{
+    precompile::{PrecompileError, PrecompileOutput, PrecompileStatus},
+    primitives::eip7825::TX_GAS_LIMIT_CAP,
+};
 use serde_json::{Value, json};
 use std::{
     sync::{
@@ -2142,6 +2145,49 @@ async fn test_simulate_tracks_amsterdam_gas_dimensions_separately() {
     let cumulative_gas_used = block.calls.iter().map(|call| call.gas_used).sum::<u64>();
     assert!(cumulative_gas_used > gas_limit);
     assert!(block.inner.header.gas_used <= gas_limit);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17716>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_amsterdam_state_gas_reservoir() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let sender = address!("0xc000000000000000000000000000000000000000");
+    let contract = address!("0xc200000000000000000000000000000000000000");
+    let payload = SimulatePayload {
+        block_state_calls: vec![SimBlock {
+            block_overrides: None,
+            state_overrides: Some(
+                StateOverridesBuilder::with_capacity(1)
+                    .append(
+                        contract,
+                        AccountOverride {
+                            // Stores and returns `gasleft()`, which reports only regular gas.
+                            code: Some(Bytes::from_static(&[
+                                0x5a, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60,
+                                0x00, 0xf3,
+                            ])),
+                            ..Default::default()
+                        },
+                    )
+                    .build(),
+            ),
+            calls: vec![TransactionRequest {
+                from: Some(sender),
+                to: Some(TxKind::Call(contract)),
+                gas: Some(30_000_000),
+                ..Default::default()
+            }],
+        }],
+        ..Default::default()
+    };
+
+    let blocks = api.simulate_v1(payload, None).await.unwrap();
+    let call = &blocks[0].calls[0];
+
+    assert!(call.status);
+    // The cap bounds regular gas, out of which the call pays 15,000 intrinsic gas and 2 for `GAS`.
+    assert_eq!(U256::from_be_slice(&call.return_data), U256::from(TX_GAS_LIMIT_CAP - 15_002));
 }
 
 #[tokio::test(flavor = "multi_thread")]

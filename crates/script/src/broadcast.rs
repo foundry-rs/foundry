@@ -6,7 +6,9 @@ use crate::{
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
-    sequence::{ScriptSequenceKind, completed_transaction_prefix, operation_ordinal},
+    sequence::{
+        ScriptSequenceKind, blocked_pending, completed_transaction_prefix, operation_ordinal,
+    },
     session::{
         SignerScope, insert_session_access_key_for_remaining_transactions,
         script_session_expected_sender_if_configured,
@@ -476,30 +478,38 @@ fn remaining_operation_indices<N: Network>(
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
-    let deployment = &sequence.sequences()[sequence_index];
-    deployment
-        .transactions
-        .iter()
-        .enumerate()
-        .filter_map(|(index, transaction)| {
-            let hash = sequence
-                .signed_payload(sequence_index, index)
-                .map(|signed| signed.hash)
-                .or_else(|| match sequence.delegated_status(sequence_index, index) {
-                    Some(DelegatedStatus::Pending { hash }) => Some(hash),
-                    _ => None,
-                })
-                .or(transaction.hash)
-                .or_else(|| match transaction.tx() {
-                    TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
-                    TransactionMaybeSigned::Unsigned(_) => None,
-                });
-            let completed = hash.is_some_and(|hash| {
-                deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
-            });
-            (!completed).then_some(index)
-        })
+    (0..sequence.sequences()[sequence_index].transactions.len())
+        .filter(|&index| !is_operation_completed(sequence, sequence_index, index))
         .collect()
+}
+
+/// Returns true if the operation has a receipt or a recorded revert for its own hash.
+fn is_operation_completed<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+    sequence_index: usize,
+    index: usize,
+) -> bool
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    let deployment = &sequence.sequences()[sequence_index];
+    let transaction = &deployment.transactions[index];
+    let hash = sequence
+        .signed_payload(sequence_index, index)
+        .map(|signed| signed.hash)
+        .or_else(|| match sequence.delegated_status(sequence_index, index) {
+            Some(DelegatedStatus::Pending { hash }) => Some(hash),
+            _ => None,
+        })
+        .or(transaction.hash)
+        .or_else(|| match transaction.tx() {
+            TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
+            TransactionMaybeSigned::Unsigned(_) => None,
+        });
+    hash.is_some_and(|hash| {
+        deployment.reverted.contains(&hash)
+            || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+    })
 }
 
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
@@ -592,7 +602,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress_ref = &progress;
         let config = &self.script_config.config;
         let submission_hashes = (0..self.sequence.sequences().len())
-            .map(|sequence| self.sequence.submission_hashes(sequence))
+            .map(|sequence| {
+                (
+                    self.sequence.submission_hashes(sequence),
+                    blocked_pending(self.sequence.sequences(), sequence),
+                )
+            })
             .collect::<Vec<_>>();
         let futs = self
             .sequence
@@ -600,7 +615,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             .iter_mut()
             .zip(submission_hashes)
             .enumerate()
-            .map(|(sequence_idx, (sequence, (durable_hashes, replayable_hashes)))| async move {
+            .map(|(sequence_idx, (sequence, ((durable_hashes, replayable_hashes), blocked)))| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
@@ -612,6 +627,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
                         (&durable_hashes, &replayable_hashes),
+                        &blocked,
                     )
                     .await
             })
@@ -936,6 +952,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                     let mut prepared = Vec::with_capacity(batch.len());
                     for (kind, is_fixed_gas_limit, index) in batch {
+                        // A pending operation can be confirmed while waiting on an earlier batch.
+                        if is_operation_completed(&self.sequence, i, *index) {
+                            continue;
+                        }
                         kind.validate_expiring_create_nonce(
                             &provider,
                             &self.sequence.sequences()[i].transactions[*index],
@@ -1066,9 +1086,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // Checkpoint save
                     self.sequence.save(true, false)?;
                     let (durable_hashes, replayable_hashes) = self.sequence.submission_hashes(i);
+                    let blocked = blocked_pending(self.sequence.sequences(), i);
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                    progress
+                    let result = progress
                         .wait_for_pending(
                             i,
                             sequence,
@@ -1076,12 +1097,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             self.script_config.config.transaction_timeout,
                             self.args.confirmations,
                             (&durable_hashes, &replayable_hashes),
+                            &blocked,
                         )
-                        .await?;
-                    self.sequence.ensure_delegated_outcomes_known(i)?;
-
-                    // Checkpoint save
+                        .await;
+                    // Checkpoint save, including reverts recorded before a failure.
                     self.sequence.save(true, false)?;
+                    result?;
+                    self.sequence.ensure_delegated_outcomes_known(i)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }
@@ -1098,8 +1120,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .unwrap_or_default()
                 .native_currency_symbol()
                 .unwrap_or("ETH");
+            // Reverted transactions have no stored receipt, so their fees are not included.
+            let excluded = match sequence.reverted.len() {
+                0 => String::new(),
+                1 => ", excluding 1 reverted transaction".to_string(),
+                n => format!(", excluding {n} reverted transactions"),
+            };
             seq_progress.inner.write().set_status(&format!(
-                "Total Paid: {} {} ({} gas * avg {} gwei)\n",
+                "Total Paid: {} {} ({} gas * avg {} gwei{excluded})\n",
                 paid.trim_end_matches('0'),
                 token_symbol,
                 total_gas,
@@ -1108,8 +1136,45 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             seq_progress.inner.write().finish();
         }
 
+        // Submitted operations can lack a receipt when the endpoint stopped returning them.
+        let unresolved = self
+            .sequence
+            .sequences()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, deployment)| {
+                let hashes = remaining_operation_indices(&self.sequence, i)
+                    .into_iter()
+                    .filter_map(|index| deployment.transactions[index].hash)
+                    .collect::<Vec<_>>();
+                (!hashes.is_empty())
+                    .then(|| format!("chain {}: {}", deployment.chain, hashes.iter().format(", ")))
+            })
+            .collect::<Vec<_>>();
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
+        }
+        // Resume skips recorded reverts, so completing the remaining work is not a success.
+        let reverted = self
+            .sequence
+            .sequences()
+            .iter()
+            .filter(|deployment| !deployment.reverted.is_empty())
+            .map(|deployment| {
+                format!("chain {}: {}", deployment.chain, deployment.reverted.iter().format(", "))
+            })
+            .collect::<Vec<_>>();
+        if !unresolved.is_empty() {
+            sh_warn!(
+                "ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:\n{}\nAdd `--resume` to your command to check them again and replay dropped signed transactions.",
+                unresolved.join("\n")
+            )?;
+        } else if !reverted.is_empty() {
+            sh_warn!(
+                "ONCHAIN EXECUTION COMPLETE WITH REVERTED TRANSACTIONS:\n{}",
+                reverted.join("\n")
+            )?;
+        } else if !shell::is_json() {
             sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
         }
 
@@ -1288,7 +1353,10 @@ impl BundledState<TempoEvmNetwork> {
             | AttemptKind::Legacy { hash } => Some(*hash),
             AttemptKind::Delegated { .. } => None,
         });
-        if completed_prefix == total_transactions {
+        if completed_prefix == total_transactions
+            || recovered_hash
+                .is_some_and(|hash| self.sequence.sequences()[0].reverted.contains(&hash))
+        {
             sh_println!("No transactions to broadcast in batch mode.")?;
             return Ok(BroadcastedState {
                 args: self.args,
@@ -1620,17 +1688,16 @@ impl BundledState<TempoEvmNetwork> {
         batch_start: usize,
         resumed: bool,
     ) -> Result<()> {
-        if receipt.status() {
-            sh_println!(
-                "Batch transaction confirmed in block {}",
-                receipt.block_number.unwrap_or(0)
-            )?;
-        } else {
-            bail!("Batch transaction failed (reverted)");
-        }
-
         let sequence = sequences.sequences_mut().get_mut(0).unwrap();
         sequence.remove_pending(tx_hash);
+        if !receipt.status() {
+            if !sequence.reverted.contains(&tx_hash) {
+                sequence.reverted.push(tx_hash);
+            }
+            sequences.save(true, false)?;
+            bail!("Batch transaction failed (reverted)");
+        }
+        sh_println!("Batch transaction confirmed in block {}", receipt.block_number.unwrap_or(0))?;
 
         // Receipts are pushed 1:1 with the remaining (not-yet-receipted) transactions.
         let remaining_len = sequence.transactions.len() - batch_start;
