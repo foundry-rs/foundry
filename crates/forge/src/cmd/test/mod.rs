@@ -3196,7 +3196,10 @@ impl Provider for TestArgs {
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
-    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
+    (0..=u8::MAX)
+        .filter_map(OpCode::new)
+        .find(|op| op.as_str() == s)
+        .ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {
@@ -3669,6 +3672,14 @@ impl JunitOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_opcode_names_exactly() {
+        assert_eq!(parse_opcode("SSTORE"), Ok(OpCode::SSTORE));
+        assert_eq!(parse_opcode("PUSH32"), Ok(OpCode::PUSH32));
+        assert_eq!(parse_opcode("sstore"), Err("invalid opcode: sstore".to_string()));
+        assert_eq!(parse_opcode("NOPE"), Err("invalid opcode: NOPE".to_string()));
+    }
 
     /// Parses `args` with the given environment variables set, restoring the previous values.
     fn parse_with_env(vars: &[(&str, &str)], args: &[&str]) -> TestArgs {

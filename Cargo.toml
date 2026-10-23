@@ -373,7 +373,7 @@ alloy-ens = { version = "2.5.0", default-features = false }
 alloy-genesis = { version = "2.5.0", default-features = false }
 alloy-json-rpc = { version = "2.5.0", default-features = false }
 alloy-network = { version = "2.5.0", default-features = false }
-alloy-provider = { version = "2.5.0", default-features = false }
+alloy-provider = { version = "2.5.0", default-features = false, features = ["reqwest", "ws", "ipc", "pubsub", "trace-api", "txpool-api", "debug-api"] }
 alloy-pubsub = { version = "2.5.0", default-features = false }
 alloy-rpc-client = { version = "2.5.0", default-features = false }
 alloy-rpc-types = { version = "2.5.0", default-features = true }
@@ -405,7 +405,7 @@ alloy-sol-types = "1.7.0"
 
 alloy-chains = "0.2.38"
 alloy-rlp = "0.3"
-alloy-trie = "0.9"
+alloy-trie = { version = "0.9", default-features = false }
 
 ## op-alloy
 op-alloy-consensus = "2.0.0"
@@ -494,14 +494,14 @@ ron = "0.12"
 rustls = "0.23.46"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_depth"] }
 shlex = "2"
 similar-asserts = "2.0"
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
-tokio = "1.53.3"
+tokio = { version = "1.53.3", features = ["full"] }
 toml = "1.1"
 toml_edit = "0.25"
 tower = "0.5"
