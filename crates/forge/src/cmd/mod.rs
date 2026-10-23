@@ -26,6 +26,7 @@ pub mod init;
 pub mod inspect;
 pub mod lint;
 pub mod lsp;
+pub mod properties;
 pub mod reinit;
 pub mod remappings;
 pub mod remove;

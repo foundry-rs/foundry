@@ -30,6 +30,7 @@ mod json;
 mod lint;
 mod multi_script;
 mod precompiles;
+mod properties;
 mod script;
 mod selectors;
 mod soldeer;
