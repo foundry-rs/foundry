@@ -14,10 +14,6 @@ ignore = [
     # declaration handling can allocate without a bound. No fixed quick-junit,
     # inferno, or soldeer release is available for either advisory yet.
     "RUSTSEC-2026-0195",
-    # https://rustsec.org/advisories/RUSTSEC-2026-0386 tokio `AsyncFd` safe
-    # constructors accept unowned file descriptors. Foundry does not use them,
-    # and dependencies only pass owned descriptors.
-    "RUSTSEC-2026-0386",
 ]
 
 # This section is considered when running `cargo deny check bans`.
