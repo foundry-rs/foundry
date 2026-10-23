@@ -491,7 +491,7 @@ soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
-tokio = "1"
+tokio = "1.53.3"
 toml = "1.1"
 toml_edit = "0.25"
 tower = "0.5"
