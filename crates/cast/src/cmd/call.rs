@@ -570,7 +570,6 @@ impl CallArgs {
                 arena: call_frame_to_arena(&frame, None),
                 ignored: Default::default(),
                 diagnostics: Default::default(),
-                debug_steps: None,
             };
             let result = TraceResult {
                 success: frame.error.is_none() && frame.revert_reason.is_none(),

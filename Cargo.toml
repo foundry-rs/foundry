@@ -497,11 +497,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 shlex = "2"
 similar-asserts = "2.0"
-soldb-core = { git = "https://github.com/figtracer/soldb", rev = "5dc6d495282e2633c8c652b6cac4314751da569d" }
-soldb-debugger = { git = "https://github.com/figtracer/soldb", rev = "5dc6d495282e2633c8c652b6cac4314751da569d" }
-soldb-ethdebug = { git = "https://github.com/figtracer/soldb", rev = "5dc6d495282e2633c8c652b6cac4314751da569d" }
-soldb-repl = { git = "https://github.com/figtracer/soldb", rev = "5dc6d495282e2633c8c652b6cac4314751da569d" }
-soldb-tui = { git = "https://github.com/figtracer/soldb", rev = "5dc6d495282e2633c8c652b6cac4314751da569d" }
+soldb-core = "=0.4.1"
+soldb-debugger = "=0.4.1"
+soldb-ethdebug = "=0.4.1"
+soldb-repl = "=0.4.1"
+soldb-tui = "=0.4.1"
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"

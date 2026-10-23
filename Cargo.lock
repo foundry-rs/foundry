@@ -6116,7 +6116,6 @@ dependencies = [
  "revm-inspectors",
  "serde",
  "serde_json",
- "soldb-core",
  "tempo-precompiles",
  "tempo-primitives",
  "tempo-revm",
@@ -6345,7 +6344,6 @@ dependencies = [
  "serde_json",
  "snapbox",
  "solar-compiler",
- "soldb-core",
  "tempfile",
  "tempo-contracts",
  "tempo-precompiles",
@@ -12392,18 +12390,19 @@ dependencies = [
 
 [[package]]
 name = "soldb-core"
-version = "0.4.2"
-source = "git+https://github.com/figtracer/soldb?rev=5dc6d495282e2633c8c652b6cac4314751da569d#5dc6d495282e2633c8c652b6cac4314751da569d"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1fc3703b17ea6036e235a00e1adb330a7cc7aece6128bd65a08bd3fadff6d25"
 dependencies = [
- "bytes",
  "serde",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "soldb-debugger"
-version = "0.4.2"
-source = "git+https://github.com/figtracer/soldb?rev=5dc6d495282e2633c8c652b6cac4314751da569d#5dc6d495282e2633c8c652b6cac4314751da569d"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4b926e560961da5ecb598a2c93b0ba5e17510d68e32933eccda47f96b7454ca"
 dependencies = [
  "serde",
  "serde_json",
@@ -12413,8 +12412,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-ethdebug"
-version = "0.4.2"
-source = "git+https://github.com/figtracer/soldb?rev=5dc6d495282e2633c8c652b6cac4314751da569d#5dc6d495282e2633c8c652b6cac4314751da569d"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1de21404c21045d7f8ff3ec73ae7b1ff3f5eb1de4b6fd9b03d646e456443867f"
 dependencies = [
  "serde",
  "serde_json",
@@ -12423,8 +12423,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-repl"
-version = "0.4.2"
-source = "git+https://github.com/figtracer/soldb?rev=5dc6d495282e2633c8c652b6cac4314751da569d#5dc6d495282e2633c8c652b6cac4314751da569d"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aec4ac993cf2a28505324d1285d0e0c8c7371841076b92d82c70305bf3a1c6b"
 dependencies = [
  "serde",
  "serde_json",
@@ -12434,8 +12435,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-tui"
-version = "0.4.2"
-source = "git+https://github.com/figtracer/soldb?rev=5dc6d495282e2633c8c652b6cac4314751da569d#5dc6d495282e2633c8c652b6cac4314751da569d"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "434cf4ec10857f323bb3aa6f47f08d42f9077e0923e1df96ede09dd331617d19"
 dependencies = [
  "crossterm",
  "ratatui",
