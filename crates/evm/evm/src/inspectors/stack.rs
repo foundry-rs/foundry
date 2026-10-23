@@ -12,7 +12,7 @@ use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure
 use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
-    FoundryBlock, FoundryTransaction, InspectorExt,
+    FoundryBlock, FoundryJournal, FoundryTransaction, InspectorExt,
     backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
     constants::{
         CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -509,6 +509,8 @@ pub struct InspectorStackInner {
     cancellation_poll_counter: u8,
     /// Whether this inspector halted the current execution due to cancellation.
     execution_cancelled: bool,
+    /// Whether CREATE2 libraries of the active fork are being deployed.
+    deploying_chain_libraries: bool,
     #[cfg(test)]
     early_exit_test_gate: Option<EarlyExitTestGate>,
     static_step_dispatch: OpcodeStepDispatch,
@@ -1529,7 +1531,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
-    /// Deploys the CREATE2 libraries of the active fork before its first broadcast.
+    /// Deploys the CREATE2 libraries missing on the active fork, and records their deployment
+    /// before the first broadcast to its endpoint.
     fn deploy_chain_libraries(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
@@ -1537,14 +1540,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     ) -> Option<String> {
         let cheats = self.cheatcodes.as_deref_mut()?;
         let config = &cheats.core.config;
-        if cheats.broadcast.is_none()
+        if self.inner.deploying_chain_libraries
             || (config.chain_builds.is_empty() && config.create2_libraries.is_empty())
         {
             return None;
         }
         let depth = ecx.journal().depth();
         let rpc = ecx.db().active_fork_url()?;
-        let (sender, salt, libraries) = cheats.take_chain_libraries(&rpc, depth, caller)?;
+        let (sender, salt, libraries) = cheats.chain_libraries(&rpc, depth, caller)?;
         let create2_deployer = self.create2_deployer();
         let code_hash = |ecx: &mut FoundryContextFor<'_, FEN>, address| {
             ecx.journal_mut().load_account(address).map(|account| account.info.code_hash).map_err(
@@ -1561,29 +1564,66 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             Ok(_) => {}
             Err(err) => return Some(err),
         }
+        let nonce = |ecx: &mut FoundryContextFor<'_, FEN>, address| {
+            ecx.journal_mut().load_account(address).map(|account| account.info.nonce).map_err(
+                |err| format!("failed to load {address} for CREATE2 library deployment: {err}"),
+            )
+        };
         for (address, code) in libraries {
-            match code_hash(ecx, address) {
-                Ok(KECCAK_EMPTY) => {}
-                Ok(_) => continue,
+            let missing = match code_hash(ecx, address) {
+                Ok(hash) => hash == KECCAK_EMPTY,
                 Err(err) => return Some(err),
-            }
+            };
             let input = Bytes::from([salt.as_slice(), code.as_ref()].concat());
-            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-                cheats.record_library_deployment(ecx, sender, create2_deployer, input.clone());
+            if missing {
+                // The local deployment does not consume a nonce; only a recorded one does.
+                let caller_nonce = match nonce(ecx, caller) {
+                    Ok(nonce) => nonce,
+                    Err(err) => return Some(err),
+                };
+                // Neither broadcast nor intercept the local deployment.
+                let cheats = self.cheatcodes.as_deref_mut().unwrap();
+                let broadcast = cheats.broadcast.take();
+                let intercept = std::mem::take(&mut cheats.core.intercept_next_create_call);
+                let gas_limit = ecx.block().gas_limit();
+                self.inner.deploying_chain_libraries = true;
+                let (result, _, _) = self.transact_inner(
+                    ecx,
+                    TxKind::Call(create2_deployer),
+                    caller,
+                    input.clone(),
+                    IsolatedGas { regular_limit: gas_limit, reservoir: 0, precharged_state: None },
+                    U256::ZERO,
+                );
+                self.inner.deploying_chain_libraries = false;
+                let cheats = self.cheatcodes.as_deref_mut().unwrap();
+                cheats.broadcast = broadcast;
+                cheats.core.intercept_next_create_call = intercept;
+                ecx.journal_mut().set_loaded_account_nonce(caller, caller_nonce);
+                if !result.result.is_ok()
+                    || !matches!(code_hash(ecx, address), Ok(hash) if hash != KECCAK_EMPTY)
+                {
+                    return Some(format!(
+                        "CREATE2 deployment of library {address} failed on {rpc}"
+                    ));
+                }
             }
-            let gas_limit = ecx.block().gas_limit();
-            let (result, _, _) = self.transact_inner(
+            let from = match sender.map(|sender| Ok((sender, nonce(ecx, sender)?))).transpose() {
+                Ok(from) => from,
+                Err(err) => return Some(err),
+            };
+            let cheats = self.cheatcodes.as_deref_mut().unwrap();
+            if let Some(next) = cheats.record_library_deployment(
                 ecx,
-                TxKind::Call(create2_deployer),
-                sender,
+                from,
+                address,
+                missing,
+                create2_deployer,
                 input,
-                IsolatedGas { regular_limit: gas_limit, reservoir: 0, precharged_state: None },
-                U256::ZERO,
-            );
-            if !result.result.is_ok()
-                || !matches!(code_hash(ecx, address), Ok(hash) if hash != KECCAK_EMPTY)
+            ) && let Some((sender, nonce)) = from
+                && next > nonce
             {
-                return Some(format!("CREATE2 deployment of library {address} failed on {rpc}"));
+                ecx.journal_mut().set_loaded_account_nonce(sender, next);
             }
         }
         None

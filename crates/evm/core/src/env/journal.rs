@@ -1,7 +1,7 @@
 //! Access to execution journals and their native state.
 
 use crate::backend::JournaledState;
-use revm::{Database, Journal, inspector::JournalExt};
+use revm::{Database, Journal, context::JournalTr, inspector::JournalExt, primitives::Address};
 
 /// Foundry extension for Journal type
 pub trait FoundryJournal: JournalExt {
@@ -10,6 +10,15 @@ pub trait FoundryJournal: JournalExt {
 
     /// Reference to the journal inner.
     fn journal_inner(&self) -> &JournaledState;
+
+    /// Returns the nonce of an account that is already loaded in the active journal.
+    fn loaded_account_nonce(&self, address: Address) -> u64;
+
+    /// Sets the nonce of an account that is already loaded in the active journal.
+    ///
+    /// This does not represent an EVM transaction. Callers use it to account for transactions
+    /// recorded for later broadcast without letting local simulation consume the same nonce.
+    fn set_loaded_account_nonce(&mut self, address: Address, nonce: u64);
 
     /// Captures Monad's reserve-balance tracker for the active transaction.
     #[cfg(feature = "monad")]
@@ -48,6 +57,14 @@ impl<DB: Database> FoundryJournal for Journal<DB> {
     fn journal_inner(&self) -> &JournaledState {
         &self.inner
     }
+
+    fn loaded_account_nonce(&self, address: Address) -> u64 {
+        self.evm_state()[&address].info.nonce
+    }
+
+    fn set_loaded_account_nonce(&mut self, address: Address, nonce: u64) {
+        self.evm_state_mut().get_mut(&address).unwrap().info.nonce = nonce;
+    }
 }
 
 #[cfg(feature = "monad")]
@@ -58,6 +75,14 @@ impl<DB: Database> FoundryJournal for monad_revm::MonadJournal<DB> {
 
     fn journal_inner(&self) -> &JournaledState {
         Journal::journal_inner(self)
+    }
+
+    fn loaded_account_nonce(&self, address: Address) -> u64 {
+        self.evm_state()[&address].info.nonce
+    }
+
+    fn set_loaded_account_nonce(&mut self, address: Address, nonce: u64) {
+        self.evm_state_mut().get_mut(&address).unwrap().info.nonce = nonce;
     }
 
     fn capture_reserve_balance(

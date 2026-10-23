@@ -652,3 +652,213 @@ unused = { endpoint = "http://127.0.0.1:1", profile = "other" }
 {"summary":{"total":1,"killed":1,"survived":0,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":100.0,"duration_secs":"{...}"},"survived_mutants":{}}
 "#]]);
 }
+
+#[forgetest_init]
+async fn endpoint_profile_fork_keeps_run_libraries_local(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test().with_hardfork(Some("paris".parse().unwrap()))).await;
+    prj.add_source(
+        "LocalRunLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor() { value = AutoLib.value(); }
+}
+contract LocalRunLibraries is Script {
+    function setUp() external { require(AutoLib.value() == 7); }
+    function run() external {
+        vm.startBroadcast();
+        UsesAutoLib child = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(child.value() == 7);
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "paris"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args([
+        "script",
+        "LocalRunLibraries",
+        "--rpc-url",
+        "local",
+        "--broadcast",
+        "--private-key",
+        PRIVATE_KEY,
+    ])
+    .assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/LocalRunLibraries.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    // Only the Paris library and the child belong on chain, not the Shanghai setup library.
+    assert_eq!(sequence["transactions"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["transactions"][1]["contractName"], "UsesAutoLib");
+    let sender =
+        sequence["transactions"][0]["transaction"]["from"].as_str().unwrap().parse().unwrap();
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_reinitializes_libraries_without_duplicate_transactions(
+    prj: _,
+    cmd: _,
+) {
+    prj.add_source(
+        "ForkLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor() { value = AutoLib.value(); }
+}
+contract ForkLibraries is Script {
+    function run(bool restore) external {
+        vm.createSelectFork("local");
+        uint256 snapshot = vm.snapshotState();
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        UsesAutoLib first = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(first.value() == 7);
+        if (restore) require(vm.revertToState(snapshot));
+        else vm.createSelectFork("local");
+        vm.startBroadcast(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+        UsesAutoLib second = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(second.value() == 7);
+    }
+}
+"#,
+    );
+    // A fresh fork of a profiled endpoint, and a snapshot of the `--rpc-url` endpoint whose run
+    // library was recorded during setup.
+    for (profile, restore) in [(true, false), (false, true)] {
+        let (_, node) = spawn(NodeConfig::test()).await;
+        let endpoint = if profile {
+            format!(r#"{{ endpoint = "{}", profile = "endpoint" }}"#, node.http_endpoint())
+        } else {
+            format!("\"{}\"", node.http_endpoint())
+        };
+        prj.create_file(
+            "foundry.toml",
+            &format!(
+                r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "paris"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {endpoint}
+"#
+            ),
+        );
+        let cmd = cmd.forge_fuse().args([
+            "script",
+            "ForkLibraries",
+            "--sig",
+            "run(bool)",
+            if restore { "true" } else { "false" },
+            "--broadcast",
+            "--unlocked",
+            "--sender",
+            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        ]);
+        if restore {
+            cmd.args(["--rpc-url", "local"]);
+        }
+        cmd.assert_success();
+        let sequence: Value = foundry_common::fs::read_json_file(
+            &prj.root().join("broadcast/ForkLibraries.sol/31337/run-latest.json"),
+        )
+        .unwrap();
+        // Local initialization on the second fork must not record or charge another library.
+        assert_eq!(sequence["transactions"].as_array().unwrap().len(), 3);
+        assert_eq!(sequence["receipts"].as_array().unwrap().len(), 3);
+        for (index, nonce) in [(0, "0x0"), (1, "0x1"), (2, "0x0")] {
+            assert_eq!(sequence["transactions"][index]["transaction"]["nonce"], nonce);
+        }
+    }
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_installs_libraries_before_local_creates(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalProfileLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor(uint256 marker) { value = AutoLib.value() + marker; }
+}
+contract LocalProfileLibraries is Script {
+    function run() external {
+        vm.interceptInitcode();
+        try new UsesAutoLib(42) { revert("creation was not intercepted"); }
+        catch (bytes memory initcode) {
+            uint256 marker;
+            assembly { marker := mload(add(initcode, mload(initcode))) }
+            require(marker == 42, "wrong intercepted initcode");
+        }
+        require(new UsesAutoLib(0).value() == 7);
+        vm.startBroadcast();
+        UsesAutoLib child = new UsesAutoLib(0);
+        vm.stopBroadcast();
+        require(child.value() == 7);
+    }
+}
+"#,
+    );
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "shanghai"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args([
+        "script",
+        "LocalProfileLibraries",
+        "--rpc-url",
+        "local",
+        "--broadcast",
+        "--private-key",
+        PRIVATE_KEY,
+    ])
+    .assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/LocalProfileLibraries.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    // A library installed locally still needs its on-chain deployment before the first child.
+    assert_eq!(sequence["transactions"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["transactions"][0]["transaction"]["nonce"], "0x0");
+    assert_eq!(sequence["transactions"][1]["transaction"]["nonce"], "0x1");
+    assert_eq!(sequence["transactions"][1]["contractName"], "UsesAutoLib");
+}
