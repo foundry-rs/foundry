@@ -1243,6 +1243,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth }
     }
 
+    /// Whether this create belongs to the local script/test or is itself recorded for broadcast.
+    /// Never replace initcode inside an ordinary on-chain factory call.
+    pub fn should_use_profile_init_code(&self, depth: usize, caller: Address) -> bool {
+        let depth = self.deploy_code_caller_depth(depth);
+        if let Some(broadcast) = &self.broadcast {
+            depth == broadcast.depth && caller == broadcast.original_caller
+        } else {
+            depth == 1 && caller != self.core.config.evm_opts.create2_deployer
+        }
+    }
+
     /// Applies the custom execution evm version, or on forks of profiled endpoints the spec of
     /// the profile to frames of non-persistent `target`s, except top-level creates.
     fn apply_execution_spec(

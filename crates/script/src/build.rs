@@ -340,7 +340,18 @@ fn chain_builds<FEN: FoundryEvmNetwork>(
                 .into_iter()
                 .map(|library| (library.address, library.bytecode))
                 .collect();
-            Ok(ChainBuild::new(build, artifacts, libraries))
+            let mut chain_build = ChainBuild::new(build, artifacts, libraries);
+            chain_build.config.libraries = output
+                .output
+                .libraries
+                .libs
+                .iter()
+                .flat_map(|(file, libs)| {
+                    libs.iter()
+                        .map(move |(name, address)| format!("{}:{name}:{address}", file.display()))
+                })
+                .collect();
+            Ok(chain_build)
         })
         .collect::<Result<Vec<_>>>()?;
     ChainBuild::by_endpoint(&script_config.config, builds)

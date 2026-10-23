@@ -1724,6 +1724,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             && ecx.journal().depth() > 0
             && let Some(cheats) = self.cheatcodes.as_deref()
             && !cheats.core.config.chain_builds.is_empty()
+            && cheats.should_use_profile_init_code(ecx.journal().depth(), inputs.caller())
             && let Some(run_artifacts) = &cheats.core.config.artifact_lookup
             && let Some(rpc) = ecx.db().active_fork_url()
             && let Some(build) = cheats.core.config.chain_builds.get(&rpc)

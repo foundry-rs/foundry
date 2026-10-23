@@ -910,6 +910,8 @@ impl Config {
         Ok(Self {
             solc: other.solc,
             evm_version: other.evm_version,
+            hardfork: other.hardfork,
+            create2_library_salt: other.create2_library_salt,
             networks: other.networks,
             optimizer: other.optimizer,
             optimizer_runs: other.optimizer_runs,
@@ -9813,5 +9815,32 @@ mod tests {
         assert_eq!(restriction.restrictions.solc.via_ir, Some(true));
         assert_eq!(fs::read_to_string(artifact).unwrap(), "existing artifact");
         assert_eq!(fs::read_to_string(cache).unwrap(), "existing cache");
+    }
+
+    #[test]
+    fn endpoint_profile_keeps_runtime_settings_separate_from_compiler_cache() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+[profile.default]
+evm_version = "cancun"
+[profile.first]
+hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+[profile.second]
+hardfork = "prague"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
+"#,
+            )?;
+            let config = Config::load().unwrap();
+            let first = config.with_profile_compiler_settings("first", Figment::new()).unwrap();
+            let second = config.with_profile_compiler_settings("second", Figment::new()).unwrap();
+            assert_ne!(first.hardfork, second.hardfork);
+            assert_eq!(first.create2_library_salt, B256::with_last_byte(1));
+            assert_eq!(second.create2_library_salt, B256::with_last_byte(2));
+            assert_eq!(first.profile_cache_path().unwrap(), second.profile_cache_path().unwrap());
+            Ok(())
+        });
     }
 }

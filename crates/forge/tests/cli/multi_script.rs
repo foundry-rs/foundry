@@ -10,6 +10,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_blocking_first_submission, spawn_rpc_proxy_recording_method,
         spawn_rpc_proxy_rejecting_method_when_enabled,
     },
+    str,
 };
 use serde_json::Value;
 use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
@@ -519,3 +520,135 @@ Ran 1 test for test/ProfileFork.t.sol:ProfileForkTest
 }
 
 const PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+#[forgetest_init]
+async fn endpoint_profile_fork_preserves_recorded_initcode_and_metadata(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.add_source(
+        "Recorded.sol",
+        r#"
+import "forge-std/Script.sol";
+library RecordedLib { function value() external pure returns (uint256) { return 7; } }
+contract RecordedChild {
+    uint256 public value;
+    constructor(uint256 x) { value = RecordedLib.value() + x; }
+}
+contract RecordedPlain { function value() external pure returns (uint256) { return 9; } }
+contract RecordedFactory {
+    function deploy(bytes memory code) external returns (address result) {
+        assembly { result := create(0, add(code, 32), mload(code)) }
+    }
+}
+contract RecordedScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        RecordedChild direct = new RecordedChild(42);
+        RecordedChild salted = new RecordedChild{salt: bytes32(block.number)}(43);
+        RecordedFactory factory = new RecordedFactory();
+        address nested = factory.deploy(type(RecordedPlain).creationCode);
+        vm.stopBroadcast();
+        require(direct.value() == 49 && salted.value() == 50);
+        require(keccak256(nested.code) == keccak256(type(RecordedPlain).runtimeCode));
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+optimizer = false
+[profile.endpoint]
+optimizer = true
+optimizer_runs = 777
+bytecode_hash = "none"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    for skip_simulation in [false, true] {
+        cmd.forge_fuse().args([
+            "script",
+            "RecordedScript",
+            "--rpc-url",
+            "local",
+            "--broadcast",
+            "--private-key",
+            PRIVATE_KEY,
+        ]);
+        if skip_simulation {
+            cmd.arg("--skip-simulation");
+        }
+        cmd.assert_success();
+        let sequence: Value = foundry_common::fs::read_json_file(
+            &prj.root().join("broadcast/Recorded.sol/31337/run-latest.json"),
+        )
+        .unwrap();
+        let children = sequence["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tx| tx["contractName"] == "RecordedChild")
+            .collect::<Vec<_>>();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0]["arguments"], serde_json::json!(["42"]));
+        assert_eq!(children[1]["arguments"], serde_json::json!(["43"]));
+        for (tx, expected) in children.into_iter().zip([49, 50]) {
+            let address = tx["contractAddress"].as_str().unwrap().parse().unwrap();
+            let value = node
+                .http_provider()
+                .call(
+                    alloy_rpc_types::TransactionRequest::default()
+                        .to(address)
+                        .input(hex!("3fa4f245").to_vec().into())
+                        .into(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(value[..], B256::with_last_byte(expected)[..]);
+        }
+    }
+}
+
+#[forgetest_init]
+fn endpoint_profiles_work_in_coverage_and_mutation(prj: _, cmd: _) {
+    prj.add_source("ProfileCounter.sol", "contract ProfileCounter { function value() external pure returns (uint256) { return 1; } }");
+    prj.add_test(
+        "ProfileCounter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "../src/ProfileCounter.sol";
+contract ProfileCounterTest is Test {
+    function test_value() public { assertEq(new ProfileCounter().value(), 1); }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[profile.other]
+optimizer = true
+[rpc_endpoints]
+unused = { endpoint = "http://127.0.0.1:1", profile = "other" }
+"#,
+    );
+    cmd.args(["coverage", "--match-contract", "ProfileCounterTest"]).assert_success();
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mutate",
+            "src/ProfileCounter.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-contract",
+            "ProfileCounterTest",
+            "--json",
+        ])
+        .assert_json_stdout(str![[r#"
+{"summary":{"total":1,"killed":1,"survived":0,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":100.0,"duration_secs":"{...}"},"survived_mutants":{}}
+"#]]);
+}

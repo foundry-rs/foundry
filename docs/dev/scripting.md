@@ -246,13 +246,16 @@ atomicity. Recovery must preserve independent per-chain progress and must not in
 completion permits skipping an operation on another.
 
 Endpoints that name a profile get a separate build of that profile's compiler settings, cached in
-`cache/profiles/<settings hash>`. Endpoints are mapped to profiles by URL without contacting them.
+`cache/profiles/<settings hash>`. Profiles with identical compiler settings share that build while
+retaining their own hardfork and CREATE2 library salt. Endpoints are mapped to profiles by URL
+without contacting them.
 On forks of the endpoint's URL, in scripts and tests:
 
 - `vm.getCode`, `vm.getDeployedCode` and `vm.deployCode` take the build's artifact.
-- `new C()` and `new C{salt: s}()` deploy the build's creation code of a project contract, with the
-  same constructor arguments. A CREATE2 address therefore follows from `vm.getCode`, not from
-  `type(C).creationCode`.
+- Direct script or test `new C()` and `new C{salt: s}()` deploy the build's creation code of a project
+  contract, with the same constructor arguments. A CREATE2 address therefore follows from
+  `vm.getCode`, not from `type(C).creationCode`. Calls into on-chain factories execute their supplied
+  initcode unchanged, so transaction simulation and broadcast reproduce script execution.
 - Frames of non-persistent accounts use the profile's spec. The script or test contract keeps the
   run's spec, and `vm.setEvmVersion` overrides both.
 
@@ -260,6 +263,11 @@ Scripts link profile builds with CREATE2 libraries and deploy them on each fork 
 broadcast, so multichain scripts support libraries unless they are deployed at nonce addresses.
 Tests link profile builds with the run's libraries, which persist across forks, unless the profile
 configures them.
+
+Constructor metadata and verification select artifacts from the endpoint's build and retain its
+compiler settings and linked library addresses. Run-profile deployments, including libraries
+prepared before broadcasting, retain the run build as a verification fallback. Coverage, mutation
+testing, and fuzz corpus replay pass endpoint builds to their test runners as well.
 
 ## Known failure windows
 

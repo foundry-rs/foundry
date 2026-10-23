@@ -887,11 +887,21 @@ pub fn compile_endpoint_profiles(
         .values()
         .filter_map(|endpoint| endpoint.profile.as_deref())
         .collect::<BTreeSet<_>>();
-    let mut builds = BTreeMap::<_, ProfileBuild>::new();
+    let mut builds = Vec::<ProfileBuild>::new();
+    let mut outputs = BTreeMap::<_, (PathBuf, ProjectCompileOutput)>::new();
     for profile in profiles {
         let config = config.with_profile_compiler_settings(profile, overrides.clone())?;
-        match builds.entry(config.profile_cache_path()?) {
-            Entry::Occupied(mut entry) => entry.get_mut().profiles.push(profile.to_string()),
+        let cache_path = config.profile_cache_path()?;
+        if let Some(build) = builds.iter_mut().find(|build| {
+            build.artifacts_dir == cache_path.join("artifacts")
+                && build.config.hardfork == config.hardfork
+                && build.config.create2_library_salt == config.create2_library_salt
+        }) {
+            build.profiles.push(profile.to_string());
+            continue;
+        }
+        let (artifacts_dir, output) = match outputs.entry(cache_path) {
+            Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let mut project = config.project()?;
                 project.paths.cache = entry.key().join(SOLIDITY_FILES_CACHE_FILENAME);
@@ -899,17 +909,17 @@ pub fn compile_endpoint_profiles(
                 project.paths.build_infos = entry.key().join("build-info");
                 project.paths.slash_paths();
                 let output = compiler(&config).compile(&project)?;
-                let artifacts_dir = project.paths.artifacts;
-                entry.insert(ProfileBuild {
-                    profiles: vec![profile.to_string()],
-                    config,
-                    artifacts_dir,
-                    output,
-                });
+                entry.insert((project.paths.artifacts, output))
             }
-        }
+        };
+        builds.push(ProfileBuild {
+            profiles: vec![profile.to_string()],
+            config,
+            artifacts_dir: artifacts_dir.clone(),
+            output: output.clone(),
+        });
     }
-    Ok(builds.into_values().collect())
+    Ok(builds)
 }
 
 /// Compiles the target contract requesting only ABI output and returns its ABI.
@@ -1245,5 +1255,47 @@ mod tests {
             sanitize_relative_path(Path::new("lib/openzeppelin")),
             Path::new("lib/openzeppelin")
         );
+    }
+
+    #[test]
+    fn endpoint_profiles_share_compilation_but_preserve_runtime_settings() {
+        foundry_config::figment::Jail::expect_with(|jail| {
+            jail.create_dir("src")?;
+            jail.create_file("src/Profile.sol", "pragma solidity >=0.8.0; contract Profile {}")?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+[profile.default]
+evm_version = "cancun"
+[profile.first]
+hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+[profile.second]
+hardfork = "prague"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
+[rpc_endpoints]
+first = { endpoint = "http://127.0.0.1:1", profile = "first" }
+second = { endpoint = "http://127.0.0.1:2", profile = "second" }
+"#,
+            )
+            .unwrap();
+            let config = Config::load().unwrap();
+            let count = std::cell::Cell::new(0);
+            let builds =
+                compile_endpoint_profiles(&config, foundry_config::figment::Figment::new(), |_| {
+                    count.set(count.get() + 1);
+                    ProjectCompiler::new().quiet(true)
+                })
+                .unwrap();
+            assert_eq!(count.get(), 1);
+            assert_eq!(builds.len(), 2);
+            assert_eq!(builds[0].artifacts_dir, builds[1].artifacts_dir);
+            assert_ne!(builds[0].config.hardfork, builds[1].config.hardfork);
+            assert_ne!(
+                builds[0].config.create2_library_salt,
+                builds[1].config.create2_library_salt
+            );
+            Ok(())
+        });
     }
 }

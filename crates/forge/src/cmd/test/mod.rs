@@ -1765,8 +1765,15 @@ impl TestArgs {
         &mut self,
         corpus_dir: &Path,
     ) -> Result<FuzzMinimizeReplaySession> {
-        let CompiledTestProject { mut config, mut evm_opts, output, filter, inline_config, .. } =
-            self.compile_project().await?;
+        let CompiledTestProject {
+            mut config,
+            mut evm_opts,
+            output,
+            filter,
+            inline_config,
+            profile_builds,
+            ..
+        } = self.compile_project().await?;
 
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -1782,11 +1789,13 @@ impl TestArgs {
 
         let override_networks = inline_config.referenced_override_networks(&config.profile);
         let (default_pass, override_passes) = network_passes(config, evm_opts, &override_networks);
+        let profile_builds = Arc::new(profile_builds);
         let mut passes = Vec::new();
         for NetworkPass { config, evm_opts, multi_network } in
             std::iter::once(default_pass).chain(override_passes)
         {
             let execution = TestExecutionOptions {
+                profile_builds: profile_builds.clone(),
                 multi_network,
                 ..TestExecutionOptions::default_run(inline_config.clone())
             };
@@ -1855,6 +1864,18 @@ impl TestArgs {
             filter,
             &execution.multi_network,
         )?;
+
+        if execution.profile_builds.is_empty() {
+            let overrides =
+                figment::Figment::new().merge(&self.build).merge(&self.evm).merge(&*self);
+            execution.profile_builds =
+                Arc::new(compile_endpoint_profiles(&config, overrides, |config| {
+                    ProjectCompiler::new()
+                        .external_compilers(config)
+                        .dynamic_test_linking(config.dynamic_test_linking)
+                        .quiet(shell::is_json() || self.junit)
+                })?);
+        }
 
         let mut filter = filter.clone();
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
@@ -2071,6 +2092,7 @@ impl TestArgs {
                         })
                         .collect::<Vec<_>>();
                     let mutation_config = MutationRunConfig {
+                        profile_overrides: figment::Figment::new().merge(&self.build).merge(&self.evm).merge(&*self),
                         mutate_paths: mutate.clone(),
                         mutate_path_pattern: self.mutate_path.clone(),
                         mutate_contract_pattern: self.mutate_contract.clone(),

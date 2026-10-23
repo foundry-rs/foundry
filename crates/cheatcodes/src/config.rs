@@ -311,6 +311,8 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
 /// Profile build used on forks of an `[rpc_endpoints]` entry naming the profile.
 #[derive(Clone, Debug)]
 pub struct ChainBuild {
+    /// Resolved compiler and execution configuration for verification.
+    pub config: Config,
     /// Profiles with the compiler settings of this build.
     pub profiles: Vec<String>,
     /// Linked artifacts of the build.
@@ -335,6 +337,7 @@ impl ChainBuild {
         create2_libraries: Vec<(Address, Bytes)>,
     ) -> Self {
         Self {
+            config: build.config.clone(),
             profiles: build.profiles.clone(),
             artifacts,
             artifacts_dir: build.artifacts_dir.clone(),
