@@ -1,6 +1,6 @@
 use crate::executors::{
     EarlyExit, EvmError, Executor, RawCallResult,
-    campaign::{apply_block_delay, execute_invariant_replay_tx},
+    campaign::{CampaignCallKind, apply_block_delay, execute_invariant_replay_tx},
     invariant::{
         IInvariantTest, call_after_invariant_function, call_invariant_function,
         error::{handler_edge_fingerprint, snapshot_edge_fingerprint},
@@ -16,7 +16,7 @@ use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder, evm::Foun
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::{cell::Cell, fmt::Write, hash::Hash};
+use std::{borrow::Cow, cell::Cell, fmt::Write, hash::Hash};
 
 const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
 
@@ -927,8 +927,14 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     // Candidates replay only up to their last kept call: the returned witness drops the delays of
     // removed trailing calls, so its value must not count them.
     // Campaigns score only after a call, so an empty witness must match the target exactly.
-    if check_sequence_value(executor.clone(), &[], &[], target_address, calldata.clone())?
-        == Some(target_value)
+    if check_sequence_value(
+        executor.clone(),
+        &[],
+        &[],
+        target_address,
+        calldata.clone(),
+        config.fail_on_revert,
+    )? == Some(target_value)
     {
         return Ok((vec![], target_value));
     }
@@ -962,6 +968,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
                 &sequence,
                 target_address,
                 calldata.clone(),
+                config.fail_on_revert,
             ) {
                 Ok(Some(value)) if value >= best => {
                     best = value;
@@ -1129,7 +1136,9 @@ fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
 /// Executes a call sequence and returns the optimization value (int256) from the invariant
 /// function. Used during shrinking for optimization mode.
 ///
-/// Returns `None` if the invariant call fails or doesn't return a valid int256.
+/// Returns `None` if the invariant call fails or doesn't return a valid int256, or if the campaign
+/// would not have scored the sequence: a kept call is rejected by `vm.assume`, reverts with
+/// `fail_on_revert`, or the last kept call reverts or fails its handler gate.
 /// Unlike `check_sequence`, this applies warp/roll from ALL calls (including removed ones).
 pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     mut executor: Executor<FEN>,
@@ -1137,10 +1146,12 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     sequence: &[usize],
     test_address: Address,
     calldata: Bytes,
+    fail_on_revert: bool,
 ) -> eyre::Result<Option<I256>> {
     let mut accumulated_warp = U256::ZERO;
     let mut accumulated_roll = U256::ZERO;
     let mut seq_iter = sequence.iter().peekable();
+    let mut last_call_scored = true;
 
     for (idx, tx) in calls.iter().enumerate() {
         accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
@@ -1151,11 +1162,30 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 
             let tx_with_accumulated =
                 apply_warp_roll(tx.clone(), accumulated_warp, accumulated_roll);
-            execute_invariant_replay_tx(&mut executor, &tx_with_accumulated)?;
+            let (kind, call_result) =
+                execute_invariant_replay_tx(&mut executor, &tx_with_accumulated)?;
+            // Campaigns drop rejected calls and stop on a revert under `fail_on_revert`; a
+            // handler assertion failure is recorded as a handler bug instead.
+            if kind == CampaignCallKind::AssumptionRejected
+                || (call_result.reverted
+                    && fail_on_revert
+                    && !did_fail_on_assert(&call_result, &call_result.state_changeset))
+            {
+                return Ok(None);
+            }
+            // Campaigns sample the score only after a call that passes the handler gate.
+            last_call_scored = executor.is_success_handler_gate(
+                test_address,
+                call_result.reverted,
+                Cow::Borrowed(&call_result.state_changeset),
+            );
 
             accumulated_warp = U256::ZERO;
             accumulated_roll = U256::ZERO;
         }
+    }
+    if !last_call_scored {
+        return Ok(None);
     }
 
     // Apply any remaining accumulated warp/roll before calling invariant.
@@ -1281,7 +1311,7 @@ mod tests {
                 executor.inspector_mut().cheatcodes.as_mut().unwrap().block = block;
             }
             let value =
-                check_sequence_value(executor, &calls, sequence, test_address, Bytes::new())
+                check_sequence_value(executor, &calls, sequence, test_address, Bytes::new(), false)
                     .unwrap();
             assert_eq!(value, expected);
         }
