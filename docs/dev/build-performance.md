@@ -15,8 +15,8 @@ of the whole workspace, so switching between selections reuses existing artifact
 single-package build then compiles more: for example, `cargo build -p cast` grows from 978 to 1046
 units.
 
-Enable it for every Cargo invocation of the current user in `~/.cargo/config.toml`, or in a local
-`.cargo/config.toml` that you do not commit:
+Enable it in `~/.cargo/config.toml`, or in a `.cargo/config.toml` in a directory above your checkout,
+which Cargo merges with the repository's own `.cargo/config.toml`:
 
 ```toml
 [unstable]
