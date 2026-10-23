@@ -5764,6 +5764,7 @@ dependencies = [
 name = "foundry-cli"
 version = "1.8.7"
 dependencies = [
+ "ahash",
  "alloy-chains",
  "alloy-dyn-abi",
  "alloy-eips",
@@ -10835,7 +10836,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d38e16b72ec1c836ec8490562bfb21003165ea8bc496086bf345680a6e6c41"
 dependencies = [
  "bitvec",
- "paste",
  "phf 0.14.0",
  "revm-primitives 43.0.0",
  "serde",
