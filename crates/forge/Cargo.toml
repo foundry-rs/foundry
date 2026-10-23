@@ -112,9 +112,9 @@ tempfile.workspace = true
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
-axum = { workspace = true, features = ["form"] }
 alloy-rpc-types.workspace = true
 async-lsp.workspace = true
+axum = { workspace = true, features = ["form"] }
 tokio-util.workspace = true
 futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
