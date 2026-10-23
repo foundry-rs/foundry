@@ -67,7 +67,7 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
 }
 
 /// Helper trait get access to the full state data of the database
-pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
+pub trait MaybeFullDatabase: crate::mem::DatabaseRef {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
     }
@@ -179,6 +179,9 @@ pub trait MaybeForkedDatabase {
 /// `dyn Db` satisfies all `alloy_evm::Database` requirements via its supertraits, but the
 /// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
 impl alloy_evm::Database for dyn Db {}
+
+/// A borrowed, type-erased state that overlays are built on, so that EVMs are monomorphized once.
+pub type StateRef<'a> = &'a (dyn MaybeFullDatabase + Send + Sync);
 
 /// A wrapper around [`CacheDB`] that executes transactions at `spec`.
 #[derive(Debug)]
