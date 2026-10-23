@@ -1110,6 +1110,20 @@ ignore them in the `.gitignore` file."
         Ok(())
     }
 
+    /// Checks out a branch without fetching or resetting an existing local branch.
+    pub fn checkout_branch(self, recursive: bool, branch: &str) -> Result<()> {
+        validate_checkout_ref(branch.as_ref())?;
+        if self.has_branch(branch, self.root)? {
+            return self.checkout(recursive, branch);
+        }
+        self.cmd()
+            .arg("checkout")
+            .args(recursive.then_some("--recurse-submodules"))
+            .args(["-b", branch, &format!("refs/remotes/origin/{branch}"), "--"])
+            .exec()
+            .map(drop)
+    }
+
     fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
@@ -1279,6 +1293,7 @@ mod tests {
         fs::write(tmp.path().join("file"), "dirty\n").unwrap();
 
         assert!(git.checkout_at("-f", tmp.path()).is_err());
+        assert!(git.checkout_branch(false, "-f").is_err());
         assert_eq!(fs::read_to_string(tmp.path().join("file")).unwrap(), "dirty\n");
     }
 
