@@ -70,7 +70,7 @@ update_cargo_toml() {
   local old_rev="$1"
   local new_rev="$2"
 
-  sed -i "s|git = \"https://github.com/paradigmxyz/solar\", rev = \"$old_rev\"|git = \"https://github.com/paradigmxyz/solar\", rev = \"$new_rev\"|g" "$CARGO_TOML"
+  sed -i "s|git = \"https://github.com/paradigmxyz/solar\", rev = \"$old_rev\"|git = \"https://github.com/paradigmxyz/solar\", rev = \"$new_rev\"|g" "$CARGO_TOML" "$REPO_ROOT/.config/hakari.toml"
   echo "Updated Cargo.toml: $old_rev -> $new_rev"
 }
 

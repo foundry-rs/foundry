@@ -281,6 +281,9 @@ jobs:
   hakari:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 10
+    env:
+      # Only `cargo metadata` runs here, and sccache is not installed.
+      RUSTC_WRAPPER: ""
     permissions:
       id-token: write
       contents: read
@@ -295,7 +298,7 @@ jobs:
           toolchain: stable
       - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
-          tool: cargo-hakari
+          tool: cargo-hakari@0.9.39
       - run: cargo hakari generate --diff
       - run: cargo hakari manage-deps --dry-run
 

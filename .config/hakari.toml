@@ -19,6 +19,8 @@ platforms = [
 # Keep optional, feature-gated stacks out of the workspace-hack so that a single binary built with
 # default features does not compile them.
 [traversal-excludes]
+# The solar binary is built on its own and keeps its own features.
+workspace-members = ["solar"]
 third-party = [
     { name = "alloy-signer-aws" },
     { name = "alloy-signer-gcp" },
@@ -40,7 +42,7 @@ third-party = [
     { name = "base-protocol", git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72" },
 ]
 
-# Keep feature-gated features of these packages out of the workspace-hack: foundry-wallets carries the
+# Keep optional features of these packages out of the workspace-hack: foundry-wallets carries the
 # KMS and Turnkey signers, revm-inspectors the JS tracer, and solar's clap support pulls vergen.
 [final-excludes]
 third-party = [

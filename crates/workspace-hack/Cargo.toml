@@ -5,10 +5,6 @@
 # one. Do not edit the section below by hand. After changing dependencies or features, run:
 #
 #     cargo hakari generate && cargo hakari manage-deps
-#
-# CI runs `cargo hakari generate --diff` and `cargo hakari manage-deps --dry-run`. Optional stacks
-# that a default build must not compile (cloud signers, JS tracer, tracy, mimalloc, solar CLI) are
-# excluded in `.config/hakari.toml`.
 
 [package]
 name = "workspace-hack"

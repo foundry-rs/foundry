@@ -12185,7 +12185,6 @@ name = "solar"
 version = "1.8.7"
 dependencies = [
  "solar-cli",
- "workspace-hack",
 ]
 
 [[package]]

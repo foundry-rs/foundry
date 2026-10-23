@@ -71,7 +71,7 @@ update_cargo_toml() {
   local old_rev="$1"
   local new_rev="$2"
 
-  sed -i "s|git = \"https://github.com/tempoxyz/tempo\", rev = \"$old_rev\"|git = \"https://github.com/tempoxyz/tempo\", rev = \"$new_rev\"|g" "$CARGO_TOML"
+  sed -i "s|git = \"https://github.com/tempoxyz/tempo\", rev = \"$old_rev\"|git = \"https://github.com/tempoxyz/tempo\", rev = \"$new_rev\"|g" "$CARGO_TOML" "$REPO_ROOT/crates/workspace-hack/Cargo.toml"
   echo "Updated Cargo.toml: $old_rev -> $new_rev"
 }
 

@@ -19,7 +19,6 @@ path = "bin/main.rs"
 
 [dependencies]
 solar-cli.workspace = true
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [features]
 default = ["jemalloc", "asm-keccak"]
