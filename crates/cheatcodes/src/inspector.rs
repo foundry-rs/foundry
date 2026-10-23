@@ -34,7 +34,7 @@ use foundry_common::{
     },
 };
 use foundry_evm_core::{
-    Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
+    Breakpoints, EvmEnv, FoundryJournal, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{
         ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState, LocalForkId, RevertDiagnostic,
@@ -68,7 +68,7 @@ use revm::{
 };
 use std::{
     cmp::max,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::Debug,
     ops::Range,
     sync::{Arc, OnceLock},
@@ -549,8 +549,8 @@ impl ArbitraryStorage {
     }
 }
 
-/// Broadcaster, salt and CREATE2 libraries to deploy before the first broadcast to a fork.
-pub type ChainLibraries = (Address, B256, Vec<(Address, Bytes)>);
+/// Broadcaster, if any, salt and CREATE2 libraries needed on the active fork.
+pub type ChainLibraries = (Option<Address>, B256, Vec<(Address, Bytes)>);
 
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
@@ -794,8 +794,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Spec of the run, restored for persistent accounts on forks of profiled endpoints.
     run_spec: Option<SpecFor<FEN>>,
 
-    /// RPC urls of the forks whose CREATE2 libraries were deployed.
-    chain_libraries_deployed: BTreeSet<String>,
+    /// CREATE2 libraries found missing on a fork, keyed by RPC and address, with the sender and
+    /// nonce of their recorded deployment.
+    chain_library_deployments: BTreeMap<(String, Address), Option<(Address, u64)>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -869,7 +870,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             capture_isolated_snapshot_restore: false,
             deploy_code_depth: None,
             run_spec: None,
-            chain_libraries_deployed: Default::default(),
+            chain_library_deployments: Default::default(),
         }
     }
 
@@ -1632,13 +1633,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
                     if !isolate_call {
-                        let account = ecx
-                            .journal_mut()
-                            .evm_state_mut()
-                            .get_mut(&broadcast.new_origin)
-                            .unwrap();
-                        let prev = account.info.nonce;
-                        account.info.nonce += 1;
+                        let prev = ecx.journal().loaded_account_nonce(broadcast.new_origin);
+                        ecx.journal_mut().set_loaded_account_nonce(broadcast.new_origin, prev + 1);
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if broadcast.single_call {
@@ -1968,51 +1964,73 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.env_overrides.is_any_set()
     }
 
-    /// Returns the broadcaster, salt and CREATE2 libraries to deploy before the first broadcast
-    /// to `rpc`: those of the endpoint's profile build, or the run's libraries, which the runner
-    /// already deploys on the `--rpc-url` endpoint.
-    pub fn take_chain_libraries(
-        &mut self,
+    /// Returns the CREATE2 libraries needed on the fork of `rpc` by a frame of the script, and
+    /// the broadcaster if the frame is broadcast: those of the endpoint's profile build, or the
+    /// run's libraries.
+    pub fn chain_libraries(
+        &self,
         rpc: &str,
         depth: usize,
         caller: Address,
+        input: &[u8],
     ) -> Option<ChainLibraries> {
         let config = &self.core.config;
-        let broadcast = self.broadcast.as_ref()?;
         let depth = self.deploy_code_caller_depth(depth);
-        if depth < broadcast.depth
-            || caller != broadcast.original_caller
-            || (depth != broadcast.depth && !broadcast.deploy_from_code)
-            || self.chain_libraries_deployed.contains(rpc)
-        {
-            return None;
-        }
+        let sender = self
+            .broadcast
+            .as_ref()
+            .filter(|broadcast| {
+                caller == broadcast.original_caller
+                    && (depth == broadcast.depth
+                        || (depth > broadcast.depth && broadcast.deploy_from_code))
+            })
+            .map(|broadcast| broadcast.new_origin);
         let (salt, libraries) = match config.chain_builds.get(rpc) {
-            Some(build) => (build.create2_library_salt, &build.create2_libraries),
-            None if config.evm_opts.fork_url.as_deref() != Some(rpc) => {
-                (config.create2_library_salt, &config.create2_libraries)
+            Some(build) if sender.is_some() || self.should_use_profile_init_code(depth, caller) => {
+                (build.create2_library_salt, &build.create2_libraries)
             }
-            None => return None,
+            None if sender.is_some() => (config.create2_library_salt, &config.create2_libraries),
+            _ => return None,
         };
         if libraries.is_empty() {
             return None;
         }
-        self.chain_libraries_deployed.insert(rpc.to_string());
-        Some((broadcast.new_origin, salt, libraries.clone()))
+        Some((
+            sender,
+            salt,
+            if config.chain_builds.contains_key(rpc) {
+                libraries.clone()
+            } else {
+                referenced_chain_libraries(input, libraries)
+            },
+        ))
     }
 
-    /// Records a CREATE2 library deployment by `from` as a broadcastable transaction.
+    /// Remembers a library `missing` on the active fork, and records its deployment by `from`
+    /// once per endpoint. Returns the nonce of `from` following its recorded deployment, which
+    /// a fresh fork of the endpoint may predate.
     pub fn record_library_deployment(
         &mut self,
-        ecx: &mut FoundryContextFor<'_, FEN>,
-        from: Address,
+        ecx: &FoundryContextFor<'_, FEN>,
+        from: Option<(Address, u64)>,
+        address: Address,
+        missing: bool,
         create2_deployer: Address,
         input: Bytes,
-    ) {
+    ) -> Option<u64> {
+        let rpc = ecx.db().active_fork_url()?;
+        let key = (rpc.clone(), address);
+        if missing {
+            self.chain_library_deployments.entry(key.clone()).or_default();
+        }
+        let (from, nonce) = from?;
+        let recorded = self.chain_library_deployments.get_mut(&key)?;
+        if let Some((sender, nonce)) = *recorded {
+            return (sender == from).then_some(nonce + 1);
+        }
+        *recorded = Some((from, nonce));
         let chain_id = ecx.cfg().chain_id();
-        let rpc = ecx.db().active_fork_url();
         let fee_token = ecx.tx().fee_token();
-        let nonce = ecx.journal().evm_state()[&from].info.nonce;
         let mut tx_req = TransactionRequestFor::<FEN>::default()
             .with_from(from)
             .with_to(create2_deployer)
@@ -2023,12 +2041,47 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             tx_req.set_fee_token(fee_token);
         }
         self.broadcastable_transactions.push_back(BroadcastableTransaction {
-            rpc,
+            rpc: Some(rpc),
             transaction: TransactionMaybeSigned::new(tx_req),
             contract_address: None,
         });
         debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable library deployment");
+        Some(nonce + 1)
     }
+
+    /// Registers a library deployment already recorded by the script runner on `rpc`.
+    pub fn mark_library_deployment_recorded(
+        &mut self,
+        rpc: String,
+        address: Address,
+        sender: Address,
+        nonce: u64,
+    ) {
+        self.chain_library_deployments.insert((rpc, address), Some((sender, nonce)));
+    }
+}
+
+/// Returns the linked CREATE2 libraries referenced by `input` and their transitive dependencies.
+fn referenced_chain_libraries(
+    input: &[u8],
+    libraries: &[(Address, Bytes)],
+) -> Vec<(Address, Bytes)> {
+    let mut inputs = VecDeque::from([input]);
+    let mut referenced = Vec::new();
+    while let Some(input) = inputs.pop_front() {
+        for (address, code) in libraries {
+            if referenced.iter().any(|(referenced, _)| referenced == address)
+                || !input
+                    .windows(address.as_slice().len())
+                    .any(|window| window == address.as_slice())
+            {
+                continue;
+            }
+            referenced.push((*address, code.clone()));
+            inputs.push_back(code.as_ref());
+        }
+    }
+    referenced
 }
 
 const fn frame_gas(result: &InterpreterResult) -> Vm::Gas {

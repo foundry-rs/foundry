@@ -17,7 +17,7 @@ use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::{ChainBuild, Wallets};
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, LIBRARY_DEPLOYER,
     compile::{ProfileBuild, ProjectCompiler, compile_endpoint_profiles},
     external_compiler::is_builtin_compiler_source,
     fs::canonicalize_path,
@@ -65,6 +65,30 @@ impl BuildData {
         self,
         script_config: &ScriptConfig<FEN>,
     ) -> Result<LinkedBuildData> {
+        // The run build is only used locally on a profiled endpoint. Its libraries must not
+        // enter that endpoint's broadcast plan or share addresses with its profile libraries.
+        if script_config
+            .evm_opts
+            .fork_url
+            .as_ref()
+            .is_some_and(|rpc| script_config.chain_builds.contains_key(rpc))
+        {
+            let output = self.get_linker().link_with_nonce_or_address_detailed(
+                script_config.config.libraries_with_remappings()?,
+                LIBRARY_DEPLOYER,
+                0,
+                [&self.target],
+            )?;
+            return LinkedBuildData::new(
+                output.output.libraries,
+                ScriptPredeployLibraries::Default {
+                    onchain: Vec::new(),
+                    local: output.linked_libraries,
+                },
+                self,
+            );
+        }
+
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = script_config
             .backend
