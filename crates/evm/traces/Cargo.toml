@@ -59,6 +59,7 @@ yansi.workspace = true
 [dev-dependencies]
 ron.workspace = true
 snapbox.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]

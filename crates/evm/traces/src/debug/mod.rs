@@ -9,7 +9,7 @@ use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
-pub use sources::{ArtifactData, ContractSources, DebugSourceScope, DebugVariable, SourceData};
+pub use sources::{ArtifactData, ContractSources, SourceData};
 
 #[derive(Clone, Debug)]
 pub struct DebugTraceIdentifier {
