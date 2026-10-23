@@ -734,7 +734,16 @@ impl Installer<'_> {
         }
         let url = dep.url.as_ref().unwrap();
 
-        let res = self.git.root(path).checkout(recurse, &tag);
+        // Check out tags by their full ref: a bare name prefers a local branch with the same
+        // name, while `foundry.lock` records the tag. Names substituted by branch matching are
+        // not recorded as tags, so they keep the bare name.
+        let checkout_ref =
+            if dep.tag.as_deref() == Some(tag.as_str()) && self.git.has_tag(&tag, path)? {
+                format!("refs/tags/{tag}")
+            } else {
+                tag.clone()
+            };
+        let res = self.git.root(path).checkout(recurse, checkout_ref);
         if let Err(mut e) = res {
             // remove dependency on failed checkout
             fs::remove_dir_all(path)?;

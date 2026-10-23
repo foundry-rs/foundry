@@ -1870,6 +1870,39 @@ fn install_with_quoted_submodule_branch(prj: _, cmd: _) {
     );
 }
 
+// Installing a tag whose name matches the dependency's default branch checks out and locks the
+// tag commit, and `forge update` keeps it there instead of switching to the branch.
+#[forgetest]
+fn install_tag_shadowed_by_same_name_default_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let source_git = Git::new(source.path());
+    let tag_rev = source_git.head().unwrap();
+    // Make a `v1` branch that diverges from the `v1` tag and is the remote's default branch.
+    for args in [&["tag", "v1"][..], &["checkout", "-b", "v1"]] {
+        let output = Command::new("git").current_dir(source.path()).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+    fs::write(source.path().join("source.txt"), "branch source\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("branch").unwrap();
+
+    let dep = Path::new("lib/parent");
+    let tag =
+        DepIdentifier::Tag { name: "v1".to_string(), rev: tag_rev.clone(), r#override: false };
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "fixture/parent@tag=v1"]).assert_success();
+    assert_eq!(Git::new(&prj.root().join(dep)).head().unwrap(), tag_rev);
+    assert_eq!(lockfile_get(prj.root(), dep), Some(tag.clone()));
+
+    // Restoring the locked tag must not switch to the branch.
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("update").assert_success();
+    assert_eq!(Git::new(&prj.root().join(dep)).head().unwrap(), tag_rev);
+    assert_eq!(lockfile_get(prj.root(), dep), Some(tag));
+}
+
 fn add_local_submodule(root: &Path, source: &Path) {
     let output = Command::new("git")
         .current_dir(root)
