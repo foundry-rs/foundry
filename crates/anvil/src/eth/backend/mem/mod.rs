@@ -8619,10 +8619,14 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             self.fees.set_blob_excess_gas_and_price(blob_excess_gas_and_price);
         }
 
-        self.db.write().await.set_block_hashes(block_hashes);
+        let mut db = self.db.write().await;
+        db.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = historical_states {
-            self.states.write().load_states(historical_states);
+            let mut states = self.states.write();
+            for (hash, state_snapshot) in historical_states {
+                states.insert(hash, db.historical_state(state_snapshot));
+            }
         }
 
         Ok(true)

@@ -422,6 +422,13 @@ pub trait Db:
 
     /// Returns the current, standalone state of the Db
     fn current_state(&self) -> StateDb;
+
+    /// Rebuilds a historical state from a serialized state snapshot.
+    fn historical_state(&self, state_snapshot: StateSnapshot) -> StateDb {
+        let mut state = StateDb::new(MemDb::default());
+        state.init_from_state_snapshot(state_snapshot);
+        state
+    }
 }
 
 /// Convenience impl only used to use any `Db` on the fly as the db layer for revm's CacheDB

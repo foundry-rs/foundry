@@ -712,6 +712,89 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     assert_eq!(greeting_after_change, "World!");
 }
 
+// Historical states loaded into a fork must still read uncached accounts from the fork.
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_historical_states_fall_back_to_remote_after_load() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin.http_provider();
+    let sender = origin.dev_accounts().next().unwrap();
+    let remote_account = Address::repeat_byte(0x42);
+    let local_account = Address::repeat_byte(0x11);
+    let send = |to, value| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(to)
+                .with_value(U256::from(value)),
+        )
+    };
+
+    let greeter = Greeter::deploy(&origin_provider, "untouched".to_string()).await.unwrap();
+    origin_provider
+        .send_transaction(send(remote_account, 12345))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let fork_block = origin_provider.get_block_number().await.unwrap();
+    let remote_code = origin_provider.get_code_at(*greeter.address()).await.unwrap();
+    let remote_slot = origin_provider.get_storage_at(*greeter.address(), U256::ZERO).await.unwrap();
+    assert_ne!(remote_code, Bytes::new());
+    assert_ne!(remote_slot, U256::ZERO);
+
+    let fork_config = || {
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_block_number(Some(fork_block))
+    };
+    // Mine two local blocks without reading the remote contract or account on the fork.
+    let (fork_api, fork) = spawn(fork_config()).await;
+    let fork_provider = fork.http_provider();
+    for value in [777, 1000] {
+        fork_provider
+            .send_transaction(send(local_account, value))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+    }
+    // A head-only change that must not leak into the restored history.
+    fork_api.anvil_set_balance(remote_account, U256::from(1)).await.unwrap();
+    let state = fork_api.serialized_state(true).await.unwrap();
+
+    let (loaded_api, loaded) = spawn(fork_config().with_init_state(Some(state))).await;
+    let provider = loaded.http_provider();
+    assert_eq!(provider.get_block_number().await.unwrap(), fork_block + 2);
+
+    for number in [fork_block, fork_block + 1] {
+        let block = BlockId::number(number);
+        assert_eq!(
+            provider.get_code_at(*greeter.address()).block_id(block).await.unwrap(),
+            remote_code
+        );
+        assert_eq!(
+            provider.get_storage_at(*greeter.address(), U256::ZERO).block_id(block).await.unwrap(),
+            remote_slot
+        );
+        assert_eq!(
+            provider.get_balance(remote_account).block_id(block).await.unwrap(),
+            U256::from(12345)
+        );
+    }
+    let fork_block_1 = BlockId::number(fork_block + 1);
+    assert_eq!(
+        provider.get_balance(local_account).block_id(fork_block_1).await.unwrap(),
+        U256::from(777)
+    );
+
+    // Rolling back restores the loaded historical state as the live state.
+    loaded_api.anvil_rollback(Some(1)).await.unwrap();
+    assert_eq!(provider.get_balance(local_account).await.unwrap(), U256::from(777));
+    assert_eq!(provider.get_code_at(*greeter.address()).await.unwrap(), remote_code);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn revert_removes_historical_states_of_discarded_blocks() {
     let (api, _handle) = spawn(NodeConfig::test()).await;

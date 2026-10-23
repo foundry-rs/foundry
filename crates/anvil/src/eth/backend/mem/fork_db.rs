@@ -14,7 +14,7 @@ use foundry_evm::{
 };
 use revm::{
     context::BlockEnv,
-    database::{Database, DbAccount},
+    database::{CacheDB, Database, DbAccount},
     state::AccountInfo,
 };
 
@@ -113,6 +113,13 @@ impl<N: Network> Db for ForkedDatabase<N> {
 
     fn current_state(&self) -> StateDb {
         StateDb::new(self.create_state_snapshot())
+    }
+
+    fn historical_state(&self, state_snapshot: StateSnapshot) -> StateDb {
+        // Fall back to the fork for anything the snapshot did not capture.
+        let mut state = StateDb::new(CacheDB::new(self.database().db.clone()));
+        state.init_from_state_snapshot(state_snapshot);
+        state
     }
 }
 
