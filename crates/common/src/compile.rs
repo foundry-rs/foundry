@@ -252,8 +252,8 @@ impl ProjectCompiler {
 
     /// Sets whether compiled contracts may depend on externally linked Solidity libraries.
     ///
-    /// This does not disable dynamic test linking. With `bail(false)`, callers must validate the
-    /// returned output with [`ensure_no_linked_libraries`] after handling compiler diagnostics.
+    /// This does not disable dynamic test linking. With `bail(false)`, violations are reported as
+    /// compiler errors in the returned output.
     pub const fn allow_linked_libraries(mut self, allow: bool) -> Self {
         self.allow_linked_libraries = allow;
         self
@@ -364,7 +364,7 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter_and_settings(
+        let mut output = with_compilation_reporter_and_settings(
             quiet,
             Some(self.project_root.clone()),
             self.print_compiler_settings,
@@ -384,12 +384,11 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
-        let linking_error = (!self.allow_linked_libraries && !output.has_compiler_errors())
-            .then(|| ensure_no_linked_libraries(&output))
-            .and_then(Result::err);
-        let has_linking_errors = linking_error.is_some();
-        if bail && let Some(error) = linking_error {
-            return Err(error);
+        let mut linking_error = (!self.allow_linked_libraries && !output.has_compiler_errors())
+            .then(|| linked_libraries_error(&output, &self.project_root))
+            .flatten();
+        if !bail && let Some(message) = linking_error.take() {
+            push_linked_libraries_error(&mut output, message);
         }
 
         if !quiet && !shell::is_json() {
@@ -401,8 +400,13 @@ impl ProjectCompiler {
             }
         }
 
+        // Report compiler warnings before the policy failure.
+        if let Some(message) = linking_error {
+            eyre::bail!("{message}");
+        }
+
         // Quiet mode suppresses reports, but size limits still apply.
-        if !(shell::is_json() && (output.has_compiler_errors() || has_linking_errors)) {
+        if !(shell::is_json() && output.has_compiler_errors()) {
             self.handle_output(&output)?;
         }
 
@@ -1146,24 +1150,55 @@ impl std::fmt::Debug for PathOrContractInfo {
     }
 }
 
-/// Rejects artifacts with Solidity library dependencies in creation or runtime bytecode.
+/// Describes the Solidity library dependencies in creation or runtime bytecode, if any.
 ///
 /// Includes cached artifacts and permits internal libraries and dynamic test linking helpers.
-pub fn ensure_no_linked_libraries<C: Compiler<CompilerContract = Contract>>(
+fn linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
     output: &ProjectCompileOutput<C>,
-) -> Result<()> {
+    root: &Path,
+) -> Option<String> {
     let violations = output
         .artifact_ids()
-        .filter(|(_, artifact)| !artifact.all_link_references().is_empty())
-        .map(|(id, _)| id.identifier())
+        .flat_map(|(id, artifact)| {
+            let contract = id.with_stripped_file_prefixes(root).identifier();
+            artifact.all_link_references().into_iter().flat_map(move |(file, libs)| {
+                let contract = contract.clone();
+                libs.into_keys().map(move |lib| format!("{contract} links {file}:{lib}"))
+            })
+        })
         .collect::<BTreeSet<_>>();
-    if !violations.is_empty() {
-        eyre::bail!(
-            "Linked libraries are not allowed but the following contracts use linked libraries:\n  {}",
+    (!violations.is_empty()).then(|| {
+        format!(
+            "Linked libraries are not allowed (`allow_linked_libraries = false`):\n  {}\n\
+             help: make the library functions `internal` to inline them, or set \
+             `allow_linked_libraries = true`",
             violations.into_iter().collect::<Vec<_>>().join("\n  ")
-        );
+        )
+    })
+}
+
+/// Appends a linked-library policy error to solc or multi-compiler diagnostics.
+fn push_linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
+    output: &mut ProjectCompileOutput<C>,
+    message: String,
+) {
+    let error = SolcError {
+        source_location: None,
+        secondary_source_locations: Vec::new(),
+        r#type: "LinkedLibraryError".to_string(),
+        component: "foundry".to_string(),
+        severity: Severity::Error,
+        error_code: None,
+        message,
+        formatted_message: None,
+    };
+    // CompilationError has no constructor; downcast to the concrete diagnostics instead.
+    let errors = &mut output.output_mut().errors as &mut dyn Any;
+    if let Some(errors) = errors.downcast_mut::<Vec<SolcError>>() {
+        errors.push(error);
+    } else if let Some(errors) = errors.downcast_mut::<Vec<MultiCompilerError>>() {
+        errors.push(MultiCompilerError::Solc(error));
     }
-    Ok(())
 }
 
 /// Recognizes only solc code-generation failures that DTL's source rewrites can introduce.
@@ -1373,21 +1408,15 @@ endpoint = { endpoint = "http://127.0.0.1:1", profile = "endpoint" }
                     ProjectCompiler::new().quiet(true)
                 })
             };
-            let builds = compile(&config).unwrap();
-            let consumer = builds[0]
-                .output
-                .artifact_ids()
-                .find(|(id, _)| id.name == "Consumer")
-                .unwrap()
-                .0
-                .identifier();
+            compile(&config).unwrap();
             config.allow_linked_libraries = false;
             for _ in 0..2 {
                 assert_eq!(
                     compile(&config).unwrap_err().to_string(),
-                    format!(
-                        "Linked libraries are not allowed but the following contracts use linked libraries:\n  {consumer}"
-                    )
+                    "Linked libraries are not allowed (`allow_linked_libraries = false`):\n  \
+                     src/Consumer.sol:Consumer links src/Consumer.sol:Lib\n\
+                     help: make the library functions `internal` to inline them, or set \
+                     `allow_linked_libraries = true`"
                 );
             }
             config.allow_linked_libraries = true;

@@ -623,8 +623,9 @@ contract Consumer {
     );
 
     cmd.args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]]);
 }
@@ -700,8 +701,9 @@ contract Consumer {
     prj.update_config(|config| config.allow_linked_libraries = false);
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]]);
 }
@@ -744,9 +746,10 @@ contract Consumer2 {
     );
 
     cmd.args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer1
-  [..]:Consumer2
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer1.sol:Consumer1 links src/Lib.sol:Lib
+  src/Consumer2.sol:Consumer2 links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]]);
 }
@@ -1874,8 +1877,9 @@ fn disallow_linked_libraries_prelinked_cache(prj: _, cmd: _) {
     prj.update_config(|config| config.allow_linked_libraries = false);
     for args in [vec!["build"], vec!["build"], vec!["build", "--force"]] {
         cmd.forge_fuse().args(args).assert_failure().stderr_eq(str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]]);
     }
@@ -1890,8 +1894,9 @@ fn disallow_linked_libraries_cached_unlinked(prj: _, cmd: _) {
     for _ in 0..2 {
         cmd.forge_fuse().args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]],
         );
@@ -1916,8 +1921,9 @@ allow_linked_libraries = true
         cmd.env("FOUNDRY_PROFILE", profile);
         cmd.forge_fuse().args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]],
         );
@@ -1953,36 +1959,40 @@ contract LinkedScript {
         (
             vec!["test", "--match-test", "testLinked"],
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
-  [..]:LinkedTest
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+  test/Linked.t.sol:LinkedTest links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]],
         ),
         (
             vec!["script", "script/Linked.s.sol:LinkedScript"],
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:LinkedScript
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  script/Linked.s.sol:LinkedScript links src/Lib.sol:Lib
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]],
         ),
         (
             vec!["create", "src/Consumer.sol:Consumer", "--chain", "1"],
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]],
         ),
         (
             vec!["coverage", "--quiet"],
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:LinkedScript
-  [..]:Consumer
-  [..]:LinkedTest
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  script/Linked.s.sol:LinkedScript links src/Lib.sol:Lib
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+  test/Linked.t.sol:LinkedTest links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]],
         ),
@@ -2020,7 +2030,7 @@ fn disallow_linked_libraries_json(prj: _, cmd: _) {
       "component": "foundry",
       "severity": "error",
       "errorCode": null,
-      "message": "Linked libraries are not allowed but the following contracts use linked libraries:\n  [..]:Consumer",
+      "message": "Linked libraries are not allowed (`allow_linked_libraries = false`):\n  src/Consumer.sol:Consumer links src/Lib.sol:Lib\nhelp: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`",
       "formattedMessage": null
     }
   ],
@@ -2146,15 +2156,17 @@ contract DeployTest {
         });
         let expected = if dynamic_test_linking {
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]]
         } else {
             str![[r#"
-Error: Linked libraries are not allowed but the following contracts use linked libraries:
-  [..]:Consumer
-  [..]:DeployTest
+Error: Linked libraries are not allowed (`allow_linked_libraries = false`):
+  src/Consumer.sol:Consumer links src/Lib.sol:Lib
+  test/Deploy.t.sol:DeployTest links src/Lib.sol:Lib
+help: make the library functions `internal` to inline them, or set `allow_linked_libraries = true`
 
 "#]]
         };
