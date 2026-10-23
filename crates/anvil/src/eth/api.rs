@@ -4,14 +4,15 @@ use super::{
         sanitize_simulation_blocks,
     },
     preserve_simulation_request_fields,
-    tempo_consensus::{TempoCertifiedBlock, TempoConsensusIdentityResponse, TempoConsensusState},
+    tempo_consensus::{TempoCertifiedBlock, TempoConsensusState},
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
         backend::{
             self, db::SerializableState, mem::MIN_TRANSACTION_GAS,
-            notifications::ChainNotifications, validate::TransactionValidator,
+            notifications::ChainNotifications, tempo_consensus::TempoConsensusIdentity,
+            validate::TransactionValidator,
         },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
@@ -5628,19 +5629,17 @@ impl EthApi<FoundryNetwork> {
     /// Returns the public local development committee on Tempo networks.
     ///
     /// Handler for `anvil_tempoConsensusIdentity`.
-    pub async fn anvil_tempo_consensus_identity(&self) -> Result<TempoConsensusIdentityResponse> {
+    pub async fn anvil_tempo_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
         node_info!("anvil_tempoConsensusIdentity");
-        Ok(self.backend.tempo_consensus_identity().await?.into())
+        self.backend.tempo_consensus_identity().await
     }
 
     /// Schedules a new identity for the epoch following the next block's epoch.
     ///
     /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
-    pub async fn anvil_tempo_rotate_consensus_identity(
-        &self,
-    ) -> Result<TempoConsensusIdentityResponse> {
+    pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
         node_info!("anvil_tempoRotateConsensusIdentity");
-        Ok(self.backend.tempo_rotate_consensus_identity().await?.into())
+        self.backend.tempo_rotate_consensus_identity().await
     }
 }
 

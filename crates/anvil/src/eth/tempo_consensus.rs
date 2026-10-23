@@ -17,10 +17,10 @@
 //! only.
 
 use super::{
-    backend::tempo_consensus::{TempoConsensusIdentity, TempoFinalization},
+    backend::tempo_consensus::TempoFinalization,
     error::{BlockchainError, Result},
 };
-use alloy_primitives::{B256, Bytes, hex};
+use alloy_primitives::{B256, hex};
 use anvil_core::eth::block::Block;
 use foundry_primitives::{FoundryHeader, FoundryTxEnvelope};
 use serde::Serialize;
@@ -78,35 +78,4 @@ pub struct TempoConsensusState {
     pub finalized: Option<TempoCertifiedBlock>,
     /// Reserved by Tempo; local mining only produces finalizations.
     pub notarized: Option<TempoCertifiedBlock>,
-}
-
-/// Public development committee information returned by Anvil's identity methods.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TempoConsensusIdentityResponse {
-    /// Compressed 96-byte BLS12-381 G2 public key, as prefixed hex.
-    pub identity: Bytes,
-    /// Ed25519 proposer public key, as prefixed hex.
-    pub proposer: B256,
-    /// First epoch using this identity.
-    pub from_epoch: u64,
-    /// Number of block heights in an epoch.
-    pub epoch_length: u64,
-    /// Number of committee members.
-    pub participants: u32,
-    /// Number of shares required to sign.
-    pub quorum: u32,
-}
-
-impl From<TempoConsensusIdentity> for TempoConsensusIdentityResponse {
-    fn from(identity: TempoConsensusIdentity) -> Self {
-        Self {
-            identity: identity.identity,
-            proposer: identity.proposer,
-            from_epoch: identity.from_epoch,
-            epoch_length: identity.epoch_length,
-            participants: identity.participants,
-            quorum: identity.quorum,
-        }
-    }
 }

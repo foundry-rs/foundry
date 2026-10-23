@@ -47,6 +47,7 @@ use commonware_cryptography::{
 use commonware_math::algebra::Random;
 use commonware_utils::{N3f1, TryFromIterator, ordered};
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};
+use serde::Serialize;
 use std::{collections::BTreeMap, num::NonZeroU64, sync::Arc};
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::TempoHardfork;
@@ -317,7 +318,8 @@ impl TempoConsensus {
 }
 
 /// Public development committee information, without secret key material.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TempoConsensusIdentity {
     /// Compressed 96-byte BLS12-381 G2 public key.
     pub identity: Bytes,

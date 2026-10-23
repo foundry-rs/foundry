@@ -637,10 +637,8 @@ Genesis Number
             })
         };
         if let Some(identity) = &self.tempo_consensus_identity {
-            value["tempo_consensus"] = serde_json::to_value(
-                crate::eth::tempo_consensus::TempoConsensusIdentityResponse::from(identity.clone()),
-            )
-            .expect("public consensus identity is serializable");
+            value["tempo_consensus"] =
+                serde_json::to_value(identity).expect("public consensus identity is serializable");
         }
         value
     }
