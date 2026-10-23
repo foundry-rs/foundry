@@ -528,6 +528,19 @@ where
         .collect()
 }
 
+/// Rejects preparing new transactions without the Tempo sponsor recorded when the deployment was
+/// created, so that resume never changes who pays.
+fn ensure_recorded_sponsor(recorded: Option<Address>, current: Option<Address>) -> Result<()> {
+    if let Some(recorded) = recorded
+        && current != Some(recorded)
+    {
+        eyre::bail!(
+            "this deployment is sponsored by {recorded}; pass `--tempo.sponsor {recorded}` with `--tempo.sponsor-signer` or `--tempo.sponsor-sig` to prepare its remaining transactions"
+        );
+    }
+    Ok(())
+}
+
 const fn should_broadcast_sequentially(
     estimate_via_rpc: bool,
     slow: bool,
@@ -648,6 +661,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
         if self.script_config.tempo.expiring_nonce {
             reject_expiring_call_before_create(self.sequence.sequences())?;
+        }
+        // Only operations without a saved or delegated attempt are sponsored again.
+        let needs_sponsorship =
+            self.sequence.sequences().iter().enumerate().any(|(sequence_index, deployment)| {
+                remaining_operation_indices(&self.sequence, sequence_index).into_iter().any(
+                    |index| {
+                        deployment.transactions[index].tx().is_unsigned()
+                            && self.sequence.signed_payload(sequence_index, index).is_none()
+                            && self.sequence.delegated_status(sequence_index, index).is_none()
+                    },
+                )
+            });
+        if needs_sponsorship {
+            ensure_recorded_sponsor(self.sequence.sponsor(), self.script_config.tempo.sponsor)?;
         }
         let remaining_transactions = remaining_unsigned_transactions_for_recovery(&self.sequence);
         let ordering_addresses = remaining_sender_addresses(&self.sequence);
@@ -1475,6 +1502,8 @@ impl BundledState<TempoEvmNetwork> {
             }
         }
 
+        ensure_recorded_sponsor(self.sequence.sponsor(), self.script_config.tempo.sponsor)?;
+
         // Reborrow after the potential save above.
         let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
 
@@ -2034,7 +2063,7 @@ mod tests {
             ..Default::default()
         };
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(sequence, false, None).unwrap();
         let payload = Bytes::from_static(SIGNED_TX);
         sequence.persist_signed_payload(0, 0, payload, true).unwrap();
 
@@ -2051,7 +2080,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, true).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, true, None).unwrap();
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
 
         assert!(remaining_unsigned_transactions_for_recovery(&sequence).is_empty());
@@ -2067,7 +2096,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, true).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, true, None).unwrap();
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
         let (_, attempt, _) = sequence.batch_attempt(0).unwrap();
 
@@ -2091,7 +2120,7 @@ mod tests {
             ..Default::default()
         };
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(sequence, false, None).unwrap();
         sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
 
         let required = remaining_unsigned_transactions_for_recovery(&sequence);
@@ -2142,7 +2171,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
         sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
         let second_hash = sequence
             .persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX), true)
@@ -2166,7 +2195,7 @@ mod tests {
         };
         deployment.transactions[1].hash = Some(deployment.receipts[0].transaction_hash());
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
 
         assert_eq!(remaining_operation_indices(&sequence, 0), [0]);
     }
@@ -2180,7 +2209,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
         let first_hash =
             sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
         let mut first_receipt = receipt();
