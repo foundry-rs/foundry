@@ -295,7 +295,7 @@ impl ScriptOutcome {
             }
             Self::ScriptFailed => "script failed: ",
             Self::UnsupportedLibraries => {
-                "Multi chain deployment does not support libraries deployed at nonce addresses."
+                "Multi chain deployment does not support library linking at the moment."
             }
             Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
             Self::OkRun => "Script ran successfully",
