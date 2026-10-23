@@ -1451,6 +1451,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 inner_sequence,
                 replay.assertion_failure,
                 None,
+                &[],
                 replay.invariant_contract,
                 replay.target_invariant,
                 identified_contracts,
@@ -1531,6 +1532,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         inner_sequence: Option<Vec<Option<BasicTxDetails>>>,
         expect_assertion_failure: bool,
         target_value: Option<I256>,
+        targets: &[Address],
         invariant_contract: &InvariantContract<'_>,
         target_invariant: &Function,
         identified_contracts: &ContractsByAddress,
@@ -1545,6 +1547,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             expect_assertion_failure,
             target_value.is_none().then(|| self.revert_decoder()),
             target_value,
+            targets,
             invariant_contract,
             target_invariant,
             &self.cr.mcr.known_contracts,
@@ -4120,6 +4123,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 None,
                 assertion_failure,
                 None,
+                &[],
                 &replay_contract,
                 replay_invariant,
                 identified_contracts,
@@ -4610,26 +4614,39 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if success {
             if let Some(best_value) = invariant_result.optimization_best_value {
                 // Optimization mode: replay and shrink to find shortest best sequence.
+                let targets = evm
+                    .select_contracts_and_senders(invariant_contract.address)
+                    .map(|(_, targets)| targets.targets().keys().copied().collect::<Vec<_>>())
+                    .unwrap_or_default();
                 match self.replay_error(
-                    invariant_config.clone(),
+                    evm.config(),
                     self.clone_executor(),
                     &invariant_result.optimization_best_sequence,
                     None,
                     false,
                     Some(best_value),
+                    &targets,
                     &invariant_contract,
                     anchor,
                     identified_contracts,
                     progress.as_ref(),
                     None,
                 ) {
-                    Ok(ReplayErrorResult { counterexample_sequence: sequence, .. })
-                        if !sequence.is_empty() =>
-                    {
+                    Ok(ReplayErrorResult {
+                        counterexample_sequence: sequence,
+                        optimization_value,
+                        ..
+                    }) if !sequence.is_empty() => {
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
                             sequence,
                         ));
+                        // Shrinking can reach a higher value than the campaign did.
+                        if let Some(value) = optimization_value
+                            && value > best_value
+                        {
+                            invariant_result.optimization_best_value = Some(value);
+                        }
                     }
                     Err(err) => {
                         error!(%err, "Failed to replay optimization best sequence");

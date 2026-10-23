@@ -5867,6 +5867,7 @@ dependencies = [
  "comfy-table",
  "dunce",
  "eyre",
+ "figment2",
  "flate2",
  "foundry-block-explorers",
  "foundry-common-fmt",

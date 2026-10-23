@@ -14,13 +14,11 @@ use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
-use foundry_cheatcodes::{ChainBuild, Wallets};
+use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
-    compile::{ProfileBuild, ProjectCompiler, compile_endpoint_profiles},
-    external_compiler::is_builtin_compiler_source,
-    fs::canonicalize_path,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
     provider::ProviderBuilder,
 };
 use foundry_compilers::{
@@ -30,12 +28,10 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::source_files_iter,
 };
-use foundry_config::{Config, figment::Figment};
 use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -50,8 +46,6 @@ pub struct BuildData {
     pub output: ProjectCompileOutput,
     /// ID of target contract artifact.
     pub target: ArtifactId,
-    /// Builds of the profiles named by `[rpc_endpoints]`.
-    pub profile_builds: Vec<ProfileBuild>,
 }
 
 impl BuildData {
@@ -146,11 +140,6 @@ impl ScriptPredeployLibraries {
             Self::Create2 { onchain, .. } => onchain.len(),
         }
     }
-
-    /// Returns whether libraries are deployed at nonce addresses.
-    pub const fn has_nonce_libraries(&self) -> bool {
-        matches!(self, Self::Default { onchain, .. } if !onchain.is_empty())
-    }
 }
 
 /// Container for the linked contracts and their dependencies
@@ -235,24 +224,19 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
-        )
-        .collect::<Vec<_>>();
+        );
 
-        let compiler = |config: &Config| {
-            let compiler = ProjectCompiler::new()
-                .allow_linked_libraries(config.allow_linked_libraries)
-                .external_compilers(config)
-                .files(sources_to_compile.clone())
-                .dynamic_test_linking(config.dynamic_test_linking);
-            if is_builtin_compiler_source(&target_path) {
-                compiler.files([target_path.clone()])
-            } else {
-                compiler.target_files([target_path.clone()])
-            }
+        let compiler = ProjectCompiler::new()
+            .allow_linked_libraries(script_config.config.allow_linked_libraries)
+            .external_compilers(&script_config.config)
+            .files(sources_to_compile)
+            .dynamic_test_linking(script_config.config.dynamic_test_linking);
+        let compiler = if is_builtin_compiler_source(&target_path) {
+            compiler.files([target_path.clone()])
+        } else {
+            compiler.target_files([target_path.clone()])
         };
-        let output = compiler(&script_config.config).compile(&project)?;
-        let overrides = Figment::new().merge(&args.build).merge(&args.evm).merge(&args);
-        let profile_builds = compile_endpoint_profiles(&script_config.config, overrides, compiler)?;
+        let output = compiler.compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -295,67 +279,9 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             script_config,
             script_wallets,
             browser_wallet,
-            build_data: BuildData {
-                output,
-                target,
-                project_root: project.root().to_path_buf(),
-                profile_builds,
-            },
+            build_data: BuildData { output, target, project_root: project.root().to_path_buf() },
         })
     }
-}
-
-/// Returns the profile builds by endpoint URL, linked with CREATE2 libraries.
-fn chain_builds<FEN: FoundryEvmNetwork>(
-    script_config: &ScriptConfig<FEN>,
-    build_data: &BuildData,
-) -> Result<BTreeMap<String, Arc<ChainBuild>>> {
-    let builds = build_data
-        .profile_builds
-        .iter()
-        .map(|build| {
-            let linker =
-                Linker::new(build_data.project_root.clone(), build.output.artifact_ids().collect());
-            let (target, _) = build
-                .output
-                .artifact_ids()
-                .find(|(id, _)| {
-                    id.source == build_data.target.source && id.name == build_data.target.name
-                })
-                .ok_or_eyre("target not found in profile build")?;
-            let output = linker.link_with_create2_detailed(
-                build.config.libraries_with_remappings()?,
-                script_config.evm_opts.create2_deployer,
-                build.config.create2_library_salt,
-                [&target],
-            )?;
-            let artifacts = ContractsByArtifactBuilder::new(
-                linker
-                    .get_linked_artifacts(&output.output.libraries)?
-                    .iter()
-                    .map(|(id, artifact)| (id.clone(), artifact.into())),
-            )
-            .build();
-            let libraries = output
-                .linked_libraries
-                .into_iter()
-                .map(|library| (library.address, library.bytecode))
-                .collect();
-            let mut chain_build = ChainBuild::new(build, artifacts, libraries);
-            chain_build.config.libraries = output
-                .output
-                .libraries
-                .libs
-                .iter()
-                .flat_map(|(file, libs)| {
-                    libs.iter()
-                        .map(move |(name, address)| format!("{}:{name}:{address}", file.display()))
-                })
-                .collect();
-            Ok(chain_build)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    ChainBuild::by_endpoint(&script_config.config, builds)
 }
 
 /// State after we have determined and compiled target contract to be executed.
@@ -370,14 +296,9 @@ pub struct CompiledState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     /// Uses provided sender address to compute library addresses and link contracts with them.
     pub async fn link(self) -> Result<LinkedState<FEN>> {
-        let Self { args, mut script_config, script_wallets, browser_wallet, build_data } = self;
+        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
 
-        script_config.chain_builds = chain_builds(&script_config, &build_data)?;
         let build_data = build_data.link(&script_config).await?;
-        if let ScriptPredeployLibraries::Create2 { onchain, .. } = &build_data.predeploy_libraries {
-            script_config.create2_libraries =
-                onchain.iter().map(|library| (library.address, library.bytecode.clone())).collect();
-        }
 
         Ok(LinkedState { args, script_config, script_wallets, browser_wallet, build_data })
     }

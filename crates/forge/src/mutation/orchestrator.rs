@@ -100,8 +100,6 @@ pub struct MutationRunConfig {
     /// EVM isolation flag — mirrors the canonical `forge test` runner so
     /// baseline and mutant runs use the same execution model.
     pub isolate: bool,
-    /// CLI overrides applied to every endpoint profile build.
-    pub profile_overrides: foundry_config::figment::Figment,
 }
 
 impl MutationRunConfig {
@@ -149,7 +147,6 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
         backend,
         executor_builder,
         create2_deployer_available,
-        profile_overrides: mutation_config.profile_overrides.clone(),
     };
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
