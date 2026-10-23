@@ -657,3 +657,10 @@ tempo-contracts = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267b
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
+
+# Trace step parity fix (OSS-1158) until it lands on `mablr/foundry-completion`. The patch also
+# applies to the Tempo and evm2-networks crates that pin the same evm2 source.
+[patch."https://github.com/mablr/evm2"]
+evm2 = { git = "https://github.com/stevencartavia/evm2", rev = "a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a" }
+evm2-inspectors = { git = "https://github.com/stevencartavia/evm2", rev = "a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a" }
+evm2-macros = { git = "https://github.com/stevencartavia/evm2", rev = "a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a" }
