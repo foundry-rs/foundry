@@ -183,7 +183,7 @@ use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 use evm2::bytecode::Bytecode;
 
 #[cfg(feature = "js-tracer")]
-use crate::eth::backend::evm::{TxFor, TypesFor, block_env, prepared_evm_tx};
+use crate::eth::backend::evm::{TxFor, TypesFor, block_env};
 #[cfg(feature = "js-tracer")]
 use evm2_inspectors::tracing::{TransactionContext, js::JsInspector};
 
@@ -193,14 +193,22 @@ use foundry_primitives::get_deposit_tx_parts;
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 
 #[cfg(feature = "base")]
+use crate::eth::backend::evm::BaseEvmNetwork;
+#[cfg(feature = "base")]
+use alloy_eips::Encodable2718;
+#[cfg(feature = "base")]
 use base_common_chains::ChainConfig;
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Predeploys,
+    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Eip8130Constants, Eip8130Signed,
+    Predeploys,
 };
 #[cfg(feature = "base")]
+use base_common_eip8130::{IntrinsicGas, IntrinsicGasInput, NonceManagerSlots};
+#[cfg(feature = "base")]
 use base_common_rpc_types::{
-    EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130ReceiptFields, Transaction as BaseRpcTransaction,
+    EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce, Eip8130ReceiptFields,
+    Transaction as BaseRpcTransaction,
 };
 #[cfg(feature = "base")]
 use base_evm2::L1BlockInfo;
@@ -548,11 +556,6 @@ struct ExecutedBlock {
     bal: Option<BlockAccessList>,
 }
 
-/// Error of executing an EIP-8130 transaction.
-#[cfg(feature = "base")]
-const EIP8130_EXECUTION_UNSUPPORTED: &str =
-    "EIP-8130 execution is not supported: base-evm2 has no EIP-8130 transaction handler";
-
 /// Deposit fields of an OP-stack call request.
 #[cfg(any(feature = "base", feature = "optimism"))]
 type DepositParts = foundry_primitives::DepositTransactionParts;
@@ -572,11 +575,21 @@ const fn is_deposit(tx: &FoundryTxEnvelope) -> bool {
     false
 }
 
-/// Applies `f` to the fields of a simulated transaction, keeping a Tempo mock signature.
+/// Applies `f` to the fields of a simulated transaction, keeping a Tempo mock signature and the
+/// representative authentication blobs of a Base EIP-8130 simulation.
 fn map_simulated_tx(
     tx: FoundryTxEnvelope,
     f: impl FnOnce(&mut FoundryTypedTx) -> Result<(), BlockchainError>,
 ) -> Result<FoundryTxEnvelope, BlockchainError> {
+    #[cfg(feature = "base")]
+    if let FoundryTxEnvelope::Eip8130(signed) = tx {
+        let sender_auth = signed.sender_auth().clone();
+        let payer_auth = signed.payer_auth().clone();
+        let mut typed = FoundryTypedTx::Eip8130(signed.into_tx());
+        f(&mut typed)?;
+        let FoundryTypedTx::Eip8130(tx) = typed else { unreachable!("EIP-8130 stays EIP-8130") };
+        return Ok(FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth)));
+    }
     if let FoundryTxEnvelope::Tempo(signed) = tx {
         let (tx, signature, _) = signed.into_parts();
         let mut typed = FoundryTypedTx::Tempo(tx);
@@ -605,6 +618,8 @@ fn with_gas_limit(tx: FoundryTxEnvelope, gas_limit: u64) -> FoundryTxEnvelope {
             FoundryTypedTx::Tempo(tx) => tx.gas_limit = gas_limit,
             #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTypedTx::Deposit(tx) => tx.gas_limit = gas_limit,
+            #[cfg(feature = "base")]
+            FoundryTypedTx::Eip8130(tx) => tx.gas_limit = gas_limit,
             #[allow(unreachable_patterns)]
             _ => {}
         }
@@ -680,6 +695,10 @@ fn uses_protocol_call_nonce(tx: &FoundryTxEnvelope) -> bool {
             tx.nonce_key.is_zero() && tx.calls.first().is_some_and(|call| call.to.is_call())
         }
         tx if is_deposit(tx) => false,
+        // EIP-8130 transactions count nonces in the nonce manager or the protocol lane before
+        // any phase runs, and their calls do not start from the sender's protocol nonce.
+        #[cfg(feature = "base")]
+        FoundryTxEnvelope::Eip8130(_) => false,
         tx => tx.kind().is_call(),
     }
 }
@@ -744,6 +763,9 @@ pub mod inspector;
 mod monad;
 pub mod state;
 pub mod storage;
+
+#[cfg(feature = "base")]
+pub(crate) use base::eip8130_max_fee_charge;
 
 // Gas per transaction not creating a contract.
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
@@ -911,7 +933,7 @@ where
         pending_state: executed.state,
         ..Default::default()
     };
-    let tx = prepared_evm_tx::<E>(tx, None)?;
+    let tx = E::prepared_evm_tx(tx, None)?;
     inspector
         .json_result(
             &result,
@@ -2936,7 +2958,12 @@ impl<N: Network> Backend<N> {
         // than failing the funds check for the default limit. Tempo pays fees in tokens instead,
         // and OP deposits mint funds before paying for execution.
         let tx = &prepared.tx.tx;
-        let cap_by_balance = !tx.is_tempo() && !is_deposit(tx);
+        // A Base EIP-8130 simulation settles no fees and may be paid by a sponsor.
+        #[cfg(feature = "base")]
+        let is_eip8130 = tx.is_eip8130();
+        #[cfg(not(feature = "base"))]
+        let is_eip8130 = false;
+        let cap_by_balance = !tx.is_tempo() && !is_deposit(tx) && !is_eip8130;
         let min_gas = if prepared.evm_env.cfg_env.enable_amsterdam_eip2780() {
             EIP2780_TX_BASE_COST
         } else {
@@ -3203,6 +3230,7 @@ impl<N: Network> Backend<N> {
                 fee_payer,
                 key_id: request.key_id,
             }),
+            eip8130_sender_actor_id: None,
         };
         Ok((tx, response_tx))
     }
@@ -3254,11 +3282,42 @@ impl<N: Network> Backend<N> {
                 })
             }
             #[cfg(feature = "base")]
-            FoundryTransactionRequest::Base(_) => {
+            FoundryTransactionRequest::Base(request) => {
                 self.ensure_base_eip8130_active_at(block_env.timestamp.saturating_to())?;
-                Err(BlockchainError::Eip8130TransactionRejected(
-                    EIP8130_EXECUTION_UNSUPPORTED.into(),
-                ))
+                let gas_limit = block_env.gas_limit;
+                let (evm_env, _) = self.build_call_env_with_base(
+                    request.as_ref(),
+                    &fee_details,
+                    block_env,
+                    base_evm_env,
+                );
+                let invalid = || {
+                    BlockchainError::InvalidTransactionRequest(
+                        "invalid EIP-8130 simulation request: missing or conflicting sender, \
+                         oversized authentication data, or invalid payer authenticator"
+                            .to_string(),
+                    )
+                };
+                // Base's RPC conversion resolves the sender and shapes representative sender and
+                // payer authentication blobs, so intrinsic gas prices the authentication scheme.
+                let simulation = request
+                    .to_eip8130_simulation_tx(self.chain_id().to(), gas_limit)
+                    .and_then(|tx| tx.eip8130)
+                    .ok_or_else(invalid)?;
+                let sender = request
+                    .as_eip8130()
+                    .and_then(|aa| aa.sender)
+                    .or(request.as_ref().from)
+                    .ok_or_else(invalid)?;
+                let envelope = FoundryTxEnvelope::Eip8130(simulation.signed);
+                let mut tx = PreparedTx::simulated(envelope.clone(), sender);
+                tx.eip8130_sender_actor_id = simulation.simulation_sender_actor_id;
+                Ok(PreparedCall {
+                    evm_env,
+                    tx,
+                    simulated_tempo_tx: None,
+                    simulated_envelope: Some(envelope),
+                })
             }
             FoundryTransactionRequest::Ethereum(mut request)
             | FoundryTransactionRequest::Celo(foundry_primitives::Cip64TransactionRequest {
@@ -8923,6 +8982,7 @@ impl Backend<FoundryNetwork> {
                             result.status,
                             canonical_logs.clone(),
                             cumulative_gas_used,
+                            result.ext.eip8130_phase_statuses.clone(),
                         )
                     };
                     #[cfg(not(any(feature = "base", feature = "optimism")))]
@@ -8931,6 +8991,7 @@ impl Backend<FoundryNetwork> {
                         result.status,
                         canonical_logs.clone(),
                         cumulative_gas_used,
+                        result.ext.eip8130_phase_statuses.clone(),
                     );
                     receipts.push(receipt);
                     transaction_envelopes.push(tx.as_ref().clone());
@@ -9448,6 +9509,51 @@ where
         })
         .await?
     }
+
+    /// Runs base-evm2's verified EIP-8130 preparation against the latest state and discards it.
+    ///
+    /// Sender and payer authorization, account changes, replay checks and payer rules fail at
+    /// admission instead of after entering the pool; no phase calls run. A sequence ahead of its
+    /// channel nonce is the sole tolerated inclusion error: the pool queues it until the gap is
+    /// filled.
+    #[cfg(feature = "base")]
+    async fn validate_eip8130_pool_transaction(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+        evm_env: &EvmEnv,
+        ready_for_execution: bool,
+    ) -> Result<(), BlockchainError> {
+        let tx = PreparedTx::signed(pending.transaction.as_ref().clone(), *pending.sender());
+        let evm_env = evm_env.clone();
+        let opts = self.evm_options(&evm_env);
+        self.with_database_at(None, move |state, _| {
+            let mut evm = build_evm::<BaseEvmNetwork>(&*state, &evm_env, &opts)?;
+            let evm_tx = BaseEvmNetwork::prepared_evm_tx(&tx, opts.cheats.as_ref())?;
+            BaseEvmNetwork::set_tx_context(&mut evm, &evm_tx, &TxContext::default());
+            match evm.validate_tx(&evm_tx).map_err(BlockchainError::from) {
+                Ok(()) => Ok(()),
+                Err(BlockchainError::InvalidTransaction(InvalidTransactionError::NonceTooHigh))
+                    if !ready_for_execution =>
+                {
+                    Ok(())
+                }
+                Err(err)
+                    if !ready_for_execution
+                        && err.to_string().contains("is ahead of the channel nonce") =>
+                {
+                    Ok(())
+                }
+                Err(BlockchainError::InvalidTransaction(InvalidTransactionError::Rejected(
+                    reason,
+                ))) => Err(BlockchainError::Eip8130TransactionRejected(reason)),
+                Err(BlockchainError::InvalidTransaction(err)) => {
+                    Err(BlockchainError::Eip8130TransactionRejected(err.to_string()))
+                }
+                Err(err) => Err(err),
+            }
+        })
+        .await?
+    }
 }
 
 #[async_trait::async_trait]
@@ -9479,11 +9585,64 @@ where
                 .validate_timestamp(now)
                 .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
 
-            let _ = body;
-            // base-evm2 has no EIP-8130 handler, so the transaction could never be included.
-            return Err(BlockchainError::Eip8130TransactionRejected(
-                EIP8130_EXECUTION_UNSUPPORTED.to_string(),
-            ));
+            let rejected = |error: &dyn std::fmt::Display| {
+                BlockchainError::Eip8130TransactionRejected(error.to_string())
+            };
+
+            let channel_nonce = if body.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+                None
+            } else if body.nonce_key.is_zero() {
+                Some(account.nonce)
+            } else {
+                let slot = NonceManagerSlots::nonce_slot(address, body.nonce_key)
+                    .ok_or_else(|| rejected(&"nonce_key 0 is the protocol nonce"))?;
+                let word = self.storage_at(NonceManagerSlots::ADDRESS, slot, None).await?;
+                Some(Eip8130Nonce::decode_channel_nonce(word.into()).to::<u64>())
+            };
+            if let Some(channel) = channel_nonce
+                && body.nonce_sequence < channel
+            {
+                return Err(rejected(&format!(
+                    "nonce sequence {} is below the channel nonce {channel}",
+                    body.nonce_sequence
+                )));
+            }
+            let nonce_key_first_use = channel_nonce == Some(0);
+            let ready_for_execution =
+                channel_nonce.is_none_or(|nonce| body.nonce_sequence == nonce);
+
+            let intrinsic = IntrinsicGas::compute(
+                signed,
+                &signed.encoded_2718(),
+                &IntrinsicGasInput::worst_case(
+                    nonce_key_first_use,
+                    IntrinsicGasInput::sender_auto_delegated(&body.account_changes),
+                    body.payer.is_some(),
+                ),
+            )
+            .map_err(|error| rejected(&error))?;
+            if intrinsic.execution_gas_available(body.gas_limit).is_none() {
+                return Err(rejected(&"sender intrinsic gas exceeds transaction gas limit"));
+            }
+
+            let payer = body.payer.unwrap_or(address);
+            let payer_balance = if payer == address {
+                account.balance
+            } else {
+                self.get_account(payer).await?.balance
+            };
+            let required = base::eip8130_max_fee_charge(
+                body.gas_limit,
+                intrinsic.payer_auth,
+                body.max_fee_per_gas,
+            );
+            if payer_balance < required {
+                return Err(rejected(&format!(
+                    "gas payer balance {payer_balance} is below the required {required}"
+                )));
+            }
+
+            self.validate_eip8130_pool_transaction(tx, &evm_env, ready_for_execution).await?;
         }
 
         // Tempo AA: validate time bounds (async checks)

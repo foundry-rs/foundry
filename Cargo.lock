@@ -2669,7 +2669,7 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=b068ddf1e3e7fb4bcefa37b129874c2dc30476a8#b068ddf1e3e7fb4bcefa37b129874c2dc30476a8"
+source = "git+https://github.com/mablr/evm2-networks?rev=06b70d6741e900f9dcab3940789e2b5818d85b6a#06b70d6741e900f9dcab3940789e2b5818d85b6a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2679,7 +2679,11 @@ dependencies = [
  "base-common-eip8130",
  "base-common-genesis",
  "base-common-l1-fees",
+ "base-common-precompiles",
+ "base-execution-eip8130",
+ "base-precompile-storage",
  "evm2",
+ "revm",
 ]
 
 [[package]]
@@ -8349,7 +8353,7 @@ dependencies = [
 [[package]]
 name = "monad-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=b068ddf1e3e7fb4bcefa37b129874c2dc30476a8#b068ddf1e3e7fb4bcefa37b129874c2dc30476a8"
+source = "git+https://github.com/mablr/evm2-networks?rev=06b70d6741e900f9dcab3940789e2b5818d85b6a#06b70d6741e900f9dcab3940789e2b5818d85b6a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8844,7 +8848,7 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=b068ddf1e3e7fb4bcefa37b129874c2dc30476a8#b068ddf1e3e7fb4bcefa37b129874c2dc30476a8"
+source = "git+https://github.com/mablr/evm2-networks?rev=06b70d6741e900f9dcab3940789e2b5818d85b6a#06b70d6741e900f9dcab3940789e2b5818d85b6a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

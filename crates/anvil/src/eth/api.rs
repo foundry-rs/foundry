@@ -119,11 +119,13 @@ use tokio::{
 };
 
 #[cfg(feature = "base")]
-use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
+use crate::eth::backend::mem::eip8130_max_fee_charge;
 #[cfg(feature = "base")]
-use base_common_consensus::Eip8130Constants;
+use base_common_consensus::{
+    EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE, Eip8130Constants, Eip8130Signed,
+};
 #[cfg(feature = "base")]
-use base_common_eip8130::NonceManagerSlots as NonceManagerStorage;
+use base_common_eip8130::{IntrinsicGas, NonceManagerSlots as NonceManagerStorage};
 #[cfg(feature = "base")]
 use base_common_rpc_types::{BaseTransactionRequest, Eip8130Nonce};
 
@@ -5434,12 +5436,18 @@ impl EthApi<FoundryNetwork> {
             return Ok(());
         };
         let payer = incoming.tx().payer.unwrap_or(*pending.sender());
-        // The payer authorization cost is not modeled without the REVM EIP-8130 executor, so
-        // the reservation charges the gas limit at the maximum fee.
-        let max_fee_charge = |gas_limit: u64, max_fee_per_gas: u128| {
-            U256::from(gas_limit).saturating_mul(U256::from(max_fee_per_gas))
+        // Payer authentication is metered on top of the gas limit, so each reservation includes
+        // its worst-case cost.
+        let max_fee_charge = |signed: &Eip8130Signed| {
+            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+                .map_err(|error| BlockchainError::Eip8130TransactionRejected(error.to_string()))?;
+            Ok::<_, BlockchainError>(eip8130_max_fee_charge(
+                signed.tx().gas_limit,
+                payer_auth,
+                signed.tx().max_fee_per_gas,
+            ))
         };
-        let incoming_cost = max_fee_charge(incoming.tx().gas_limit, incoming.tx().max_fee_per_gas);
+        let incoming_cost = max_fee_charge(incoming)?;
         let mut reserved = U256::ZERO;
         for pooled in self.pool.all_transactions() {
             if pooled.provides == replacing_markers {
@@ -5453,8 +5461,7 @@ impl EthApi<FoundryNetwork> {
             if signed.tx().payer.unwrap_or(*pooled.pending_transaction.sender()) != payer {
                 continue;
             }
-            reserved = reserved
-                .saturating_add(max_fee_charge(signed.tx().gas_limit, signed.tx().max_fee_per_gas));
+            reserved = reserved.saturating_add(max_fee_charge(signed)?);
         }
         let balance = self.backend.get_account(payer).await?.balance;
         let required = reserved.saturating_add(incoming_cost);

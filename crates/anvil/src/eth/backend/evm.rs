@@ -133,6 +133,8 @@ pub(crate) use with_evm_network;
 pub struct ResultExt {
     /// Whether an OP-stack deposit failed and kept only its mint and nonce bump.
     pub failed_deposit: bool,
+    /// Per-phase statuses of an included signed Base EIP-8130 transaction.
+    pub eip8130_phase_statuses: Option<Vec<u8>>,
 }
 
 /// Network-neutral transaction result.
@@ -160,17 +162,25 @@ pub struct PreparedTx {
     pub payload: TxPayload,
     /// Tempo simulation identity of a Tempo RPC request.
     pub tempo: Option<TempoSimulation>,
+    /// Acting actor hint (`senderActorId`) of a simulated Base EIP-8130 request.
+    pub eip8130_sender_actor_id: Option<B256>,
 }
 
 impl PreparedTx {
     /// Prepares a signed or impersonated transaction.
     pub const fn signed(tx: FoundryTxEnvelope, sender: Address) -> Self {
-        Self { tx, sender, payload: TxPayload::Signed, tempo: None }
+        Self { tx, sender, payload: TxPayload::Signed, tempo: None, eip8130_sender_actor_id: None }
     }
 
     /// Prepares a simulated request.
     pub const fn simulated(tx: FoundryTxEnvelope, sender: Address) -> Self {
-        Self { tx, sender, payload: TxPayload::Simulated, tempo: None }
+        Self {
+            tx,
+            sender,
+            payload: TxPayload::Simulated,
+            tempo: None,
+            eip8130_sender_actor_id: None,
+        }
     }
 }
 
@@ -225,14 +235,20 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         evm.ext_mut().for_transaction(tx);
     }
 
-    /// Marks a simulated transaction with Tempo's RPC simulation identity.
-    fn apply_tempo_simulation(tx: TxFor<Self>, _simulation: &TempoSimulation) -> TxFor<Self> {
-        tx
-    }
-
     /// Returns the network-neutral outcome flags.
     fn result_ext(ext: &<TypesFor<Self> as EvmTypesHost>::TxResultExt) -> ResultExt {
-        ResultExt { failed_deposit: ext.is_failed_deposit() }
+        ResultExt {
+            failed_deposit: ext.is_failed_deposit(),
+            eip8130_phase_statuses: ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
+        }
+    }
+
+    /// Converts a prepared transaction, including its network's RPC simulation identity.
+    fn prepared_evm_tx(
+        prepared: &PreparedTx,
+        cheats: Option<&CheatsManager>,
+    ) -> Result<Recovered<TxFor<Self>>, BlockchainError> {
+        evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)
     }
 }
 
@@ -369,6 +385,22 @@ impl AnvilEvmNetwork for BaseEvmNetwork {
         base_evm2::BaseEvmFactory::default()
             .with_activation_admin_address(opts.base_activation_admin)
     }
+
+    fn prepared_evm_tx(
+        prepared: &PreparedTx,
+        cheats: Option<&CheatsManager>,
+    ) -> Result<Recovered<base_evm2::BaseTxEnvelope>, BlockchainError> {
+        let tx = evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)?;
+        // Signed transactions authenticate their actor; only simulations accept the RPC hint.
+        if prepared.payload.is_simulated()
+            && let Some(sender_actor_id) = prepared.eip8130_sender_actor_id
+        {
+            let (mut inner, signer) = tx.into_parts();
+            inner.set_eip8130_simulation(Some(sender_actor_id));
+            return Ok(Recovered::new_unchecked(inner, signer));
+        }
+        Ok(tx)
+    }
 }
 
 impl AnvilEvmNetwork for TempoEvmNetwork {
@@ -384,15 +416,23 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
         }
     }
 
-    fn apply_tempo_simulation(
-        tx: tempo_evm::TempoTxEnv,
-        simulation: &TempoSimulation,
-    ) -> tempo_evm::TempoTxEnv {
-        tx.with_simulation_overrides(
-            simulation.unique_tx_identifier,
-            simulation.fee_payer,
-            simulation.key_id,
-        )
+    fn prepared_evm_tx(
+        prepared: &PreparedTx,
+        cheats: Option<&CheatsManager>,
+    ) -> Result<Recovered<tempo_evm::TempoTxEnv>, BlockchainError> {
+        let tx = evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)?;
+        if let Some(simulation) = &prepared.tempo {
+            let (inner, signer) = tx.into_parts();
+            return Ok(Recovered::new_unchecked(
+                inner.with_simulation_overrides(
+                    simulation.unique_tx_identifier,
+                    simulation.fee_payer,
+                    simulation.key_id,
+                ),
+                signer,
+            ));
+        }
+        Ok(tx)
     }
 }
 
@@ -569,21 +609,6 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     Ok(tx)
 }
 
-/// Converts a prepared transaction into `N`'s evm2 transaction.
-pub fn prepared_evm_tx<N: AnvilEvmNetwork>(
-    prepared: &PreparedTx,
-    cheats: Option<&CheatsManager>,
-) -> Result<Recovered<TxFor<N>>, BlockchainError> {
-    let tx = evm_tx::<N>(&prepared.tx, prepared.sender, prepared.payload, cheats)?;
-    match &prepared.tempo {
-        Some(simulation) => {
-            let (tx, signer) = tx.into_parts();
-            Ok(Recovered::new_unchecked(N::apply_tempo_simulation(tx, simulation), signer))
-        }
-        None => Ok(tx),
-    }
-}
-
 /// Executes `prepared` on `evm` and detaches its state changes.
 pub fn transact<N: AnvilEvmNetwork>(
     evm: &mut Evm<'_, TypesFor<N>>,
@@ -591,7 +616,7 @@ pub fn transact<N: AnvilEvmNetwork>(
     context: &TxContext,
     cheats: Option<&CheatsManager>,
 ) -> Result<Executed, BlockchainError> {
-    let tx = prepared_evm_tx::<N>(prepared, cheats)?;
+    let tx = N::prepared_evm_tx(prepared, cheats)?;
     N::set_tx_context(evm, &tx, context);
     let detached = evm.transact(&tx)?.detach();
     Ok(Executed { result: exec_result::<N>(detached.result), state: detached.pending_state })
