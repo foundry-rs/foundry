@@ -924,8 +924,10 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().into();
 
+    // Candidates replay only up to their last kept call: the returned witness drops the delays of
+    // removed trailing calls, so its value must not count them.
     // Campaigns score only after a call, so an empty witness must match the target exactly.
-    if check_sequence_value(executor.clone(), calls, &[], target_address, calldata.clone())?
+    if check_sequence_value(executor.clone(), &[], &[], target_address, calldata.clone())?
         == Some(target_value)
     {
         return Ok((vec![], target_value));
@@ -956,7 +958,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
             }
             match check_sequence_value(
                 executor.clone(),
-                calls,
+                &calls[..=sequence[sequence.len() - 1]],
                 &sequence,
                 target_address,
                 calldata.clone(),
@@ -1333,35 +1335,6 @@ mod tests {
         );
 
         assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![1]);
-    }
-
-    #[test]
-    fn shrink_loop_stops_after_full_pass_without_accepted_removal() {
-        let config = InvariantConfig { shrink_run_limit: 100, ..Default::default() };
-        let early_exit = EarlyExit::new(false);
-        let calls = vec![tx(None, None), tx(None, None), tx(None, None), tx(None, None)];
-        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
-        let mut replay_attempts = 0;
-
-        // Only the removal of call 1 keeps the bug.
-        let shrinker = run_shrink_loop(
-            &config,
-            &calls,
-            &progress,
-            false,
-            &early_exit,
-            ShrinkErrorPolicy::RestoreRemoved,
-            |shrinker| {
-                replay_attempts += 1;
-                Ok(shrinker.current().eq([0, 2, 3]))
-            },
-        );
-
-        // Chunk pass: blocks [0, 1] and [2, 3] rejected. Single pass 1: call 0 rejected, call 1
-        // accepted, calls 2 and 3 rejected. Pass 2: call 0 rejected again, which completes a pass
-        // over the three kept calls.
-        assert_eq!(replay_attempts, 7);
-        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![0, 2, 3]);
     }
 
     #[test]

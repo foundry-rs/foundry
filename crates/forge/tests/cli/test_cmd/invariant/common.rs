@@ -1,6 +1,5 @@
 use super::*;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_test_utils::snapbox::IntoData;
 
 #[forgetest]
 fn invariant_after_invariant(prj: _, cmd: _) {
@@ -2685,25 +2684,18 @@ contract OptimizationTest {
  invariant_optimize() (best: 22, runs: 1, calls: 2)
 ...
 "#]]);
-    assert!(!prj.root().join("opt_corpus/optimization_best.json").exists());
-    let saved =
-        prj.root().join("opt_corpus/OptimizationTest/invariant_optimize/optimization_best.json");
-    assert_data_eq!(
-        std::fs::read_to_string(saved).unwrap().is_json(),
-        str![[r#"
-{
-  "best_value": "22",
-  "best_sequence": [
-    {
-      "sender": "[..]",
-      "target": "[..]",
-      "calldata": "[..]"
-    }
-  ]
-}
-"#]]
-        .is_json()
-    );
+    // The rerun replays the persisted shrunk witness and its raised value.
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 1, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 0, calls: 0)
+...
+"#
+    ]]);
 }
 
 #[forgetest]
@@ -2743,6 +2735,55 @@ contract OptimizationTest {
  invariant_optimize() (best: 4, runs: 1, calls: 12)
 ...
 "#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_shrunk_witness_reproduces_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.max_block_delay = Some(1000);
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Handler {
+    bool started;
+    function start() external { started = true; }
+    function noop() external {}
+    function score() external view returns (int256) { return started ? int256(block.number) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 1 ends with a noop after start: dropping that noop also drops its roll from the
+    // witness, so the shrunk witness must keep it to reproduce the value.
+    cmd.args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 10, shrunk: 2)
+[..]roll=4324 calldata=start() args=[]
+[..]roll=1518 calldata=noop() args=[]
+ invariant_optimize() (best: 5843, runs: 1, calls: 10)
+...
+"#]]);
+    // The rerun replays the persisted witness, which must still reach the reported value.
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 2)
+[..]roll=4324 calldata=start() args=[]
+[..]roll=1518 calldata=noop() args=[]
+ invariant_optimize() (best: 5843, runs: 0, calls: 0)
+...
+"#
+    ]]);
 }
 
 // Test that optimization mode works with negative values (finding max of negative range).
