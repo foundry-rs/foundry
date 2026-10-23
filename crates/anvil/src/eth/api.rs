@@ -4,6 +4,7 @@ use super::{
         sanitize_simulation_blocks,
     },
     preserve_simulation_request_fields,
+    tempo_consensus::{TempoCertifiedBlock, TempoConsensusIdentityResponse, TempoConsensusState},
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
@@ -81,7 +82,7 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
-        EthRequest,
+        EthRequest, TempoConsensusQuery,
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
@@ -1723,6 +1724,13 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
         let loaded = self.backend.load_state_bytes(buf).await?;
+        if loaded {
+            // Lock before reading the active IDs so a concurrent snapshot cannot insert its pool
+            // state between that read and cleanup.
+            let mut snapshots = self.pool_snapshots.lock();
+            let active = self.backend.list_state_snapshots();
+            snapshots.retain(|id, _| active.contains_key(id));
+        }
         #[cfg(feature = "base")]
         if loaded {
             self.invalidate_base_eip8130_pool();
@@ -1837,10 +1845,13 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
-    /// Returns a locally stored rollback ancestor, or the remote base of a Monad transaction-hash
-    /// fork when that integration is enabled.
+    /// Returns a locally stored rollback ancestor, the pinned Tempo fork anchor, or the remote
+    /// base of a Monad transaction-hash fork when that integration is enabled.
     async fn rollback_block(&self, number: u64) -> Result<Option<Block>> {
         if let Some(block) = self.backend.get_block(number) {
+            return Ok(Some(block));
+        }
+        if let Some(block) = self.backend.tempo_rollback_block(number).await? {
             return Ok(Some(block));
         }
         #[cfg(feature = "monad")]
@@ -2650,6 +2661,16 @@ impl EthApi<FoundryNetwork> {
                 .anvil_set_fee_amm_liquidity(user_token, validator_token, amount)
                 .await
                 .to_rpc_result(),
+            EthRequest::ConsensusGetFinalization(query) => {
+                self.consensus_get_finalization(query).await.to_rpc_result()
+            }
+            EthRequest::ConsensusGetLatest(()) => self.consensus_get_latest().await.to_rpc_result(),
+            EthRequest::TempoConsensusIdentity(()) => {
+                self.anvil_tempo_consensus_identity().await.to_rpc_result()
+            }
+            EthRequest::TempoRotateConsensusIdentity(()) => {
+                self.anvil_tempo_rotate_consensus_identity().await.to_rpc_result()
+            }
         }
     }
 
@@ -5574,6 +5595,53 @@ impl EthApi<FoundryNetwork> {
         }
         self.request_nonce(request.as_ref(), from).await
     }
+
+    /// Returns a locally mined Tempo finalization and its native block.
+    ///
+    /// Handler for `consensus_getFinalization`; unavailable on non-Tempo networks.
+    pub async fn consensus_get_finalization(
+        &self,
+        query: TempoConsensusQuery,
+    ) -> Result<TempoCertifiedBlock> {
+        node_info!("consensus_getFinalization");
+        let height = match query {
+            TempoConsensusQuery::Latest => None,
+            TempoConsensusQuery::Height(height) => Some(height),
+        };
+        self.backend.tempo_finalization(height).await?.try_into()
+    }
+
+    /// Returns the latest local finalization, with `notarized: null` as on Tempo.
+    ///
+    /// Handler for `consensus_getLatest`; unavailable on non-Tempo networks.
+    pub async fn consensus_get_latest(&self) -> Result<TempoConsensusState> {
+        node_info!("consensus_getLatest");
+        let finalized = self
+            .backend
+            .tempo_latest_finalization()
+            .await?
+            .map(TempoCertifiedBlock::try_from)
+            .transpose()?;
+        Ok(TempoConsensusState { finalized, notarized: None })
+    }
+
+    /// Returns the public local development committee on Tempo networks.
+    ///
+    /// Handler for `anvil_tempoConsensusIdentity`.
+    pub async fn anvil_tempo_consensus_identity(&self) -> Result<TempoConsensusIdentityResponse> {
+        node_info!("anvil_tempoConsensusIdentity");
+        Ok(self.backend.tempo_consensus_identity().await?.into())
+    }
+
+    /// Schedules a new identity for the epoch following the next block's epoch.
+    ///
+    /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
+    pub async fn anvil_tempo_rotate_consensus_identity(
+        &self,
+    ) -> Result<TempoConsensusIdentityResponse> {
+        node_info!("anvil_tempoRotateConsensusIdentity");
+        Ok(self.backend.tempo_rotate_consensus_identity().await?.into())
+    }
 }
 
 fn is_simple_transfer_request(request: &TransactionRequest) -> bool {
@@ -5977,5 +6045,31 @@ mod tests {
         assert_eq!(response.blob_gas_used_ratio.len(), 6);
         assert_eq!(response.base_fee_per_blob_gas.len(), 6);
         assert_eq!(rewards.len(), 6);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn loaded_state_releases_only_invalidated_pool_snapshots() {
+        for (config, preserves_snapshots) in
+            [(NodeConfig::test(), true), (NodeConfig::test_tempo(), false)]
+        {
+            let (api, handle) = spawn(config.with_no_mining(true)).await;
+            let sender = handle.dev_wallets().next().unwrap().address();
+            let hash = api
+                .send_transaction(WithOtherFields::new(
+                    TransactionRequest::default().from(sender).to(Address::repeat_byte(0x11)),
+                ))
+                .await
+                .unwrap();
+            let transaction = Arc::downgrade(&api.pool.ready_transactions().next().unwrap());
+            let snapshot = api.evm_snapshot().await.unwrap();
+            let state = api.anvil_dump_state(None).await.unwrap();
+            api.pool.clear();
+            assert!(transaction.upgrade().is_some());
+
+            assert!(api.anvil_load_state(state).await.unwrap());
+            assert_eq!(transaction.upgrade().is_some(), preserves_snapshots);
+            assert_eq!(api.evm_revert(snapshot).await.unwrap(), preserves_snapshots);
+            assert_eq!(api.pool.get_transaction(hash).is_some(), preserves_snapshots);
+        }
     }
 }

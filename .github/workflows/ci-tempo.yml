@@ -146,6 +146,46 @@ jobs:
           TEMPO_HOME: ${{ runner.temp }}/tempo-wallet
         run: ./.github/scripts/tempo-wallet.sh
 
+  tempo-consensus-compat:
+    name: Native Tempo certificate compatibility
+    runs-on: depot-ubuntu-latest-16
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      ANVIL_TEMPO_CONSENSUS_ARTIFACT: ${{ runner.temp }}/tempo-consensus.json
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            crates/anvil/tests/fixtures/tempo-consensus-compat -> target
+      - name: Capture locally mined Tempo certificates
+        run: |
+          cargo test --locked -p anvil --test it tempo::tempo_consensus_mined_certificate_matches_block_hash -- --exact
+          cargo test --locked -p anvil --test it tempo::tempo_consensus_nonempty_native_block_body -- --exact
+          test -s "$ANVIL_TEMPO_CONSENSUS_ARTIFACT"
+          test -s "${ANVIL_TEMPO_CONSENSUS_ARTIFACT%.json}.nonempty.json"
+      - name: Verify native certificate and block compatibility
+        run: |
+          cargo run --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml
+          ANVIL_TEMPO_CONSENSUS_ARTIFACT="${ANVIL_TEMPO_CONSENSUS_ARTIFACT%.json}.nonempty.json" \
+            cargo run --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml
+
   # If the nightly run fails, this will create an issue to signal so.
   issue:
     name: Open an issue

@@ -157,6 +157,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
             .wrap_err("failed to replay fork transaction prefix")?;
     }
 
+    if config.networks.is_tempo() {
+        config.tempo_consensus_identity = Some(backend.tempo_consensus_identity().await?);
+    }
+
     backend.commit_startup_fork_cache();
     let backend = Arc::new(backend);
 
