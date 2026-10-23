@@ -21,6 +21,7 @@ mod create;
 mod debug;
 mod doc;
 mod eip712;
+mod exploit;
 mod failure_assertions;
 mod inline_config;
 mod install;

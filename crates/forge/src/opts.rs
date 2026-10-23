@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
-    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
+    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, exploit,
+    flatten, fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
     lint::LintArgs, lsp::LspArgs, properties::PropertiesArgs, reinit::ReinitArgs,
     remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
     soldeer, test, tree, update,
@@ -227,6 +227,14 @@ pub enum ForgeSubcommand {
 
     /// Generate documentation for the project.
     Doc(DocArgs),
+
+    /// Ask a model on the Tempo Gateway to find a bug in a contract and prove it with a test.
+    ///
+    /// Examples:
+    /// - forge exploit --target src/Vault.sol
+    /// - forge exploit --target src/Vault.sol --context docs/spec.md --attempts 5
+    #[command(verbatim_doc_comment)]
+    Exploit(exploit::ExploitArgs),
 
     /// Function selector utilities.
     #[command(visible_alias = "se")]
