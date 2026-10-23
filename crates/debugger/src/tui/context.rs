@@ -2439,7 +2439,7 @@ mod tests {
         tui.run_command_from_input("storage 1");
 
         assert_eq!(tui.current_step, 2);
-        assert_eq!(tui.active_storage, Some(StorageSpace::Persistent));
+        assert_eq!(tui.active_storage(), Some(StorageSpace::Persistent));
         assert_eq!(tui.storage_accesses(StorageSpace::Persistent).len(), 2);
         assert_eq!(
             tui.status.as_ref().unwrap().text,
@@ -2465,7 +2465,7 @@ mod tests {
         tui.run_command_from_input("transient 2a");
 
         assert_eq!(tui.current_step, 1);
-        assert_eq!(tui.active_storage, Some(StorageSpace::Transient));
+        assert_eq!(tui.active_storage(), Some(StorageSpace::Transient));
         assert_eq!(
             tui.status.as_ref().unwrap().text,
             "Jumped to transient storage TSTORE slot 0x2a = 0xbeef at PC 0x2a (42)"

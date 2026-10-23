@@ -17,7 +17,7 @@ use alloy_provider::{
     fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
 };
-use alloy_rpc_client::ClientBuilder;
+use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_transport::{
     TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
 };
@@ -228,7 +228,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// The timeout is applied from when the request starts connecting until the
     /// response body has finished.
     ///
-    /// Default is no timeout.
+    /// Defaults to 45 seconds ([`REQUEST_TIMEOUT`]).
     pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -346,6 +346,11 @@ impl<N: Network> ProviderBuilder<N> {
 
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
+        Ok(RootProvider::new(self.build_client()?))
+    }
+
+    /// Constructs a shared RPC client with the configured transport, authentication, and retries.
+    pub fn build_client(self) -> Result<RpcClient> {
         let Self {
             url,
             chain,
@@ -372,10 +377,7 @@ impl<N: Network> ProviderBuilder<N> {
             let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
             let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .connect_provider(RootProvider::new(client));
-
-            return Ok(provider);
+            return Ok(client);
         }
 
         let transport = RuntimeTransportBuilder::new(url)
@@ -399,10 +401,7 @@ impl<N: Network> ProviderBuilder<N> {
             );
         }
 
-        let provider =
-            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
-
-        Ok(provider)
+        Ok(client)
     }
 }
 
@@ -530,10 +529,7 @@ fn rpc_error_code_from_body(body: &str) -> Option<i64> {
     error.get("code")?.as_i64()
 }
 
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
-///
-/// See [`try_get_http_provider`] for more details.
+/// Constructs a provider using [`try_get_http_provider`].
 ///
 /// # Panics
 ///
@@ -552,8 +548,11 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
     try_get_http_provider(builder).unwrap()
 }
 
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
+/// Constructs a provider, retaining Alloy's default polling interval for local URLs.
+///
+/// For non-local URLs, the polling interval is 60% of the chain's average block time hint, capped
+/// at 3 seconds before scaling (at most 1.8 seconds). If no hint is available, 3 seconds is used
+/// before scaling.
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()

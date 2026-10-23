@@ -288,7 +288,7 @@ async fn can_resend_transaction() {
         provider.get_transaction_by_hash(replacement_hash).await.unwrap().unwrap();
     assert_eq!(replacement_tx.inner.tx_hash(), replacement_hash);
     assert_eq!(replacement_tx.inner.gas_limit(), replacement_gas_limit);
-    assert_eq!(Transaction::max_fee_per_gas(&replacement_tx.inner), replacement_gas_price);
+    assert_eq!(Transaction::max_fee_per_gas(replacement_tx.inner()), replacement_gas_price);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1981,10 +1981,12 @@ async fn poll_receipt_block(client: &reqwest::Client, endpoint: &str, tx_hash: &
     }
 }
 
-/// Txs in one JSON-RPC batch POST must share a block.
+/// Opt-in coalescing groups txs in one JSON-RPC batch POST into a block.
 #[tokio::test(flavor = "multi_thread")]
 async fn instant_mine_groups_json_rpc_batch_in_one_block() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_transaction_coalescing_window(Duration::from_millis(5)))
+            .await;
     let endpoint = handle.http_endpoint();
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from1 = accounts[1].address();
@@ -2029,10 +2031,12 @@ async fn instant_mine_groups_json_rpc_batch_in_one_block() {
     );
 }
 
-/// Txs from in-process parallel HTTP requests must share a block.
+/// Opt-in coalescing groups txs from in-process parallel HTTP requests into a block.
 #[tokio::test(flavor = "multi_thread")]
 async fn instant_mine_groups_in_process_parallel_http_in_one_block() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_transaction_coalescing_window(Duration::from_millis(5)))
+            .await;
     let endpoint = handle.http_endpoint();
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from1 = accounts[1].address();
@@ -2068,7 +2072,9 @@ async fn instant_mine_groups_in_process_parallel_http_in_one_block() {
 /// Sends spaced beyond the coalescing window must still mine in separate blocks.
 #[tokio::test(flavor = "multi_thread")]
 async fn instant_mine_does_not_group_sequential_sends_beyond_window() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_transaction_coalescing_window(Duration::from_millis(5)))
+            .await;
     let endpoint = handle.http_endpoint();
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from1 = accounts[1].address();
@@ -2440,4 +2446,71 @@ async fn instant_mine_drains_concurrent_burst_on_local_fork() {
         assert_eq!(provider.get_transaction_count(*from).await.unwrap(), 4);
     }
     assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
+
+/// A configured window applies both at startup and after automining is re-enabled.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_configured_coalescing_window_survives_toggle() {
+    for window in [Duration::ZERO, Duration::from_secs(60)] {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_transaction_coalescing_window(window)).await;
+        let provider = handle.http_provider();
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        for toggle in [false, true] {
+            if toggle {
+                api.anvil_set_auto_mine(false).await.unwrap();
+                api.anvil_set_auto_mine(true).await.unwrap();
+            }
+            let tx = TransactionRequest::default()
+                .from(accounts[0].address())
+                .to(accounts[1].address())
+                .value(U256::ONE);
+            let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+            if window.is_zero() {
+                timeout(Duration::from_secs(5), pending.get_receipt()).await.unwrap().unwrap();
+            } else {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                assert!(
+                    provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_none()
+                );
+                api.mine_one().await.unwrap();
+                assert!(
+                    provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_some()
+                );
+            }
+        }
+    }
+}
+
+// https://github.com/foundry-rs/foundry/issues/17725
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tx_by_sender_and_nonce_with_genesis_block_number() {
+    let (api, handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(100u64))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // Mine empty blocks first so the transactions land in blocks 104 and 105.
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let mut tx_hashes = Vec::new();
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().from(sender).to(Address::random());
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push((receipt.transaction_hash, receipt.block_number.unwrap()));
+    }
+    assert_eq!(tx_hashes.iter().map(|(_, block)| *block).collect::<Vec<_>>(), [104, 105]);
+
+    for (nonce, (hash, _)) in tx_hashes.into_iter().enumerate() {
+        let tx: Option<AnyRpcTransaction> = provider
+            .client()
+            .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(nonce)))
+            .await
+            .unwrap();
+        assert_eq!(tx.unwrap().tx_hash(), hash, "nonce={nonce}");
+    }
 }

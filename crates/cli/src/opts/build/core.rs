@@ -187,21 +187,7 @@ impl BuildOpts {
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a BuildOpts> for Figment {
     fn from(args: &'a BuildOpts) -> Self {
-        let root = if let Some(config_path) = &args.project_paths.config_path {
-            assert!(
-                config_path.exists(),
-                "error: config-path `{}` does not exist",
-                config_path.display()
-            );
-            assert!(
-                config_path.ends_with(Config::FILE_NAME),
-                "error: the config-path must be a path to a foundry.toml file"
-            );
-            let config_path = canonicalized(config_path);
-            config_path.parent().unwrap().to_path_buf()
-        } else {
-            args.project_paths.project_root()
-        };
+        let root = args.project_paths.project_root();
         let mut figment = Config::figment_with_root(&root);
 
         // remappings should stack

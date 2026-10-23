@@ -1,7 +1,7 @@
 //! Core test functionality tests
 
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 use serde_json::Value;
 
 #[forgetest_init]
@@ -65,38 +65,117 @@ contract NoAssertionsRevertTest is Test {
 contract LegacyAssertionsTest {
     bool public failed;
 
+    function setFailed() external {
+        failed = true;
+    }
+
     function testFlagNotSetSuccess() public {}
 
     function testFlagSetFailure() public {
         failed = true;
     }
+
+    function testFlagSetInCallFailure() public {
+        this.setFailed();
+    }
 }
+
+/// forge-config: default.legacy_assertions = true
+/// forge-config: default.isolate = false
+contract LegacyAssertionsNonIsolatedTest is LegacyAssertionsTest {}
+
+// Non-view on purpose: calls into it must be CALLs, which run isolated.
+contract Asserter {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function fail() external {
+        vm.assertTrue(false);
+    }
+
+    function failThenRevert() external {
+        vm.assertTrue(false);
+        revert();
+    }
+}
+
+/// forge-config: default.assertions_revert = false
+contract NonRevertingAssertionsTest is Test {
+    Asserter asserter = new Asserter();
+
+    function testBodyFailure() public {
+        vm.assertTrue(false);
+    }
+
+    function testCallFailure() public {
+        asserter.fail();
+    }
+
+    function testRevertedCallFailureIsDropped() public {
+        try asserter.failThenRevert() {} catch {}
+    }
+}
+
+/// forge-config: default.assertions_revert = false
+/// forge-config: default.isolate = false
+contract NonRevertingAssertionsNonIsolatedTest is NonRevertingAssertionsTest {}
 "#,
     );
 
     cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/LegacyAssertions.t.sol:LegacyAssertionsTest
+Ran 3 tests for test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
 [PASS] testFlagNotSetSuccess() ([GAS])
 [FAIL] testFlagSetFailure() ([GAS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL] testFlagSetInCallFailure() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 3 tests for test/LegacyAssertions.t.sol:LegacyAssertionsTest
+[PASS] testFlagNotSetSuccess() ([GAS])
+[FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 2 test suites [ELAPSED]: 1 tests passed, 2 failed, 0 skipped (3 total tests)
+Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+[PASS] testRevertedCallFailureIsDropped() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 3 tests for test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+[PASS] testRevertedCallFailureIsDropped() ([GAS])
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 5 test suites [ELAPSED]: 4 tests passed, 9 failed, 0 skipped (13 total tests)
 
 Failing tests:
-Encountered 1 failing test in test/LegacyAssertions.t.sol:LegacyAssertionsTest
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsNonIsolatedTest
 [FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
+
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:LegacyAssertionsTest
+[FAIL] testFlagSetFailure() ([GAS])
+[FAIL] testFlagSetInCallFailure() ([GAS])
 
 Encountered 1 failing test in test/LegacyAssertions.t.sol:NoAssertionsRevertTest
 [FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
 
-Encountered a total of 2 failing tests, 1 tests succeeded
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsNonIsolatedTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
 
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Encountered 2 failing tests in test/LegacyAssertions.t.sol:NonRevertingAssertionsTest
+[FAIL] testBodyFailure() ([GAS])
+[FAIL] testCallFailure() ([GAS])
+
+Encountered a total of 9 failing tests, 4 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 9 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
@@ -126,6 +205,90 @@ Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
         .expect("profile should be valid JSON");
     assert_eq!(profile["exporter"], "foundry");
     assert_eq!(profile["profiles"][0]["type"], "evented");
+}
+
+// Trace gas is gross: the refund is only subtracted from the test's reported gas. A profile must
+// use the trace's gas as is, with isolation from the config (the default) or from `--isolate`.
+#[forgetest_init]
+fn evm_profile_gas_matches_trace_gas_with_refund(prj: _, cmd: _) {
+    prj.add_test(
+        "RefundProfile.t.sol",
+        r#"
+contract Store {
+    uint256 public x = 1;
+
+    function clear() external {
+        x = 0;
+    }
+}
+
+contract RefundProfileTest {
+    Store store;
+
+    function setUp() public {
+        store = new Store();
+    }
+
+    function testClear() public {
+        store.clear();
+    }
+}
+"#,
+    );
+
+    for isolate_flag in [false, true] {
+        let mut args = vec!["test", "--match-test", "testClear"];
+        if isolate_flag {
+            args.push("--isolate");
+        }
+
+        let output = cmd
+            .forge_fuse()
+            .args(&args)
+            .args(["--json", "-vvvv"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let results: Value = serde_json::from_str(&output).unwrap();
+        let traces = &results["test/RefundProfile.t.sol:RefundProfileTest"]["test_results"]["testClear()"]
+            ["traces"];
+        let execution = traces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|trace| trace[0] == "Execution")
+            .expect("execution trace");
+        let root = &execution[1]["arena"][0]["trace"];
+        let clear = &execution[1]["arena"][1]["trace"];
+        assert!(root["gas_refund_counter"].as_u64().unwrap() > 0, "the test should earn a refund");
+
+        cmd.forge_fuse().args(&args).args(["--evm-profile", "--no-open"]).assert_success();
+        let profile_path = prj.root().join("cache/evm_profile_RefundProfileTest_testClear.json");
+        let file: Value =
+            serde_json::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
+        let clear_frame = file["shared"]["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|frame| frame["name"] == "Store.clear()")
+            .expect("frame of Store.clear()");
+        let profile = &file["profiles"][0];
+        let events = profile["events"].as_array().unwrap();
+        let clear_at = |kind: &str| {
+            events
+                .iter()
+                .find(|event| event["type"] == kind && event["frame"] == clear_frame)
+                .and_then(|event| event["at"].as_u64())
+                .unwrap()
+        };
+
+        assert_eq!(profile["endValue"], root["gas_used"], "test frame, --isolate: {isolate_flag}");
+        assert_eq!(
+            clear_at("C") - clear_at("O"),
+            clear["gas_used"].as_u64().unwrap(),
+            "Store.clear() frame, --isolate: {isolate_flag}"
+        );
+    }
 }
 
 #[forgetest_init]

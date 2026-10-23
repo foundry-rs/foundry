@@ -57,7 +57,7 @@ fn fuzz_param_inner(
     let fuzz_fixtures = fuzz_fixtures.map(|(f, _)| f);
 
     let value = || {
-        let default_strategy = DynSolValue::type_strategy(param);
+        let default_strategy = param.value_strategy();
         if let Some(fixtures) = fuzz_fixtures {
             proptest::prop_oneof![
                 50 => {
@@ -81,11 +81,11 @@ fn fuzz_param_inner(
         DynSolType::Uint(n @ 8..=256) => super::UintStrategy::new(n, fuzz_fixtures)
             .prop_map(move |x| DynSolValue::Uint(x, n))
             .boxed(),
-        DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
+        DynSolType::Function | DynSolType::Bool => param.value_strategy().boxed(),
         DynSolType::Bytes => value(),
         DynSolType::FixedBytes(_size @ 1..=32) => value(),
         DynSolType::String => {
-            let default_strategy = DynSolValue::type_strategy(param).prop_map(move |value| {
+            let default_strategy = param.value_strategy().prop_map(move |value| {
                 DynSolValue::String(
                     value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
                 )
@@ -184,7 +184,7 @@ pub(crate) fn fuzz_param_from_state(
                 DynSolValue::FixedBytes(B256::from(v), size)
             })
             .boxed(),
-        DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
+        DynSolType::Bool => param.value_strategy().boxed(),
         DynSolType::String => {
             let state = state.clone();
             (proptest::bool::weighted(0.3), any::<prop::sample::Index>())
@@ -202,7 +202,8 @@ pub(crate) fn fuzz_param_from_state(
                     }
 
                     // Fallback to random string generation
-                    DynSolValue::type_strategy(&DynSolType::String)
+                    DynSolType::String
+                        .value_strategy()
                         .prop_map(|value| {
                             DynSolValue::String(
                                 value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),

@@ -160,7 +160,7 @@ impl InMemoryBlockStates {
                         continue;
                     }
 
-                    let state_snapshot = state.read_as_state_snapshot();
+                    let state_snapshot = state.serialize_state();
                     if self.disk_cache.write(hash, &state_snapshot) {
                         state.clear();
                         // Write succeeded, move state to on-disk tracking
@@ -585,11 +585,6 @@ impl<N: Network> Blockchain<N> {
 
     pub fn get_transaction_by_hash(&self, hash: &B256) -> Option<MinedTransaction<N>> {
         self.storage.read().transactions.get(hash).cloned()
-    }
-
-    /// Returns the total number of blocks
-    pub fn blocks_count(&self) -> usize {
-        self.storage.read().blocks.len()
     }
 }
 

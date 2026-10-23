@@ -4,6 +4,7 @@ use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
+use foundry_common::LIBRARY_DEPLOYER;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand, assert_data_eq,
@@ -140,10 +141,8 @@ fn testdata(cmd: _) {
     setup_testdata_cmd(&mut cmd);
 
     let mut args = vec!["test"];
-    let nmc_isolate = format!(
-        "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount|{FLAKY_TESTDATA_CONTRACTS})",
-    );
-    args.push(&nmc_isolate);
+    let nmc = format!("--nmc=({FLAKY_TESTDATA_CONTRACTS})");
+    args.push(&nmc);
 
     let orig_assert = cmd.args(args).assert();
     if orig_assert.get_output().status.success() {
@@ -1722,6 +1721,99 @@ contract LongInvariantTest is Test {
         elapsed < std::time::Duration::from_secs(60),
         "fail-fast did not cancel the in-flight invariant campaign: elapsed {elapsed:?}",
     );
+}
+
+// Fuzz, table and invariant campaigns cut short by fail-fast must not be reported as passing,
+// while a timed campaign that already finished its planned runs still passes.
+#[forgetest]
+fn fail_fast_reports_interrupted_campaigns_as_skipped(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 50;
+        config.invariant.runs = 50;
+        config.invariant.depth = 1;
+        config.invariant.show_metrics = false;
+    });
+
+    prj.add_test(
+        "Interrupted.t.sol",
+        r#"
+interface Vm {
+    function sleep(uint256 milliseconds) external;
+}
+
+contract SlowTarget {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function bump() external {
+        vm.sleep(200);
+    }
+}
+
+contract InterruptedTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SlowTarget target;
+    uint256[] public fixtureX = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+
+    function setUp() public {
+        target = new SlowTarget();
+    }
+
+    function invariant_slow() public view {}
+
+    function invariant_slowToo() public view {}
+
+    function testFuzz_slow(uint256) public {
+        vm.sleep(200);
+    }
+
+    /// forge-config: default.fuzz.runs = 1
+    /// forge-config: default.fuzz.timeout = 3600
+    function testFuzz_completes(uint256) public {
+        vm.sleep(2000);
+    }
+
+    function tableSlow(uint256 x) public {
+        vm.sleep(200 + x);
+    }
+
+    function test_fails() public {
+        vm.sleep(1000);
+        revert("boom");
+    }
+}
+"#,
+    );
+
+    // One thread per test so all campaigns are in flight when `test_fails` trips fail-fast.
+    cmd.args(["test", "--fail-fast", "-j5"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 6 tests for test/Interrupted.t.sol:InterruptedTest
+[SKIP]
+InterruptedTest invariants:
+[SKIP: interrupted] invariant_slow
+[SKIP: interrupted] invariant_slowToo
+ InterruptedTest invariants (runs: [..], calls: [..], reverts: 0)
+[SKIP: interrupted] tableSlow(uint256) (runs: [..], [AVG_GAS])
+[PASS] testFuzz_completes(uint256) (runs: 1, [AVG_GAS])
+[SKIP: interrupted] testFuzz_slow(uint256) (runs: [..], [AVG_GAS])
+[FAIL: boom] test_fails() ([GAS])
+Suite result: FAILED. 1 passed; 1 failed; 4 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 4 skipped (6 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Interrupted.t.sol:InterruptedTest
+[FAIL: boom] test_fails() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
 }
 
 // https://github.com/foundry-rs/foundry/pull/6531
@@ -4273,6 +4365,75 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 }
 
+#[forgetest]
+async fn fork_setup_error_containing_skipped_fails(prj: _, cmd: _) {
+    let (_, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let router = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let upstream = upstream.clone();
+            let client = client.clone();
+            async move {
+                let error = match request["method"].as_str() {
+                    // Force the separate account requests even when Anvil supports account info.
+                    Some("eth_getAccountInfo") => Some((-32601, "method not found")),
+                    Some("eth_getBalance") => Some((-32603, "account lookup skipped by provider")),
+                    _ => None,
+                };
+                if let Some((code, message)) = error {
+                    return axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "error": { "code": code, "message": message },
+                    }));
+                }
+                let response = client.post(upstream).json(&request).send().await.unwrap();
+                axum::Json(response.json::<serde_json::Value>().await.unwrap())
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    prj.add_test(
+        "ForkSetup.t.sol",
+        r#"
+contract ForkSetup {
+    function test_shouldRun() public pure {}
+}
+"#,
+    );
+
+    cmd.env("RUST_LOG", "off");
+    cmd.args(["test", "--fork-url", &endpoint, "--no-storage-caching"])
+        .assert_failure()
+        .stderr_eq(str![""])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForkSetup.t.sol:ForkSetup
+[FAIL: failed to get account for 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38: server returned an error response: error code -32603: account lookup skipped by provider] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/16197>
 #[forgetest_init]
 fn skip_setup_after_caught_revert(prj: _, cmd: _) {
@@ -5985,8 +6146,8 @@ fn should_show_state_changes(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6027,8 +6188,8 @@ fn tracing_verbosity_shows_state_changes_independently(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] ConfiguredCounter::setNumber(0)
     │   └─ ← [Stop]
@@ -6321,8 +6482,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6374,8 +6535,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -7282,8 +7443,8 @@ Logs:
   test non contract call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7304,8 +7465,8 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7324,8 +7485,8 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7407,8 +7568,8 @@ No files changed, compilation skipped
 Ran 1 test for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: call reverted as expected, but without data] test_revert_data_exact_diagnostic() ([GAS])
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7528,10 +7689,10 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [350661] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350673] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [286918] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
@@ -7765,6 +7926,58 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 
 "#]]);
     }
+}
+
+// Nonce-linked libraries must deploy at their linked addresses even if the fork reports a nonzero
+// library deployer nonce.
+#[forgetest]
+async fn fork_test_ignores_library_deployer_nonce(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_nonce(LIBRARY_DEPLOYER, U256::ONE).await.unwrap();
+
+    prj.add_source(
+        "Lib.sol",
+        r"
+library Lib {
+    function answer() external pure returns (uint256) {
+        return 42;
+    }
+}
+",
+    );
+    prj.add_test(
+        "Lib.t.sol",
+        r#"
+import {Lib} from "src/Lib.sol";
+
+contract LibTest {
+    function testLinkedLibrary() public pure {
+        require(Lib.answer() == 42);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--create2-deployer",
+        &Address::ZERO.to_string(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Lib.t.sol:LibTest
+[PASS] testLinkedLibrary() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/11632>

@@ -4,7 +4,7 @@ use foundry_cli::{
     opts::{BuildOpts, ProjectPathOpts},
     utils::LoadConfig,
 };
-use foundry_common::{flatten, fs};
+use foundry_common::{flatten, fs, fs::canonicalize_path};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
@@ -38,7 +38,7 @@ impl FlattenArgs {
         let config = build.load_config_with_dependencies()?;
         let project = config.ephemeral_project()?;
 
-        let target_path = dunce::canonicalize(target_path)?;
+        let target_path = canonicalize_path(target_path)?;
         let flattened = flatten(project, &target_path)?;
 
         match output {

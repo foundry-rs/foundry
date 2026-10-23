@@ -220,7 +220,8 @@ impl ConsoleFmt for U256 {
             }
             FormatSpec::Hexadecimal => {
                 let hex = format!("{self:x}");
-                format!("0x{}", hex.trim_start_matches('0'))
+                let digits = hex.trim_start_matches('0');
+                format!("0x{}", if digits.is_empty() { "0" } else { digits })
             }
             FormatSpec::Exponential(None) => {
                 let log = self.pretty().len() - 1;
@@ -248,7 +249,8 @@ impl ConsoleFmt for I256 {
             }
             FormatSpec::Hexadecimal => {
                 let hex = format!("{self:x}");
-                format!("0x{}", hex.trim_start_matches('0'))
+                let digits = hex.trim_start_matches('0');
+                format!("0x{}", if digits.is_empty() { "0" } else { digits })
             }
             FormatSpec::Exponential(None) => {
                 let amount = *self;
@@ -553,6 +555,7 @@ mod tests {
         assert_eq!("1.0023e6", fmt_1("%e", &U256::from(1002300)));
         assert_eq!("1.23e5", fmt_1("%e", &U256::from(123000)));
         assert_eq!("0x64", fmt_1("%x", &U256::from(100)));
+        assert_eq!("0x0", fmt_1("%x", &U256::ZERO));
         assert_eq!("100", fmt_1("%o", &U256::from(100)));
 
         assert_eq!("100", fmt_1("%s", &I256::try_from(100).unwrap()));
@@ -574,6 +577,7 @@ mod tests {
         assert_eq!("-0.0123", fmt_1("%7e", &I256::try_from(-123000).unwrap()));
 
         assert_eq!("0x64", fmt_1("%x", &I256::try_from(100).unwrap()));
+        assert_eq!("0x0", fmt_1("%x", &I256::ZERO));
         assert_eq!(
             "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c",
             fmt_1("%x", &I256::try_from(-100).unwrap())

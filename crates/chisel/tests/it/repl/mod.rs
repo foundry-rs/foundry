@@ -1,6 +1,7 @@
 mod session;
 use chisel::session::ChiselSession as CachedChiselSession;
 use foundry_evm::core::evm::EthEvmNetwork;
+use foundry_test_utils::util::{OTHER_SOLC_VERSION, SOLC_VERSION};
 use session::ChiselSession;
 use std::{
     fs,
@@ -337,8 +338,8 @@ repl_test!(trailing_whitespace, |repl| {
 });
 
 // Issue #4652: Test that solc flags are respected.
-repl_test!(solc_flags, "--use 0.8.23", |repl| {
-    repl.sendln("pragma solidity 0.8.24;");
+repl_test!(solc_flags, &format!("--use {OTHER_SOLC_VERSION}"), |repl| {
+    repl.sendln(&format!("pragma solidity ={SOLC_VERSION};"));
     repl.expect("invalid compiler version");
 });
 
@@ -612,3 +613,65 @@ repl_test!(chisel_can_run_with_live_logs_flag, "--live-logs", init = true, |repl
     repl.expect("Hello, World!"); // old log is also printed
     repl.expect("Goodbye, World!");
 });
+
+// A user-defined `run` overload must not shadow the generated `run()` entrypoint.
+repl_test!(run_overload_does_not_shadow_entrypoint, |repl| {
+    repl.sendln("function run(uint256 x) public pure returns (uint256) { return x; }");
+    repl.sendln("uint256 y = 7");
+
+    repl.sendln("y");
+    repl.expect("Decimal: 7");
+
+    repl.sendln("run(3)");
+    repl.expect("Decimal: 3");
+});
+
+// Assembly in a user-defined `run` overload must not affect the generated `run()` entrypoint.
+repl_test!(run_overload_assembly_does_not_shadow_entrypoint, |repl| {
+    repl.sendln("function run(uint256) public pure { assembly { return(0, 0) } }");
+
+    repl.sendln("uint256(7)");
+    repl.expect("Decimal: 7");
+});
+
+// Interactive block comments must keep their contents together until they are closed.
+repl_test!(multiline_block_comment_continues, |repl| {
+    repl.sendln("uint256 value = 1;");
+    repl.sendln_raw("/*\nvalue = 2;\n*/");
+    repl.expect_prompt();
+
+    repl.sendln("value");
+    repl.expect("Decimal: 1");
+
+    // Code preceding an open comment must also wait for the closing delimiter.
+    repl.sendln_raw("value = 3; /*\nvalue = 4;\n*/");
+    repl.expect_prompt();
+
+    repl.sendln("value");
+    repl.expect("Decimal: 3");
+});
+
+#[test]
+fn imported_repl_does_not_shadow_wrapper() {
+    // Cover both sides of artifact path ordering, with and without matching file names.
+    for (file_index, file) in
+        ["A.sol", "Z.sol", "A/ReplContract.sol", "Z/ReplContract.sol"].into_iter().enumerate()
+    {
+        // Missing run() exposes incorrect HIR selection; an existing run() exposes wrong execution.
+        for (body_index, body) in ["", "function run() public pure {}"].into_iter().enumerate() {
+            let name = format!("imported_repl_{file_index}_{body_index}");
+            let mut repl = ChiselSession::new(&name, "", false);
+            let source = repl.project().root().join(file);
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            fs::write(source, format!("contract REPL {{ {body} }}")).unwrap();
+            repl.sendln(&format!("import {{REPL as ImportedREPL}} from \"./{file}\";"));
+
+            repl.sendln("uint256 value = 7;");
+            repl.sendln("value");
+            repl.expect("Decimal: 7");
+            repl.sendln("value += 1;");
+            repl.sendln("value");
+            repl.expect("Decimal: 8");
+        }
+    }
+}

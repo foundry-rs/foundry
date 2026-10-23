@@ -5,10 +5,7 @@ use crate::{
         send::{SendOptions, cast_send},
         tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
     },
-    tempo::{
-        active_tempo_hardfork, apply_fee_payment, is_tempo_hardfork_active, print_expires,
-        require_hardfork, sponsor_hash, tempo_provider,
-    },
+    tempo::{apply_fee_payment, print_expires, require_hardfork, sponsor_hash, tempo_provider},
     tx::{CastTxBuilder, SendTxOpts, SenderKind, apply_poll_interval},
 };
 use alloy_consensus::BlockHeader;
@@ -25,13 +22,14 @@ use eyre::Result;
 use foundry_cli::{
     json::{print_json_object, print_json_success},
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, now, parse_fee_token_address, resolve_lane},
+    utils::{LoadConfig, now, parse_fee_token_address, parse_json, resolve_lane},
 };
 use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, read_tempo_accounts_store, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, active_tempo_hardfork, is_tempo_hardfork_active,
+        read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -664,7 +662,7 @@ struct JsonSelectorWithRecipients {
 /// Parse `--scopes` JSON flag value.
 fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
     let entries: Vec<JsonCallScope> =
-        serde_json::from_str(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
+        parse_json(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
     entries
         .into_iter()
         .map(|entry| {

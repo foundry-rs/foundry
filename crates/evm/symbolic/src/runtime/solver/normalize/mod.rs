@@ -7,34 +7,52 @@ mod rounding;
 
 use polynomial::polynomial_identity;
 
+/// Per-expression normalization facts reused across solver queries.
+///
+/// Keys are strong hash-consed handles, so each map is bounded like the SAT cache.
+#[derive(Default)]
+pub(super) struct NormalizationCache {
+    normalized: HashMap<SymBoolExpr, SymBoolExpr>,
+    requires_independent_context: HashMap<SymBoolExpr, bool>,
+}
+
+impl NormalizationCache {
+    pub(super) fn clear(&mut self) {
+        self.normalized.clear();
+        self.requires_independent_context.clear();
+    }
+
+    /// Returns the memoized context-dependence classification of one conjunct.
+    fn requires_independent_context(&mut self, constraint: &SymBoolExpr) -> bool {
+        if let Some(requires) = self.requires_independent_context.get(constraint) {
+            return *requires;
+        }
+        let requires = ConstraintContext::requires_independent_context(constraint);
+        if self.requires_independent_context.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
+            self.requires_independent_context.insert(constraint.clone(), requires);
+        }
+        requires
+    }
+}
+
 /// Reuses context-free normalization results while retaining per-query contextual rewrites.
 pub(super) fn normalize_constraints_for_solver_cached(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
-    normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
-) -> Vec<SymBoolExpr> {
-    normalize_constraints_for_solver_with(cx, constraints, |cx, constraint| {
-        if let Some(normalized) = normalization_cache.get(constraint) {
-            return normalized.clone();
-        }
-        let normalized = normalize_bool_for_solver(cx, constraint.clone());
-        // These are strong hash-consed handles, so bound their lifetime like the SAT cache.
-        if normalization_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
-            normalization_cache.insert(constraint.clone(), normalized.clone());
-        }
-        normalized
-    })
-}
-
-fn normalize_constraints_for_solver_with(
-    cx: &mut SymCx,
-    constraints: &[SymBoolExpr],
-    mut normalize: impl FnMut(&mut SymCx, &SymBoolExpr) -> SymBoolExpr,
+    cache: &mut NormalizationCache,
 ) -> Vec<SymBoolExpr> {
     let mut changed_conjuncts = HashSet::default();
     let normalized = normalize_constraint_batch(
         constraints.iter().map(|constraint| {
-            let normalized = normalize(cx, constraint);
+            let normalized = if let Some(normalized) = cache.normalized.get(constraint) {
+                normalized.clone()
+            } else {
+                let normalized = normalize_bool_for_solver(cx, constraint.clone());
+                if cache.normalized.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
+                    cache.normalized.insert(constraint.clone(), normalized.clone());
+                }
+                normalized
+            };
             if normalized != *constraint {
                 mark_conjuncts(&normalized, &mut changed_conjuncts);
             }
@@ -42,6 +60,18 @@ fn normalize_constraints_for_solver_with(
         }),
         constraints.len(),
     );
+    normalize_contextually(cx, normalized, &changed_conjuncts, |constraint| {
+        cache.requires_independent_context(constraint)
+    })
+}
+
+/// Applies context-dependent rewrites to an already context-free-normalized conjunction.
+fn normalize_contextually(
+    cx: &mut SymCx,
+    normalized: Vec<SymBoolExpr>,
+    changed_conjuncts: &HashSet<SymBoolExpr>,
+    mut requires_independent_context: impl FnMut(&SymBoolExpr) -> bool,
+) -> Vec<SymBoolExpr> {
     if matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)) {
         return normalized;
     }
@@ -49,15 +79,17 @@ fn normalize_constraints_for_solver_with(
     // Context-dependent rewrites must not contribute facts to the context that proves them. Mark
     // candidates by syntax rather than by whether the full context happens to prove a rewrite:
     // contradictory bounds can make an interval unavailable until another candidate is removed.
-    let retained_count = normalized
-        .iter()
-        .filter(|constraint| !ConstraintContext::requires_independent_context(constraint))
-        .count();
+    // Classify each conjunct once per query (memoized across queries): the context builder
+    // iterates its input on every propagation round, and classification walks the whole DAG.
     let retained = normalized
         .iter()
-        .filter(|constraint| !ConstraintContext::requires_independent_context(constraint));
-    let context =
-        ConstraintContext::from_constraints_with_lower_bounds(retained, retained_count, false);
+        .filter(|constraint| !requires_independent_context(constraint))
+        .collect::<Vec<_>>();
+    let context = ConstraintContext::from_constraints_with_lower_bounds(
+        retained.iter().copied(),
+        retained.len(),
+        false,
+    );
     let normalized_len = normalized.len();
     let normalized = normalize_constraint_batch(
         normalized.into_iter().map(|constraint| {
@@ -585,7 +617,7 @@ impl ConstraintContext {
         };
         root_candidate
             || expr.contains_udiv()
-            || expr.visit_unique_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
+            || expr.visit_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
     }
 
     fn normalize_bool(
@@ -595,7 +627,7 @@ impl ConstraintContext {
         context_free_changed: bool,
     ) -> SymBoolExpr {
         let may_normalize_word = !self.is_exact_value_constraint(&expr)
-            && expr.visit_unique_bool(|word| self.may_normalize_word(word));
+            && expr.visit_bool(|word| self.may_normalize_word(word));
         let expr = if may_normalize_word {
             let expr = expr.fold_exprs(cx, &mut |cx, expr| self.normalize_word(cx, expr));
             normalize_bool_for_solver(cx, expr)

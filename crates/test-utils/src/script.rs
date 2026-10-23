@@ -219,13 +219,15 @@ impl ScriptTester {
     }
 
     pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {
-        let out = self.cmd.execute();
+        let out =
+            if expected.is_err() { self.cmd.assert_failure() } else { self.cmd.assert_success() };
+        let out = out.get_output();
         let (stdout, stderr) = (lossy_string(&out.stdout), lossy_string(&out.stderr));
 
         trace!(target: "tests", "STDOUT\n{stdout}\n\nSTDERR\n{stderr}");
 
         assert!(
-            !(!stdout.contains(expected.as_str()) && !stderr.contains(expected.as_str())),
+            stdout.contains(expected.as_str()) || stderr.contains(expected.as_str()),
             "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--\n{:?} not found in stdout or stderr",
             expected.as_str()
         );

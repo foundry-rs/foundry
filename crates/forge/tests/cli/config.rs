@@ -17,7 +17,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
-    util::{OTHER_SOLC_VERSION, OutputExt, TestCommand, pretty_err},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
 use semver::VersionReq;
@@ -29,6 +29,9 @@ use std::{
     str::FromStr,
     thread,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 const DEFAULT_CONFIG: &str = r#"[profile.default]
 src = "src"
@@ -105,6 +108,7 @@ experimental = false
 ast = false
 no_storage_caching = false
 no_fork_bal = false
+fork_prefetch = false
 no_rpc_rate_limit = false
 use_literal_content = false
 bytecode_hash = "ipfs"
@@ -474,6 +478,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         },
         no_storage_caching: true,
         no_fork_bal: true,
+        fork_prefetch: true,
         no_rpc_rate_limit: true,
         use_literal_content: false,
         bytecode_hash: Default::default(),
@@ -2437,6 +2442,7 @@ fn test_default_config(prj: _, cmd: _) {
   },
   "no_storage_caching": false,
   "no_fork_bal": false,
+  "fork_prefetch": false,
   "no_rpc_rate_limit": false,
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
@@ -3185,7 +3191,7 @@ contract AnotherCounterTest is Test {
 Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
 ...
 [FAIL: EvmError: Revert] test_Failure() ([GAS])
-Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 1 failed; [..] skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -3364,4 +3370,301 @@ contract MixedTests is Test {
     assert!(rerun_output.contains("Ran 1 test"));
     assert!(rerun_output.contains("testFail()"));
     assert!(!rerun_output.contains("[PASS] testPass()"));
+}
+
+// Loading config must never execute a local `solc`, whether it was overridden by `--use`, the
+// command doesn't compile, or it comes from a nested dependency config.
+#[cfg(unix)]
+#[forgetest]
+fn config_loading_does_not_run_local_solc(prj: _, cmd: _) {
+    let fake_solc = prj.root().join("fake-solc");
+    let marker = prj.root().join("fake-solc.invoked");
+    fs::write(
+        &fake_solc,
+        r#"#!/bin/sh
+echo "$@" >> "$0.invoked"
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.13+commit.abaa5c0e"
+    exit 0
+fi
+exit 1
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&fake_solc, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.add_source("Counter.sol", "contract Counter {}");
+    let assert_not_invoked =
+        || assert!(!marker.exists(), "{}", fs::read_to_string(&marker).unwrap());
+    let write_config = |solc: &str| {
+        let config = format!(
+            "[profile.default]\nsrc = \"src\"\nout = \"out\"\nlibs = [\"lib\"]\nsolc = \"{solc}\"\n"
+        );
+        fs::write(prj.root().join(Config::FILE_NAME), config).unwrap();
+    };
+
+    // `evm_version` is unset, so only the `--use` compiler may determine it.
+    write_config(fake_solc.to_str().unwrap());
+    cmd.args(["build", "--use", SOLC_VERSION]).assert_success();
+    assert_not_invoked();
+    let artifact: Value =
+        serde_json::from_slice(&fs::read(prj.root().join("out/Counter.sol/Counter.json")).unwrap())
+            .unwrap();
+    let default_evm_version = Config::default().evm_version;
+    assert_eq!(artifact["metadata"]["settings"]["evmVersion"], default_evm_version.to_string());
+
+    let output = cmd.forge_fuse().args(["config", "--json"]).assert_success();
+    let config: Config = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(config.evm_version, default_evm_version);
+    assert_not_invoked();
+
+    cmd.forge_fuse().arg("fmt").assert_success();
+    assert_not_invoked();
+
+    // A dependency's `solc` is never used to compile the parent project.
+    let dep = prj.root().join("lib/dep");
+    fs::create_dir_all(dep.join("src")).unwrap();
+    fs::write(dep.join("src/Dep.sol"), "contract Dep {}").unwrap();
+    fs::write(
+        dep.join(Config::FILE_NAME),
+        format!("[profile.default]\nsolc = \"{}\"\n", fake_solc.display()),
+    )
+    .unwrap();
+    write_config(SOLC_VERSION);
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    assert_not_invoked();
+}
+
+// `--config-path` selects the project root, so combining it with `--root` is rejected.
+#[forgetest]
+fn config_path_conflicts_with_root(prj: _, cmd: _) {
+    let config_path = prj.root().join(Config::FILE_NAME);
+    cmd.arg("config")
+        .arg("--root")
+        .arg(prj.root())
+        .arg("--config-path")
+        .arg(config_path)
+        .assert_failure()
+        .stderr_eq(str![[r#"
+error: the argument '--root <PATH>' cannot be used with '--config-path <FILE>'
+...
+"#]]);
+}
+
+#[forgetest]
+fn contextual_remapping_bytecode_is_independent_of_project_root(prj: _, cmd: _) {
+    let mut artifacts = Vec::new();
+    for name in ["first", "second"] {
+        let project = prj.root().join(name);
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::create_dir_all(project.join("lib/dependency")).unwrap();
+        fs::write(
+            project.join(Config::FILE_NAME),
+            r#"
+[profile.default]
+auto_detect_remappings = false
+remappings = ["lib/dependency:unused/=lib/dependency/"]
+"#,
+        )
+        .unwrap();
+        fs::write(
+            project.join("src/Counter.sol"),
+            "// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\ncontract Counter { uint256 public number; }\n",
+        )
+        .unwrap();
+        cmd.forge_fuse()
+            .current_dir(&project)
+            .args(["build", "--no-lint", "--use", SOLC_VERSION])
+            .assert_success();
+        let artifact: Value = serde_json::from_slice(
+            &fs::read(project.join("out/Counter.sol/Counter.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            artifact["metadata"]["settings"]["remappings"],
+            serde_json::json!(["lib/dependency:unused/=lib/dependency/"])
+        );
+        artifacts.push(artifact);
+    }
+    for field in ["bytecode", "deployedBytecode"] {
+        let bytecodes = artifacts
+            .iter()
+            .map(|artifact| {
+                let bytecode = artifact[field]["object"].as_str().expect("missing bytecode object");
+                assert!(!bytecode.is_empty() && bytecode != "0x", "empty {field} object");
+                bytecode
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bytecodes[0], bytecodes[1], "{field} differs between project roots");
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_respects_project_selection(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected");
+    fs::create_dir_all(selected.join("src")).unwrap();
+    // Migration must not require valid configuration values.
+    let legacy = "[default]\noptimizer_runs = \"invalid\"\n";
+
+    for (cwd, args) in [
+        (".", ["--root", "selected"].as_slice()),
+        (".", ["--config-path", "selected/foundry.toml"].as_slice()),
+        ("selected/src", [].as_slice()),
+    ] {
+        fs::write(prj.root().join(Config::FILE_NAME), legacy).unwrap();
+        fs::write(selected.join(Config::FILE_NAME), legacy).unwrap();
+
+        cmd.forge_fuse();
+        cmd.env("HOME", test_home.path());
+        cmd.unset_env("FOUNDRY_CONFIG");
+        cmd.current_dir(prj.root().join(cwd))
+            .args(["config", "--fix"])
+            .args(args)
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![""]);
+
+        assert_data_eq!(
+            fs::read_to_string(selected.join(Config::FILE_NAME)).unwrap(),
+            str![[r#"
+[profile.default]
+optimizer_runs = "invalid"
+
+"#]]
+        );
+        assert_eq!(fs::read_to_string(prj.root().join(Config::FILE_NAME)).unwrap(), legacy);
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_preserves_environment_precedence(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected/foundry.toml");
+    fs::create_dir_all(selected.parent().unwrap()).unwrap();
+    let cwd_config = prj.root().join(Config::FILE_NAME);
+    let custom = prj.root().join("custom.toml");
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    for path in [&cwd_config, &selected, &custom] {
+        fs::write(path, legacy).unwrap();
+    }
+
+    fs::write(prj.root().join(".env"), "FOUNDRY_CONFIG=custom.toml\n").unwrap();
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.args(["config", "--fix", "--config-path", "selected/foundry.toml"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![""]);
+
+    assert_data_eq!(
+        fs::read_to_string(&custom).unwrap(),
+        str![[r#"
+[profile.default]
+optimizer_runs = 123
+
+"#]]
+    );
+    assert_eq!(fs::read_to_string(&cwd_config).unwrap(), legacy);
+    assert_eq!(fs::read_to_string(&selected).unwrap(), legacy);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_rejects_invalid_config_path_before_writing(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let global = test_home.path().join(".foundry/foundry.toml");
+    fs::create_dir_all(global.parent().unwrap()).unwrap();
+    fs::create_dir_all(prj.root().join("directory/foundry.toml")).unwrap();
+    let cwd_config = prj.root().join(Config::FILE_NAME);
+    let other = prj.root().join("other.toml");
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    for path in [&global, &cwd_config, &other] {
+        fs::write(path, legacy).unwrap();
+    }
+
+    for (path, expected) in [
+        (
+            "missing/foundry.toml",
+            str![[r#"
+Error: config-path `missing/foundry.toml` does not exist
+
+"#]],
+        ),
+        (
+            "other.toml",
+            str![[r#"
+Error: the config-path must be a path to a foundry.toml file
+
+"#]],
+        ),
+        (
+            "directory/foundry.toml",
+            str![[r#"
+Error: config-path `directory/foundry.toml` is not a file
+
+"#]],
+        ),
+    ] {
+        cmd.forge_fuse();
+        cmd.env("HOME", test_home.path());
+        cmd.unset_env("FOUNDRY_CONFIG");
+        cmd.args(["config", "--fix", "--config-path", path])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(expected);
+
+        for path in [&global, &cwd_config, &other] {
+            assert_eq!(fs::read_to_string(path).unwrap(), legacy);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn config_fix_matches_loading_for_config_file_symlink(prj: _, cmd: _) {
+    let test_home = tempfile::tempdir().unwrap();
+    let selected = prj.root().join("selected");
+    let shared = prj.root().join("shared");
+    fs::create_dir_all(&selected).unwrap();
+    fs::create_dir_all(&shared).unwrap();
+    let config_path = selected.join(Config::FILE_NAME);
+    let target = shared.join("custom.toml");
+    let sibling = shared.join(Config::FILE_NAME);
+    let legacy = "[default]\noptimizer_runs = 123\n";
+    fs::write(&target, legacy).unwrap();
+    fs::write(&sibling, "[default]\noptimizer_runs = 456\n").unwrap();
+    std::os::unix::fs::symlink("../shared/custom.toml", &config_path).unwrap();
+
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.current_dir(&selected)
+        .args(["config", "--fix", "--config-path", Config::FILE_NAME])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![""]);
+
+    assert_eq!(fs::read_to_string(&target).unwrap(), legacy);
+    assert_eq!(fs::read_link(&config_path).unwrap(), Path::new("../shared/custom.toml"));
+    assert_data_eq!(
+        fs::read_to_string(&sibling).unwrap(),
+        str![[r#"
+[profile.default]
+optimizer_runs = 456
+
+"#]]
+    );
+
+    cmd.forge_fuse();
+    cmd.env("HOME", test_home.path());
+    cmd.unset_env("FOUNDRY_CONFIG");
+    cmd.current_dir(&selected)
+        .args(["config", "--json", "--config-path", Config::FILE_NAME])
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"{ "optimizer_runs": 456, "...": "{...}" }"#]],
+        )
+        .stderr_eq(str![""]);
 }

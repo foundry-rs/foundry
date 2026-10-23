@@ -12,6 +12,7 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
+use foundry_common::provider::redact_url;
 use foundry_config::{Chain, Config, RpcEndpointUrl};
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork},
@@ -466,7 +467,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // upon the next execution of the session source.
         source.config.cached_backend = None;
 
-        sh_println!("Set fork URL to {}", fork_url.yellow())?;
+        sh_println!("Set fork URL to {}", redact_url(&fork_url).yellow())?;
 
         Ok(())
     }
@@ -683,8 +684,13 @@ fn preprocess<'a>(input: &'a str, last_result: Option<&str>) -> Result<(bool, Co
     for (pos, token) in solar::parse::Cursor::new(input).with_position() {
         use RawTokenKind::{BlockComment, LineComment, Literal, Whitespace};
 
-        if matches!(token.kind, Whitespace | LineComment { .. } | BlockComment { .. }) {
-            continue;
+        match token.kind {
+            Whitespace | LineComment { .. } => continue,
+            BlockComment { terminated, .. } if !terminated => {
+                eyre::bail!("unterminated block comment");
+            }
+            BlockComment { .. } => continue,
+            _ => {}
         }
         only_trivia = false;
 

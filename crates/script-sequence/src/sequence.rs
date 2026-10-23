@@ -56,6 +56,10 @@ pub struct ScriptSequence<N: Network> {
     pub commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_generation: Option<TxHash>,
+    /// Hashes of mined transactions that reverted. They are kept out of `receipts`, which
+    /// consumers treat as successful, and resume never resubmits them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reverted: Vec<TxHash>,
 }
 
 impl<N: Network> Default for ScriptSequence<N> {
@@ -71,6 +75,7 @@ impl<N: Network> Default for ScriptSequence<N> {
             chain: Default::default(),
             commit: Default::default(),
             recovery_generation: Default::default(),
+            reverted: Default::default(),
         }
     }
 }
@@ -273,7 +278,7 @@ pub fn sig_to_file_name(sig: &str) -> String {
         return name.to_string();
     }
     // assume calldata if `sig` is hex
-    if let Ok(calldata) = hex::decode(sig.strip_prefix("0x").unwrap_or(sig)) {
+    if let Ok(calldata) = hex::decode(sig) {
         // in which case we return the function selector if available
         if let Some(selector) = calldata.get(..SELECTOR_LEN) {
             return hex::encode(selector);

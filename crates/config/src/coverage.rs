@@ -19,6 +19,8 @@ pub enum CoverageReportKind {
     Bytecode,
     /// JSON report mapping each test to the source items it covers.
     Attribution,
+    /// JSON report listing uncovered source items with their location and context.
+    Gaps,
 }
 
 /// Configuration for `forge coverage`, exposed under `[coverage]` and
@@ -125,7 +127,7 @@ mod tests {
     fn default_matches_cli_defaults() {
         let cfg = CoverageConfig::default();
         assert_eq!(cfg.report, vec![CoverageReportKind::Summary]);
-        assert_eq!(cfg.lcov_version, Version::new(1, 0, 0));
+        assert_eq!(cfg.lcov_version, default_lcov_version());
         assert!(!cfg.ir_minimum);
         assert!(cfg.report_file.is_none());
         assert!(!cfg.include_libs);
@@ -160,7 +162,7 @@ mod tests {
         let cfg: CoverageConfig = toml::from_str(toml).unwrap();
         // Defaulted fields keep their default values.
         assert_eq!(cfg.report, vec![CoverageReportKind::Summary]);
-        assert_eq!(cfg.lcov_version, Version::new(1, 0, 0));
+        assert_eq!(cfg.lcov_version, default_lcov_version());
         assert!(!cfg.ir_minimum);
         // Set field came through.
         assert_eq!(cfg.skip_files, vec!["src/mocks/**".to_string()]);
@@ -170,8 +172,8 @@ mod tests {
     fn deserialize_lcov_version_accepts_cli_formats() {
         for (input, expected) in [
             ("0", Version::new(0, 0, 0)),
-            ("1", Version::new(1, 0, 0)),
-            ("1.0", Version::new(1, 0, 0)),
+            ("1", default_lcov_version()),
+            ("1.0", default_lcov_version()),
             ("1.1", Version::new(1, 1, 0)),
             ("2", Version::new(2, 0, 0)),
             ("2.2", Version::new(2, 2, 0)),
