@@ -67,7 +67,7 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
 }
 
 /// Helper trait get access to the full state data of the database
-pub trait MaybeFullDatabase: crate::mem::DatabaseRef {
+pub trait MaybeFullDatabase: crate::mem::DatabaseRef + Send + Sync {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
     }
@@ -100,6 +100,9 @@ pub trait MaybeFullDatabase: crate::mem::DatabaseRef {
     /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
 }
+
+/// A borrowed, type-erased state that overlays are built on, so that EVMs are monomorphized once.
+pub type StateRef<'a> = &'a dyn MaybeFullDatabase;
 
 impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
 where
@@ -179,9 +182,6 @@ pub trait MaybeForkedDatabase {
 /// `dyn Db` satisfies all `alloy_evm::Database` requirements via its supertraits, but the
 /// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
 impl alloy_evm::Database for dyn Db {}
-
-/// A borrowed, type-erased state that overlays are built on, so that EVMs are monomorphized once.
-pub type StateRef<'a> = &'a (dyn MaybeFullDatabase + Send + Sync);
 
 /// A wrapper around [`CacheDB`] that executes transactions at `spec`.
 #[derive(Debug)]
@@ -621,10 +621,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 
 /// Represents a state at certain point
 #[derive(Debug)]
-pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
+pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase>);
 
 impl StateDb {
-    pub fn new(db: impl MaybeFullDatabase + Send + Sync + 'static) -> Self {
+    pub fn new(db: impl MaybeFullDatabase + 'static) -> Self {
         Self(Box::new(db))
     }
 

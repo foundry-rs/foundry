@@ -6530,7 +6530,7 @@ where
         f: F,
     ) -> Result<T, BlockchainError>
     where
-        F: FnOnce(Box<dyn MaybeFullDatabase + Send + Sync + '_>, BlockInfo<N>) -> T,
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockInfo<N>) -> T,
     {
         let db = self.db.read().await;
         let evm_env = self.next_evm_env(&**db)?;
@@ -7012,7 +7012,7 @@ where
         f: F,
     ) -> Result<T, BlockchainError>
     where
-        F: FnOnce(Box<dyn MaybeFullDatabase + Send + Sync + '_>, BlockEnv) -> T,
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
     {
         let block_number = match block_request {
             Some(BlockRequest::Pending(pool_transactions)) => {
@@ -7079,7 +7079,7 @@ where
     ) -> Result<T, BlockchainError>
     where
         F: FnOnce(
-            Box<dyn MaybeFullDatabase + Send + Sync + '_>,
+            Box<dyn MaybeFullDatabase + '_>,
             BlockEnv,
             Option<MonadReplayContext>,
         ) -> Result<T, BlockchainError>,
@@ -8851,7 +8851,7 @@ impl Backend<FoundryNetwork> {
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         block_interval: u64,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
-        let simulate_at = |state: Box<dyn MaybeFullDatabase + Send + Sync + '_>,
+        let simulate_at = |state: Box<dyn MaybeFullDatabase + '_>,
                            base_block_env: BlockEnv,
                            base_number,
                            base_timestamp,
