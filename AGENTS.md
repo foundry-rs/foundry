@@ -53,6 +53,24 @@ and CI checklist in [`docs/dev/networks.md`](docs/dev/networks.md).
 For symbolic execution work under `crates/evm/symbolic`, read
 `crates/evm/symbolic/AGENTS.md` before editing.
 
+## Reuse and ownership
+
+Before you build, convert, compare, or format a revm, alloy, or Foundry value by
+hand, check the owning type and crate for a canonical constructor, alias,
+conversion, or predicate. For example, use `BlockId::latest()`, `InMemoryDB`,
+`From` between `U256` and `B256`, and `AccountInfo::is_empty_code_hash()`.
+Reuse the shared helpers in `foundry_common` and `foundry_config`, such as path,
+JSON, and provider construction helpers, instead of local copies. Apply this to
+the code that you add or change, not as a repository-wide sweep.
+
+Put new behavior in the component that owns the authoritative state, and use
+its canonical entry point. Callers must not mirror or select behavior that an
+executor, backend, network implementation, or module already owns, so do not
+add parameters, marker types, or parallel context objects for it. Keep custom
+network behavior behind the ownership boundary in
+[`docs/dev/networks.md`](docs/dev/networks.md): select the execution family once
+at the outermost boundary, and do not add family checks below that dispatch.
+
 ## Testing
 
 - Add tests for code changes that fix behavior or add functionality.

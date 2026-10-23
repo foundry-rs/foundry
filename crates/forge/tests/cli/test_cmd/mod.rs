@@ -6146,8 +6146,8 @@ fn should_show_state_changes(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6188,8 +6188,8 @@ fn tracing_verbosity_shows_state_changes_independently(prj: _, cmd: _) {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218890] CounterTest::setUp()
-    ├─ [156801] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] ConfiguredCounter::setNumber(0)
     │   └─ ← [Stop]
@@ -6482,8 +6482,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -6535,8 +6535,8 @@ Logs:
   test increment failure
 
 Traces:
-  [218890] SuppressTracesTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218902] SuppressTracesTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
@@ -7443,8 +7443,8 @@ Logs:
   test non contract call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7465,8 +7465,8 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7485,8 +7485,8 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7568,8 +7568,8 @@ No files changed, compilation skipped
 Ran 1 test for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: call reverted as expected, but without data] test_revert_data_exact_diagnostic() ([GAS])
 Traces:
-  [238803] NonContractCallRevertTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238815] NonContractCallRevertTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
     ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
@@ -7689,10 +7689,10 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [350661] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350673] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [286918] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
