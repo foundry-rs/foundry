@@ -573,8 +573,7 @@ mod tests {
             "retries": 5,
             "retry_backoff": 250,
             "compute_units_per_second": 100,
-            "auth": "Bearer 123",
-            "profile": "linea"
+            "auth": "Bearer 123"
         }"#;
         let config: RpcEndpoint = serde_json::from_str(s).unwrap();
         assert_eq!(
@@ -588,21 +587,8 @@ mod tests {
                     compute_units_per_second: Some(100),
                 },
                 auth: Some(RpcAuth::Raw("Bearer 123".to_string())),
-                profile: Some("linea".to_string()),
+                profile: None,
             }
-        );
-        assert_eq!(
-            serde_json::from_str::<RpcEndpoint>(&serde_json::to_string(&config).unwrap()).unwrap(),
-            config
-        );
-
-        let config = RpcEndpoint {
-            profile: Some("linea".to_string()),
-            ..RpcEndpoint::new(RpcEndpointUrl::Url("http://localhost:8545".to_string()))
-        };
-        assert_eq!(
-            serde_json::from_str::<RpcEndpoint>(&serde_json::to_string(&config).unwrap()).unwrap(),
-            config
         );
 
         let s = "\"http://localhost:8545\"";

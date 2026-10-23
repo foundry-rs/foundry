@@ -878,7 +878,10 @@ fn get_artifact_code(
         ArtifactSource::InMemory(id, data) => {
             let data = match chain_build {
                 Some(build) => build.artifact(id).ok_or_else(|| {
-                    fmt_err!("no artifact for {} on the active chain", id.identifier())
+                    fmt_err!(
+                        "no artifact for {} in the profile of the active fork",
+                        id.identifier()
+                    )
                 })?,
                 None => data,
             };

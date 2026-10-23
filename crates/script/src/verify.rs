@@ -38,26 +38,17 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
     pub async fn verify(self) -> Result<()> {
         let Self { args, script_config, build_data, mut sequence, .. } = self;
 
+        let verify = VerifyBundle::new(
+            &script_config.config.project()?,
+            &script_config.config,
+            build_data.known_contracts,
+            args.retry,
+            args.verifier,
+            args.verify_external,
+        );
+
         for sequence in sequence.sequences_mut() {
-            let profile_build = sequence
-                .profile
-                .as_ref()
-                .map(|profile| build_data.profile_build(profile))
-                .transpose()?;
-            let (config, known_contracts) = profile_build
-                .map_or((&script_config.config, &build_data.known_contracts), |build| {
-                    (&build.config, &build.known_contracts)
-                });
-            let mut verify = VerifyBundle::new(
-                &config.project()?,
-                config,
-                known_contracts.clone(),
-                args.retry,
-                args.verifier.clone(),
-                args.verify_external,
-            );
-            verify.profile.clone_from(&sequence.profile);
-            verify_contracts::<FEN>(sequence, config, verify).await?;
+            verify_contracts::<FEN>(sequence, &script_config.config, verify.clone()).await?;
         }
 
         Ok(())
@@ -75,7 +66,6 @@ pub struct VerifyBundle {
     pub verifier: VerifierArgs,
     pub via_ir: bool,
     pub verify_external: bool,
-    pub profile: Option<String>,
     source_etherscan_url: Option<String>,
     source_etherscan_key: Option<String>,
     source_sourcify_url: Option<String>,
@@ -117,7 +107,6 @@ impl VerifyBundle {
             verifier,
             via_ir,
             verify_external,
-            profile: None,
             source_etherscan_url: None,
             source_etherscan_key: None,
             source_sourcify_url: None,
@@ -243,7 +232,6 @@ impl VerifyBundle {
                     skip_is_verified_check: true,
                     watch: true,
                     print_submission_result_to_stdout: false,
-                    profile: self.profile.clone(),
                     retry: self.retry,
                     libraries: libraries.to_vec(),
                     root: None,
@@ -391,7 +379,6 @@ async fn external_job(
         skip_is_verified_check: true,
         watch: true,
         print_submission_result_to_stdout: false,
-        profile: None,
         retry: verify.retry,
         libraries: Vec::new(),
         root: None,

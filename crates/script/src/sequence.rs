@@ -65,7 +65,6 @@ pub(crate) fn completed_transaction_prefix<N: Network>(
         deserialize = "N::TxEnvelope: for<'de2> Deserialize<'de2>"
     )
 )]
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum SequenceData<N: Network> {
     Single(Box<ScriptSequence<N>>),
     Multi(MultiChainSequence<N>),
@@ -465,6 +464,10 @@ where
             );
         }
         Ok(())
+    }
+
+    pub const fn is_multi(&self) -> bool {
+        self.recovery.data().is_multi()
     }
 
     /// Atomically promotes a dry-run sequence to the broadcast paths.

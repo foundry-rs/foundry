@@ -367,10 +367,6 @@ pub struct VerifyArgs {
     #[arg(skip)]
     pub print_submission_result_to_stdout: bool,
 
-    /// The `[rpc_endpoints]` profile to use to build the smart contract.
-    #[arg(skip)]
-    pub profile: Option<String>,
-
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
@@ -813,16 +809,7 @@ impl VerifyArgs {
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
         let mut config = self.load_config_with_dependencies()?;
-        if let Some(profile) = &self.profile {
-            config = config.with_profile_compiler_settings(profile, self)?;
-        }
         config.libraries.extend(self.libraries.clone());
-        if self.profile.is_some() {
-            let path = config.profile_cache_path()?;
-            config.out = path.join("artifacts");
-            config.build_info_path = Some(path.join("build-info"));
-            config.cache_path = path;
-        }
 
         let project = config.project()?;
 

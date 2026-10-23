@@ -67,7 +67,7 @@ use revm::{
 };
 use std::{
     cmp::max,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::Debug,
     ops::Range,
     sync::{Arc, OnceLock},
@@ -551,9 +551,6 @@ impl ArbitraryStorage {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
-/// Broadcaster, salt and CREATE2 libraries to deploy before the first broadcast to a fork.
-pub type ChainLibraries = (Address, B256, Vec<(Address, Bytes)>);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CreatedAccountsFrameKind {
     Call,
@@ -789,9 +786,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
-
-    /// RPC urls of the forks whose CREATE2 libraries were deployed.
-    pub chain_libraries_deployed: BTreeSet<String>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -864,7 +858,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             isolated_snapshot_restores: Vec::new(),
             capture_isolated_snapshot_restore: false,
             deploy_code_depth: None,
-            chain_libraries_deployed: Default::default(),
         }
     }
 
@@ -1916,101 +1909,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[inline(always)]
     fn has_active_env_overrides(&self) -> bool {
         self.env_overrides.is_any_set()
-    }
-
-    /// Returns the broadcaster, salt and CREATE2 libraries to deploy before the first broadcast
-    /// to `rpc`: those of the endpoint's profile build, or the run's libraries, which the runner
-    /// already deploys on the `--rpc-url` endpoint.
-    pub fn take_chain_libraries(
-        &mut self,
-        rpc: &str,
-        depth: usize,
-        caller: Address,
-    ) -> Option<ChainLibraries> {
-        let config = &self.core.config;
-        let broadcast = self.broadcast.as_ref()?;
-        let depth = self.deploy_code_caller_depth(depth);
-        if depth < broadcast.depth
-            || caller != broadcast.original_caller
-            || (depth != broadcast.depth && !broadcast.deploy_from_code)
-            || self.chain_libraries_deployed.contains(rpc)
-        {
-            return None;
-        }
-        let (salt, libraries) = match config.chain_builds.get(rpc) {
-            Some(build) => (build.create2_library_salt, &build.create2_libraries),
-            None if config.evm_opts.fork_url.as_deref() != Some(rpc) => {
-                (config.create2_library_salt, &config.create2_libraries)
-            }
-            None => return None,
-        };
-        if libraries.is_empty() {
-            return None;
-        }
-        self.chain_libraries_deployed.insert(rpc.to_string());
-        Some((broadcast.new_origin, salt, libraries.clone()))
-    }
-
-    /// Records a CREATE2 library deployment by `from` as a broadcastable transaction.
-    pub fn record_library_deployment(
-        &mut self,
-        ecx: &mut FoundryContextFor<'_, FEN>,
-        from: Address,
-        create2_deployer: Address,
-        input: Bytes,
-    ) {
-        let chain_id = ecx.cfg().chain_id();
-        let rpc = ecx.db().active_fork_url();
-        let fee_token = ecx.tx().fee_token();
-        let nonce = ecx.journal().evm_state()[&from].info.nonce;
-        let mut tx_req = TransactionRequestFor::<FEN>::default()
-            .with_from(from)
-            .with_to(create2_deployer)
-            .with_input(input)
-            .with_nonce(nonce)
-            .with_chain_id(chain_id);
-        if let Some(fee_token) = fee_token {
-            tx_req.set_fee_token(fee_token);
-        }
-        self.broadcastable_transactions.push_back(BroadcastableTransaction {
-            rpc,
-            transaction: TransactionMaybeSigned::new(tx_req),
-            contract_address: None,
-        });
-        debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable library deployment");
-    }
-
-    /// Returns an error if a broadcast create on the fork of `rpc` would deploy the run's build
-    /// of a project contract whose build differs in the profile named by that endpoint.
-    pub fn check_profile_create(
-        &self,
-        rpc: &str,
-        depth: usize,
-        caller: Address,
-        init_code: &[u8],
-    ) -> Option<String> {
-        let build = self.core.config.chain_builds.get(rpc)?;
-        let broadcast = self.broadcast.as_ref()?;
-        if depth < broadcast.depth
-            || caller != broadcast.original_caller
-            || (depth != broadcast.depth && !broadcast.deploy_from_code)
-            || self.deploy_code_depth.is_some_and(|deploy_depth| deploy_depth + 1 == depth)
-        {
-            return None;
-        }
-        let (id, _) = self.core.config.artifact_lookup.as_ref()?.iter().find(|(id, data)| {
-            data.bytecode().is_some_and(|code| {
-                !code.is_empty()
-                    && init_code.starts_with(code)
-                    && build.artifact(id).and_then(|data| data.bytecode()) != Some(code)
-            })
-        })?;
-        let name = id.name.split('.').next().unwrap_or(&id.name);
-        Some(format!(
-            "the endpoint's profile builds {} differently; deploy its build with \
-             `vm.deployCode(\"{name}\")` instead of `new {name}`",
-            id.identifier()
-        ))
     }
 }
 

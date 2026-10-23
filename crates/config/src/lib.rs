@@ -891,8 +891,7 @@ impl Config {
         Self::from_figment(Figment::from(provider.legacy_labels()))
     }
 
-    /// Returns this config with the compiler settings, hardfork and CREATE2 library salt of
-    /// `profile`, with `overrides` applied.
+    /// Returns this config with the compiler settings of `profile`, with `overrides` applied.
     pub fn with_profile_compiler_settings<T: Provider>(
         &self,
         profile: &str,
@@ -911,8 +910,6 @@ impl Config {
         Ok(Self {
             solc: other.solc,
             evm_version: other.evm_version,
-            hardfork: other.hardfork,
-            create2_library_salt: other.create2_library_salt,
             networks: other.networks,
             optimizer: other.optimizer,
             optimizer_runs: other.optimizer_runs,
@@ -934,15 +931,13 @@ impl Config {
         })
     }
 
-    /// Returns the path to the cache dir of the build for this config.
+    /// Returns the cache dir of the build with this config's compiler settings.
     pub fn profile_cache_path(&self) -> Result<PathBuf, SolcError> {
         let settings = serde_json::to_vec(&(
             self.compiler_settings()?,
             &self.solc,
             &self.additional_compiler_profiles,
             &self.compilation_restrictions,
-            self.hardfork,
-            self.create2_library_salt,
         ))?;
         Ok(self.root.join(&self.cache_path).join("profiles").join(keccak256(settings).to_string()))
     }
@@ -9243,67 +9238,6 @@ mod tests {
                 )),
                 "Expected UnknownProfile warning, got: {:?}",
                 cfg.warnings
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn can_use_profile_compiler_settings() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                src = "src"
-                evm_version = "cancun"
-                libraries = ["src/Lib.sol:Lib:0x1111111111111111111111111111111111111111"]
-
-                [profile.linea]
-                src = "other"
-                evm_version = "london"
-                optimizer_runs = 1
-                libraries = ["src/Lib.sol:Lib:0x2222222222222222222222222222222222222222"]
-                "#,
-            )?;
-
-            let config = Config::load().unwrap();
-            let linea = config
-                .with_profile_compiler_settings(
-                    "linea",
-                    figment::providers::Serialized::default("via_ir", true),
-                )
-                .unwrap();
-            assert_eq!(linea.evm_version, EvmVersion::London);
-            assert_eq!(linea.optimizer_runs, Some(1));
-            assert!(linea.via_ir);
-            assert!(!config.via_ir);
-            assert_eq!(
-                linea.libraries,
-                vec!["src/Lib.sol:Lib:0x2222222222222222222222222222222222222222".to_string()]
-            );
-            assert_eq!(linea.src, config.src);
-            assert_eq!(linea.profile, config.profile);
-
-            assert_ne!(config.profile_cache_path().unwrap(), linea.profile_cache_path().unwrap());
-            assert!(
-                config
-                    .profile_cache_path()
-                    .unwrap()
-                    .starts_with(config.root.join(&config.cache_path).join("profiles"))
-            );
-
-            let err = config
-                .with_profile_compiler_settings(
-                    "nonexistent",
-                    figment::providers::Serialized::default("via_ir", true),
-                )
-                .unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "failed to extract foundry config:\n\
-                 foundry config error: unknown profile `nonexistent`\n"
             );
 
             Ok(())

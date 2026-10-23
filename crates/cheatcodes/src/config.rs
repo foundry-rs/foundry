@@ -1,13 +1,11 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashMap};
+use alloy_primitives::{U256, map::AddressHashMap};
 use foundry_common::{ContractData, ContractsByArtifact, fs::normalize_path};
-use foundry_compilers::{
-    ArtifactId, ProjectPathsConfig, artifacts::EvmVersion, utils::canonicalize,
-};
+use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
-    Config, FoundryHardfork, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint,
-    RpcEndpointUrl, cache::StorageCachingConfig, fs_permissions::FsAccessKind,
+    Config, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
+    cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
 use foundry_evm_traces::identifier::ExternalIdentifierConfig;
@@ -78,10 +76,6 @@ pub struct CheatsConfig {
     pub internal_expect_revert: bool,
     /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
     pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
-    /// CREATE2 libraries to deploy on each fork.
-    pub create2_libraries: Vec<(Address, Bytes)>,
-    /// CREATE2 salt to use for the library deployment in scripts.
-    pub create2_library_salt: B256,
 }
 
 impl CheatsConfig {
@@ -129,8 +123,6 @@ impl CheatsConfig {
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
             chain_builds: BTreeMap::new(),
-            create2_libraries: Vec::new(),
-            create2_library_salt: config.create2_library_salt,
         }
     }
 
@@ -145,7 +137,6 @@ impl CheatsConfig {
         );
         cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
         cloned.chain_builds.clone_from(&self.chain_builds);
-        cloned.create2_libraries.clone_from(&self.create2_libraries);
         cloned
     }
 
@@ -281,8 +272,6 @@ impl Default for CheatsConfig {
             seed: None,
             internal_expect_revert: false,
             chain_builds: BTreeMap::new(),
-            create2_libraries: Vec::new(),
-            create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         }
     }
 }
@@ -312,14 +301,6 @@ pub struct ChainBuild {
     pub artifacts: ContractsByArtifact,
     /// Artifacts directory of the build.
     pub artifacts_dir: PathBuf,
-    /// CREATE2 libraries to deploy on each fork.
-    pub create2_libraries: Vec<(Address, Bytes)>,
-    /// CREATE2 salt to use for the library deployment in scripts.
-    pub create2_library_salt: B256,
-    /// EVM version of the profile.
-    pub evm_version: EvmVersion,
-    /// Hardfork of the profile.
-    pub hardfork: Option<FoundryHardfork>,
 }
 
 impl ChainBuild {
@@ -349,6 +330,7 @@ impl ChainBuild {
 mod tests {
 
     use super::*;
+    use alloy_primitives::Address;
     use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 

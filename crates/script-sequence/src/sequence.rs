@@ -56,8 +56,6 @@ pub struct ScriptSequence<N: Network> {
     pub commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_generation: Option<TxHash>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<String>,
     /// Hashes of mined transactions that reverted. They are kept out of `receipts`, which
     /// consumers treat as successful, and resume never resubmits them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -77,7 +75,6 @@ impl<N: Network> Default for ScriptSequence<N> {
             chain: Default::default(),
             commit: Default::default(),
             recovery_generation: Default::default(),
-            profile: Default::default(),
             reverted: Default::default(),
         }
     }
