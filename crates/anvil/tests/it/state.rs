@@ -827,6 +827,23 @@ async fn fork_historical_states_fall_back_to_remote_after_load() {
     assert_eq!(provider.get_balance(local_account).await.unwrap(), U256::from(777));
     assert_eq!(provider.get_code_at(*greeter.address()).await.unwrap(), remote_code);
     assert_eq!(provider.get_storage_at(destructible, U256::ZERO).await.unwrap(), U256::ZERO);
+
+    // Snapshots saved before `account_states` existed must not resurrect cleared storage either.
+    let mut legacy = serde_json::to_value(fork_api.serialized_state(true).await.unwrap()).unwrap();
+    for entry in legacy["historical_states"].as_array_mut().unwrap() {
+        entry[1].as_object_mut().unwrap().remove("account_states").unwrap();
+    }
+    let legacy = serde_json::from_value(legacy).unwrap();
+    let (_legacy_api, legacy_node) = spawn(fork_config().with_init_state(Some(legacy))).await;
+    assert_eq!(
+        legacy_node
+            .http_provider()
+            .get_storage_at(destructible, U256::ZERO)
+            .block_id(selfdestruct_block)
+            .await
+            .unwrap(),
+        U256::ZERO
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

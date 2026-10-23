@@ -8,7 +8,8 @@ use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{
-        BlockchainDb, DatabaseResult, RevertStateSnapshotAction, SharedBackend, StateSnapshot,
+        BlockchainDb, DatabaseResult, MemDb, RevertStateSnapshotAction, SharedBackend,
+        StateSnapshot,
     },
     fork::database::ForkDbStateSnapshot,
 };
@@ -116,8 +117,14 @@ impl<N: Network> Db for ForkedDatabase<N> {
     }
 
     fn historical_state(&self, state_snapshot: StateSnapshot) -> StateDb {
-        // Fall back to the fork for anything the snapshot did not capture.
-        let mut state = StateDb::new(CacheDB::new(self.database().db.clone()));
+        // Fall back to the fork for anything the snapshot did not capture. Snapshots without
+        // account states cannot tell cleared storage from uncached storage, so they keep the
+        // previous standalone restore.
+        let mut state = if state_snapshot.account_states.is_some() {
+            StateDb::new(CacheDB::new(self.database().db.clone()))
+        } else {
+            StateDb::new(MemDb::default())
+        };
         state.init_from_state_snapshot(state_snapshot);
         state
     }
@@ -181,7 +188,9 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
-        state_snapshot.account_states.extend(local_state_snapshot.account_states);
+        if let Some(account_states) = local_state_snapshot.account_states {
+            state_snapshot.account_states.get_or_insert_default().extend(account_states);
+        }
         state_snapshot
     }
 
@@ -191,7 +200,9 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
-        state_snapshot.account_states.extend(local_state_snapshot.account_states);
+        if let Some(account_states) = local_state_snapshot.account_states {
+            state_snapshot.account_states.get_or_insert_default().extend(account_states);
+        }
         state_snapshot
     }
 

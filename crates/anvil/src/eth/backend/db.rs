@@ -530,7 +530,12 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
             accounts.insert(addr, info);
         }
         let block_hashes = std::mem::take(&mut self.cache.block_hashes);
-        StateSnapshot { accounts, storage: account_storage, block_hashes, account_states }
+        StateSnapshot {
+            accounts,
+            storage: account_storage,
+            block_hashes,
+            account_states: Some(account_states),
+        }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
@@ -550,7 +555,12 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         }
 
         let block_hashes = self.cache.block_hashes.clone();
-        StateSnapshot { accounts, storage: account_storage, block_hashes, account_states }
+        StateSnapshot {
+            accounts,
+            storage: account_storage,
+            block_hashes,
+            account_states: Some(account_states),
+        }
     }
 
     fn clear(&mut self) {
@@ -558,8 +568,8 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
-        let StateSnapshot { accounts, mut storage, block_hashes, mut account_states } =
-            state_snapshot;
+        let StateSnapshot { accounts, mut storage, block_hashes, account_states } = state_snapshot;
+        let mut account_states = account_states.unwrap_or_default();
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {

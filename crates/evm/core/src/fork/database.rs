@@ -102,7 +102,7 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
             accounts: db.accounts.read().clone(),
             storage: db.storage.read().clone(),
             block_hashes: db.block_hashes.read().clone(),
-            account_states: Default::default(),
+            account_states: None,
         };
         ForkDbStateSnapshot { local: self.cache_db.clone(), state_snapshot }
     }
