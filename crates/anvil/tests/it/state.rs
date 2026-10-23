@@ -712,6 +712,140 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     assert_eq!(greeting_after_change, "World!");
 }
 
+// Historical states loaded into a fork must still read uncached accounts from the fork, without
+// resurrecting storage that was cleared locally.
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_historical_states_fall_back_to_remote_after_load() {
+    // Shanghai keeps the pre-Cancun selfdestruct that clears storage.
+    let config = || NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()));
+    let (_origin_api, origin) = spawn(config()).await;
+    let origin_provider = origin.http_provider();
+    let sender = origin.dev_accounts().next().unwrap();
+    let remote_account = Address::repeat_byte(0x42);
+    let local_account = Address::repeat_byte(0x11);
+    let send = |to, value| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(to)
+                .with_value(U256::from(value)),
+        )
+    };
+
+    let greeter = Greeter::deploy(&origin_provider, "untouched".to_string()).await.unwrap();
+    origin_provider
+        .send_transaction(send(remote_account, 12345))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    // Stores 42 in slot zero, and its runtime selfdestructs when called.
+    let destructible = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_deploy_code(bytes!("602a6000556133ff6000526002601ef3")),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .contract_address
+        .unwrap();
+    let fork_block = origin_provider.get_block_number().await.unwrap();
+    let remote_code = origin_provider.get_code_at(*greeter.address()).await.unwrap();
+    let remote_slot = origin_provider.get_storage_at(*greeter.address(), U256::ZERO).await.unwrap();
+    assert_ne!(remote_code, Bytes::new());
+    assert_ne!(remote_slot, U256::ZERO);
+    assert_eq!(
+        origin_provider.get_storage_at(destructible, U256::ZERO).await.unwrap(),
+        U256::from(42)
+    );
+
+    let fork_config = || {
+        config()
+            .with_eth_rpc_url(Some(origin.http_endpoint()))
+            .with_fork_block_number(Some(fork_block))
+    };
+    // Mine three local blocks without reading the remote greeter or account on the fork, and
+    // selfdestruct the remote contract in the second one.
+    let (fork_api, fork) = spawn(fork_config()).await;
+    let fork_provider = fork.http_provider();
+    for (to, value) in [(local_account, 777), (destructible, 0), (local_account, 1000)] {
+        fork_provider.send_transaction(send(to, value)).await.unwrap().get_receipt().await.unwrap();
+    }
+    let selfdestruct_block = BlockId::number(fork_block + 2);
+    assert_eq!(
+        fork_provider
+            .get_storage_at(destructible, U256::ZERO)
+            .block_id(selfdestruct_block)
+            .await
+            .unwrap(),
+        U256::ZERO
+    );
+    // A head-only change that must not leak into the restored history.
+    fork_api.anvil_set_balance(remote_account, U256::from(1)).await.unwrap();
+    let dump = fork_api.anvil_dump_state(Some(true)).await.unwrap();
+
+    let (loaded_api, loaded) = spawn(fork_config()).await;
+    assert!(loaded_api.anvil_load_state(dump).await.unwrap());
+    let provider = loaded.http_provider();
+    assert_eq!(provider.get_block_number().await.unwrap(), fork_block + 3);
+
+    for number in fork_block..=fork_block + 2 {
+        let block = BlockId::number(number);
+        assert_eq!(
+            provider.get_code_at(*greeter.address()).block_id(block).await.unwrap(),
+            remote_code
+        );
+        assert_eq!(
+            provider.get_storage_at(*greeter.address(), U256::ZERO).block_id(block).await.unwrap(),
+            remote_slot
+        );
+        assert_eq!(
+            provider.get_balance(remote_account).block_id(block).await.unwrap(),
+            U256::from(12345)
+        );
+    }
+    assert_eq!(
+        provider.get_balance(local_account).block_id(selfdestruct_block).await.unwrap(),
+        U256::from(777)
+    );
+    assert_eq!(
+        provider
+            .get_storage_at(destructible, U256::ZERO)
+            .block_id(selfdestruct_block)
+            .await
+            .unwrap(),
+        U256::ZERO
+    );
+
+    // Rolling back restores the loaded historical state as the live state.
+    loaded_api.anvil_rollback(Some(1)).await.unwrap();
+    assert_eq!(provider.get_balance(local_account).await.unwrap(), U256::from(777));
+    assert_eq!(provider.get_code_at(*greeter.address()).await.unwrap(), remote_code);
+    assert_eq!(provider.get_storage_at(destructible, U256::ZERO).await.unwrap(), U256::ZERO);
+
+    // Snapshots saved before `account_states` existed must not resurrect cleared storage either.
+    let mut legacy = serde_json::to_value(fork_api.serialized_state(true).await.unwrap()).unwrap();
+    for entry in legacy["historical_states"].as_array_mut().unwrap() {
+        entry[1].as_object_mut().unwrap().remove("account_states").unwrap();
+    }
+    let legacy = serde_json::from_value(legacy).unwrap();
+    let (_legacy_api, legacy_node) = spawn(fork_config().with_init_state(Some(legacy))).await;
+    assert_eq!(
+        legacy_node
+            .http_provider()
+            .get_storage_at(destructible, U256::ZERO)
+            .block_id(selfdestruct_block)
+            .await
+            .unwrap(),
+        U256::ZERO
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn revert_removes_historical_states_of_discarded_blocks() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
