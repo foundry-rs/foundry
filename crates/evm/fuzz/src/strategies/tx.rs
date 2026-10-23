@@ -152,7 +152,6 @@ impl TxGenerator {
         config: InvariantConfig,
         fixtures: FuzzFixtures,
     ) -> Self {
-        let actors = invariant_actors(&senders);
         let senders = Rc::new(senders);
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
@@ -165,7 +164,7 @@ impl TxGenerator {
                 fixtures: fixtures.clone(),
                 contracts: contracts.clone(),
                 sender: select_sender(&state, senders.clone(), dictionary_weight),
-                actors,
+                actors: invariant_actors(&senders),
                 config: config.clone(),
                 pending_views: Vec::new(),
                 pending_feedback: Vec::new(),
@@ -363,18 +362,26 @@ fn invariant_actors(senders: &SenderFilters) -> [Address; 3] {
     if !senders.targeted.is_empty() {
         return std::array::from_fn(|index| senders.targeted[index % senders.targeted.len()]);
     }
-    std::array::from_fn(|role| {
+    let mut actors = [Address::ZERO; 3];
+    for role in 0..actors.len() {
         let mut bytes = [0u8; 20];
-        // Match the conventional stateful-fuzz actor identities used by Solidity harnesses and
-        // other EVM fuzzers, so pre-funded or explicitly recognized actors remain useful.
+        // Match conventional stateful-fuzz identities while respecting exclusions and keeping
+        // implicit roles distinct. Carry across the whole address instead of cycling one byte.
         bytes[17] = 1 + role as u8;
-        let mut actor = Address::from(bytes);
-        while !senders.allows(actor) {
-            bytes[17] = bytes[17].wrapping_add(1);
-            actor = Address::from(bytes);
+        while !senders.allows(Address::from(bytes))
+            || actors[..role].contains(&Address::from(bytes))
+        {
+            for byte in bytes.iter_mut().rev() {
+                let (next, carry) = byte.overflowing_add(1);
+                *byte = next;
+                if !carry {
+                    break;
+                }
+            }
         }
-        actor
-    })
+        actors[role] = Address::from(bytes);
+    }
+    actors
 }
 
 fn select_sender(
@@ -415,6 +422,29 @@ mod tests {
     };
 
     #[test]
+    fn jev_actors_escape_excluded_prefixes_and_stay_distinct() {
+        let excluded = (0..=u8::MAX)
+            .map(|value| {
+                let mut bytes = [0u8; 20];
+                bytes[17] = value;
+                Address::from(bytes)
+            })
+            .collect();
+        let filters = SenderFilters::new(Vec::new(), excluded);
+        let actors = invariant_actors(&filters);
+        for (index, actor) in actors.iter().enumerate() {
+            assert!(filters.allows(*actor));
+            assert!(!actors[..index].contains(actor));
+        }
+        let first = actors[0];
+        let second = actors[1];
+        assert_eq!(
+            invariant_actors(&SenderFilters::new(vec![first, second], Vec::new())),
+            [first, second, first]
+        );
+    }
+
+    #[test]
     fn jev_decides_native_transactions_online_and_receives_execution_feedback() {
         let target = Address::with_last_byte(1);
         let deposit = Function::parse("deposit(uint256)").unwrap();
@@ -425,13 +455,9 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.insert(target, TargetedContract::new("Ledger".into(), abi));
         let contracts = FuzzRunIdentifiedContracts::new(targets, false);
-        let state = EvmFuzzState::new(
-            &[],
-            &InMemoryDB::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
-        .into_invariant();
+        let state =
+            EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
+                .into_invariant();
         let generator = TxGenerator::invariant(
             state,
             SenderFilters::default(),
@@ -529,13 +555,9 @@ mod tests {
         view_abi.functions.insert(balance.name.clone(), vec![balance.clone()]);
         targets.insert(view_target, TargetedContract::new("Accounting".into(), view_abi));
         let contracts = FuzzRunIdentifiedContracts::new(targets, false);
-        let state = EvmFuzzState::new(
-            &[],
-            &InMemoryDB::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
-        .into_invariant();
+        let state =
+            EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
+                .into_invariant();
         let generator = TxGenerator::invariant(
             state,
             SenderFilters { targeted: vec![sender], ..Default::default() },
