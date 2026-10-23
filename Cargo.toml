@@ -139,6 +139,10 @@ all = "warn"
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
+[profile.dev.build-override]
+# Host units share the dev debuginfo level, so switching package selections reuses them.
+debug = "line-tables-only"
+
 [profile.test.package.tempo-precompiles]
 # Historical Moderato ghost orders violate an upstream debug-only invariant.
 debug-assertions = false
