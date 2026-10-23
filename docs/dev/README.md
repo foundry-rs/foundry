@@ -36,6 +36,8 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 
 ## Maintained guides
 
+- [Build performance](./build-performance.md) describes opt-in Cargo settings that shorten local
+  build cycles.
 - [Cheatcodes](./cheatcodes.md) explains cheatcode generation, dispatch, and implementation.
 - [Debugging](./debugging.md) collects contributor debugging techniques.
 - [Editor integrations](../../editors/README.md) covers the VS Code Development Host,
