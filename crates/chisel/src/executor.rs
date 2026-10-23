@@ -705,7 +705,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "evm2 does not install the Celo transfer precompile; see docs/dev/evm2-migration.md"]
     async fn celo_network_reaches_fresh_and_restored_runners() {
         let networks = NetworkConfigs::with_celo();
         let mut evm_opts = EvmOpts { networks, ..Default::default() };

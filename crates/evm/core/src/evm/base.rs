@@ -44,6 +44,10 @@ impl FoundryTxResultExt for BaseTxResultExt {
     fn is_failed_deposit(&self) -> bool {
         self.failed_deposit
     }
+
+    fn eip8130_phase_statuses(&self) -> Option<&[u8]> {
+        self.eip8130_phase_statuses.as_deref()
+    }
 }
 
 impl FoundryEvmNetwork for BaseEvmNetwork {
@@ -57,9 +61,12 @@ impl FoundryEvmNetwork for BaseEvmNetwork {
     ) -> eyre::Result<Recovered<BaseTxEnvelope>> {
         let mut tx = BaseTxEnvelope::from(envelope);
         // The L1 data and operator fees are priced over the signed encoding; simulations of
-        // unsigned requests price them at zero, like `eth_call`.
+        // unsigned requests price them at zero, like `eth_call`. An EIP-8130 simulation carries
+        // placeholder authentication, so it runs without signature checks, nonce advancement or
+        // fee settlement, as the sender's self-actor unless a caller supplies an actor hint.
         if payload.is_simulated() {
             tx.set_enveloped(Bytes::new());
+            tx.set_eip8130_simulation(None);
         }
         Ok(tx.with_signer(sender))
     }

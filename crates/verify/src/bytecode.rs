@@ -37,8 +37,8 @@ use foundry_config::{Chain, Config, figment, impl_figment_convert};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::evm::{
-        BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory,
-        FoundryEvmNetwork, TempoEvmNetwork, TransactionRequestFor,
+        BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmExt,
+        FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork, TransactionRequestFor,
     },
     executors::{Executor, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
@@ -962,7 +962,8 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
 /// prepared for the target, positioned in `context` when the network's execution depends on the
 /// block position.
 ///
-/// Protocol system transactions are skipped; see the replay gaps in `docs/dev/evm2-migration.md`.
+/// System transactions are skipped, except canonical protocol transactions of the network, such as
+/// Monad's staking syscalls, which replay.
 fn replay_block_transactions<FEN: FoundryEvmNetwork>(
     block: Option<&AnyRpcBlock>,
     target_hash: B256,
@@ -988,17 +989,29 @@ fn replay_block_transactions<FEN: FoundryEvmNetwork>(
 
     for (index, tx) in txs[..target_index].iter().enumerate() {
         trace!("replay tx::: {}", tx.tx_hash());
-        if is_known_system_sender(tx.from())
-            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
-        {
+        if tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE) {
             continue;
         }
+        let replayed = if is_known_system_sender(tx.from()) {
+            // Only canonical protocol transactions replay; other system envelopes have no native
+            // representation.
+            match FEN::tx_from_any_rpc(tx) {
+                Ok(replayed) if ChainFor::<FEN>::is_protocol_transaction(&replayed) => replayed,
+                _ => continue,
+            }
+        } else {
+            FEN::tx_from_any_rpc(tx)?
+        };
+        let ext = ext_at(index).map(|mut ext| {
+            // The canonical block is trusted history, so its protocol transactions replay.
+            ext.set_protocol_replay(ChainFor::<FEN>::is_protocol_transaction(&replayed));
+            ext
+        });
 
         // Transact creations too: batched transactions can mix a creation with calls, so their
         // result need not be a deployment. Reverted transactions are committed and replay
         // continues.
-        let replayed = FEN::tx_from_any_rpc(tx)?;
-        executor.transact_tx(*evm_env, &replayed, ext_at(index)).wrap_err_with(|| {
+        executor.transact_tx(*evm_env, &replayed, ext).wrap_err_with(|| {
             format!(
                 "Failed to execute transaction: {:?} in block {}",
                 tx.tx_hash(),
@@ -1136,6 +1149,50 @@ mod tests {
         assert!(error.to_string().contains("missing from its block"), "{error:?}");
         assert_eq!(executor.get_nonce(caller).unwrap(), 0);
         assert_eq!(executor.get_balance(caller).unwrap(), U256::from(100));
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_replay_prefix_replays_canonical_protocol_envelopes() {
+        let system = foundry_common::MONAD_SYSTEM_ADDRESS;
+        let staking = alloy_primitives::address!("0x0000000000000000000000000000000000001000");
+        let target = B256::with_last_byte(3);
+        let env = EvmOpts::default().local_evm_env::<MonadEvmNetwork>();
+        let mut executor = ExecutorBuilder::<MonadEvmNetwork>::new().build(
+            env,
+            Default::default(),
+            Backend::spawn(None, env).unwrap(),
+            Default::default(),
+        );
+        // Historical staking state is funded; EIP-161 prunes a touched empty account's storage.
+        executor.set_balance(staking, U256::ONE).unwrap();
+        let system_transaction = |nonce: u64, hash: B256, gas: u64| -> AnyRpcTransaction {
+            serde_json::from_value(serde_json::json!({
+                "type": "0x0",
+                "hash": hash, "nonce": format!("0x{nonce:x}"),
+                "from": system, "to": staking,
+                "value": "0x0", "gas": format!("0x{gas:x}"), "gasPrice": "0x0",
+                "input": hex::encode_prefixed(&alloy_primitives::keccak256("syscallSnapshot()")[..4]),
+                "v": "0x1b", "r": "0x1", "s": "0x1"
+            }))
+            .unwrap()
+        };
+        let block = replay_block(vec![
+            // A gas-paying envelope from the system sender is not a protocol system call.
+            system_transaction(0, B256::with_last_byte(1), 100_000),
+            system_transaction(0, B256::with_last_byte(2), 0),
+            system_transaction(1, target, 0),
+        ]);
+        let context = BlockContext::new(Vec::new(), Vec::new(), Vec::new());
+
+        replay_block_transactions(Some(&block), target, &mut executor, &env, Some(&context))
+            .unwrap();
+
+        // Only the canonical snapshot ran: it advanced the protocol nonce and entered the epoch
+        // boundary.
+        assert_eq!(executor.get_nonce(system).unwrap(), 1);
+        assert_eq!(executor.get_balance(staking).unwrap(), U256::ONE);
+        assert_eq!(executor.backend().storage(staking, U256::from(2)).unwrap(), U256::ONE << 248);
     }
 
     #[test]

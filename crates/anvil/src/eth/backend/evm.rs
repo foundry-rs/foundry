@@ -31,6 +31,7 @@ use evm2::{
     interpreter::{GasTracker, Interpreter, Message, MessageResult},
     precompiles::{MovePrecompileError, PrecompileId, PrecompileResult},
 };
+use foundry_evm_core::evm::celo_transfer;
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{
     NetworkConfigs,
@@ -44,7 +45,7 @@ pub use evm2::evm::precompile::PrecompileOutput;
 pub use foundry_evm_core::evm::{
     EthEvmNetwork, EvmFactoryFor, FoundryDatabase, FoundryEvmExt, FoundryEvmFactory,
     FoundryEvmNetwork, FoundryTxResultExt, SpecFor, TempoEvmNetwork, TxEnvelopeFor, TxFor,
-    TxPayload, TypesFor,
+    TxPayload, TypesFor, bsc_p256,
 };
 
 #[cfg(feature = "base")]
@@ -132,6 +133,8 @@ pub(crate) use with_evm_network;
 pub struct ResultExt {
     /// Whether an OP-stack deposit failed and kept only its mint and nonce bump.
     pub failed_deposit: bool,
+    /// Per-phase statuses of an included signed Base EIP-8130 transaction.
+    pub eip8130_phase_statuses: Option<Vec<u8>>,
 }
 
 /// Network-neutral transaction result.
@@ -159,17 +162,25 @@ pub struct PreparedTx {
     pub payload: TxPayload,
     /// Tempo simulation identity of a Tempo RPC request.
     pub tempo: Option<TempoSimulation>,
+    /// Acting actor hint (`senderActorId`) of a simulated Base EIP-8130 request.
+    pub eip8130_sender_actor_id: Option<B256>,
 }
 
 impl PreparedTx {
     /// Prepares a signed or impersonated transaction.
     pub const fn signed(tx: FoundryTxEnvelope, sender: Address) -> Self {
-        Self { tx, sender, payload: TxPayload::Signed, tempo: None }
+        Self { tx, sender, payload: TxPayload::Signed, tempo: None, eip8130_sender_actor_id: None }
     }
 
     /// Prepares a simulated request.
     pub const fn simulated(tx: FoundryTxEnvelope, sender: Address) -> Self {
-        Self { tx, sender, payload: TxPayload::Simulated, tempo: None }
+        Self {
+            tx,
+            sender,
+            payload: TxPayload::Simulated,
+            tempo: None,
+            eip8130_sender_actor_id: None,
+        }
     }
 }
 
@@ -188,6 +199,10 @@ pub struct TxContext {
     /// Monad's block-level sender and authority context for the reserve-balance rules.
     #[cfg(feature = "monad")]
     pub monad: Option<monad_evm2::MonadChainContext>,
+    /// Whether the transaction is trusted Monad history, such as a mined or forced replay, so a
+    /// canonical protocol system envelope executes as a protocol system call.
+    #[cfg(feature = "monad")]
+    pub monad_protocol_replay: bool,
 }
 
 /// Anvil's binding of an evm2 network family.
@@ -220,14 +235,20 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         evm.ext_mut().for_transaction(tx);
     }
 
-    /// Marks a simulated transaction with Tempo's RPC simulation identity.
-    fn apply_tempo_simulation(tx: TxFor<Self>, _simulation: &TempoSimulation) -> TxFor<Self> {
-        tx
-    }
-
     /// Returns the network-neutral outcome flags.
     fn result_ext(ext: &<TypesFor<Self> as EvmTypesHost>::TxResultExt) -> ResultExt {
-        ResultExt { failed_deposit: ext.is_failed_deposit() }
+        ResultExt {
+            failed_deposit: ext.is_failed_deposit(),
+            eip8130_phase_statuses: ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
+        }
+    }
+
+    /// Converts a prepared transaction, including its network's RPC simulation identity.
+    fn prepared_evm_tx(
+        prepared: &PreparedTx,
+        cheats: Option<&CheatsManager>,
+    ) -> Result<Recovered<TxFor<Self>>, BlockchainError> {
+        evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)
     }
 }
 
@@ -329,6 +350,11 @@ impl AnvilEvmNetwork for MonadEvmNetwork {
             Some(chain) => evm.ext_mut().chain = chain.clone(),
             None => evm.ext_mut().for_transaction(tx),
         }
+        // Only canonical envelopes replay as protocol system calls, so other transactions from
+        // the system sender, such as impersonated ones, keep their ordinary semantics.
+        let protocol = context.monad_protocol_replay
+            && <monad_evm2::MonadEvmExt as FoundryEvmExt<_>>::is_protocol_transaction(tx);
+        evm.ext_mut().set_protocol_replay(protocol);
     }
 }
 
@@ -359,6 +385,22 @@ impl AnvilEvmNetwork for BaseEvmNetwork {
         base_evm2::BaseEvmFactory::default()
             .with_activation_admin_address(opts.base_activation_admin)
     }
+
+    fn prepared_evm_tx(
+        prepared: &PreparedTx,
+        cheats: Option<&CheatsManager>,
+    ) -> Result<Recovered<base_evm2::BaseTxEnvelope>, BlockchainError> {
+        let tx = evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)?;
+        // Signed transactions authenticate their actor; only simulations accept the RPC hint.
+        if prepared.payload.is_simulated()
+            && let Some(sender_actor_id) = prepared.eip8130_sender_actor_id
+        {
+            let (mut inner, signer) = tx.into_parts();
+            inner.set_eip8130_simulation(Some(sender_actor_id));
+            return Ok(Recovered::new_unchecked(inner, signer));
+        }
+        Ok(tx)
+    }
 }
 
 impl AnvilEvmNetwork for TempoEvmNetwork {
@@ -374,15 +416,23 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
         }
     }
 
-    fn apply_tempo_simulation(
-        tx: tempo_evm::TempoTxEnv,
-        simulation: &TempoSimulation,
-    ) -> tempo_evm::TempoTxEnv {
-        tx.with_simulation_overrides(
-            simulation.unique_tx_identifier,
-            simulation.fee_payer,
-            simulation.key_id,
-        )
+    fn prepared_evm_tx(
+        prepared: &PreparedTx,
+        cheats: Option<&CheatsManager>,
+    ) -> Result<Recovered<tempo_evm::TempoTxEnv>, BlockchainError> {
+        let tx = evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)?;
+        if let Some(simulation) = &prepared.tempo {
+            let (inner, signer) = tx.into_parts();
+            return Ok(Recovered::new_unchecked(
+                inner.with_simulation_overrides(
+                    simulation.unique_tx_identifier,
+                    simulation.fee_payer,
+                    simulation.key_id,
+                ),
+                signer,
+            ));
+        }
+        Ok(tx)
     }
 }
 
@@ -419,8 +469,8 @@ pub struct EvmOptions {
     pub cheats: Option<CheatsManager>,
     /// Arbitrum L2 block number reported by `ArbSys`, for Arbitrum forks.
     pub arbitrum_block_number: Option<u64>,
-    /// Whether the BSC `P256VERIFY` precompile is active, and its Osaka variant.
-    pub bsc_p256: Option<bool>,
+    /// BSC's `P256VERIFY` on BSC chains: whether it is active, and its Osaka variant.
+    pub bsc_p256: Option<Option<bool>>,
     /// Precompile moves requested by `eth_simulateV1` state overrides.
     pub precompile_moves: Vec<(Address, Address)>,
     /// Source chain ID of the active fork.
@@ -559,21 +609,6 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     Ok(tx)
 }
 
-/// Converts a prepared transaction into `N`'s evm2 transaction.
-pub fn prepared_evm_tx<N: AnvilEvmNetwork>(
-    prepared: &PreparedTx,
-    cheats: Option<&CheatsManager>,
-) -> Result<Recovered<TxFor<N>>, BlockchainError> {
-    let tx = evm_tx::<N>(&prepared.tx, prepared.sender, prepared.payload, cheats)?;
-    match &prepared.tempo {
-        Some(simulation) => {
-            let (tx, signer) = tx.into_parts();
-            Ok(Recovered::new_unchecked(N::apply_tempo_simulation(tx, simulation), signer))
-        }
-        None => Ok(tx),
-    }
-}
-
 /// Executes `prepared` on `evm` and detaches its state changes.
 pub fn transact<N: AnvilEvmNetwork>(
     evm: &mut Evm<'_, TypesFor<N>>,
@@ -581,7 +616,7 @@ pub fn transact<N: AnvilEvmNetwork>(
     context: &TxContext,
     cheats: Option<&CheatsManager>,
 ) -> Result<Executed, BlockchainError> {
-    let tx = prepared_evm_tx::<N>(prepared, cheats)?;
+    let tx = N::prepared_evm_tx(prepared, cheats)?;
     N::set_tx_context(evm, &tx, context);
     let detached = evm.transact(&tx)?.detach();
     Ok(Executed { result: exec_result::<N>(detached.result), state: detached.pending_state })
@@ -763,6 +798,8 @@ pub struct AnvilPrecompiles<'a, T: evm2::EvmTypes> {
     moved_to: AddressMap<Address>,
     /// Sources of moved precompiles, no longer served at their protocol address.
     moved_from: AddressSet,
+    /// Network precompiles the chain has not activated, such as BSC's `P256VERIFY` before Haber.
+    removed: AddressSet,
 }
 
 impl<T: evm2::EvmTypes> fmt::Debug for AnvilPrecompiles<'_, T> {
@@ -781,8 +818,15 @@ impl<'a, T: evm2::EvmTypes> AnvilPrecompiles<'a, T> {
         if opts.networks.is_celo() {
             extra.insert(CELO_TRANSFER_ADDRESS, ExtraPrecompile::CeloTransfer);
         }
-        if let Some(osaka) = opts.bsc_p256 {
-            extra.insert(BSC_P256_ADDRESS, ExtraPrecompile::P256 { osaka });
+        let mut removed = AddressSet::default();
+        match opts.bsc_p256 {
+            Some(Some(osaka)) => {
+                extra.insert(BSC_P256_ADDRESS, ExtraPrecompile::P256 { osaka });
+            }
+            Some(None) => {
+                removed.insert(BSC_P256_ADDRESS);
+            }
+            None => {}
         }
         if let Some(factory) = &opts.precompile_factory {
             for (address, id, precompile) in factory.precompiles() {
@@ -793,11 +837,19 @@ impl<'a, T: evm2::EvmTypes> AnvilPrecompiles<'a, T> {
             extra.insert(ARB_SYS_ADDRESS, ExtraPrecompile::ArbSys(number));
         }
         let cheats = opts.cheats.clone().filter(CheatsManager::has_recover_overrides);
-        Self { inner, extra, cheats, moved_to: Default::default(), moved_from: Default::default() }
+        Self {
+            inner,
+            extra,
+            cheats,
+            moved_to: Default::default(),
+            moved_from: Default::default(),
+            removed,
+        }
     }
 
     fn contains_unmoved(&self, address: &Address) -> bool {
-        self.extra.contains_key(address) || self.inner.contains(address)
+        self.extra.contains_key(address)
+            || (!self.removed.contains(address) && self.inner.contains(address))
     }
 }
 
@@ -807,9 +859,6 @@ const BSC_P256_ADDRESS: Address =
 
 /// Address of the ecrecover precompile.
 const ECRECOVER_ADDRESS: Address = Address::with_last_byte(1);
-
-/// Gas Celo's transfer precompile charges.
-const CELO_TRANSFER_GAS_COST: u64 = 9000;
 
 impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
     /// Returns the protocol precompile addresses.
@@ -821,6 +870,7 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
             .inner
             .addresses()
             .into_iter()
+            .filter(|address| !self.removed.contains(address))
             .chain(self.extra.keys().copied())
             .collect::<Vec<_>>();
         addresses.sort_unstable();
@@ -833,7 +883,9 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
             .inner
             .precompile_ids()
             .into_iter()
-            .filter(|(address, _)| !self.extra.contains_key(address))
+            .filter(|(address, _)| {
+                !self.extra.contains_key(address) && !self.removed.contains(address)
+            })
             .collect::<Vec<_>>();
         ids.extend(self.extra.iter().map(|(address, extra)| {
             let id = match extra {
@@ -892,6 +944,9 @@ impl<T: evm2::EvmTypes> PrecompileProvider<T> for AnvilPrecompiles<'_, T> {
         }
         if let Some(extra) = self.extra.get(&address).cloned() {
             return Some(execute_extra(&extra, evm, message, address, gas));
+        }
+        if self.removed.contains(&address) {
+            return None;
         }
         if address == message.call_target {
             return self.inner.execute(evm, message, gas);
@@ -963,42 +1018,6 @@ fn execute_extra<T: evm2::EvmTypes>(
                 evm2::precompiles::secp256r1::run(&message.input, gas)
             }
         }
-        ExtraPrecompile::CeloTransfer => {
-            gas.spend(CELO_TRANSFER_GAS_COST)?;
-            let input = &message.input;
-            if input.len() != 96 {
-                return halt("invalid input length for Celo transfer precompile");
-            }
-            let from = Address::from_slice(&input[12..32]);
-            let to = Address::from_slice(&input[44..64]);
-            let value = U256::from_be_slice(&input[64..96]);
-            let state = evm.state_mut();
-            let balance = state.account_info_untracked(&from)?.map(|info| info.balance);
-            if balance.unwrap_or_default() < value {
-                return halt("insufficient balance");
-            }
-            if !state.transfer(&from, &to, &value)? {
-                return halt("balance overflow in to account");
-            }
-            Ok(PrecompileOutput::new(Bytes::new()))
-        }
+        ExtraPrecompile::CeloTransfer => celo_transfer(evm, &message.input, gas),
     }
-}
-
-const BSC_MAINNET_CHAIN_ID: u64 = 56;
-const BSC_TESTNET_CHAIN_ID: u64 = 97;
-const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
-const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
-const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
-const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
-
-/// Returns whether BSC's `P256VERIFY` precompile is active on `chain_id` at `timestamp`, and
-/// whether it uses the Osaka gas schedule.
-pub const fn bsc_p256(chain_id: u64, timestamp: u64) -> Option<bool> {
-    let (haber_timestamp, osaka_timestamp) = match chain_id {
-        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
-        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
-        _ => return None,
-    };
-    if timestamp < haber_timestamp { None } else { Some(timestamp >= osaka_timestamp) }
 }

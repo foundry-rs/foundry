@@ -156,6 +156,47 @@ pub trait FoundryEvmExt<Tx>: SendableExt + Debug + Default + 'static {
     fn replace_while_executing(&mut self, ext: Self) {
         *self = ext;
     }
+
+    /// Returns whether `tx` is a canonical protocol transaction of the network, such as a Monad
+    /// staking syscall, which only executes with [`Self::set_protocol_replay`] enabled.
+    fn is_protocol_transaction(_tx: &Recovered<Tx>) -> bool {
+        false
+    }
+
+    /// Sets whether the next transaction continues the transaction state derived so far, such as
+    /// Monad's reserve-balance tracker, instead of starting its own. Isolated calls continue the
+    /// running transaction's.
+    fn set_preserve_transaction_state(&mut self, _preserve: bool) {}
+
+    /// Sets whether transactions from the network's protocol sender execute as protocol
+    /// transactions.
+    ///
+    /// Enable it only to replay trusted canonical chain history, after preparing the transaction
+    /// with [`Self::for_transaction`] or [`Self::for_block`], which disable it.
+    fn set_protocol_replay(&mut self, _enabled: bool) {}
+
+    /// Prepares the state for a synthetic transaction appended at the retained block cursor,
+    /// such as a test call or `vm.executeTransaction`.
+    ///
+    /// Networks without block-position state treat it as standalone (see
+    /// [`Self::for_transaction`]). The retained cursor itself does not move: only canonical
+    /// replays advance it, through [`Self::adopt_cursor`].
+    fn for_next_transaction(&mut self, tx: &Recovered<Tx>) {
+        self.for_transaction(tx);
+    }
+
+    /// Moves the retained block cursor to `cursor`'s, keeping the running transaction's own
+    /// position at the new cursor and every other state.
+    fn adopt_cursor(&mut self, _cursor: &Self) {}
+
+    /// Switches an EVM that may be executing to the parked context state `ext`, such as on a fork
+    /// switch.
+    ///
+    /// Networks whose context state is only a block cursor, such as Monad, keep the running
+    /// transaction's own state and adopt the context's cursor.
+    fn resume_context(&mut self, ext: Self) {
+        self.replace_while_executing(ext);
+    }
 }
 
 impl<Tx> FoundryEvmExt<Tx> for () {}
@@ -229,6 +270,14 @@ pub trait FoundryTxResultExt: Clone + Debug + Default + 'static {
     /// Returns whether an OP-stack deposit failed and kept only its mint and nonce bump.
     fn is_failed_deposit(&self) -> bool {
         false
+    }
+
+    /// Returns the per-phase statuses of an included signed Base EIP-8130 transaction.
+    ///
+    /// Each entry is `0x01` if the phase committed and `0x00` if it reverted. Other transactions,
+    /// including EIP-8130 simulations, return `None`.
+    fn eip8130_phase_statuses(&self) -> Option<&[u8]> {
+        None
     }
 }
 

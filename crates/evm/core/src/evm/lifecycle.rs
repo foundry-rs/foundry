@@ -29,8 +29,8 @@
 //! enclosing call reverts.
 
 use super::{
-    AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkRegistry, FoundryEvmExt, FoundryEvmFactory,
-    LifecycleSnapshot, Parked, StoredExt, evm_env,
+    AcceptedView, BackingDb, EvmEnv, ForkInfo, ForkPosition, ForkRegistry, FoundryEvmExt,
+    FoundryEvmFactory, LifecycleSnapshot, Parked, StoredExt, evm_env,
 };
 use crate::{
     backend::{RevertStateSnapshotAction, transaction_error},
@@ -39,13 +39,14 @@ use crate::{
 use alloy_consensus::{Typed2718, transaction::Recovered};
 use alloy_primitives::{
     Address, KECCAK256_EMPTY, Log, U256,
-    map::{AddressMap, AddressSet, HashSet},
+    map::{AddressMap, AddressSet, Entry, HashSet},
 };
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, Cache, DbResult, EmptyDB, PendingState, PrewarmSet, State, StateSnapshot,
+        AccountChanges, AccountInfo, Cache, DbResult, EmptyDB, PendingState, PrewarmSet, State,
+        StateSnapshot,
     },
 };
 use std::{mem, sync::Arc};
@@ -99,12 +100,23 @@ pub struct PreparedTx<T: EvmTypesHost> {
     /// The inactive context the transaction executes on, with the persistent accounts whose
     /// changes merge back into the running transaction.
     inactive: Option<(Option<U256>, AddressSet)>,
+    /// The fork whose canonical position and block cursor advance once the transaction executed.
+    cursor: Option<ForkCursor<T>>,
 }
+
+/// A fork's canonical position and the network state retaining its block cursor.
+pub type ForkCursor<T> = (U256, ForkPosition, <T as EvmTypesHost>::EvmExt);
 
 impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
     /// Returns the transaction.
     pub const fn tx(&self) -> &Recovered<T::Tx> {
         &self.tx
+    }
+
+    /// Advances fork `id` to `position`, with the network state retaining its block `cursor`,
+    /// once the transaction executed.
+    pub fn set_cursor(&mut self, id: U256, position: ForkPosition, cursor: T::EvmExt) {
+        self.cursor = Some((id, position, cursor));
     }
 
     /// Executes the transaction observed by `inspector` and merges its changes into the running
@@ -118,7 +130,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         inspector: Option<&mut dyn Inspector<T>>,
         untracked: bool,
     ) -> eyre::Result<ExecutedNested<T>> {
-        let Self { executor, tx, inactive } = self;
+        let Self { executor, tx, inactive, cursor } = self;
         let mut executor: Evm<'_, T> = executor;
         if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
@@ -126,7 +138,8 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         let executed = executor.transact(&tx).map_err(transaction_error)?;
         let Some((id, persistent)) = inactive else {
             merge_changes(evm.state_mut(), executed.account_changes(), |_| true, untracked)?;
-            return Ok(ExecutedNested { result: executed.result().clone(), context: None });
+            let result = executed.result().clone();
+            return Ok(ExecutedNested { result, context: None, cursor });
         };
         merge_changes(
             evm.state_mut(),
@@ -137,7 +150,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         let result = executed.commit();
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
-        Ok(ExecutedNested { result, context: Some((id, cache)) })
+        Ok(ExecutedNested { result, context: Some((id, cache)), cursor })
     }
 }
 
@@ -147,6 +160,15 @@ pub struct ExecutedNested<T: EvmTypesHost> {
     result: TxResult<T>,
     /// The inactive context the transaction was accepted on, with its new accepted state.
     context: Option<(Option<U256>, Cache)>,
+    /// See [`PreparedTx::set_cursor`].
+    cursor: Option<ForkCursor<T>>,
+}
+
+impl<T: EvmTypesHost> ExecutedNested<T> {
+    /// Takes the fork cursor to advance, see [`PreparedTx::set_cursor`].
+    pub const fn take_cursor(&mut self) -> Option<ForkCursor<T>> {
+        self.cursor.take()
+    }
 }
 
 /// Fork, snapshot and nested-execution lifecycle for one EVM network family.
@@ -159,6 +181,9 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory, C = ()> {
     pending_env: Option<EvmEnv<F::Types>>,
     /// Base warm set of the running transaction from before a fork switch carried warmth into it.
     tx_prewarm: Option<PrewarmSet>,
+    /// Transaction-start info of the persistent accounts a fork switch accepted the running
+    /// transaction's changes to.
+    tx_original: AddressMap<Option<AccountInfo>>,
     /// Warm slots of persistent accounts the last fork switch carried into the next context.
     switch_slots: AddressMap<HashSet<U256>>,
 }
@@ -171,6 +196,7 @@ impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
             snapshots: self.snapshots.clone(),
             pending_env: self.pending_env,
             tx_prewarm: self.tx_prewarm.clone(),
+            tx_original: self.tx_original.clone(),
             switch_slots: self.switch_slots.clone(),
         }
     }
@@ -192,6 +218,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             snapshots: StateSnapshots::default(),
             pending_env: None,
             tx_prewarm: None,
+            tx_original: AddressMap::default(),
             switch_slots: AddressMap::default(),
         }
     }
@@ -199,6 +226,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Returns the factory.
     pub const fn factory(&self) -> &F {
         &self.factory
+    }
+
+    /// Replaces the factory used for EVMs built from now on.
+    pub fn set_factory(&mut self, factory: F) {
+        self.factory = factory;
     }
 
     /// Returns the fork registry.
@@ -480,6 +512,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// contexts kept from the previous transaction. Call before every transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {
         self.tx_prewarm = None;
+        self.tx_original.clear();
         self.forks.local.warm.clear();
         for entry in self.forks.forks.values_mut() {
             entry.context.warm.clear();
@@ -634,7 +667,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         state.clear_transaction_state();
         let ext = ext.unwrap_or_else(|| {
             let mut ext = evm.ext().clone();
-            ext.for_transaction(tx);
+            ext.for_next_transaction(tx);
             ext
         });
         let env = env.unwrap_or_else(|| evm_env(evm));
@@ -691,7 +724,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         env: Option<EvmEnv<F::Types>>,
         ext: Option<<F::Types as EvmTypesHost>::EvmExt>,
     ) -> PreparedTx<F::Types> {
-        PreparedTx { executor: self.nested_evm(evm, &tx, env, ext), tx, inactive: None }
+        PreparedTx {
+            executor: self.nested_evm(evm, &tx, env, ext),
+            tx,
+            inactive: None,
+            cursor: None,
+        }
     }
 
     /// Prepares `tx` to execute on the inactive fork `id`, or the local context for `None`, and
@@ -716,7 +754,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let env = env.unwrap_or(context.env);
         let ext = ext.unwrap_or_else(|| {
             let mut ext = context.ext.get();
-            ext.for_transaction(&tx);
+            ext.for_next_transaction(&tx);
             ext
         });
         let factory = self.factory.configure_for(&db, &env);
@@ -743,12 +781,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             &running.overlay_db().cache,
             &mut executor.state_mut().overlay_db_mut().cache,
         );
-        Ok(PreparedTx { executor, tx, inactive: Some((id, self.forks.persistent.clone())) })
+        let inactive = Some((id, self.forks.persistent.clone()));
+        Ok(PreparedTx { executor, tx, inactive, cursor: None })
     }
 
     /// Stores the outcome of a [`PreparedTx`]: an inactive context's new accepted state.
     pub fn store_executed(&mut self, executed: ExecutedNested<F::Types>) -> TxResult<F::Types> {
-        let ExecutedNested { result, context } = executed;
+        let ExecutedNested { result, context, .. } = executed;
         if let Some((id, cache)) = context {
             let context = self.forks.context_mut(id).expect("prepared context exists");
             context.cache = Some(Arc::new(cache));
@@ -760,6 +799,27 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// context. A fork keeps its own chain ID. Returns what the running transaction carries into
     /// the next context.
     fn suspend(&mut self, evm: &mut Evm<'_, F::Types>) -> Suspended {
+        // Fold the running transaction's execution so far into its network state before the
+        // state is replaced.
+        self.factory.sync_transaction(evm);
+        let loaded_persistent = evm
+            .state()
+            .loaded_accounts()
+            .map(|(address, _)| *address)
+            .filter(|address| self.forks.is_persistent(address))
+            .collect::<Vec<_>>();
+        for address in loaded_persistent {
+            if let Entry::Vacant(entry) = self.tx_original.entry(address) {
+                // Read the accepted info without caching it, which would carry it into the next
+                // context.
+                let db = evm.overlay_db_mut();
+                let info = match db.cache.accounts.get(&address) {
+                    Some(info) => info.clone(),
+                    None => db.db.get_account(&address).ok().flatten(),
+                };
+                entry.insert(info);
+            }
+        }
         let state = evm.state_mut();
         let loaded = state
             .loaded_accounts()
@@ -868,7 +928,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         *state.logs_mut() = logs;
         state.set_prewarm_set(prewarm);
         *evm.state_mut() = state;
-        evm.ext_mut().replace_while_executing(ext);
+        evm.ext_mut().resume_context(ext);
 
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
@@ -889,6 +949,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
                 account.mark_created();
             }
         }
+        factory.refresh_switched_transaction(evm, &self.tx_original);
         transition
     }
 

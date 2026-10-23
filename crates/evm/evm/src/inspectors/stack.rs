@@ -535,6 +535,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> eyre::Result<TxResultFor<FEN>> {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth;
+        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, tx, Some(env));
         let previous =
             self.enter_inner_context(InnerRoot { depth, caller: tx.signer(), observe: false });
@@ -558,6 +559,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        // The nested transaction's changes are not the running transaction's execution.
+        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         cheats.snapshot_restores = snapshot_restores;
         cheats.origin_override = origin_override;
         self.exit_inner_context(previous);
@@ -581,7 +584,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, false);
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
-        Ok(backend.backend_mut().store_executed(executed?))
+        Ok(backend.backend_mut().store_executed(evm, executed?))
     }
 
     fn transact_from_tx(
@@ -598,7 +601,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, true);
         drop(replay);
-        Ok(backend.backend_mut().store_executed(executed?))
+        Ok(backend.backend_mut().store_executed(evm, executed?))
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -1263,10 +1266,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         };
         let source_fork = backend.backend().active_fork_id();
         let epoch = self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
+        EvmFactoryFor::<FEN>::default().sync_transaction(evm);
         let mut child = backend.backend().nested_evm(evm, &tx, Some(env));
         // The nested transaction continues the running one's network extension state, such as
-        // Monad's reserve balance context.
+        // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
+        child.ext_mut().set_preserve_transaction_state(true);
         // Accounts the running transaction created stay created in the nested one, so that
         // EIP-6780 SELFDESTRUCT still deletes them.
         for address in &self.inner.tx_created {
@@ -1390,6 +1395,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             evm.ext_mut().replace_while_executing(child.ext().clone());
             merged
         };
+        // The running transaction continues from the nested one's derived state, rebased onto
+        // the merged state.
+        evm.ext_mut().set_preserve_transaction_state(false);
+        EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         let mut block = *evm.block();
         block.basefee = outer_basefee;
         evm.set_block(block);

@@ -325,6 +325,19 @@ pub(super) fn validate_system_transactions(
     Ok(())
 }
 
+/// Upper bound on a Base EIP-8130 payer's debit: `(gas_limit + payer_auth_cost) * max_fee`.
+///
+/// Payer authentication is metered on top of the sender-signed gas limit, so the payer reimburses
+/// it as well. Matches Base's `FeeCheck::max_fee_charge`.
+pub(crate) fn eip8130_max_fee_charge(
+    gas_limit: u64,
+    payer_auth_cost: u64,
+    max_fee_per_gas: u128,
+) -> U256 {
+    U256::from(gas_limit.saturating_add(payer_auth_cost))
+        .saturating_mul(U256::from(max_fee_per_gas))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

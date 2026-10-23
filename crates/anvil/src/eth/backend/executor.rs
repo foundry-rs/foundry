@@ -97,7 +97,10 @@ impl FoundryReceiptBuilder {
     fn wrap_receipt(
         tx_type: FoundryTxType,
         receipt: ReceiptWithBloom<Receipt>,
+        eip8130_phase_statuses: Option<Vec<u8>>,
     ) -> FoundryReceiptEnvelope {
+        #[cfg(not(feature = "base"))]
+        let _ = eip8130_phase_statuses;
         match tx_type {
             FoundryTxType::Legacy => FoundryReceiptEnvelope::Legacy(receipt),
             FoundryTxType::Eip2930 => FoundryReceiptEnvelope::Eip2930(receipt),
@@ -114,7 +117,7 @@ impl FoundryReceiptBuilder {
             FoundryTxType::Eip8130 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
                 receipt: base_common_consensus::Eip8130Receipt::new(
                     receipt.receipt,
-                    Default::default(),
+                    eip8130_phase_statuses.unwrap_or_default(),
                 ),
                 logs_bloom: receipt.logs_bloom,
             }),
@@ -129,15 +132,19 @@ impl FoundryReceiptBuilder {
     }
 
     /// Builds a typed receipt.
+    ///
+    /// `eip8130_phase_statuses` are the per-phase statuses of a Base EIP-8130 transaction, and are
+    /// ignored for other transaction types.
     pub(crate) fn build_receipt(
         tx_type: FoundryTxType,
         success: bool,
         logs: Vec<Log>,
         cumulative_gas_used: u64,
+        eip8130_phase_statuses: Option<Vec<u8>>,
     ) -> FoundryReceiptEnvelope {
         let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs }
             .with_bloom();
-        Self::wrap_receipt(tx_type, receipt)
+        Self::wrap_receipt(tx_type, receipt, eip8130_phase_statuses)
     }
 }
 
@@ -412,6 +419,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 result.status,
                 result.logs.clone(),
                 self.gas_used,
+                result.ext.eip8130_phase_statuses.clone(),
             )
         };
         #[cfg(not(any(feature = "base", feature = "optimism")))]
@@ -420,6 +428,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
             result.status,
             result.logs.clone(),
             self.gas_used,
+            result.ext.eip8130_phase_statuses.clone(),
         );
         self.receipts.push(receipt);
 

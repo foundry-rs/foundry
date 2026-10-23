@@ -904,16 +904,12 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
 #[cfg(feature = "monad")]
 impl PreparedRun<MonadEvmNetwork> {
     async fn execute_monad(&mut self) -> Result<TraceResult> {
-        // Monad protocol system calls have no evm2 replay path: running them as ordinary
-        // transactions from the system sender would not reproduce their effects.
-        if self.tx.from() == MONAD_SYSTEM_ADDRESS {
-            eyre::bail!(
-                "{:?} is a Monad protocol system transaction, which cannot be replayed locally; \
-                 {REMOTE_TRACE_HINT}",
-                self.tx.tx_hash()
-            );
-        }
-        if is_system_transaction(&self.tx) && !self.args.replay_system_txes {
+        // Monad protocol system transactions replay as the protocol system calls they are; the
+        // replay rejects a non-canonical envelope from the system sender.
+        if self.tx.from() != MONAD_SYSTEM_ADDRESS
+            && is_system_transaction(&self.tx)
+            && !self.args.replay_system_txes
+        {
             eyre::bail!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 self.tx.tx_hash()
