@@ -1,13 +1,20 @@
 [package]
 name = "anvil-tempo-consensus-compat"
 version = "0.0.0"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 publish = false
+autobins = false
 
-# Keep the native consensus runtime out of Anvil's dependency graph and workspace lockfile.
-[workspace]
+[lints]
+workspace = true
 
-[dependencies]
+[[example]]
+name = "verify"
+path = "src/main.rs"
+
+[dev-dependencies]
 alloy-consensus = "=2.5.0"
 alloy-primitives = { version = "=1.7.3", features = ["serde"] }
 commonware-codec = "=2026.9.0"
@@ -19,10 +26,3 @@ rand_chacha = "=0.10.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88", default-features = false, features = ["serde"] }
-
-[patch.crates-io]
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
-
-[profile.dev]
-debug = 0
-incremental = false

@@ -170,10 +170,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: |
-            . -> target
-            crates/anvil/tests/fixtures/tempo-consensus-compat -> target
       - name: Capture locally mined Tempo certificates
         run: |
           cargo test --locked -p anvil --test it tempo::tempo_consensus_mined_certificate_matches_block_hash -- --exact
@@ -182,9 +178,9 @@ jobs:
           test -s "${ANVIL_TEMPO_CONSENSUS_ARTIFACT%.json}.nonempty.json"
       - name: Verify native certificate and block compatibility
         run: |
-          cargo run --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml
+          cargo run --locked -p anvil-tempo-consensus-compat --example verify
           ANVIL_TEMPO_CONSENSUS_ARTIFACT="${ANVIL_TEMPO_CONSENSUS_ARTIFACT%.json}.nonempty.json" \
-            cargo run --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml
+            cargo run --locked -p anvil-tempo-consensus-compat --example verify
 
   # If the nightly run fails, this will create an issue to signal so.
   issue:

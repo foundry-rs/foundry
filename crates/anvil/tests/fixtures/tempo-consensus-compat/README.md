@@ -1,14 +1,17 @@
 # Native Tempo certificate verification
 
-This separate test workspace decodes actual Anvil HTTP responses using
+This test-only workspace member decodes actual Anvil HTTP responses using
 Commonware 2026.9.0's `Finalization<Scheme<PublicKey, MinSig>, Digest>` and
 `tempo_primitives::Block`. It checks byte-identical re-encoding, header and body
 commitments, and both signatures. Wrong identities and changes to the digest,
 parent view, epoch, view or either signature must fail verification.
 
-The separate checked-in lockfile keeps `commonware-consensus` and its runtime out
-of Anvil's production dependency graph and the root workspace lockfile. The
-`tempo-consensus-compat` job in `.github/workflows/ci-tempo.yml` runs on ordinary
+The verifier shares the root workspace lockfile and target directory. It is a
+separate package, so `commonware-consensus` and its runtime stay out of Anvil's
+production and test dependency graphs. The verifier is an example target, so
+release builds using `--bins` exclude it; workspace test and all-target checks
+include it.
+The `tempo-consensus-compat` job in `.github/workflows/ci-tempo.yml` runs on ordinary
 pull requests, including forks, with local nodes and no RPC secrets.
 
 From the repository root:
@@ -17,9 +20,9 @@ From the repository root:
 export ANVIL_TEMPO_CONSENSUS_ARTIFACT=/tmp/tempo-consensus.json
 cargo test --locked -p anvil --test it tempo::tempo_consensus_mined_certificate_matches_block_hash -- --exact
 cargo test --locked -p anvil --test it tempo::tempo_consensus_nonempty_native_block_body -- --exact
-cargo run --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml
+cargo run --locked -p anvil-tempo-consensus-compat --example verify
 ANVIL_TEMPO_CONSENSUS_ARTIFACT=/tmp/tempo-consensus.nonempty.json \
-  cargo run --locked --manifest-path crates/anvil/tests/fixtures/tempo-consensus-compat/Cargo.toml
+  cargo run --locked -p anvil-tempo-consensus-compat --example verify
 ```
 
 The verifier also accepts the artifact on standard input when the environment
