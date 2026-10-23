@@ -7,7 +7,7 @@ use crate::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt, Specifier};
+use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
 use alloy_json_abi::Function;
 use alloy_primitives::{U256, map::HashSet};
 use eyre::{Result, eyre};
@@ -579,18 +579,14 @@ impl SequenceMutator {
         if hints.is_empty() || tx.call_details.calldata.len() <= 4 {
             return Ok(false);
         }
-        let Ok(types) = function.inputs.iter().map(|input| input.resolve()).collect() else {
-            return Ok(false);
-        };
-        let ty = DynSolType::Tuple(types);
+        let config = AbiDecoderConfig::new().validate_words(true);
         let start = runner.rng().random_range(0..hints.len());
         for offset in 0..hints.len() {
             if let Some(calldata) = cmp_mutated_calldata(
                 tx.call_details.calldata.as_ref(),
                 hints[(start + offset) % hints.len()],
                 runner,
-            ) && let Ok(DynSolValue::Tuple(inputs)) =
-                ty.abi_decode_sequence_checked(&calldata[4..])
+            ) && let Ok(inputs) = function.abi_decode_input_with_config(&calldata[4..], config)
                 && inputs.iter().zip(&function.inputs).all(|(value, input)| {
                     constrain_enum_value(value.clone(), input, fixtures) == *value
                 })
@@ -678,6 +674,7 @@ mod tests {
         invariant::{TargetedContract, TargetedContracts},
         strategies::EvmFuzzState,
     };
+    use alloy_dyn_abi::DynSolValue;
     use alloy_json_abi::JsonAbi;
     use alloy_primitives::{Address, Bytes, I256};
     use foundry_config::FuzzDictionaryConfig;
