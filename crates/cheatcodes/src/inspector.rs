@@ -1972,6 +1972,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         rpc: &str,
         depth: usize,
         caller: Address,
+        input: &[u8],
     ) -> Option<ChainLibraries> {
         let config = &self.core.config;
         let depth = self.deploy_code_caller_depth(depth);
@@ -1994,7 +1995,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if libraries.is_empty() {
             return None;
         }
-        Some((sender, salt, libraries.clone()))
+        Some((
+            sender,
+            salt,
+            if config.chain_builds.contains_key(rpc) {
+                libraries.clone()
+            } else {
+                referenced_chain_libraries(input, libraries)
+            },
+        ))
     }
 
     /// Remembers a library `missing` on the active fork, and records its deployment by `from`
@@ -2050,6 +2059,29 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         self.chain_library_deployments.insert((rpc, address), Some((sender, nonce)));
     }
+}
+
+/// Returns the linked CREATE2 libraries referenced by `input` and their transitive dependencies.
+fn referenced_chain_libraries(
+    input: &[u8],
+    libraries: &[(Address, Bytes)],
+) -> Vec<(Address, Bytes)> {
+    let mut inputs = VecDeque::from([input]);
+    let mut referenced = Vec::new();
+    while let Some(input) = inputs.pop_front() {
+        for (address, code) in libraries {
+            if referenced.iter().any(|(referenced, _)| referenced == address)
+                || !input
+                    .windows(address.as_slice().len())
+                    .any(|window| window == address.as_slice())
+            {
+                continue;
+            }
+            referenced.push((*address, code.clone()));
+            inputs.push_back(code.as_ref());
+        }
+    }
+    referenced
 }
 
 const fn frame_gas(result: &InterpreterResult) -> Vm::Gas {

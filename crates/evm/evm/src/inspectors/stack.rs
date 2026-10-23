@@ -1537,6 +1537,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
         caller: Address,
+        input: &[u8],
     ) -> Option<String> {
         let cheats = self.cheatcodes.as_deref_mut()?;
         let config = &cheats.core.config;
@@ -1547,7 +1548,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         let depth = ecx.journal().depth();
         let rpc = ecx.db().active_fork_url()?;
-        let (sender, salt, libraries) = cheats.chain_libraries(&rpc, depth, caller)?;
+        let (sender, salt, libraries) = cheats.chain_libraries(&rpc, depth, caller, input)?;
         let create2_deployer = self.create2_deployer();
         let code_hash = |ecx: &mut FoundryContextFor<'_, FEN>, address| {
             ecx.journal_mut().load_account(address).map(|account| account.info.code_hash).map_err(
@@ -1981,8 +1982,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             && !self.in_inner_context
             && (ecx.journal().depth() == 1
                 || self.inner.synthetic_create_depth == Some(ecx.journal().depth()));
+        let input = call.input.bytes(ecx);
         if call.target_address != CHEATCODE_ADDRESS
-            && let Some(err) = self.deploy_chain_libraries(ecx, call.transfer_from())
+            && let Some(err) = self.deploy_chain_libraries(ecx, call.transfer_from(), &input)
         {
             self.inner.pending_chain_call_error = Some(CallOutcome {
                 result: InterpreterResult {
@@ -2180,7 +2182,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         );
 
         let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        if let Some(err) = self.deploy_chain_libraries(ecx, create.caller()) {
+        if let Some(err) = self.deploy_chain_libraries(ecx, create.caller(), create.init_code()) {
             self.inner.pending_create2_error = Some(CreateOutcome {
                 result: InterpreterResult {
                     result: InstructionResult::Revert,
