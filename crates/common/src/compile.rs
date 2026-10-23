@@ -21,6 +21,7 @@ use foundry_compilers::{
         BytecodeObject, Contract, Error as SolcError, Severity, Source,
         output_selection::OutputSelection, remappings::Remapping,
     },
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
@@ -31,7 +32,7 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
-use foundry_config::Config;
+use foundry_config::{Config, figment::Provider};
 use num_format::{Locale, ToFormattedString};
 use revm::primitives::{eip170, eip3860, hardfork::SpecId};
 use solar::{
@@ -41,7 +42,7 @@ use solar::{
 };
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map::Entry},
     fmt::Display,
     io::IsTerminal,
     path::{Component, Path, PathBuf},
@@ -859,6 +860,56 @@ where
     compiler.abi_cache = true;
     compiler.external_writes &= !project.no_artifacts;
     compile_abi_project(&mut cached_project, compiler)
+}
+
+/// Build of the profiles named by `[rpc_endpoints]` that share compiler settings.
+#[derive(Clone, Debug)]
+pub struct ProfileBuild {
+    /// Profiles with these compiler settings.
+    pub profiles: Vec<String>,
+    /// Config with these compiler settings.
+    pub config: Config,
+    /// Artifacts directory of the build.
+    pub artifacts_dir: PathBuf,
+    /// The compiler output.
+    pub output: ProjectCompileOutput,
+}
+
+/// Compiles each distinct set of compiler settings among the profiles named by `[rpc_endpoints]`
+/// once, with `overrides` applied, and caches it by those settings.
+pub fn compile_endpoint_profiles(
+    config: &Config,
+    overrides: impl Provider + Clone,
+    compiler: impl Fn(&Config) -> ProjectCompiler,
+) -> Result<Vec<ProfileBuild>> {
+    let profiles = config
+        .rpc_endpoints
+        .values()
+        .filter_map(|endpoint| endpoint.profile.as_deref())
+        .collect::<BTreeSet<_>>();
+    let mut builds = BTreeMap::<_, ProfileBuild>::new();
+    for profile in profiles {
+        let config = config.with_profile_compiler_settings(profile, overrides.clone())?;
+        match builds.entry(config.profile_cache_path()?) {
+            Entry::Occupied(mut entry) => entry.get_mut().profiles.push(profile.to_string()),
+            Entry::Vacant(entry) => {
+                let mut project = config.project()?;
+                project.paths.cache = entry.key().join(SOLIDITY_FILES_CACHE_FILENAME);
+                project.paths.artifacts = entry.key().join("artifacts");
+                project.paths.build_infos = entry.key().join("build-info");
+                project.paths.slash_paths();
+                let output = compiler(&config).compile(&project)?;
+                let artifacts_dir = project.paths.artifacts;
+                entry.insert(ProfileBuild {
+                    profiles: vec![profile.to_string()],
+                    config,
+                    artifacts_dir,
+                    output,
+                });
+            }
+        }
+    }
+    Ok(builds.into_values().collect())
 }
 
 /// Compiles the target contract requesting only ABI output and returns its ABI.

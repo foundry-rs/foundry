@@ -39,7 +39,9 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{ProjectCompiler, compile_abi_project_cached},
+    compile::{
+        ProfileBuild, ProjectCompiler, compile_abi_project_cached, compile_endpoint_profiles,
+    },
     external_compiler::is_external_artifact,
     fs,
     fs::canonicalize_path,
@@ -306,6 +308,7 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
     pub(crate) selected_sources: BTreeSet<PathBuf>,
+    pub(crate) profile_builds: Arc<Vec<ProfileBuild>>,
 }
 
 impl TestExecutionOptions {
@@ -318,6 +321,7 @@ impl TestExecutionOptions {
             replay_symbolic_artifact: None,
             inline_config,
             selected_sources: BTreeSet::new(),
+            profile_builds: Default::default(),
         }
     }
 
@@ -365,6 +369,7 @@ struct CompiledTestProject {
     inline_config: Arc<InlineConfig>,
     replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     selected_sources: BTreeSet<PathBuf>,
+    profile_builds: Vec<ProfileBuild>,
     /// Keeps the brutalized copy of the project alive while its tests run.
     _brutalized_workspace: Option<TempDir>,
 }
@@ -1607,6 +1612,7 @@ impl TestArgs {
             TestExecutionOptions {
                 replay_symbolic_artifact: compiled.replay_symbolic_artifact,
                 selected_sources: compiled.selected_sources,
+                profile_builds: Arc::new(compiled.profile_builds),
                 ..TestExecutionOptions::default_run(compiled.inline_config)
             },
         )
@@ -1683,7 +1689,7 @@ impl TestArgs {
             .external_compilers(&config)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
-        let (output, selected_sources, inline_config) = if self.list {
+        let (output, selected_sources, inline_config, profile_builds) = if self.list {
             let compiler = compiler.external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
@@ -1703,7 +1709,8 @@ impl TestArgs {
             // Listing must not replace full artifacts with ABI-only ones, which later cached
             // builds would treat as fresh.
             let mut project = config.create_project(config.cache, true)?;
-            (compile_abi_project_cached(&mut project, compiler)?, BTreeSet::new(), None)
+            let output = compile_abi_project_cached(&mut project, compiler)?;
+            (output, BTreeSet::new(), None, Vec::new())
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
@@ -1724,7 +1731,16 @@ impl TestArgs {
             } else {
                 output?
             };
-            (output, files, inline_config)
+            let overrides =
+                figment::Figment::new().merge(&self.build).merge(&self.evm).merge(&*self);
+            let profile_builds = compile_endpoint_profiles(&config, overrides, |config| {
+                ProjectCompiler::new()
+                    .external_compilers(config)
+                    .dynamic_test_linking(config.dynamic_test_linking)
+                    .quiet(shell::is_json() || self.junit)
+                    .files(files.clone())
+            })?;
+            (output, files, inline_config, profile_builds)
         };
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
@@ -1740,6 +1756,7 @@ impl TestArgs {
             inline_config,
             replay_symbolic_artifact,
             selected_sources,
+            profile_builds,
             _brutalized_workspace: brutalized_workspace,
         })
     }
@@ -2205,6 +2222,7 @@ impl TestArgs {
             .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
+            .with_profile_builds(execution.profile_builds)
             .build::<FEN, MultiCompiler>(
                 output,
                 evm_env,

@@ -38,10 +38,31 @@ async fn can_deploy_multi_chain_script_without_lib(prj: _, cmd: _) {
 }
 
 #[forgetest]
-async fn can_not_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
-    let (_, handle1) = spawn(NodeConfig::test()).await;
-    let (_, handle2) = spawn(NodeConfig::test()).await;
+async fn can_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
+    let (api1, handle1) = spawn(NodeConfig::test()).await;
+    let (api2, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_deployer(0)
+        .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
+        .broadcast(ScriptOutcome::OkBroadcast);
+
+    let deployer = tester.accounts_pub[1];
+    for (api, handle) in [(&api1, &handle1), (&api2, &handle2)] {
+        assert_eq!(api.transaction_count(deployer, None).await.unwrap().to::<u32>(), 2);
+        assert!(!handle.http_provider().get_code_at(deployer.create(1)).await.unwrap().is_empty());
+    }
+}
+
+#[forgetest]
+async fn can_not_deploy_multi_chain_script_with_lib_without_create2_deployer(prj: _, cmd: _) {
+    let (_, handle1) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let (_, handle2) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle1.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(&[0, 1])
@@ -344,19 +365,47 @@ async fn uses_endpoint_profile_builds_on_forks(prj: _, cmd: _) {
 import "forge-std/Script.sol";
 library Lib { function value() external pure returns (uint256) { return 1; } }
 contract UsesLib { function value() external pure returns (uint256) { return Lib.value(); } }
+library AutoLib { function value() external pure returns (uint256) { return 2; } }
+contract UsesAutoLib {
+    uint256 x;
+    constructor(uint256 x_) { x = x_; }
+    function value() external view returns (uint256) { return AutoLib.value() + x; }
+}
+contract Creator {
+    function created(bytes memory initCode) external returns (bool ok) {
+        assembly { ok := iszero(iszero(create(0, add(initCode, 0x20), mload(initCode)))) }
+    }
+}
+bytes constant PUSH0 = hex"5f00";
+bytes constant TSTORE = hex"600160005d00";
 contract ProfileScript is Script {
     function run() external {
         vm.createSelectFork("first");
+        Creator creator = new Creator();
+        vm.assertTrue(creator.created{gas: 1e6}(hex"00") && !creator.created{gas: 1e6}(PUSH0));
         bytes memory firstCode = vm.getCode("ProfileScript.sol:UsesLib");
-        vm.broadcast();
-        vm.deployCode("ProfileScript.sol:UsesLib");
+        deploy(1);
         vm.createSelectFork("second");
+        vm.assertTrue(new Creator().created{gas: 1e6}(TSTORE));
         vm.assertNotEq(vm.getCode("ProfileScript.sol:UsesLib"), firstCode);
         vm.assertEq(
             vm.getCode("out/ProfileScript.sol/UsesLib.json"), vm.getCode("ProfileScript.sol:UsesLib")
         );
-        vm.broadcast();
+        deploy(2);
+    }
+
+    function deploy(uint256 x) internal {
+        bytes32 salt = bytes32(x);
+        bytes memory initCode =
+            abi.encodePacked(vm.getCode("ProfileScript.sol:UsesAutoLib"), abi.encode(x));
+        vm.startBroadcast();
         vm.deployCode("ProfileScript.sol:UsesLib");
+        UsesAutoLib created_ = new UsesAutoLib(x);
+        UsesAutoLib salted = new UsesAutoLib{salt: salt}(x);
+        vm.stopBroadcast();
+        vm.assertEq(address(created_).code, vm.getDeployedCode("ProfileScript.sol:UsesAutoLib"));
+        vm.assertEq(address(salted), vm.computeCreate2Address(salt, keccak256(initCode)));
+        vm.assertEq(created_.value(), 2 + x);
     }
 
     function single() external {
@@ -366,16 +415,38 @@ contract ProfileScript is Script {
 }
 "#,
     );
+    prj.add_test(
+        "ProfileFork.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "../src/ProfileScript.sol";
+contract ProfileForkTest is Test {
+    function test_fork_profile() public {
+        bytes memory runCode = address(new UsesLib()).code;
+        assertFalse(new Creator().created{gas: 1e6}(TSTORE));
+        vm.createSelectFork("second");
+        assertTrue(new Creator().created{gas: 1e6}(TSTORE));
+        bytes memory code = address(new UsesLib()).code;
+        assertEq(code, vm.getDeployedCode("ProfileScript.sol:UsesLib"));
+        assertNotEq(code, runCode);
+    }
+}
+"#,
+    );
     // `unset` and `offline` are never forked, so they must not be resolved or contacted.
     prj.create_file(
         "foundry.toml",
         &format!(
             r#"
+[profile.default]
+evm_version = "shanghai"
+
 [profile.first]
+evm_version = "paris"
 libraries = ["src/ProfileScript.sol:Lib:{first_lib}"]
 
 [profile.second]
-evm_version = "shanghai"
+evm_version = "cancun"
 libraries = ["src/ProfileScript.sol:Lib:{second_lib}"]
 
 [rpc_endpoints]
@@ -391,18 +462,37 @@ offline = {{ endpoint = "http://127.0.0.1:1", profile = "second" }}
     let read = |path: &str| -> Value {
         foundry_common::fs::read_json_file(&prj.root().join("broadcast").join(path)).unwrap()
     };
-    // Whether the contract deployed by `sequence` on `handle` is linked to `library`.
-    let linked = async |handle: &anvil::NodeHandle, sequence: &Value, library: Address| {
-        let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
-        let code = handle.http_provider().get_code_at(address.parse().unwrap()).await.unwrap();
-        code.windows(20).any(|window| window == library.as_slice())
+    // Returns the code of the contract deployed by transaction `index` of `sequence`.
+    let code = async |handle: &anvil::NodeHandle, sequence: &Value, index: usize| {
+        let address = sequence["transactions"][index]["contractAddress"].as_str().unwrap();
+        handle.http_provider().get_code_at(address.parse().unwrap()).await.unwrap()
     };
+    let linked =
+        |code: &[u8], library: Address| code.windows(20).any(|window| window == library.as_slice());
 
     cmd.args(["script", "ProfileScript", "--broadcast", "--private-key", PRIVATE_KEY])
         .assert_success();
     let deployments = &read("multi/ProfileScript.sol-latest/run.json")["deployments"];
-    assert!(linked(&first, &deployments[0], first_lib).await);
-    assert!(linked(&second, &deployments[1], second_lib).await);
+    for (handle, deployment, library, x) in
+        [(&first, &deployments[0], first_lib, 1u8), (&second, &deployments[1], second_lib, 2)]
+    {
+        // The CREATE2 library deployment, `vm.deployCode`, `new` and `new` with salt.
+        assert_eq!(deployment["transactions"].as_array().unwrap().len(), 4);
+        assert!(linked(&code(handle, deployment, 1).await, library));
+        let uses_auto_lib = deployment["transactions"][2]["contractAddress"].as_str().unwrap();
+        let value = handle
+            .http_provider()
+            .call(
+                alloy_rpc_types::TransactionRequest::default()
+                    .to(uses_auto_lib.parse().unwrap())
+                    .input(hex!("3fa4f245").to_vec().into())
+                    .into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(value[..], B256::with_last_byte(2 + x)[..]);
+        assert_eq!(code(handle, deployment, 2).await, code(handle, deployment, 3).await);
+    }
 
     // The `--rpc-url` endpoint uses its profile build too.
     cmd.forge_fuse()
@@ -410,11 +500,22 @@ offline = {{ endpoint = "http://127.0.0.1:1", profile = "second" }}
         .args(["--broadcast", "--private-key", PRIVATE_KEY])
         .assert_success();
     let sequence = read("ProfileScript.sol/31339/single-latest.json");
-    assert!(linked(&second, &sequence, second_lib).await);
+    let last = sequence["transactions"].as_array().unwrap().len() - 1;
+    assert!(linked(&code(&second, &sequence, last).await, second_lib));
 
-    // Profile builds are cached.
-    let output = cmd.forge_fuse().args(["script", "ProfileScript"]).assert_success();
-    assert!(!String::from_utf8_lossy(&output.get_output().stdout).contains("Compiling"));
+    // Tests use profile builds and specs on forks too, and profile builds are cached.
+    cmd.forge_fuse().args(["test", "--mt", "test_fork_profile"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mt", "test_fork_profile"]).assert_success().stdout_eq(str![
+        [r#"
+No files changed, compilation skipped
+No files changed, compilation skipped
+No files changed, compilation skipped
+
+Ran 1 test for test/ProfileFork.t.sol:ProfileForkTest
+[PASS] test_fork_profile() ([GAS])
+...
+"#]
+    ]);
 }
 
 const PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";

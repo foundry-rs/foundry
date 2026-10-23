@@ -246,9 +246,20 @@ atomicity. Recovery must preserve independent per-chain progress and must not in
 completion permits skipping an operation on another.
 
 Endpoints that name a profile get a separate build of that profile's compiler settings, cached in
-`cache/profiles/<settings hash>`. On forks of the endpoint's URL, including the `--rpc-url`
-endpoint, `vm.getCode`, `vm.getDeployedCode` and `vm.deployCode` take the build's artifact.
-Endpoints are mapped to profiles by URL without contacting them.
+`cache/profiles/<settings hash>`. Endpoints are mapped to profiles by URL without contacting them.
+On forks of the endpoint's URL, in scripts and tests:
+
+- `vm.getCode`, `vm.getDeployedCode` and `vm.deployCode` take the build's artifact.
+- `new C()` and `new C{salt: s}()` deploy the build's creation code of a project contract, with the
+  same constructor arguments. A CREATE2 address therefore follows from `vm.getCode`, not from
+  `type(C).creationCode`.
+- Frames of non-persistent accounts use the profile's spec. The script or test contract keeps the
+  run's spec, and `vm.setEvmVersion` overrides both.
+
+Scripts link profile builds with CREATE2 libraries and deploy them on each fork before its first
+broadcast, so multichain scripts support libraries unless they are deployed at nonce addresses.
+Tests link profile builds with the run's libraries, which persist across forks, unless the profile
+configures them.
 
 ## Known failure windows
 

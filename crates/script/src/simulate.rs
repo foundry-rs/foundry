@@ -35,7 +35,7 @@ use foundry_evm::{
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     mem,
 };
 
@@ -641,8 +641,10 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
     pub async fn bundle(mut self) -> Result<BundledState<FEN>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
-        if is_multi_deployment && !self.build_data.libraries.is_empty() {
-            eyre::bail!("Multi-chain deployment is not supported with libraries.");
+        if is_multi_deployment && self.build_data.predeploy_libraries.has_nonce_libraries() {
+            eyre::bail!(
+                "Multi-chain deployment is not supported with libraries deployed at nonce addresses."
+            );
         }
 
         let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::default();
@@ -651,6 +653,8 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         let mut new_sequence = VecDeque::new();
         let mut manager = ProvidersManager::<FEN::Network>::default();
         let mut sequences = vec![];
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
+        let mut checked_create2_deployer = HashSet::new();
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
         // [`ScriptSequence`] from all the collected transactions up to this point.
@@ -671,6 +675,17 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
                 tx.set_chain_id(provider_info.chain);
+            }
+
+            // Simulation forks may carry the local CREATE2 deployer, so check the chain itself.
+            if tx.tx().to() == Some(create2_deployer)
+                && checked_create2_deployer.insert(tx_rpc.clone())
+                && provider_info.provider.get_code_at(create2_deployer).await?.is_empty()
+            {
+                eyre::bail!(
+                    "CREATE2 deployer {create2_deployer} is not deployed on chain {}",
+                    provider_info.chain
+                );
             }
 
             if !self.args.skip_simulation {
