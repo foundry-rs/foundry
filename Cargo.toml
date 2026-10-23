@@ -457,7 +457,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
-axum = "0.8"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "8"
@@ -599,10 +599,10 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd0986
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", branch = "dani/wallets-axum-features" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", branch = "dani/wallets-axum-features" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", branch = "dani/wallets-axum-features" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", branch = "dani/wallets-axum-features" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
