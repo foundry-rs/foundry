@@ -32,7 +32,7 @@ impl FoundryEvmNetwork for EthEvmNetwork {
     }
 
     fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<alloy_consensus::TxEnvelope> {
-        eth_envelope_from_any_rpc(tx, "Ethereum")
+        eth_envelope_from_any_rpc(tx, "TxEnv")
     }
 }
 

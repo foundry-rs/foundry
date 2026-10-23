@@ -2130,7 +2130,7 @@ impl TestArgs {
 
         match trace_output {
             TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
-                let mut folded_stack_trace = folded_stack_trace::build(arena, self.evm.isolate);
+                let mut folded_stack_trace = folded_stack_trace::build(arena);
                 let flame_chart = trace_output == TraceOutputKind::Flamechart;
                 if flame_chart {
                     folded_stack_trace.reverse();

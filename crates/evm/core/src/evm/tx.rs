@@ -70,7 +70,7 @@ pub fn eth_tx(envelope: EthereumTxEnvelope<TxEip4844Variant>) -> TxEnvelope {
 /// Celo's CIP-64 fee-currency transactions have no evm2 representation and fail explicitly.
 pub fn eth_envelope_from_any_rpc(
     tx: &AnyRpcTransaction,
-    network: &str,
+    target: &str,
 ) -> eyre::Result<alloy_consensus::TxEnvelope> {
     if let Some(envelope) = tx.as_envelope() {
         return Ok(envelope.clone());
@@ -81,7 +81,7 @@ pub fn eth_envelope_from_any_rpc(
             alloy_network::TransactionResponse::tx_hash(tx)
         );
     }
-    Err(super::unknown_transaction_type(tx, network))
+    Err(super::unknown_transaction_type(tx, target))
 }
 
 /// Transactions of a block and its two ancestors, for network state that depends on the block

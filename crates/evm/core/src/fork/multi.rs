@@ -907,13 +907,21 @@ fn cache_block_env(block: &evm2::env::BlockEnv) -> BlockEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::opts::EvmOpts;
     use alloy_chains::NamedChain;
     use alloy_eips::eip7928::{AccountChanges, BlockAccessIndex, SlotChanges, StorageChange};
-    use alloy_primitives::{Address, B256, U256};
-    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::{Address, B256, U256, bytes};
+    use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types::TransactionRequest;
+    use alloy_serde::WithOtherFields;
     use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use foundry_fork_db::AccountFetchPolicy;
-    use futures::task::noop_waker_ref;
+    use foundry_test_utils::rpc::{
+        spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
+    };
+    use futures::{channel::oneshot, task::noop_waker_ref};
+    use std::sync::mpsc::{Receiver as OneshotReceiver, TryRecvError};
 
     fn context(block_number: u64) -> ForkContext {
         ForkContext {
@@ -1133,5 +1141,335 @@ mod tests {
             );
             assert!(manager.forks[&id].bal_prewarmed.load(Ordering::Relaxed));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_state_by_number_does_not_load_or_overwrite_hash_cache() {
+        let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+        let (_api, handle) = anvil::spawn(
+            anvil::NodeConfig::test().with_chain_id(Some(chain_id)).with_no_mining(true),
+        )
+        .await;
+        let opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(0),
+            ..Default::default()
+        };
+        let resolved = opts.prepare_fork().await.unwrap().unwrap();
+        let (env, _) = opts.env_at_fork::<EthEvmNetwork>(Some(&resolved)).await.unwrap();
+        let path = Config::foundry_block_cache_dir(chain_id, resolved.number()).unwrap();
+        assert!(!path.exists());
+        let meta = BlockchainDbMeta::new(cache_block_env(&env.block), handle.http_endpoint())
+            .with_fork_identity(resolved.hash(), resolved.source_id());
+        let cached = BlockchainDb::new(meta.clone(), Some(path.clone()));
+        let address = Address::with_last_byte(0x42);
+        cached.storage().write().entry(address).or_default().insert(U256::ZERO, U256::from(42));
+        cached.cache().flush();
+        assert!(path.exists());
+
+        for state_by_number in [true, false] {
+            let fork = CreateFork {
+                url: handle.http_endpoint(),
+                enable_caching: true,
+                evm_opts: EvmOpts { fork_state_by_number: state_by_number, ..opts.clone() },
+            };
+            let (_, fork, fork_state, block_env, _) =
+                create_fork(fork, None, false, None).await.unwrap();
+            let (backend, handler) = create_backend(&fork, &fork_state, &block_env).unwrap();
+            assert_eq!(backend.data().storage.read().contains_key(&address), !state_by_number);
+            if state_by_number {
+                backend
+                    .data()
+                    .storage
+                    .write()
+                    .entry(address)
+                    .or_default()
+                    .insert(U256::ZERO, U256::from(99));
+            }
+            backend.flush_cache();
+            drop(backend);
+            drop(handler);
+            let reloaded = BlockchainDb::new(meta.clone(), Some(path.clone()));
+            assert_eq!(reloaded.storage().read()[&address][&U256::ZERO], U256::from(42));
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    async fn complete_fork(
+        manager: &mut MultiForkHandler,
+        receiver: OneshotReceiver<eyre::Result<ForkResult>>,
+    ) -> ForkResult {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            futures::future::poll_fn(|cx| {
+                assert!(manager.poll_unpin(cx).is_pending());
+                match receiver.try_recv() {
+                    Ok(result) => Poll::Ready(result),
+                    Err(TryRecvError::Empty) => Poll::Pending,
+                    Err(error) => panic!("fork response channel closed: {error}"),
+                }
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_bal_reuses_prewarmed_cache_only_for_equivalent_identities() {
+        let (api, handle) = anvil::spawn(
+            anvil::NodeConfig::test()
+                .with_chain_id(Some(1u64))
+                .with_hardfork(Some(anvil::EthereumHardfork::Amsterdam.into()))
+                .with_genesis_timestamp(Some(1_800_000_000u64))
+                .with_no_mining(true),
+        )
+        .await;
+        let address = Address::with_last_byte(0x42);
+        api.anvil_set_code(address, bytes!("602a60015500")).await.unwrap();
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(handle.dev_accounts().next().unwrap())
+                .with_to(address)
+                .with_nonce(0)
+                // Enough for the EIP-8037 state gas of creating slot one.
+                .with_gas_limit(1_000_000)
+                .with_gas_price(2_000_000_000),
+        ))
+        .await
+        .unwrap();
+        api.mine_one().await.unwrap();
+        let block = handle.http_provider().get_block_by_number(1.into()).await.unwrap().unwrap();
+        let block = BlockNumHash::new(1, block.header.hash);
+        // Expose native BALs through an endpoint without mutable Anvil identity.
+        let endpoint = spawn_rpc_proxy_method_not_found_before(
+            handle.http_endpoint(),
+            "anvil_nodeInfo",
+            usize::MAX,
+        )
+        .await;
+        let (endpoint, bal_requests) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockAccessList").await;
+        let (endpoint, probes) = spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
+        let (_incoming, receiver) = channel(1);
+        let mut manager = MultiForkHandler::new(receiver);
+        let mut first = None;
+        let mut probe_counts = Vec::new();
+        let other_headers = ["X-Test-Source: other".to_string()];
+
+        for (profile, headers) in [
+            (NetworkConfigs::default(), None),
+            (NetworkConfigs::with_ethereum(), None),
+            (NetworkConfigs::default(), None),
+            (NetworkConfigs::default(), Some(other_headers.as_slice())),
+        ] {
+            let evm_opts = EvmOpts {
+                fork_url: Some(endpoint.clone()),
+                fork_block_number: Some(1),
+                fork_headers: headers.map(<[_]>::to_vec),
+                networks: profile,
+                ..Default::default()
+            };
+            let resolved = evm_opts.prepare_fork().await.unwrap().unwrap();
+            assert_eq!(resolved.block(), block);
+            let fingerprint = resolved.fingerprint();
+            let fork = CreateFork { enable_caching: false, url: endpoint.clone(), evm_opts };
+            let before = probes.lock().unwrap().len();
+            let (sender, receiver) = oneshot_channel();
+            manager.create_fork_with_identity(
+                fork,
+                None,
+                true,
+                Some((resolved.clone(), resolved.block())),
+                sender,
+            );
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                futures::future::poll_fn(|cx| {
+                    assert!(manager.poll_unpin(cx).is_pending());
+                    match receiver.try_recv() {
+                        Ok(result) => Poll::Ready(result),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => Poll::Pending,
+                        Err(error) => panic!("fork response channel closed: {error}"),
+                    }
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+            let db = result.backend.data();
+            assert_eq!(
+                Arc::ptr_eq(first.get_or_insert_with(|| db.clone()), &db),
+                headers.is_none(),
+            );
+            assert_eq!(result.fork.fingerprint(), fingerprint);
+            assert_eq!(db.storage.read()[&address][&U256::ONE], U256::from(42));
+            assert!(manager.forks[&result.id].bal_prewarmed.load(Ordering::Relaxed));
+            assert_eq!(bal_requests.lock().unwrap().len(), if headers.is_some() { 2 } else { 1 });
+            probe_counts.push(probes.lock().unwrap().len() - before);
+        }
+
+        // Only cold caches need the two source probes surrounding BAL preparation.
+        assert_eq!(probe_counts[0], probe_counts[1] + 2);
+        assert_eq!(probe_counts[1], probe_counts[2]);
+        assert_eq!(probe_counts[0], probe_counts[3]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_bal_shared_backend_preserves_opposite_policies_on_roll() {
+        let (api, handle) = anvil::spawn(
+            anvil::NodeConfig::test()
+                .with_chain_id(Some(1u64))
+                .with_hardfork(Some(anvil::EthereumHardfork::Amsterdam.into()))
+                .with_genesis_timestamp(Some(1_800_000_000u64))
+                .with_no_mining(true),
+        )
+        .await;
+        let mut blocks = Vec::new();
+        for number in 1..=3 {
+            api.mine_one().await.unwrap();
+            let block =
+                handle.http_provider().get_block_by_number(number.into()).await.unwrap().unwrap();
+            blocks.push(BlockNumHash::new(number, block.header.hash));
+        }
+        // Expose native BALs through an endpoint without mutable Anvil identity.
+        let endpoint = spawn_rpc_proxy_method_not_found_before(
+            handle.http_endpoint(),
+            "anvil_nodeInfo",
+            usize::MAX,
+        )
+        .await;
+        let (endpoint, bal_requests) =
+            spawn_rpc_proxy_recording_method(endpoint, "eth_getBlockAccessList").await;
+        let resolved = EvmOpts {
+            fork_url: Some(endpoint.clone()),
+            fork_block_number: Some(1),
+            ..Default::default()
+        }
+        .prepare_fork()
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(resolved.block(), blocks[0]);
+
+        for disabled_first in [false, true] {
+            let (_incoming, receiver) = channel(1);
+            let mut manager = MultiForkHandler::new(receiver);
+            bal_requests.lock().unwrap().clear();
+            let mut requests = [false, true].map(|no_fork_bal| {
+                let fork = CreateFork {
+                    enable_caching: false,
+                    url: endpoint.clone(),
+                    evm_opts: EvmOpts {
+                        fork_url: Some(endpoint.clone()),
+                        fork_block_number: Some(1),
+                        no_fork_bal,
+                        ..Default::default()
+                    },
+                };
+                let (sender, receiver) = oneshot_channel();
+                manager.create_fork(fork, sender);
+                let ForkTask::Create { future, .. } = manager.pending_tasks.last_mut().unwrap();
+                let original = std::mem::replace(future, Box::pin(futures::future::pending()));
+                let (release, gate) = oneshot::channel();
+                // Run real creation, but explicitly control which result reaches backend reuse.
+                *future = Box::pin(async move {
+                    let result = original.await;
+                    gate.await.unwrap();
+                    result
+                });
+                (no_fork_bal, release, receiver)
+            });
+            assert_eq!(manager.pending_tasks.len(), 2);
+            if disabled_first {
+                requests.reverse();
+            }
+            let [
+                (first_policy, first_gate, first_receiver),
+                (second_policy, second_gate, second_receiver),
+            ] = requests;
+            first_gate.send(()).unwrap();
+            let first = complete_fork(&mut manager, first_receiver).await;
+            assert!(matches!(second_receiver.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(manager.pending_tasks.len(), 1);
+            second_gate.send(()).unwrap();
+            let second = complete_fork(&mut manager, second_receiver).await;
+
+            assert_ne!(first.id, second.id);
+            assert!(Arc::ptr_eq(&first.backend.data(), &second.backend.data()));
+            assert!(Arc::ptr_eq(first.fork.client.inner(), second.fork.client.inner()));
+            assert!(Arc::ptr_eq(&first.fork.block, &second.fork.block));
+            assert_eq!(manager.forks[&first.id].opts.evm_opts.no_fork_bal, first_policy);
+            assert_eq!(manager.forks[&second.id].opts.evm_opts.no_fork_bal, second_policy);
+            assert!(bal_requests.lock().unwrap().is_empty());
+
+            // Each roll targets a cold block so shared prewarming cannot mask a lost policy.
+            for (no_fork_bal, fork, block) in
+                [(first_policy, first, blocks[1]), (second_policy, second, blocks[2])]
+            {
+                bal_requests.lock().unwrap().clear();
+                let (sender, receiver) = oneshot_channel();
+                manager.on_request(Request::RollForkExact(fork.id, block, true, sender));
+                let rolled = complete_fork(&mut manager, receiver).await;
+                assert_eq!(rolled.fork.block(), block);
+                assert_eq!(manager.forks[&rolled.id].opts.evm_opts.no_fork_bal, no_fork_bal);
+                assert_eq!(
+                    manager.forks[&rolled.id].bal_prewarmed.load(Ordering::Relaxed),
+                    !no_fork_bal,
+                );
+                let expected =
+                    if no_fork_bal { vec![] } else { vec![serde_json::json!([block.hash])] };
+                assert_eq!(*bal_requests.lock().unwrap(), expected);
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cache() {
+        use alloy_chains::NamedChain;
+        use foundry_common::provider::get_http_provider;
+        use foundry_config::Config;
+
+        let endpoint = &*foundry_test_utils::rpc::next_http_rpc_endpoint();
+        let provider = get_http_provider(endpoint);
+
+        let block_num = provider.get_block_number().await.unwrap();
+
+        let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.to_string());
+        evm_opts.fork_block_number = Some(block_num);
+
+        let backend = crate::backend::Backend::<EthEvmNetwork>::spawn(
+            evm_opts.get_fork(&Config::default(), NamedChain::Mainnet as u64, None),
+            evm_opts.local_evm_env::<EthEvmNetwork>(),
+        )
+        .unwrap();
+        let fork = backend.fork().unwrap();
+        let fork_hash = fork.hash();
+        let source_id = fork.source_id();
+        let (evm_env, _) = backend.env(&evm_opts).await.unwrap();
+
+        // some rng contract from etherscan
+        let address = alloy_primitives::address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
+
+        let num_slots = 5;
+        let _account = backend.basic(address);
+        for idx in 0..num_slots {
+            let _ = backend.storage(address, U256::from(idx));
+        }
+        drop(backend);
+
+        let meta = BlockchainDbMeta::new(cache_block_env(&evm_env.block), endpoint.to_string())
+            .with_fork_identity(fork_hash, source_id);
+
+        let db = BlockchainDb::new(
+            meta,
+            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
+        );
+        assert!(db.accounts().read().contains_key(&address));
+        assert!(db.storage().read().contains_key(&address));
+        assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
     }
 }

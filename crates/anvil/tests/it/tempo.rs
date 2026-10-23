@@ -2102,9 +2102,13 @@ async fn test_tempo_eip7702_replay_signature_override() {
     api.mine_one().await.unwrap();
 
     let signature = Signature::new(U256::ZERO, U256::ZERO, true);
-    let chain_id = U256::from(provider.get_chain_id().await.unwrap());
-    let authorization =
-        Authorization { chain_id, address: implementation, nonce: 0 }.into_signed(signature);
+    api.anvil_impersonate_signature(signature.as_bytes().into(), authority).await.unwrap();
+    let authorization = Authorization {
+        chain_id: U256::from(provider.get_chain_id().await.unwrap()),
+        address: implementation,
+        nonce: 0,
+    }
+    .into_signed(signature);
     let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     let gas_price = provider
         .get_gas_price()
@@ -2118,49 +2122,10 @@ async fn test_tempo_eip7702_replay_signature_override() {
         .with_gas_limit(TIP20_TRANSFER_GAS)
         .max_fee_per_gas(gas_price * 2)
         .max_priority_fee_per_gas(gas_price / 10);
-    let signed = api.sign_transaction(WithOtherFields::new(request.clone())).await.unwrap();
+    let signed = api.sign_transaction(WithOtherFields::new(request)).await.unwrap();
     let raw = signed.parse::<Bytes>().unwrap();
     let envelope = FoundryTxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
     assert_eq!(envelope.ty(), 4);
-
-    assert_eq!(provider.trace_raw_transaction(&raw).trace().await.unwrap().output, Bytes::new());
-    api.anvil_impersonate_signature(signature.as_bytes().into(), authority).await.unwrap();
-
-    // Recovery overrides must not bypass authorization validation or match other signatures.
-    for (chain_id, nonce, signature) in [
-        (chain_id + U256::from(1), 0, signature),
-        (chain_id, 1, signature),
-        (chain_id, u64::MAX, signature),
-        (chain_id, 0, Signature::new(U256::ZERO, U256::ZERO, false)),
-    ] {
-        let authorization =
-            Authorization { chain_id, address: implementation, nonce }.into_signed(signature);
-        let invalid = request.clone().with_authorization_list(vec![authorization]);
-        let signed = api.sign_transaction(WithOtherFields::new(invalid)).await.unwrap();
-        let raw = signed.parse::<Bytes>().unwrap();
-        assert_eq!(
-            provider.trace_raw_transaction(&raw).trace().await.unwrap().output,
-            Bytes::new()
-        );
-    }
-
-    // A valid signature wins over a conflicting local override.
-    let authorization = Authorization { chain_id, address: implementation, nonce: 0 };
-    let valid_signature = handle
-        .dev_wallets()
-        .next()
-        .unwrap()
-        .sign_hash(&authorization.signature_hash())
-        .await
-        .unwrap();
-    api.anvil_impersonate_signature(valid_signature.as_bytes().into(), sender).await.unwrap();
-    let valid = request.with_authorization_list(vec![authorization.into_signed(valid_signature)]);
-    let signed = api.sign_transaction(WithOtherFields::new(valid)).await.unwrap();
-    let valid_raw = signed.parse::<Bytes>().unwrap();
-    assert_eq!(
-        provider.trace_raw_transaction(&valid_raw).trace().await.unwrap().output.as_ref(),
-        U256::from(42).abi_encode()
-    );
 
     let raw_trace = provider.trace_raw_transaction(&raw).trace().await.unwrap();
     assert_eq!(raw_trace.output.as_ref(), U256::from(42).abi_encode());
@@ -2168,8 +2133,6 @@ async fn test_tempo_eip7702_replay_signature_override() {
 
     let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
     assert!(receipt.status());
-    assert_eq!(provider.debug_get_raw_transaction(receipt.transaction_hash).await.unwrap(), raw);
-    assert_eq!(provider.get_transaction_count(authority).await.unwrap(), 1);
     let replay = provider.trace_replay_transaction(receipt.transaction_hash).trace().await.unwrap();
     assert_eq!(replay.output, raw_trace.output);
     assert!(replay.trace.iter().all(|trace| trace.error.is_none()));

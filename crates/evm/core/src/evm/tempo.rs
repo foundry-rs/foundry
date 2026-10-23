@@ -99,7 +99,7 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
     fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<TempoNetworkTxEnvelope> {
         match &*tx.inner.inner {
             AnyTxEnvelope::Ethereum(envelope) => TempoNetworkTxEnvelope::try_from(envelope.clone())
-                .map_err(|_| super::unknown_transaction_type(tx, "Tempo")),
+                .map_err(|_| super::unknown_transaction_type(tx, "TempoTxEnv")),
             AnyTxEnvelope::Unknown(unknown) if unknown.ty() == TEMPO_TX_TYPE_ID => {
                 // Tempo AA transactions only deserialize through Tempo's own envelope.
                 let rpc_tx = serde_json::from_value::<
@@ -108,7 +108,7 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
                 .map_err(|err| eyre::eyre!("cannot decode Tempo AA transaction: {err}"))?;
                 Ok(rpc_tx.inner.into_inner())
             }
-            AnyTxEnvelope::Unknown(_) => Err(super::unknown_transaction_type(tx, "Tempo")),
+            AnyTxEnvelope::Unknown(_) => Err(super::unknown_transaction_type(tx, "TempoTxEnv")),
         }
     }
 }

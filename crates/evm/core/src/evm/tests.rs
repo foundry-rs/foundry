@@ -1,6 +1,6 @@
 use super::*;
 use crate::{backend::RevertStateSnapshotAction, fork::ForkId};
-use alloy_consensus::TxEip1559;
+use alloy_consensus::{Transaction as _, TxEip1559};
 use alloy_eips::Encodable2718;
 use alloy_network::{
     AnyTxEnvelope, AnyTxType, TxSignerSync, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -549,4 +549,327 @@ fn captured_tempo_aa_rpc_transactions_convert_exactly() {
         let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&rpc).unwrap();
         assert_eq!((tx.signer(), tx.ty()), (rpc.from(), 0x76));
     }
+}
+
+#[test]
+fn from_any_rpc_transaction_for_eth() {
+    let from = Address::random();
+    let tx = EthEvmNetwork::tx_from_any_rpc(&eth_rpc_transaction(from)).unwrap();
+
+    assert_eq!(tx.signer(), from);
+    assert_eq!(tx.nonce(), 42);
+    assert_eq!(tx.gas_limit(), 21001);
+    assert_eq!(tx.value(), U256::from(101));
+    assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
+}
+
+#[test]
+fn from_any_rpc_transaction_unknown_envelope_errors() {
+    let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+        hash: B256::ZERO,
+        inner: UnknownTypedTransaction {
+            ty: AnyTxType(0xFF),
+            fields: Default::default(),
+            memo: Default::default(),
+        },
+    });
+    let any_tx = rpc_transaction(unknown, Address::random());
+
+    let err = EthEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
+    assert_eq!(err.to_string(), "cannot convert unknown transaction type 0xff to TxEnv");
+}
+
+#[test]
+fn from_any_rpc_transaction_for_tempo_eth_envelope() {
+    let from = Address::random();
+    // evm2 hashes the re-encoded envelope, so the RPC hash must be the real one.
+    let signed = eth_rpc_transaction(from).as_envelope().unwrap().as_eip1559().unwrap().clone();
+    let signature = *signed.signature();
+    let signed = Signed::new_unhashed(signed.strip_signature(), signature);
+    let any_tx = rpc_transaction(AnyTxEnvelope::Ethereum(signed.into()), from);
+    let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
+
+    assert_eq!(tx.signer(), from);
+    assert_eq!(tx.nonce(), 42);
+    assert_eq!(tx.gas_limit(), 21001);
+    assert_eq!(tx.value(), U256::from(101));
+    assert_eq!(tx.evm_tx().fee_token(), None);
+    let tx_hash = any_tx.tx_hash();
+    assert_eq!(tx.execution_context(), tempo_evm::ExecutionContext::Transaction { tx_hash });
+    let envelope = crate::evm::TempoEvmNetwork::envelope_from_any_rpc(&any_tx).unwrap();
+    assert_eq!(tx.unique_tx_identifier(), envelope.unique_tx_identifier(from));
+    assert!(tx.as_aa().is_none());
+}
+
+#[test]
+fn from_any_rpc_transaction_for_tempo_aa() {
+    use alloy_signer::SignerSync;
+    use std::num::NonZeroU64;
+    use tempo_alloy::primitives::{TempoTransaction, TempoTxEnvelope, transaction::Call};
+
+    let sender = PrivateKeySigner::random();
+    let sponsor = PrivateKeySigner::random();
+    let fee_token = Some(Address::random());
+    let calls = vec![
+        Call {
+            to: TxKind::Call(Address::with_last_byte(0x11)),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xaa, 0xbb]),
+        },
+        Call {
+            to: TxKind::Call(Address::with_last_byte(0x22)),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xcc, 0xdd]),
+        },
+    ];
+    let mut tempo_tx = TempoTransaction {
+        chain_id: 42431,
+        nonce: 42,
+        gas_limit: 424242,
+        fee_token,
+        nonce_key: U256::from(4242),
+        valid_after: NonZeroU64::new(1800000000),
+        valid_before: NonZeroU64::new(1900000000),
+        calls,
+        ..Default::default()
+    };
+    tempo_tx.fee_payer_signature =
+        Some(sponsor.sign_hash_sync(&tempo_tx.fee_payer_signature_hash(sender.address())).unwrap());
+    let signature = sender.sign_hash_sync(&tempo_tx.signature_hash()).unwrap();
+    let aa_signed = tempo_tx.into_signed(signature.into());
+    let tx_hash = *aa_signed.hash();
+    let unique_tx_identifier = aa_signed.expiring_nonce_hash(sender.address());
+
+    // Round-trip a Tempo RPC transaction through JSON, as `AnyNetwork` providers receive it.
+    let rpc_tx = RpcTransaction::from_transaction(
+        Recovered::new_unchecked(TempoTxEnvelope::AA(aa_signed), sender.address()),
+        alloy_rpc_types::TransactionInfo::default(),
+    );
+    let any_tx: AnyRpcTransaction =
+        serde_json::from_value(serde_json::to_value(&rpc_tx).unwrap()).unwrap();
+    assert!((*any_tx.inner.inner).is_unknown());
+
+    let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
+    assert_eq!(tx.ty(), 0x76);
+    assert_eq!(tx.signer(), sender.address());
+    assert_eq!(tx.nonce(), 42);
+    assert_eq!(tx.gas_limit(), 424242);
+    assert_eq!(tx.chain_id(), Some(42431));
+    assert_eq!(tx.evm_tx().fee_token(), fee_token);
+    assert_eq!(tx.fee_payer().unwrap(), sponsor.address());
+    assert_eq!(tx.execution_context(), tempo_evm::ExecutionContext::Transaction { tx_hash });
+    assert_eq!(tx.unique_tx_identifier(), unique_tx_identifier);
+
+    let aa = tx.as_aa().unwrap().tx();
+    assert_eq!(
+        aa.calls.iter().map(|call| (call.to, call.input.clone())).collect::<Vec<_>>(),
+        [
+            (TxKind::Call(Address::with_last_byte(0x11)), Bytes::from_static(&[0xaa, 0xbb])),
+            (TxKind::Call(Address::with_last_byte(0x22)), Bytes::from_static(&[0xcc, 0xdd])),
+        ]
+    );
+    assert_eq!(aa.nonce_key, U256::from(4242));
+    assert_eq!(aa.valid_after.map(NonZeroU64::get), Some(1800000000));
+    assert_eq!(aa.valid_before.map(NonZeroU64::get), Some(1900000000));
+    assert_eq!(tx.tx_hash(), tx_hash);
+}
+
+/// Decodes a captured Tempo `eth_getTransactionByHash` result.
+fn captured_tempo_aa(json: &str) -> Recovered<tempo_evm::TempoTxEnv> {
+    let any_tx: AnyRpcTransaction = serde_json::from_str(json).unwrap();
+    let tx = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap();
+    let aa = tx.as_aa().unwrap();
+    // Recovery over the recomputed signing hash only succeeds if every signed field decoded.
+    assert_eq!(aa.signature().recover_signer(&aa.signature_hash()).unwrap(), tx.signer());
+    assert_eq!(tx.ty(), 0x76);
+    tx
+}
+
+fn tempo_call(to: Address, input: Bytes) -> (TxKind, U256, Bytes) {
+    (TxKind::Call(to), U256::ZERO, input)
+}
+
+fn tempo_calls(tx: &tempo_evm::TempoTxEnv) -> Vec<(TxKind, U256, Bytes)> {
+    tx.as_aa()
+        .unwrap()
+        .tx()
+        .calls
+        .iter()
+        .map(|call| (call.to, call.value, call.input.clone()))
+        .collect()
+}
+
+#[test]
+fn from_any_rpc_transaction_for_captured_sponsored_tempo_aa_batch() {
+    use alloy_primitives::{address, b256, bytes};
+
+    let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-sponsored-batch.json"));
+    assert_eq!(tx.signer(), address!("0x0a0d9bc4dda3a659699ce05153ffe9298f99ce89"));
+    assert_eq!(tx.nonce(), 0);
+    assert_eq!(tx.gas_limit(), 1403789);
+    assert_eq!(tx.chain_id(), Some(4217));
+    assert_eq!(
+        tx.evm_tx().fee_token(),
+        Some(address!("0x20c0000000000000000000006a37da5c996874be"))
+    );
+    assert_eq!(tx.fee_payer().unwrap(), address!("0x58aa7ce42e1d13b2919e2ac7e006c4fbc171442c"));
+    assert_eq!(
+        tx.execution_context(),
+        tempo_evm::ExecutionContext::Transaction {
+            tx_hash: b256!("0xbb23551c35bc2c2539ac3637c7464a22b5fb38bbb9cf39fa1f533ca6c2c981a3")
+        }
+    );
+    // Expiring nonces are replay-protected by this sender-scoped identifier.
+    assert_eq!(
+        tx.channel_open_context_hash(),
+        b256!("0xadb35ee9830a691a8dbd8f42208a1553d9a242b8750a218d841cc78a0dea20ca")
+    );
+
+    assert_eq!(
+        tempo_calls(&tx),
+        [
+            tempo_call(
+                address!("0x20c0000000000000000000000000000000000000"),
+                bytes!(
+                    "0x095ea7b300000000000000000000000083a1491f3e7f8daab8f787a631334b9ca7a870230000000000000000000000000000000000000000000000000000000077359400"
+                ),
+            ),
+            tempo_call(
+                address!("0x83a1491f3e7f8daab8f787a631334b9ca7a87023"),
+                bytes!(
+                    "0x6e553f6500000000000000000000000000000000000000000000000000000000773594000000000000000000000000000a0d9bc4dda3a659699ce05153ffe9298f99ce89"
+                ),
+            ),
+        ]
+    );
+    let aa = tx.as_aa().unwrap().tx();
+    assert_eq!(aa.nonce_key, U256::MAX);
+    assert_eq!(aa.valid_after.map(|v| v.get()), Some(542204929));
+    assert_eq!(aa.valid_before.map(|v| v.get()), Some(1790813692));
+}
+
+#[test]
+fn from_any_rpc_transaction_for_captured_nonce_lane_tempo_aa() {
+    use alloy_primitives::{address, b256};
+
+    let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-nonce-lane.json"));
+    let sender = address!("0xfdd1c606b498f5fcaaf27bd318b14caf52e8f6c2");
+    assert_eq!(tx.signer(), sender);
+    assert_eq!(tx.nonce(), 22496);
+    assert_eq!(tx.gas_limit(), 99408);
+    assert_eq!(tx.chain_id(), Some(42431));
+    assert_eq!(tx.evm_tx().fee_token(), None);
+    // Without a sponsor the sender pays.
+    assert_eq!(tx.fee_payer().unwrap(), sender);
+    assert_eq!(
+        tx.execution_context(),
+        tempo_evm::ExecutionContext::Transaction {
+            tx_hash: b256!("0x4df0a9b9e859be6c91c00edf8478939d0b91f6f9eb39dd9c8a93946ac70ff740")
+        }
+    );
+
+    let calls = tempo_calls(&tx);
+    let [(to, value, input)] = calls.as_slice() else { panic!("expected one call") };
+    assert_eq!(*to, TxKind::Call(address!("0x5ad0000000000000000000000000000000000003")));
+    assert_eq!(*value, U256::ZERO);
+    assert_eq!(input.len(), 868);
+    let aa = tx.as_aa().unwrap().tx();
+    assert_eq!(aa.nonce_key, U256::ONE);
+    assert_eq!(aa.valid_after, None);
+    assert_eq!(aa.valid_before, None);
+}
+
+#[test]
+fn from_any_rpc_transaction_for_captured_keychain_tempo_aa() {
+    use alloy_primitives::{address, b256};
+    use tempo_primitives_evm2::TempoSignature;
+
+    let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-keychain.json"));
+    let sender = address!("0x5f704c6c7075acd14ee36527f03b5b5dcb4a966f");
+    let key_id = address!("0x240a31713e851acdc0c590fe45ef72baeff55f91");
+    assert_eq!(tx.signer(), sender);
+    assert_eq!(tx.nonce(), 0);
+    assert_eq!(tx.gas_limit(), 322821);
+    assert_eq!(tx.chain_id(), Some(42431));
+    assert_eq!(tx.evm_tx().fee_token(), None);
+    assert_eq!(tx.fee_payer().unwrap(), address!("0x133d7736f290fa2758cf0d1e0862f5a93ae1dcbf"));
+    assert_eq!(
+        tx.execution_context(),
+        tempo_evm::ExecutionContext::Transaction {
+            tx_hash: b256!("0xd4d372ad5cfa4cdf476aeb25d4a76fb80fe2d6169eb9354c544500c0496a19d6")
+        }
+    );
+    // Expiring nonces are replay-protected by this sender-scoped identifier.
+    assert_eq!(
+        tx.channel_open_context_hash(),
+        b256!("0xdb2722c83d8893c1637bbabfe2ad924bcc044653f6c9fa91d472d70ddfa97de3")
+    );
+
+    assert_eq!(tempo_calls(&tx), [tempo_call(Address::ZERO, Bytes::new())]);
+    let signed = tx.as_aa().unwrap();
+    let aa = signed.tx();
+    assert_eq!(aa.nonce_key, U256::MAX);
+    assert_eq!(aa.valid_after.map(|v| v.get()), Some(949691873));
+    assert_eq!(aa.valid_before.map(|v| v.get()), Some(1790811579));
+    let TempoSignature::Keychain(keychain) = signed.signature() else {
+        panic!("expected keychain")
+    };
+    assert_eq!(keychain.user_address, sender);
+    assert_eq!(keychain.key_id(&signed.signature_hash()).unwrap(), key_id);
+    let key_authorization = aa.key_authorization.as_ref().unwrap();
+    assert_eq!(key_authorization.key_id, key_id);
+    assert_eq!(key_authorization.recover_signer().unwrap(), sender);
+}
+
+#[test]
+fn from_any_rpc_transaction_for_captured_authorization_list_tempo_aa() {
+    use alloy_primitives::{address, b256};
+
+    let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-authorization-list.json"));
+    let sender = address!("0xd410bcea80de9214e0e49df7d19c4c5e3db60f2a");
+    assert_eq!(tx.signer(), sender);
+    assert_eq!(tx.nonce(), 0);
+    assert_eq!(tx.gas_limit(), 2000000);
+    assert_eq!(tx.chain_id(), Some(42431));
+    assert_eq!(
+        tx.evm_tx().fee_token(),
+        Some(address!("0x20c0000000000000000000000000000000000000"))
+    );
+    assert_eq!(tx.fee_payer().unwrap(), sender);
+    assert_eq!(
+        tx.execution_context(),
+        tempo_evm::ExecutionContext::Transaction {
+            tx_hash: b256!("0xfff5a6fa344fa9d6d7410374f40b6f711735500892cccdf480670fd7c5adcf93")
+        }
+    );
+
+    let call = tempo_call(address!("0xa98d41b22c17ae4f4a94420a29a3095464c037e3"), Bytes::new());
+    assert_eq!(tempo_calls(&tx), [call.clone(), call]);
+    let aa = tx.as_aa().unwrap().tx();
+    assert_eq!(aa.nonce_key, U256::ZERO);
+    // Secp256k1, P256 and WebAuthn authorizations, in that order.
+    let delegate = address!("0xaaaaaaaa00000000000000000000000000000000");
+    assert_eq!(
+        aa.tempo_authorization_list
+            .iter()
+            .map(|auth| (auth.address, auth.recover_authority().ok()))
+            .collect::<Vec<_>>(),
+        [
+            (delegate, Some(address!("0xd9aa283bc5643587f9623a0e9683df78588404a8"))),
+            (delegate, Some(address!("0x883b644ccaa219845187fd0932a8ef6e7d484bd6"))),
+            (delegate, Some(address!("0x732c32ec8e029d8989b9d1db9914376b17e20676"))),
+        ]
+    );
+}
+
+#[test]
+fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
+    let mut json: serde_json::Value =
+        serde_json::from_str(include_str!("../../test-data/tempo-aa-sponsored-batch.json"))
+            .unwrap();
+    json.as_object_mut().unwrap().remove("signature");
+    let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
+
+    let err = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
+    assert_eq!(err.to_string(), "cannot decode Tempo AA transaction: missing field `signature`");
 }
