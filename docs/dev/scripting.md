@@ -345,10 +345,12 @@ behavior, including:
   membership.
 
 An operation without an attempt is prepared on resume like a new one. Its saved request keeps the
-sender, nonce, destination, value, and input, but fees, gas estimates, Tempo options such as the fee
-token, nonce key, and validity window, and sponsorship can come from the resume invocation. When the
-original run was sponsored, the recovery snapshot records the sponsor address, and resume refuses to
-prepare remaining operations unless `--tempo.sponsor` names the same sponsor.
+sender, nonce, destination, value, input, and any recorded Tempo fee token, including when `--batch`
+rebuilds the remaining operations as one transaction. Fees, gas estimates, Tempo options such as the
+nonce key and validity window, and sponsorship can come from the resume invocation, and
+`--tempo.fee-token` replaces a recorded fee token. When the original run was sponsored, the recovery
+snapshot records the sponsor address, and resume refuses to prepare remaining operations unless
+`--tempo.sponsor` names the same sponsor.
 
 Reconciliation and rebroadcast of identical locally signed bytes do not request a signer. The
 initial recovery implementation fails closed instead of replacing an existing attempt with changed

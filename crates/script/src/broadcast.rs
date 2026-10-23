@@ -1586,7 +1586,12 @@ impl BundledState<TempoEvmNetwork> {
                 max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
                 ..Default::default()
             },
-            fee_token: self.script_config.tempo.fee_token,
+            // Keep the fee token recorded with the remaining calls; `apply` overrides it with
+            // `--tempo.fee-token`.
+            fee_token: match sequence.transactions[batch_start].tx() {
+                TransactionMaybeSigned::Unsigned(tx) => tx.fee_token,
+                TransactionMaybeSigned::Signed { .. } => None,
+            },
             calls: calls.clone(),
             nonce_key: self.script_config.tempo.expiring_nonce.then_some(U256::MAX),
             valid_before: self.script_config.tempo.valid_before.and_then(NonZeroU64::new),

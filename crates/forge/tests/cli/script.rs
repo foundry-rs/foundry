@@ -6863,6 +6863,62 @@ async fn tempo_batch_resume_requires_original_sponsor(prj: _, cmd: _) {
     assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
 }
 
+// Resumes a PathUSD batch dry run with `resume_args` and checks which fee token pays for it.
+async fn tempo_batch_resume_fee_token(
+    prj: TestProject,
+    mut cmd: TestCommand,
+    resume_args: &[&str],
+    expected: (&str, Address),
+) {
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let args = [
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--batch",
+        "--network",
+        "tempo",
+    ];
+
+    cmd.arg("script").arg(&script).args(args).args(["--tempo.fee-token", "PathUSD"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume").args(resume_args);
+    cmd.assert_success().stderr_eq(format!("Paying gas in {} ({})\n", expected.0, expected.1));
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 3);
+    for receipt in receipts {
+        assert_eq!(receipt["feeToken"].as_str().unwrap().parse::<Address>().unwrap(), expected.1);
+    }
+}
+
+// A batch rebuilt on resume keeps the fee token recorded by the dry run.
+#[forgetest_init]
+async fn tempo_batch_resume_keeps_recorded_fee_token(prj: _, cmd: _) {
+    let path_usd = address!("0x20C0000000000000000000000000000000000000");
+    tempo_batch_resume_fee_token(prj, cmd, &[], ("PathUSD", path_usd)).await;
+}
+
+// An explicit `--tempo.fee-token` still replaces the recorded fee token on batch resume.
+#[forgetest_init]
+async fn tempo_batch_resume_fee_token_flag_overrides_recorded(prj: _, cmd: _) {
+    let alpha_usd = address!("0x20C0000000000000000000000000000000000001");
+    tempo_batch_resume_fee_token(
+        prj,
+        cmd,
+        &["--tempo.fee-token", "AlphaUSD"],
+        ("AlphaUSD", alpha_usd),
+    )
+    .await;
+}
+
 #[forgetest_init]
 async fn tempo_batch_unlocked_crash_blocks_resubmission(prj: _, cmd: _) {
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
