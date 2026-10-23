@@ -150,6 +150,9 @@ pub struct SparsedTraceArena {
     /// Presentation-only revert diagnostics, keyed by trace node index.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub diagnostics: HashMap<usize, RevertDiagnostic>,
+    /// The opcode steps recorded for the debugger, if a debug recorder ran.
+    #[serde(skip)]
+    pub debug_steps: Option<debug::DebugRecording>,
 }
 
 impl Serialize for SparsedTraceArena {
@@ -378,7 +381,12 @@ pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedT
         }
     }
 
-    SparsedTraceArena { arena, ignored: Default::default(), diagnostics: Default::default() }
+    SparsedTraceArena {
+        arena,
+        ignored: Default::default(),
+        diagnostics: Default::default(),
+        debug_steps: None,
+    }
 }
 
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
@@ -605,6 +613,7 @@ pub struct TraceRequirements {
     immediate_bytes: bool,
     state_diff: bool,
     bytecode: bool,
+    debug_recording: bool,
 }
 
 impl TraceRequirements {
@@ -618,6 +627,7 @@ impl TraceRequirements {
             immediate_bytes: false,
             state_diff: false,
             bytecode: false,
+            debug_recording: false,
         }
     }
 
@@ -635,6 +645,7 @@ impl TraceRequirements {
         self.immediate_bytes |= other.immediate_bytes;
         self.state_diff |= other.state_diff;
         self.bytecode |= other.bytecode;
+        self.debug_recording |= other.debug_recording;
         self
     }
 
@@ -667,6 +678,24 @@ impl TraceRequirements {
         self
     }
 
+    /// Records the debugger's opcode steps with a debug recorder instead of the tracer.
+    ///
+    /// The tracer keeps the call trace and the bytecode of each call; the steps go straight into
+    /// one step table, see [`debug::DebugRecording`].
+    pub const fn with_debug_recording(mut self, yes: bool) -> Self {
+        if yes {
+            self.calls = true;
+            self.bytecode = true;
+            self.debug_recording = true;
+        }
+        self
+    }
+
+    /// Whether a debug recorder records the opcode steps.
+    pub const fn debug_recording(&self) -> bool {
+        self.debug_recording
+    }
+
     pub const fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
         match mode {
             InternalTraceMode::None => self,
@@ -697,7 +726,9 @@ impl TraceRequirements {
         match verbosity {
             0..3 => self,
             3..=4 => self.with_calls(true),
-            _ if matches!(self.steps, StepRecording::All) => self.with_calls(true),
+            _ if matches!(self.steps, StepRecording::All) || self.debug_recording => {
+                self.with_calls(true)
+            }
             _ => self.with_state_changes(true),
         }
     }
@@ -787,6 +818,7 @@ mod tests {
             arena,
             ignored: Default::default(),
             diagnostics: Default::default(),
+            debug_steps: None,
         };
 
         let arena = trace_arena_at_depth(&arena, 1);
@@ -855,6 +887,7 @@ mod tests {
                 arena,
                 ignored: Default::default(),
                 diagnostics: Default::default(),
+                debug_steps: None,
             },
             false,
             true,
@@ -873,6 +906,7 @@ mod tests {
                 0,
                 RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
             )]),
+            debug_steps: None,
         };
 
         let resolved = traces.resolve_arena();
@@ -900,6 +934,7 @@ mod tests {
                 0,
                 RevertDiagnostic::CallToNonContract(alloy_primitives::Address::ZERO),
             )]),
+            debug_steps: None,
         };
 
         let serialized = ron::to_string(&traces).unwrap();
