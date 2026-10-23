@@ -6909,12 +6909,12 @@ async fn tempo_batch_resume_keeps_recorded_fee_token(prj: _, cmd: _) {
 // An explicit `--tempo.fee-token` still replaces the recorded fee token on batch resume.
 #[forgetest_init]
 async fn tempo_batch_resume_fee_token_flag_overrides_recorded(prj: _, cmd: _) {
-    let alpha_usd = address!("0x20C0000000000000000000000000000000000001");
+    let beta_usd = address!("0x20C0000000000000000000000000000000000002");
     tempo_batch_resume_fee_token(
         prj,
         cmd,
-        &["--tempo.fee-token", "AlphaUSD"],
-        ("AlphaUSD", alpha_usd),
+        &["--tempo.fee-token", "BetaUSD"],
+        ("BetaUSD", beta_usd),
     )
     .await;
 }
