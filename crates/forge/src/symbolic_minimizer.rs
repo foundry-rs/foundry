@@ -164,6 +164,7 @@ impl<'a> SequenceMinimizer<'a> {
         shrink_sequence_by_removing(
             base_calls.len(),
             &mut self.run,
+            true,
             || false,
             || {},
             |shrinker| {

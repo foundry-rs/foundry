@@ -472,11 +472,13 @@ impl DepIdentifier {
     }
 
     /// Get the name/rev to checkout at.
+    ///
+    /// Tags are checked out at their locked revision, since a tag name can be shadowed by a
+    /// branch with the same name.
     pub fn checkout_id(&self) -> &str {
         match self {
             Self::Branch { name, .. } => name,
-            Self::Tag { name, .. } => name,
-            Self::Rev { rev, .. } => rev,
+            Self::Tag { rev, .. } | Self::Rev { rev, .. } => rev,
         }
     }
 

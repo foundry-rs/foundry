@@ -15,4 +15,5 @@ pub mod info;
 pub mod notifications;
 pub(crate) mod replay;
 pub mod tempo;
+pub mod tempo_consensus;
 pub mod validate;

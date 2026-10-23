@@ -6830,6 +6830,39 @@ contract RevertedBatch is Script {
     }
 }
 
+// A sponsored dry run cannot be broadcast as a batch without its sponsor.
+#[forgetest_init]
+async fn tempo_batch_resume_requires_original_sponsor(prj: _, cmd: _) {
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+    let sender = wallets[0].address();
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
+    let sponsor = wallets[1].address();
+    let sponsor_key =
+        format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
+    let rpc = handle.http_endpoint();
+    let args = ["--tc", "MultiDeploy", "--rpc-url", &rpc, "--private-key", &sender_key, "--batch"];
+
+    cmd.arg("script").arg(&script).args(args).args([
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        "PathUSD",
+        "--tempo.sponsor",
+        &sponsor.to_string(),
+        "--tempo.sponsor-signer",
+        &sponsor_key,
+    ]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).args(["--resume", "--network", "tempo"]);
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: this deployment is sponsored by {sponsor}; pass `--tempo.sponsor {sponsor}` with `--tempo.sponsor-signer` or `--tempo.sponsor-sig` to prepare its remaining transactions\n"
+    ));
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+}
+
 #[forgetest_init]
 async fn tempo_batch_unlocked_crash_blocks_resubmission(prj: _, cmd: _) {
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
@@ -8034,6 +8067,114 @@ contract DeploySponsoredTempoAA is Script {
     assert_eq!(receipt["contractAddress"].as_str().unwrap().parse::<Address>().unwrap(), address);
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
     assert!(!provider.get_code_at(address).await.unwrap().is_empty());
+}
+
+// Resume refuses to prepare the remaining transactions of a sponsored deployment without its
+// sponsor, which would silently make the sender pay for them.
+#[forgetest_init]
+async fn tempo_sponsored_resume_requires_original_sponsor(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "SponsoredTail.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SponsoredTailDeployment {}
+
+contract SponsoredTail is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SponsoredTailDeployment();
+        new SponsoredTailDeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        true,
+    )
+    .await;
+    let wallets = handle.dev_wallets().take(3).collect::<Vec<_>>();
+    let sender = wallets[0].address();
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
+    let signer = |index: usize| {
+        format!("private-key://{}", hex::encode_prefixed(wallets[index].credential().to_bytes()))
+    };
+    let sponsor = wallets[1].address();
+    let path = prj.root().join("broadcast/SponsoredTail.s.sol/31337/run-latest.json");
+    let sponsored = |index: usize| {
+        vec![
+            "--tempo.sponsor".to_string(),
+            wallets[index].address().to_string(),
+            "--tempo.sponsor-signer".to_string(),
+            signer(index),
+        ]
+    };
+
+    // The first deployment is submitted with the sponsor, then Forge is killed before preparing
+    // the second.
+    cmd.arg("script")
+        .arg(&script)
+        .args(["--rpc-url", &rpc, "--private-key", &sender_key, "--broadcast", "--slow"])
+        .args(["--tempo.fee-token", "PathUSD"])
+        .args(sponsored(1));
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), reached.notified())
+        .await
+        .expect("forge did not submit the sponsored transaction");
+    child.kill_and_wait();
+    release.notify_one();
+    let accepted = submissions.lock().unwrap()[0][0].clone();
+    let accepted_hash = keccak256(hex::decode(accepted.as_str().unwrap()).unwrap());
+    let provider = handle.http_provider();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while provider.get_transaction_receipt(accepted_hash).await.unwrap().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the sponsored transaction was not mined");
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .expect("no authoritative recovery snapshot");
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_eq!(recovery["sponsor"], serde_json::json!(sponsor));
+    assert_eq!(recovery["deployments"][0]["attempts"].as_array().unwrap().len(), 1);
+
+    // Without a sponsor, or with a different one, resume stops before preparing anything.
+    for sponsor_args in [vec![], sponsored(2)] {
+        cmd.forge_fuse()
+            .arg("script")
+            .arg(&script)
+            .args(["--rpc-url", &rpc, "--private-key", &sender_key, "--resume", "--slow"])
+            .args(["--network", "tempo"])
+            .args(sponsor_args);
+        cmd.assert_failure().stderr_eq(format!(
+            "Error: this deployment is sponsored by {sponsor}; pass `--tempo.sponsor {sponsor}` with `--tempo.sponsor-signer` or `--tempo.sponsor-sig` to prepare its remaining transactions\n"
+        ));
+        assert_eq!(submissions.lock().unwrap().len(), 1);
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    }
+
+    // With the original sponsor, resume completes and the sponsor pays for every deployment.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--rpc-url", &rpc, "--private-key", &sender_key, "--resume", "--slow"])
+        .args(["--network", "tempo"])
+        .args(sponsored(1));
+    cmd.assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 2);
+    for receipt in receipts {
+        assert_eq!(receipt["status"], "0x1");
+        assert_eq!(receipt["feePayer"].as_str().unwrap().parse::<Address>().unwrap(), sponsor);
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
 }
 
 // Helper: write a script that deploys `LargeRuntime` with runtime > default limit via
