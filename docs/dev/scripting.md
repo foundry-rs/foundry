@@ -216,8 +216,10 @@ A saved signed attempt that is visible but unmined and has no pending hash is no
 step 2. It needs no signer, but signers for other operations can be requested before it is
 replayed.
 
-The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
-endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.
+The saved RPC is part of the sensitive sequence. A single-chain resume uses the `--rpc-url`
+endpoint for Forge-managed reconciliation and submission, after checking that it reports the saved
+chain, without rewriting the saved endpoint. Browser-wallet submission stays wallet-controlled, and
+multichain resume keeps the saved endpoints.
 
 ## Tempo and multichain behavior
 
@@ -358,8 +360,8 @@ fees or validity fields. Replacement workflows are deferred to deployment plans 
 - Pre-signed envelopes, saved signed payloads, and saved batch attempts do not require a signer for
   recovery. Other incomplete unsigned requests remain eligible for signer acquisition. Unknown
   delegated outcomes block resume before signer acquisition.
-- The initial recovery implementation retains the saved endpoint. Validated endpoint rebinding is
-  deferred to deployment plans and handoff.
+- A single-chain resume reaches the chain through `--rpc-url` instead of the saved endpoint, so a
+  handoff does not need the original operator's RPC. Multichain resume keeps the saved endpoints.
 - Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
   associations. If it cannot prove a safe batch state, it fails closed rather than guessing.
 

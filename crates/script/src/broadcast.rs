@@ -622,6 +622,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 )
             })
             .collect::<Vec<_>>();
+        let rpc_urls = (0..self.sequence.sequences().len())
+            .map(|sequence| self.sequence.rpc_url(sequence).to_owned())
+            .collect::<Vec<_>>();
+        let rpc_urls = &rpc_urls;
         let futs = self
             .sequence
             .sequences_mut()
@@ -629,7 +633,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             .zip(submission_hashes)
             .enumerate()
             .map(|(sequence_idx, (sequence, ((durable_hashes, replayable_hashes), blocked)))| async move {
-                let rpc_url = sequence.rpc_url();
+                let rpc_url = &rpc_urls[sequence_idx];
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
                 progress_ref
@@ -798,22 +802,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         .map(|signed| (signed.payload.clone(), signed.hash))
                 })
                 .collect::<Vec<_>>();
+            let rpc_url = self.sequence.rpc_url(i).to_owned();
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(
-                ProviderBuilder::from_config_with_url(
-                    &self.script_config.config,
-                    sequence.rpc_url(),
-                )?
-                .build()?,
+                ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
+                    .build()?,
             );
             let unlocked_submission_provider = Arc::new(
-                ProviderBuilder::from_config_with_url(
-                    &self.script_config.config,
-                    sequence.rpc_url(),
-                )?
-                .max_retry(0)
-                .build()?,
+                ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
+                    .max_retry(0)
+                    .build()?,
             );
 
             let seq_progress = progress.get_sequence_progress(i, sequence);
@@ -1355,8 +1354,7 @@ impl BundledState<TempoEvmNetwork> {
             }
         }
 
-        let rpc_url = sequence.rpc_url().to_owned();
-        let _ = sequence;
+        let rpc_url = self.sequence.rpc_url(0).to_owned();
         if let Some((attempt_id, hash)) = batch_resolution {
             let provider = ProviderBuilder::<TempoNetwork>::from_config_with_url(
                 &self.script_config.config,
@@ -1413,7 +1411,7 @@ impl BundledState<TempoEvmNetwork> {
         let provider = Arc::new(
             ProviderBuilder::<TempoNetwork>::from_config_with_url(
                 &self.script_config.config,
-                sequence.rpc_url(),
+                &rpc_url,
             )?
             .build()?,
         );
