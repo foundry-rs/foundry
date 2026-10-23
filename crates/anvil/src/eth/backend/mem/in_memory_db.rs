@@ -262,6 +262,7 @@ impl PersistentStateDb {
                 })
                 .collect(),
             block_hashes: self.block_hashes.iter().map(|(number, hash)| (*number, *hash)).collect(),
+            ..Default::default()
         }
     }
 
@@ -347,7 +348,7 @@ impl MaybeFullDatabase for PersistentStateDb {
     }
 
     fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
-        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
+        let StateSnapshot { accounts, mut storage, block_hashes, .. } = snapshot;
         let mut contracts = PersistentMap::new();
         let accounts = accounts
             .into_iter()

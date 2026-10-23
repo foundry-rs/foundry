@@ -141,7 +141,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         let accounts = std::mem::take(&mut *db.accounts.write());
         let storage = std::mem::take(&mut *db.storage.write());
         let block_hashes = std::mem::take(&mut *db.block_hashes.write());
-        StateSnapshot { accounts, storage, block_hashes }
+        StateSnapshot { accounts, storage, block_hashes, ..Default::default() }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
@@ -149,7 +149,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         let accounts = db.accounts.read().clone();
         let storage = db.storage.read().clone();
         let block_hashes = db.block_hashes.read().clone();
-        StateSnapshot { accounts, storage, block_hashes }
+        StateSnapshot { accounts, storage, block_hashes, ..Default::default() }
     }
 
     fn clear(&mut self) {
@@ -159,7 +159,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         let db = self.inner().db();
-        let StateSnapshot { accounts, storage, block_hashes } = state_snapshot;
+        let StateSnapshot { accounts, storage, block_hashes, .. } = state_snapshot;
         *db.accounts.write() = accounts;
         *db.storage.write() = storage;
         *db.block_hashes.write() = block_hashes;
@@ -181,6 +181,7 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        state_snapshot.account_states.extend(local_state_snapshot.account_states);
         state_snapshot
     }
 
@@ -190,6 +191,7 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        state_snapshot.account_states.extend(local_state_snapshot.account_states);
         state_snapshot
     }
 
