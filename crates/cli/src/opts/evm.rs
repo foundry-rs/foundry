@@ -52,6 +52,15 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
+    /// Fetch fork state by block number instead of hash.
+    ///
+    /// Use for RPC endpoints that cannot serve state by block hash. Number-based reads
+    /// cannot guarantee a consistent snapshot if the remote chain reorganizes and do not
+    /// use the disk state cache. Transaction replay still requires hash-addressed state.
+    #[arg(long)]
+    #[serde(skip)]
+    pub fork_state_by_number: bool,
+
     /// Number of retries.
     ///
     /// See --rpc-url.
@@ -83,6 +92,13 @@ pub struct EvmArgs {
     #[arg(long)]
     #[serde(skip)]
     pub no_fork_bal: bool,
+
+    /// Prefetch a new fork block's cache from the keys of an older cached block on the same chain.
+    ///
+    /// Helps forks of `latest`, which start with an empty cache on each new head.
+    #[arg(long)]
+    #[serde(skip)]
+    pub fork_prefetch: bool,
 
     /// The initial balance of deployed test contracts.
     #[arg(long, value_name = "BALANCE")]
@@ -207,9 +223,19 @@ impl Provider for EvmArgs {
         }
 
         let mut data = Map::from([(Config::selected_profile(), dict)]);
+        if self.fork_state_by_number {
+            data.entry(Profile::Global)
+                .or_default()
+                .insert("fork_state_by_number".to_string(), true.into());
+        }
         if self.no_fork_bal {
             // Environment values use the global profile, which overrides the selected profile.
             data.entry(Profile::Global).or_default().insert("no_fork_bal".to_string(), true.into());
+        }
+        if self.fork_prefetch {
+            data.entry(Profile::Global)
+                .or_default()
+                .insert("fork_prefetch".to_string(), true.into());
         }
         Ok(data)
     }
@@ -314,6 +340,38 @@ mod tests {
     };
 
     #[test]
+    fn fork_state_by_number_cli_preserves_config_unless_explicit() {
+        for profile in ["default", "ci"] {
+            for configured in [false, true] {
+                for environment in [None, Some(false), Some(true)] {
+                    for flag in [false, true] {
+                        let config =
+                            Config { fork_state_by_number: configured, ..Default::default() };
+                        let mut figment =
+                            Figment::from(Serialized::defaults(config).profile(profile))
+                                .select(profile);
+                        if let Some(environment) = environment {
+                            figment = figment
+                                .merge(Serialized::global("fork_state_by_number", environment));
+                        }
+                        let args = EvmArgs::parse_from(
+                            ["foundry-cli"]
+                                .into_iter()
+                                .chain(flag.then_some("--fork-state-by-number")),
+                        );
+                        let merged = Config::from_provider(figment.merge(args)).unwrap();
+                        assert_eq!(
+                            merged.fork_state_by_number,
+                            flag || environment.unwrap_or(configured),
+                            "profile={profile}, configured={configured}, environment={environment:?}, flag={flag}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn fork_bal_cli_preserves_config_unless_explicit() {
         for profile in ["default", "ci"] {
             for configured in [false, true] {
@@ -336,6 +394,28 @@ mod tests {
                             "profile={profile}, configured={configured}, environment={environment:?}, flag={flag}",
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fork_prefetch_cli_preserves_config_unless_explicit() {
+        for profile in ["default", "ci"] {
+            for configured in [false, true] {
+                for flag in [false, true] {
+                    let config = Config { fork_prefetch: configured, ..Default::default() };
+                    let figment = Figment::from(Serialized::defaults(config).profile(profile))
+                        .select(profile);
+                    let args = EvmArgs::parse_from(
+                        ["foundry-cli"].into_iter().chain(flag.then_some("--fork-prefetch")),
+                    );
+                    let merged = Config::from_provider(figment.merge(args)).unwrap();
+                    assert_eq!(
+                        merged.fork_prefetch,
+                        flag || configured,
+                        "profile={profile}, configured={configured}, flag={flag}",
+                    );
                 }
             }
         }

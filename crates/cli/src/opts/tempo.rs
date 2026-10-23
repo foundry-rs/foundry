@@ -8,15 +8,9 @@ use foundry_common::{
     tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
 };
 use foundry_evm::hardfork::TempoHardfork;
-use std::{
-    num::NonZeroU64,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{num::NonZeroU64, path::PathBuf, str::FromStr, sync::Arc};
 
-use crate::utils::parse_fee_token_address;
+use crate::utils::{now, parse_fee_token_address};
 
 mod session;
 pub use session::TEMPO_SESSION_ID_ENV;
@@ -47,8 +41,8 @@ pub struct TempoOpts {
     /// Opt into TIP-1009 expiring-nonce mode with a validity window.
     ///
     /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
-    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
-    /// seconds.
+    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX and valid_before = now + seconds. The
+    /// nonce defaults to 0; see `--tempo.expiring-nonce` for how an explicit nonce is used.
     ///
     /// Maximum value is 300 seconds; networks that have not activated the T11 hardfork reject
     /// windows above 30 seconds. The transaction must be mined before the deadline or it becomes
@@ -158,8 +152,14 @@ pub struct TempoOpts {
 
     /// Enable expiring nonce mode for Tempo transactions.
     ///
-    /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
-    /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
+    /// Sets nonce_key to U256::MAX, enabling time-bounded transaction validity via
+    /// `--tempo.valid-before` and `--tempo.valid-after`.
+    ///
+    /// The nonce is not sequential in this mode and defaults to 0. From the T12 hardfork
+    /// (TIP-1106) an explicitly supplied nonce is kept as an opaque discriminator, so otherwise
+    /// identical transactions with different nonces are distinct. Earlier hardforks reject any
+    /// nonce other than 0. `forge script` takes no nonce and from T12 uses each transaction's
+    /// ordinal across the complete script plan, including completed transactions on resume.
     #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
@@ -199,8 +199,7 @@ impl TempoOpts {
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
         let secs = self.expires?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-        Some(now.as_secs() + secs)
+        Some(now().as_secs() + secs)
     }
 
     /// Resolves `--tempo.expires` into concrete expiring-nonce fields.
@@ -253,14 +252,17 @@ impl TempoOpts {
     /// Applies Tempo-specific options to a transaction request.
     ///
     /// All setters are no-ops for non-Tempo networks, so this is safe to call unconditionally.
+    ///
+    /// In expiring nonce mode `nonce` is the TIP-1106 discriminator rather than a sequential
+    /// nonce: an explicit value is kept as supplied and `None` selects 0.
     pub fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, nonce: Option<u64>)
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX.
+        // Handle expiring nonce mode: sets nonce_key=U256::MAX and never reads nonce state.
         // --tempo.expires is a convenience alias that also sets valid_before = now + duration.
         if self.expiring_nonce || self.expires.is_some() {
-            tx.set_nonce(0);
+            tx.set_nonce(nonce.unwrap_or_default());
             tx.set_nonce_key(U256::MAX);
         } else {
             if let Some(nonce) = nonce {
@@ -376,13 +378,11 @@ mod tests {
 
     #[test]
     fn resolve_expires_materializes_valid_before() {
-        let before =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let before = now().as_secs();
         let mut opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
 
         let resolved = opts.resolve_expires().unwrap();
-        let after =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let after = now().as_secs();
 
         assert!(resolved >= before + 10);
         assert!(resolved <= after + 10);
@@ -437,7 +437,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert_eq!(opts.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
         assert!(opts.sponsor_sig.is_none());
         assert!(opts.is_tempo());
@@ -462,7 +462,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert!(opts.sponsor_sig.is_some());
     }
 
@@ -477,7 +477,7 @@ mod tests {
         .unwrap();
 
         assert!(opts.print_sponsor_hash);
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
     }
 
     #[test]

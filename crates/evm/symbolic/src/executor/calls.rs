@@ -1240,12 +1240,12 @@ impl SymbolicExecutor {
             return Ok(true);
         }
 
-        let balance = state.world.balance_word_for_address(&mut self.cx, executor, from);
+        let balance = state.balance(&mut self.cx, executor, from);
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value.clone());
         let can_transfer = if from == to {
             can_pay
         } else {
-            let balance = state.world.balance_word_for_address(&mut self.cx, executor, to);
+            let balance = state.balance(&mut self.cx, executor, to);
             let sum = SymExpr::binop(&mut self.cx, SymBinOp::Add, balance.clone(), value);
             let no_overflow = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, sum, balance);
             SymBoolExpr::and(&mut self.cx, vec![can_pay, no_overflow])
@@ -1307,7 +1307,7 @@ impl SymbolicExecutor {
             return Ok(true);
         }
 
-        let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
+        let balance = state.balance(&mut self.cx, executor, state.address);
         let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),

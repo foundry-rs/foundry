@@ -237,6 +237,14 @@ contract SymbolicCreateEip3541 is Test {
         assert(created2.code.length == 1);
     }
 
+    function checkAllowedPrefixBeforeLondonResetsNonce() public {
+        address created = address(new DelegationPrefixRuntime());
+        assertEq(created.code.length, 23);
+        vm.setNonceUnsafe(created, 5);
+        vm.resetNonce(created);
+        assertEq(vm.getNonce(created), 1);
+    }
+
     function checkAdjacentPrefixStillAllowed() public {
         address created = deployCreate(0xee);
         address created2 = deployCreate2(0xee);
@@ -267,6 +275,15 @@ contract WarpThenReject {
         assembly ("memory-safe") {
             mstore(0, shl(248, 0xef))
             return(0, 1)
+        }
+    }
+}
+
+contract DelegationPrefixRuntime {
+    constructor() {
+        assembly ("memory-safe") {
+            mstore(0, shl(232, 0xef0100))
+            return(0, 23)
         }
     }
 }

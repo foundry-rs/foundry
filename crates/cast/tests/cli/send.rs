@@ -243,6 +243,7 @@ Continue anyway? [y/N] Aborted.
 "#]])
         .stderr_eq(str![[r#"
 Building batch transaction with 1 call(s)...
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
 
 "#]]);
 }

@@ -13,16 +13,9 @@ contract Issue4232Test is Test {
         // Would previously fail with:
         // [FAIL: backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; ] setUp() (gas: 0)
         //
-        // Related fix:
-        // Moonbeam | Moonbase | Moonriver | MoonbeamDev => {
-        //     if env.block.prevrandao.is_none() {
-        //         // <https://github.com/foundry-rs/foundry/issues/4232>
-        //         env.block.prevrandao = Some(B256::random());
-        //     }
-        // }
-        //
-        // Note: public RPC node used for `moonbeam` discards state quickly so we need to fork against the latest block
+        // Missing mixHash is normalized to difficulty, which is zero on Moonbeam.
+        // The public Moonbeam RPC discards state quickly, so fork the latest block.
         vm.createSelectFork("moonbeam");
-        vm.assertFalse(block.prevrandao == 0);
+        vm.assertEq(block.prevrandao, 0);
     }
 }

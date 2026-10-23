@@ -3135,19 +3135,52 @@ contract Counter {
         "CounterTest.sol",
         r#"
 import "./test.sol";
-import {Counter} from "./Counter.sol";
+import {Counter, LibCounter} from "./Counter.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata code) external;
+}
 
 contract CounterTest is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
     function testIncrement() public {
         Counter counter = new Counter();
         counter.increment();
+    }
+
+    function testRelinked() public {
+        Counter counter = new Counter();
+        address original = address(LibCounter);
+        address replacement = address(0x1234567890123456789012345678901234567890);
+        vm.etch(replacement, original.code);
+        bytes memory code = address(counter).code;
+        bytes20 oldAddress = bytes20(original);
+        bytes20 newAddress = bytes20(replacement);
+        uint256 patches;
+        for (uint256 i; i + 20 <= code.length; ++i) {
+            bool matchAddress = true;
+            for (uint256 j; j < 20; ++j) {
+                if (code[i + j] != oldAddress[j]) matchAddress = false;
+            }
+            if (matchAddress) {
+                for (uint256 j; j < 20; ++j) code[i + j] = newAddress[j];
+                ++patches;
+                i += 19;
+            }
+        }
+        require(patches == 1, "expected one library link");
+        vm.etch(address(counter), code);
+        counter.increment();
+        require(counter.number() == 1);
     }
 }
     "#,
     );
 
-    // Assert 100% coverage for linked libraries.
-    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+    // Assert 100% coverage for both original and relocated library links.
+    for test in ["testIncrement", "testRelinked"] {
+        cmd.forge_fuse().args(["coverage", "--mt", test]).assert_success().stdout_eq(str![[r#"
 ...
 ╭-----------------+---------------+---------------+------------+---------------╮
 | File            | % Lines       | % Statements  | % Branches | % Funcs       |
@@ -3158,6 +3191,7 @@ contract CounterTest is DSTest {
 ╰-----------------+---------------+---------------+------------+---------------╯
 ...
 "#]]);
+    }
 }
 
 // <https://github.com/foundry-rs/foundry/issues/10422>
@@ -4436,4 +4470,277 @@ fn coverage_cache_prunes_obsolete_files(prj: _, cmd: _) {
         builds = files_with_ext(&cache.join("build-info"), "json").collect();
         assert_eq!(builds.len(), 1);
     }
+}
+
+// Only bytecode matching an artifact is credited to its source; constructor data may vary.
+#[forgetest]
+fn coverage_credits_only_exact_bytecode(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {
+    uint256 public value;
+
+    constructor(uint256 x) {
+        value = x;
+    }
+
+    function live() external pure returns (uint256) {
+        return 0x1111;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+}
+
+contract TargetTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    // Patches `PUSH2 0x1111` to `PUSH2 0x2222`.
+    function patch(bytes memory code) internal pure returns (bytes memory) {
+        for (uint256 i; i + 2 < code.length; ++i) {
+            if (code[i] == 0x61 && code[i + 1] == 0x11 && code[i + 2] == 0x11) {
+                code[i + 1] = 0x22;
+                code[i + 2] = 0x22;
+                return code;
+            }
+        }
+        revert("constant not found");
+    }
+
+    function deploy(bytes memory initCode) internal returns (Target created) {
+        assembly {
+            created := create(0, add(initCode, 0x20), mload(initCode))
+        }
+    }
+
+    function testModifiedCode() external {
+        address etched = address(0x1234);
+        vm.etch(etched, patch(type(Target).runtimeCode));
+        require(Target(etched).live() == 0x2222);
+
+        Target created =
+            deploy(patch(abi.encodePacked(type(Target).creationCode, abi.encode(uint256(1)))));
+        require(created.value() == 1 && created.live() == 0x2222);
+    }
+
+    function testConstructorTrailingData() external {
+        Target created = deploy(
+            abi.encodePacked(type(Target).creationCode, abi.encode(uint256(42)), hex"ff")
+        );
+        require(created.value() == 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["coverage", "--report=summary", "--mt", "testModifiedCode"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭----------------+-------------+--------------+------------+-------------╮
+| File           | % Lines     | % Statements | % Branches | % Funcs     |
++========================================================================+
+| src/Target.sol | 0.00% (0/4) | 0.00% (0/2)  | N/A (0/0)  | 0.00% (0/2) |
+|----------------+-------------+--------------+------------+-------------|
+| Total          | 0.00% (0/4) | 0.00% (0/2)  | N/A (0/0)  | 0.00% (0/2) |
+╰----------------+-------------+--------------+------------+-------------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
+Warning: excluding executed [..] code from coverage: it resembles `src/Target.sol:Target` but does not match it exactly
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["coverage", "--report=summary", "--mt", "testConstructorTrailingData"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭----------------+--------------+--------------+------------+--------------╮
+| File           | % Lines      | % Statements | % Branches | % Funcs      |
++==========================================================================+
+| src/Target.sol | 50.00% (2/4) | 50.00% (1/2) | N/A (0/0)  | 50.00% (1/2) |
+|----------------+--------------+--------------+------------+--------------|
+| Total          | 50.00% (2/4) | 50.00% (1/2) | N/A (0/0)  | 50.00% (1/2) |
+╰----------------+--------------+--------------+------------+--------------╯
+
+"#]]);
+}
+
+#[forgetest]
+fn coverage_bytecode_report(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        "contract Counter { function get() public pure returns (uint256) { return 42; } }",
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "src/Counter.sol";
+
+contract CounterTest {
+    function testGet() public {
+        require(new Counter().get() == 42);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=bytecode"]).assert_success();
+    let asm = fs::read_to_string(prj.root().join("bytecode-coverage/Counter.asm")).unwrap();
+    assert_data_eq!(
+        asm,
+        str![[r#"
+[002] 00000000: PUSH1 0x80                     // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000002: PUSH1 0x40                     // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000004: MSTORE                         // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000005: CALLVALUE                      // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000006: DUP1                           // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000007: ISZERO                         // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 00000008: PUSH1 0x0e                     // src/Counter.sol: 3:1-3:81 (71-151)
+[002] 0000000a: JUMPI                          // src/Counter.sol: 3:1-3:81 (71-151)
+      0000000b: PUSH0                          // src/Counter.sol: 3:1-3:81 (71-151)
+...
+"#]]
+    );
+}
+
+// Gaps report offsets and snippets do not depend on CRLF line endings or multibyte text.
+#[forgetest]
+fn coverage_gaps_report(prj: _, cmd: _) {
+    let source = prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public value;
+
+    function set(uint256 x) public {
+        // ☃
+        if (x > 10) {
+            value = x;
+        } else {
+            value = 0;
+        }
+    }
+
+    function check(uint256 x) public pure {
+        require(x > 0, "zero");
+    }
+
+    function unused() public {
+        value = 42;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "AContract.t.sol",
+        r#"
+import {AContract} from "../src/AContract.sol";
+
+contract AContractTest {
+    function testSet() public {
+        AContract a = new AContract();
+        a.set(11);
+        a.check(1);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+{
+  "version": 1,
+  "files": {
+    "src/AContract.sol": [
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 9,
+        "line_end": 13,
+        "byte_start": 180,
+        "byte_end": 266,
+        "snippet": "if (x > 10) {",
+        "branch_id": 0,
+        "path_id": 1
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "set",
+        "line_start": 12,
+        "line_end": 12,
+        "byte_start": 246,
+        "byte_end": 255,
+        "snippet": "value = 0"
+      },
+      {
+        "kind": "branch",
+        "contract": "AContract",
+        "function": "check",
+        "line_start": 17,
+        "line_end": 17,
+        "byte_start": 326,
+        "byte_end": 348,
+        "snippet": "require(x > 0, \"zero\")",
+        "branch_id": 1,
+        "path_id": 0
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 20,
+        "byte_start": 361,
+        "byte_end": 387,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "function",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 20,
+        "line_end": 22,
+        "byte_start": 361,
+        "byte_end": 413,
+        "snippet": "function unused() public {"
+      },
+      {
+        "kind": "line",
+        "contract": "AContract",
+        "function": "unused",
+        "line_start": 21,
+        "line_end": 21,
+        "byte_start": 396,
+        "byte_end": 406,
+        "snippet": "value = 42"
+      }
+    ]
+  }
+}
+"#]]
+    .is_json();
+    cmd.args(["coverage", "--report=gaps"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("coverage-gaps.json"), None),
+        expected.clone()
+    );
+
+    let crlf = fs::read_to_string(&source).unwrap().replace('\n', "\r\n");
+    fs::write(&source, crlf).unwrap();
+    cmd.forge_fuse()
+        .args(["coverage", "--report=gaps", "--report-file", "crlf-gaps.json"])
+        .assert_success();
+    assert_data_eq!(Data::read_from(&prj.root().join("crlf-gaps.json"), None), expected);
 }

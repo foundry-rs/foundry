@@ -1,6 +1,7 @@
 //! Tests for BAL source eligibility, validation and fork cache insertion.
 
 use super::*;
+use crate::mem::in_memory_db::MemDb;
 use alloy_eips::eip7928::{
     AccountChanges, BalanceChange, BlockAccessIndex, CodeChange, NonceChange, SlotChanges,
     StorageChange, compute_block_access_list_hash,
@@ -11,7 +12,15 @@ use alloy_provider::ProviderBuilder;
 use alloy_rpc_types::Block;
 use alloy_transport::mock::Asserter;
 use foundry_evm::{backend::BlockchainDbMeta, hardfork::EthereumHardfork};
+use futures::executor::block_on;
 use revm::{context::BlockEnv, state::AccountInfo};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    thread,
+};
 
 fn database(hash: B256) -> BlockchainDb {
     BlockchainDb::new(
@@ -46,6 +55,7 @@ fn fork_config(asserter: Asserter, block_hash: B256) -> ClientForkConfig {
             network: None,
             network_profile: None,
             hardfork: None,
+            blob_params: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -215,7 +225,7 @@ async fn fork_bal_unavailable_does_not_fetch_block_or_change_cache() {
 fn fork_bal_seed_preserves_storage_boundaries() {
     let hash = B256::repeat_byte(1);
     let address = Address::repeat_byte(1);
-    let slot = U256::from(1);
+    let slot = U256::ONE;
     let system_slot = U256::from(2);
     let account = AccountChanges::new(address)
         .with_storage_change(SlotChanges::new(
@@ -278,7 +288,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     let address = Address::repeat_byte(1);
     let account = complete_account(address, Bytes::new())
         .with_storage_change(SlotChanges::new(
-            U256::from(1),
+            U256::ONE,
             vec![StorageChange::new(index(1), U256::from(11))],
         ))
         .with_storage_change(SlotChanges::new(
@@ -290,7 +300,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     db.accounts().write().insert(address, cached_account.clone());
     db.storage().write().insert(
         address,
-        [(U256::from(1), U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
+        [(U256::ONE, U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
     );
 
     cache_bal(db.db(), vec![account]);
@@ -299,7 +309,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     assert_eq!(
         db.storage().read()[&address],
         [
-            (U256::from(1), U256::from(101)),
+            (U256::ONE, U256::from(101)),
             (U256::from(2), U256::from(22)),
             (U256::from(3), U256::from(303)),
         ]
@@ -323,7 +333,7 @@ fn fork_bal_seed_keeps_final_account_code() {
         let account = &accounts[&address];
         assert_eq!(account.balance, U256::from(42));
         assert_eq!(account.nonce, 3);
-        assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
+        assert_eq!(account.code_hash(), alloy_primitives::keccak256(&code));
         assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
         assert_eq!(
             account.code.as_ref().unwrap().is_eip7702(),
@@ -347,4 +357,55 @@ fn fork_bal_seed_rejects_invalid_structure_hash_and_bytecode() {
         .with_code_change(CodeChange::new(index(0), bytes!("ef0100")))
         .with_code_change(CodeChange::new(index(1), Bytes::new()));
     assert!(validate_bal(&vec![invalid_code], 1, None).is_err());
+}
+
+/// Cached block reads must not take the storage read lock while already holding it, or a writer
+/// queued between the two acquisitions deadlocks them.
+#[test]
+fn fork_cached_block_reads_do_not_deadlock_with_writers() {
+    let hash = B256::repeat_byte(1);
+    let db: Box<dyn Db> = Box::new(MemDb::default());
+    let fork = ClientFork::new(fork_config(Asserter::new(), hash), Arc::new(AsyncRwLock::new(db)));
+    let block = AnyRpcBlock::new(
+        Block::new(
+            AnyRpcHeader {
+                hash,
+                inner: AnyHeader { number: 1, ..Default::default() },
+                ..Default::default()
+            },
+            BlockTransactions::Hashes(vec![]),
+        )
+        .into(),
+    );
+    {
+        let mut storage = fork.storage.write();
+        storage.hashes.insert(1, hash);
+        storage.blocks.insert(hash, block);
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer = {
+        let (fork, stop) = (fork.clone(), stop.clone());
+        thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                drop(fork.storage.write());
+            }
+        })
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for _ in 0..10_000 {
+            assert!(block_on(fork.block_by_number(1)).unwrap().is_some());
+            assert!(block_on(fork.block_by_number_full(1)).unwrap().is_some());
+            assert!(block_on(fork.block_by_hash_full(hash)).unwrap().is_some());
+        }
+        tx.send(()).unwrap();
+    });
+
+    let finished = rx.recv_timeout(Duration::from_secs(30));
+    stop.store(true, Ordering::Relaxed);
+    // A deadlocked writer never exits, so only join it after the reads completed. A timeout means
+    // the reads deadlocked with the writer.
+    finished.expect("cached block reader failed to complete");
+    writer.join().unwrap();
 }

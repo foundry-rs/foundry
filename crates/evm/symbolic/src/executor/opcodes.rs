@@ -321,7 +321,7 @@ impl SymbolicExecutor {
 
         let representable = if let Some(host_max_offset) = host_max_offset {
             let host_max_offset = SymExpr::constant(&mut self.cx, U256::from(host_max_offset));
-            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), host_max_offset)
+            SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ule, offset, host_max_offset)
         } else {
             SymBoolExpr::constant(&mut self.cx, false)
         };
@@ -421,9 +421,10 @@ impl SymbolicExecutor {
         let zero_size = SymBoolExpr::eq_word_const(&mut self.cx, size, U256::ZERO);
         let host_max = SymExpr::constant(&mut self.cx, U256::from(usize::MAX & !31usize));
         let size_fits =
-            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, size.clone(), host_max.clone());
+            SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ule, size, host_max.clone());
         let max_offset = SymExpr::binop(&mut self.cx, SymBinOp::Sub, host_max, size.clone());
-        let offset_fits = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), max_offset);
+        let offset_fits =
+            SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ule, offset, max_offset);
 
         let local_size = state.memory.size_after_range_expansion_word(
             &mut self.cx,
@@ -1441,11 +1442,16 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let return_data_len = state.return_data.len_word.clone();
-        let offset_in_bounds =
-            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), return_data_len.clone());
+        let offset_in_bounds = SymBoolExpr::cmp_word_expr(
+            &mut self.cx,
+            SymCmpOp::Ule,
+            offset,
+            return_data_len.clone(),
+        );
         let remaining =
             SymExpr::binop(&mut self.cx, SymBinOp::Sub, return_data_len, offset.clone());
-        let size_in_bounds = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, size.clone(), remaining);
+        let size_in_bounds =
+            SymBoolExpr::cmp_word_expr(&mut self.cx, SymCmpOp::Ule, size, remaining);
         let valid_access = SymBoolExpr::and(&mut self.cx, vec![offset_in_bounds, size_in_bounds]);
         self.apply_memory_access_guard(state, worklist, valid_access)
     }

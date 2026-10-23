@@ -6,6 +6,7 @@ mod api;
 mod base;
 mod beacon_api;
 mod block_index;
+mod celo;
 mod eip2935;
 mod eip4844;
 mod eip6110;
@@ -27,6 +28,7 @@ mod otterscan;
 mod proof;
 mod pubsub;
 mod revert;
+mod rpc_logging;
 mod sign;
 mod simulate;
 #[cfg(feature = "cmd")]

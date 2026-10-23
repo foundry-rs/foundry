@@ -1,7 +1,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::{constants::MAGIC_ASSUME, evm::FoundryEvmNetwork};
-use revm::context::{ContextTr, JournalTr};
 use spec::Vm::{
     PotentialRevert, assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
 };
@@ -35,7 +34,7 @@ impl AcceptableRevertParameters {
         Self {
             reason: potential_revert.revertData.to_vec(),
             partial_match: potential_revert.partialMatch,
-            reverter: if potential_revert.reverter == Address::ZERO {
+            reverter: if potential_revert.reverter.is_zero() {
                 None
             } else {
                 Some(potential_revert.reverter)
@@ -45,7 +44,7 @@ impl AcceptableRevertParameters {
 }
 
 impl Cheatcode for assumeCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply_context_free(&self) -> Result {
         let Self { condition } = self;
         if *condition { Ok(Default::default()) } else { Err(Error::from(MAGIC_ASSUME)) }
     }
@@ -53,7 +52,7 @@ impl Cheatcode for assumeCall {
 
 impl Cheatcode for assumeNoRevert_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        assume_no_revert(ccx.state, ccx.ecx.journal().depth(), vec![])
+        assume_no_revert(ccx.state, ccx.depth(), vec![])
     }
 }
 
@@ -62,7 +61,7 @@ impl Cheatcode for assumeNoRevert_1Call {
         let Self { potentialRevert } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             vec![AcceptableRevertParameters::from(potentialRevert)],
         )
     }
@@ -73,7 +72,7 @@ impl Cheatcode for assumeNoRevert_2Call {
         let Self { potentialReverts } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             potentialReverts.iter().map(AcceptableRevertParameters::from).collect(),
         )
     }

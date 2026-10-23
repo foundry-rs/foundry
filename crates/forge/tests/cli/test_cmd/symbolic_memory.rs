@@ -1352,3 +1352,35 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
         assert!(!stdout.contains(reason), "{stdout}");
     }
 }
+
+// A chain of hashes over the previous hash shares every earlier preimage. Naming and searching such
+// expressions must stay linear in the chain length; before the fix, six rounds ran out of memory.
+#[forgetest_init]
+fn symbolic_chained_keccak_stays_linear(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_chained_keccak_stays_linear");
+
+    prj.add_test(
+        "SymbolicKeccakChain.t.sol",
+        r#"
+contract SymbolicKeccakChain {
+    uint256 public sink;
+
+    function checkKeccakChain(uint256 seed) external {
+        uint256 s = seed;
+        for (uint256 i; i < 16; ++i) {
+            s = uint256(keccak256(abi.encode(s))) + 1;
+        }
+        sink = s;
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkKeccakChain"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] checkKeccakChain(uint256) [..]
+...
+"#]]);
+}

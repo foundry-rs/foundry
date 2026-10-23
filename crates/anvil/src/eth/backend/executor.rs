@@ -28,6 +28,7 @@ use alloy_evm::{
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
         spec::EthExecutorSpec,
     },
+    precompiles::PrecompilesMap,
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::{Address, B256, Bytes, Log, U256, map::HashSet};
@@ -177,6 +178,12 @@ impl FoundryReceiptBuilder {
                 logs_bloom: receipt.logs_bloom,
             }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+            FoundryTxType::Celo => {
+                FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
+                    inner: receipt,
+                    r#type: foundry_primitives::CIP64_TX_TYPE,
+                })
+            }
         }
     }
 
@@ -427,7 +434,7 @@ where
                         .transact_system_call(
                             eip4788::SYSTEM_ADDRESS,
                             eip2935::HISTORY_STORAGE_ADDRESS,
-                            Bytes::copy_from_slice(self.parent_hash.as_slice()),
+                            Bytes::from(self.parent_hash),
                         )
                         .map_err(BlockExecutionError::other)?;
                     state_changes.push(result.state.clone());
@@ -442,7 +449,7 @@ where
                         .transact_system_call(
                             eip4788::SYSTEM_ADDRESS,
                             eip4788::BEACON_ROOTS_ADDRESS,
-                            Bytes::copy_from_slice(parent_beacon_block_root.as_slice()),
+                            Bytes::from(parent_beacon_block_root),
                         )
                         .map_err(BlockExecutionError::other)?;
                     state_changes.push(result.state.clone());
@@ -614,7 +621,11 @@ pub fn execute_pool_transactions<B, ExecuteTransaction>(
 where
     B: BlockExecutor<
             Transaction = FoundryTxEnvelope,
-            Evm: Evm<DB: Database + Debug, Inspector = AnvilInspector>,
+            Evm: Evm<
+                DB: Database + Debug,
+                Inspector = AnvilInspector,
+                Precompiles = PrecompilesMap,
+            >,
         >,
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
@@ -702,7 +713,7 @@ where
             executor.receipts().last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
         let max_block_gas = cumulative_gas.saturating_add(pending.transaction.gas_limit());
         if !gas_config.disable_block_gas_limit && max_block_gas > gas_limit {
-            trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "block gas limit exhausting, skipping transaction");
+            trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), tx_hash = ?pool_tx.hash(), "block gas limit exhausting, skipping transaction");
             unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
@@ -711,7 +722,7 @@ where
         if let Some(tx_gas_limit_cap) = gas_config.enforced_tx_gas_limit_cap
             && pending.transaction.gas_limit() > tx_gas_limit_cap
         {
-            trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
+            trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), tx_hash = ?pool_tx.hash(), "transaction gas limit exhausting, skipping transaction");
             unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
@@ -720,7 +731,7 @@ where
         // against the execution result below.
         let declared_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
         if blob_gas_used.saturating_add(declared_blob_gas) > gas_config.max_blob_gas_per_block {
-            trace!(target: "backend", blob_gas = %declared_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+            trace!(target: "backend", blob_gas = %declared_blob_gas, tx_hash = ?pool_tx.hash(), "block blob gas limit exhausting, skipping transaction");
             unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
@@ -743,8 +754,8 @@ where
 
                 executor.commit_transaction(result);
 
-                let traces =
-                    executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
+                let (_, inspector, precompiles) = executor.evm_mut().components_mut();
+                let traces = inspector.finish_transaction(inspector_config, precompiles);
 
                 if gas_config.is_cancun {
                     blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);

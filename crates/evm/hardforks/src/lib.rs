@@ -94,11 +94,17 @@ impl FromStr for FoundryHardfork {
             "op" | "optimism" => OpHardfork::from_str(&fork)
                 .map(Self::Optimism)
                 .map_err(|_| format!("unknown optimism hardfork '{fork_raw}'")),
+            #[cfg(not(feature = "optimism"))]
+            "op" | "optimism" => {
+                Err(format!("hardfork namespace '{ns}' requires the `optimism` feature"))
+            }
 
             #[cfg(feature = "base")]
             "base" => BaseUpgrade::from_str(&fork)
                 .map(Self::Base)
                 .map_err(|_| format!("unknown base hardfork '{fork_raw}'")),
+            #[cfg(not(feature = "base"))]
+            "base" => Err(format!("hardfork namespace '{ns}' requires the `base` feature")),
 
             "t" | "tempo" => TempoHardfork::from_str(&fork)
                 .map(Self::Tempo)
@@ -108,9 +114,10 @@ impl FromStr for FoundryHardfork {
             "m" | "monad" => MonadHardfork::from_str(&fork)
                 .map(Self::Monad)
                 .map_err(|_| format!("unknown monad hardfork '{fork_raw}'")),
-            _ => EthereumHardfork::from_str(&fork)
-                .map(Self::Ethereum)
-                .map_err(|_| format!("unknown hardfork '{raw}'")),
+            #[cfg(not(feature = "monad"))]
+            "m" | "monad" => Err(format!("hardfork namespace '{ns}' requires the `monad` feature")),
+
+            _ => Err(format!("unknown hardfork namespace '{ns}'")),
         }
     }
 }
@@ -770,6 +777,44 @@ mod tests {
             "m:MonadNext".parse::<FoundryHardfork>().unwrap(),
             FoundryHardfork::Monad(MonadHardfork::MonadNext)
         );
+    }
+
+    #[test]
+    fn test_hardfork_namespace_parsing() {
+        let cases = [
+            ("prague", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+            ("eth:prague", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+            ("ethereum:Osaka", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Osaka))),
+            (" ETH : Prague ", Ok(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+            ("t:T5", Ok(FoundryHardfork::Tempo(TempoHardfork::T5))),
+            ("tempo:t5", Ok(FoundryHardfork::Tempo(TempoHardfork::T5))),
+            #[cfg(feature = "optimism")]
+            ("op:Isthmus", Ok(FoundryHardfork::Optimism(OpHardfork::Isthmus))),
+            #[cfg(feature = "optimism")]
+            ("optimism:jovian", Ok(FoundryHardfork::Optimism(OpHardfork::Jovian))),
+            #[cfg(not(feature = "optimism"))]
+            ("op:prague", Err("hardfork namespace 'op' requires the `optimism` feature")),
+            #[cfg(feature = "base")]
+            ("base:azul", Ok(FoundryHardfork::Base(BaseUpgrade::Azul))),
+            #[cfg(not(feature = "base"))]
+            ("base:prague", Err("hardfork namespace 'base' requires the `base` feature")),
+            #[cfg(feature = "monad")]
+            ("m:MonadTen", Ok(FoundryHardfork::Monad(MonadHardfork::MonadTen))),
+            #[cfg(feature = "monad")]
+            ("monad:monadnine", Ok(FoundryHardfork::Monad(MonadHardfork::MonadNine))),
+            #[cfg(not(feature = "monad"))]
+            ("monad:prague", Err("hardfork namespace 'monad' requires the `monad` feature")),
+            ("foo:prague", Err("unknown hardfork namespace 'foo'")),
+            ("Foo:Prague", Err("unknown hardfork namespace 'foo'")),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                input.parse::<FoundryHardfork>(),
+                expected.map_err(str::to_string),
+                "{input}"
+            );
+        }
     }
 
     #[test]

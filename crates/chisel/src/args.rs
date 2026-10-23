@@ -7,13 +7,13 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     executors::ExecutorBuilder,
     opts::EvmOpts,
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
@@ -74,67 +74,73 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     config.networks = evm_opts.networks;
     let local_networks = evm_opts.networks;
     let local_chain_id = evm_opts.env.chain_id.or(config.chain.map(|chain| chain.id()));
-
-    if evm_opts.networks.is_tempo() {
-        return Box::pin(run_command_with_network::<TempoEvmNetwork>(
-            args,
-            config,
-            evm_opts,
-            ExecutorBuilder::<TempoEvmNetwork>::new(),
-            local_networks,
-            local_chain_id,
-        ))
-        .await;
+    // Like `!fork`, use the fork's source chain for explorer lookups unless `--chain` was given.
+    if config.chain.is_none()
+        && let Some(identity) = &evm_opts.fork_endpoint
+    {
+        config.chain = Some(Chain::from(identity.source_chain_id));
     }
 
-    #[cfg(feature = "base")]
-    if evm_opts.networks.is_base() {
-        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
-            args,
-            config,
-            evm_opts,
-            ExecutorBuilder::<BaseEvmNetwork>::new(),
-            local_networks,
-            local_chain_id,
-        ))
-        .await;
+    match evm_opts.networks.execution_network() {
+        NetworkVariant::Tempo => {
+            Box::pin(run_command_with_network::<TempoEvmNetwork>(
+                args,
+                config,
+                evm_opts,
+                ExecutorBuilder::<TempoEvmNetwork>::new(),
+                local_networks,
+                local_chain_id,
+            ))
+            .await
+        }
+        #[cfg(feature = "base")]
+        NetworkVariant::Base => {
+            Box::pin(run_command_with_network::<BaseEvmNetwork>(
+                args,
+                config,
+                evm_opts,
+                ExecutorBuilder::<BaseEvmNetwork>::new(),
+                local_networks,
+                local_chain_id,
+            ))
+            .await
+        }
+        #[cfg(feature = "monad")]
+        NetworkVariant::Monad => {
+            Box::pin(run_command_with_network::<MonadEvmNetwork>(
+                args,
+                config,
+                evm_opts,
+                ExecutorBuilder::<MonadEvmNetwork>::new(),
+                local_networks,
+                local_chain_id,
+            ))
+            .await
+        }
+        #[cfg(feature = "optimism")]
+        NetworkVariant::Optimism => {
+            Box::pin(run_command_with_network::<OpEvmNetwork>(
+                args,
+                config,
+                evm_opts,
+                ExecutorBuilder::<OpEvmNetwork>::new(),
+                local_networks,
+                local_chain_id,
+            ))
+            .await
+        }
+        NetworkVariant::Ethereum => {
+            Box::pin(run_command_with_network::<EthEvmNetwork>(
+                args,
+                config,
+                evm_opts,
+                ExecutorBuilder::<EthEvmNetwork>::new(),
+                local_networks,
+                local_chain_id,
+            ))
+            .await
+        }
     }
-
-    #[cfg(feature = "monad")]
-    if evm_opts.networks.is_monad() {
-        return Box::pin(run_command_with_network::<MonadEvmNetwork>(
-            args,
-            config,
-            evm_opts,
-            ExecutorBuilder::<MonadEvmNetwork>::new(),
-            local_networks,
-            local_chain_id,
-        ))
-        .await;
-    }
-
-    #[cfg(feature = "optimism")]
-    if evm_opts.networks.is_optimism() {
-        return Box::pin(run_command_with_network::<OpEvmNetwork>(
-            args,
-            config,
-            evm_opts,
-            ExecutorBuilder::<OpEvmNetwork>::new(),
-            local_networks,
-            local_chain_id,
-        ))
-        .await;
-    }
-
-    Box::pin(run_command_with_network::<EthEvmNetwork>(
-        args,
-        config,
-        evm_opts,
-        ExecutorBuilder::<EthEvmNetwork>::new(),
-        local_networks,
-        local_chain_id,
-    ))
-    .await
 }
 
 fn infer_network_from_chain_id(

@@ -1,9 +1,9 @@
 use crate::{Error, Result};
-use alloy_primitives::{Address, Bytes, address, hex};
+use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::{InstructionResult, return_ok};
+use revm::interpreter::InstructionResult;
 use spec::Vm;
 
 use super::{
@@ -20,7 +20,7 @@ use super::{
 static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-const DUMMY_CREATE_ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
+const DUMMY_CREATE_ADDRESS: Address = Address::with_last_byte(1);
 
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {
@@ -182,10 +182,7 @@ pub(crate) fn handle_expect_revert(
     if expected_revert.count == 0 {
         // If no specific reason or reverter is expected, we just check if it reverted
         if expected_revert.reverter.is_none() && expected_revert.reason.is_none() {
-            ensure!(
-                matches!(status, return_ok!()),
-                "call reverted when it was expected not to revert"
-            );
+            ensure!(status.is_ok(), "call reverted when it was expected not to revert");
             return Ok(success_return());
         }
 
@@ -195,7 +192,7 @@ pub(crate) fn handle_expect_revert(
 
         // If we expect no reverts with a specific reason/reverter, but got a revert,
         // we need to check if it matches our criteria
-        if matches!(status, return_ok!()) {
+        if status.is_ok() {
             // No revert occurred, which is what we expected
             Ok(success_return())
         } else {
@@ -268,7 +265,7 @@ pub(crate) fn handle_expect_revert(
             }
         }
     } else {
-        ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
+        ensure!(!status.is_ok(), "next call did not revert as expected");
 
         handle_revert(
             is_cheatcode,

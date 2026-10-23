@@ -488,8 +488,8 @@ fn format_channel_state(value: U256) -> String {
 }
 
 fn decode_channel_state(value: U256) -> (U256, U256, u32) {
-    let mask96 = (U256::from(1) << 96) - U256::from(1);
-    let mask32 = (U256::from(1) << 32) - U256::from(1);
+    let mask96 = (U256::ONE << 96) - U256::ONE;
+    let mask32 = (U256::ONE << 32) - U256::ONE;
     let settled: U256 = value & mask96;
     let deposit: U256 = (value >> 96usize) & mask96;
     let close_requested_at_word: U256 = (value >> 192usize) & mask32;
@@ -740,7 +740,6 @@ impl TraceRequirements {
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
-    use foundry_config::NamedChain;
     use revm::interpreter::InstructionResult;
 
     #[test]
@@ -751,11 +750,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let context = TraceContext::new(
-            Chain::from_named(NamedChain::Tempo),
-            NetworkConfigs::with_tempo(),
-            None,
-        );
+        let context = TraceContext::new(Chain::tempo_mainnet(), NetworkConfigs::with_tempo(), None);
 
         assert!(matches!(context.decoding_hardfork(&config), Some(FoundryHardfork::Tempo(_))));
     }
@@ -843,9 +838,9 @@ mod tests {
                 state_gas_reservoir: None,
                 state_gas_spent: 0,
                 storage_change: Some(Box::new(StorageChange {
-                    key: U256::from(1),
+                    key: U256::ONE,
                     value: U256::from(2),
-                    had_value: Some(U256::from(1)),
+                    had_value: Some(U256::ONE),
                     reason: StorageChangeReason::SSTORE,
                 })),
                 status: Some(InstructionResult::Stop),

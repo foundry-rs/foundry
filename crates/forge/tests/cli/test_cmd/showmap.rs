@@ -368,7 +368,14 @@ contract ShowmapCounterTest is Test {
                 "--showmap-trial",
                 trial,
             ])
-            .assert_success();
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ShowmapCounter.t.sol:ShowmapCounterTest
+[PASS] invariant_counter_called() (replay: 1 entries, 1 files)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     }
 
     // Distinct trials become side-by-side files inside the same per-test approach dir.

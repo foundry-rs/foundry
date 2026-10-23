@@ -25,6 +25,7 @@ pub enum MutatorType {
     BinaryOp,
     DeleteExpression,
     ElimDelegate,
+    FunctionBody,
     Require,
     UnaryOp,
 }

@@ -317,6 +317,8 @@ impl<'a> Linter for SolidityLinter<'a> {
             sess.reconfigure();
         }
 
+        // Solar's supported version does not constrain projects linted by Foundry.
+        compiler.dcx().set_allowed_diagnostic_codes(["5333".into()]);
         compiler.enter_mut(|compiler| -> eyre::Result<()> {
             if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();

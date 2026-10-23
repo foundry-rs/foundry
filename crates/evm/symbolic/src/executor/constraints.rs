@@ -215,7 +215,7 @@ impl SymbolicExecutor {
                     SymBoolExpr::cmp_word_const(cx, op, word, bound)
                 } else {
                     let bound = SymExpr::constant(cx, bound);
-                    SymBoolExpr::cmp(cx, op, word.clone(), bound)
+                    SymBoolExpr::cmp_word_expr(cx, op, word, bound)
                 }
             };
             if signed {

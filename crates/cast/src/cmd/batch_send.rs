@@ -86,8 +86,7 @@ impl BatchSendArgs {
         let builder = with_batch_calls(&calls, builder, &provider).await?;
         tempo::print_expires(expires_at)?;
 
-        let send_opts =
-            SendOptions::new(&send_tx, &config).resolving_fee_token(Some(chain), &config);
+        let send_opts = SendOptions::new(&send_tx, &config).resolving_fee_token(true, &config);
 
         if unlocked {
             let Some(tx) = confirm_and_build(builder, config.sender, force, lane, false).await?

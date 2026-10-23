@@ -3,6 +3,7 @@
 //! replay/shrink semantics, and stale-file cleanup. Distinct from invariant predicate
 //! failures.
 
+use alloy_primitives::address;
 use foundry_test_utils::{forgetest_init, str};
 
 // Handler `assert(false)` surfaces under `Assertion Tests:`, not as a live invariant failure.
@@ -522,8 +523,7 @@ Warning: Replayed handler-side assertion bug from [..]
     // the legacy record until normal result persistence has written its canonical replacement.
     let mut legacy: serde_json::Value =
         serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
-    let legacy_reverter: alloy_primitives::Address =
-        "0x7109709ecfa91a80626ff3989d68f67f5b1dd12d".parse().unwrap();
+    let legacy_reverter = address!("0x7109709ecfa91a80626ff3989d68f67f5b1dd12d");
     let selector: alloy_primitives::Selector =
         legacy["failure_site"]["selector"].as_str().unwrap().parse().unwrap();
     let mut identity = [0u8; 24];

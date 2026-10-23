@@ -18,7 +18,6 @@ use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
     executors::ExecutorBuilder,
-    fork::ResolvedFork,
     opts::EvmOpts,
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -33,7 +32,11 @@ use solar::{
         ty::Gcx,
     },
 };
-use std::{cell::OnceCell, fmt};
+use std::{
+    cell::OnceCell,
+    fmt,
+    path::{Path, PathBuf},
+};
 use walkdir::WalkDir;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -42,16 +45,11 @@ pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
 
-/// In-memory backend and the exact fork identity from which it was constructed.
-#[derive(Clone, Debug)]
-pub(crate) struct CachedBackend<FEN: FoundryEvmNetwork> {
-    pub(crate) backend: Backend<FEN>,
-    pub(crate) resolved_fork: Option<ResolvedFork>,
-}
-
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
     output: ProjectCompileOutput,
+    /// The full path of the generated REPL source in the compilation.
+    source_path: PathBuf,
 }
 
 impl fmt::Debug for GeneratedOutput {
@@ -66,11 +64,12 @@ impl GeneratedOutput {
         &self,
         f: impl for<'a, 'b, 'gcx> FnOnce(GeneratedOutputRef<'a, 'b, 'gcx>) -> R + Send,
     ) -> R {
+        let source_path = &self.source_path;
         self.output
             .parser()
             .solc()
             .compiler()
-            .enter(|c| f(GeneratedOutputRef { output: &self.output, compiler: c }))
+            .enter(|c| f(GeneratedOutputRef { output: &self.output, compiler: c, source_path }))
     }
 }
 
@@ -78,6 +77,8 @@ impl GeneratedOutput {
 pub struct GeneratedOutputRef<'a, 'b, 'gcx> {
     output: &'a ProjectCompileOutput,
     pub(crate) compiler: &'b CompilerRef<'gcx>,
+    /// The full path of the generated REPL source in the compilation.
+    source_path: &'a Path,
 }
 
 impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
@@ -86,12 +87,16 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     }
 
     pub fn repl_contract(&self) -> Option<&ConfigurableContractArtifact> {
-        self.output.find_first("REPL")
+        self.output.find(self.source_path, "REPL")
     }
 
     /// Looks up the REPL contract in the HIR.
     pub fn repl_contract_hir(&self) -> Option<&'gcx Contract<'gcx>> {
-        self.gcx().hir.contracts().find(|c| c.name.as_str() == "REPL")
+        self.gcx().hir.contracts().find(|c| {
+            c.name.as_str() == "REPL"
+                && self.gcx().sources.get(c.source).and_then(|s| s.file.name.as_real())
+                    == Some(self.source_path)
+        })
     }
 
     /// Returns the body block of the REPL `run()` function.
@@ -100,7 +105,10 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         let c = self.repl_contract_hir().expect("REPL contract not found in HIR");
         let f = c
             .functions()
-            .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some("run"))
+            .find(|&f| {
+                let f = hir.function(f);
+                f.name.is_some_and(|n| n.as_str() == "run") && f.parameters.is_empty()
+            })
             .expect("`run()` function not found in REPL contract");
         hir.function(f).body.expect("`run()` function does not have a body")
     }
@@ -241,7 +249,10 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
             _ => None,
         })?;
         contract_ast.body.iter().find_map(|i| match &i.kind {
-            ItemKind::Function(f) if f.header.name.is_some_and(|n| n.as_str() == "run") => {
+            ItemKind::Function(f)
+                if f.header.name.is_some_and(|n| n.as_str() == "run")
+                    && f.header.parameters.is_empty() =>
+            {
                 f.body.as_ref()
             }
             _ => None,
@@ -321,7 +332,7 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     pub no_vm: bool,
     /// Cached execution backend and its fork identity.
     #[serde(skip)]
-    pub(crate) cached_backend: Option<CachedBackend<FEN>>,
+    pub(crate) cached_backend: Option<Backend<FEN>>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution
@@ -374,7 +385,7 @@ impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
 
     /// Uses credentials from this invocation, never values persisted by an older Chisel version.
     pub(crate) fn restore_credentials(&mut self, current: &InvocationRpc) -> Result<()> {
-        let forked = self.fork_url_required || self.evm_opts.fork_url.is_some();
+        let forked = self.persisted_fork_url_required();
         if forked && current.fork_url.is_none() {
             eyre::bail!(
                 "this saved Chisel session requires a fork endpoint; use !fork <url> or restart Chisel with --fork-url to load it"
@@ -686,16 +697,16 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             return Ok(output);
         }
         let output = self.compile()?;
-        let output = GeneratedOutput { output };
         Ok(self.output.get_or_init(|| output))
     }
 
     /// Compiles the source.
     #[cold]
-    fn compile(&self) -> Result<ProjectCompileOutput> {
+    fn compile(&self) -> Result<GeneratedOutput> {
         let sources = self.get_sources();
 
         let mut project = self.config.foundry_config.ephemeral_project()?;
+        let source_path = project.root().join(&self.file_name);
         self.config.foundry_config.disable_optimizations(&mut project, self.config.ir_minimum);
         let mut output = ProjectCompiler::with_sources(&project, sources)?.compile()?;
 
@@ -711,7 +722,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             let _ = c.analysis();
         });
 
-        Ok(output)
+        Ok(GeneratedOutput { output, source_path })
     }
 
     fn get_sources(&self) -> Sources {

@@ -6,15 +6,14 @@
 //! * `natspec_doc`: resolves effective NatSpec for a callable item.
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
+use crate::utils::{contract_kind_str, page_path, relative_source_path};
 use path_slash::PathBufExt;
 use solar::{
-    ast::{
-        ContractKind, DataLocation, FunctionKind, ItemKind, NatSpecItem, NatSpecKind, Visibility,
-    },
+    ast::{DataLocation, FunctionKind, ItemKind, NatSpecItem, NatSpecKind, Visibility},
     interface::{Span, source_map::FileName},
     sema::{
         Gcx,
-        hir::{ContractId, FunctionId, ItemId, SourceId, VariableId},
+        hir::{ContractId, FunctionId, Item, ItemId, VariableId},
         ty::{Ty, TyAbiPrinter, TyAbiPrinterMode},
     },
 };
@@ -64,130 +63,57 @@ pub fn build_name_to_page(
 ) -> NameToPage {
     let mut map = NameToPage::new();
 
-    // Collect and sort by (source_path, name) so that last-insert-wins is deterministic
-    // across platforms even when the HIR iteration order is unspecified.
-    let mut item_ids: Vec<_> = gcx.hir.item_ids().collect();
-    item_ids.sort_by_key(|id| {
-        let (name, source) = match id {
-            ItemId::Contract(id) => {
-                let c = gcx.hir.contract(*id);
-                (c.name.as_str().to_string(), c.source)
+    // Sort by source path and name to preserve deterministic candidate ordering.
+    let mut items = gcx
+        .hir
+        .item_ids()
+        .filter_map(|item_id| {
+            let item = gcx.hir.item(item_id);
+            let prefix = match item {
+                Item::Contract(c) => contract_kind_str(c.kind),
+                Item::Struct(_) => "struct",
+                Item::Enum(_) => "enum",
+                Item::Error(_) => "error",
+                Item::Event(_) => "event",
+                Item::Udvt(_) => "type",
+                Item::Function(_) | Item::Variable(_) => return None,
+            };
+            if item.contract().is_some() {
+                return None;
             }
-            ItemId::Struct(id) => {
-                let s = gcx.hir.strukt(*id);
-                (s.name.as_str().to_string(), s.source)
-            }
-            ItemId::Enum(id) => {
-                let e = gcx.hir.enumm(*id);
-                (e.name.as_str().to_string(), e.source)
-            }
-            ItemId::Error(id) => {
-                let e = gcx.hir.error(*id);
-                (e.name.as_str().to_string(), e.source)
-            }
-            ItemId::Event(id) => {
-                let e = gcx.hir.event(*id);
-                (e.name.as_str().to_string(), e.source)
-            }
-            ItemId::Udvt(id) => {
-                let u = gcx.hir.udvt(*id);
-                (u.name.as_str().to_string(), u.source)
-            }
-            ItemId::Function(_) | ItemId::Variable(_) => {
-                return (String::new(), String::new());
-            }
-        };
-        let path = source_paths(gcx, source, root)
-            .map(|(_, rel)| rel.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        (path, name)
+            let FileName::Real(abs) = &gcx.hir.source(item.source()).file.name else {
+                return None;
+            };
+            let name = item.name()?;
+            allowed_sources
+                .contains(abs)
+                .then(|| (relative_source_path(root, abs), name, prefix, item_id))
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|(a, an, _, _), (b, bn, _, _)| {
+        a.to_string_lossy().cmp(&b.to_string_lossy()).then_with(|| an.as_str().cmp(bn.as_str()))
     });
 
-    for item_id in item_ids {
-        let (name, source, contract, prefix) = match item_id {
-            ItemId::Contract(id) => {
-                let c = gcx.hir.contract(id);
-                let kind = match c.kind {
-                    ContractKind::Contract => "contract",
-                    ContractKind::AbstractContract => "abstract",
-                    ContractKind::Interface => "interface",
-                    ContractKind::Library => "library",
-                };
-                (c.name, c.source, None, kind)
-            }
-            ItemId::Struct(id) => {
-                let s = gcx.hir.strukt(id);
-                (s.name, s.source, s.contract, "struct")
-            }
-            ItemId::Enum(id) => {
-                let e = gcx.hir.enumm(id);
-                (e.name, e.source, e.contract, "enum")
-            }
-            ItemId::Error(id) => {
-                let e = gcx.hir.error(id);
-                (e.name, e.source, e.contract, "error")
-            }
-            ItemId::Event(id) => {
-                let e = gcx.hir.event(id);
-                (e.name, e.source, e.contract, "event")
-            }
-            ItemId::Udvt(id) => {
-                let u = gcx.hir.udvt(id);
-                (u.name, u.source, u.contract, "type")
-            }
-            ItemId::Function(_) | ItemId::Variable(_) => continue,
-        };
-
-        // For non-contract items, skip those defined inside a contract (they appear on the
-        // contract page, not their own page).
-        if contract.is_some() && !matches!(item_id, ItemId::Contract(_)) {
-            continue;
-        }
-
-        if let Some((abs, rel)) = source_paths(gcx, source, root) {
-            if !allowed_sources.contains(&abs) {
-                continue;
-            }
-            let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
-            let page = out_dir.join(format!("{prefix}.{}.mdx", name.as_str()));
-            let name_str = name.as_str().to_string();
-            let entry = map.by_name.entry(name_str.clone()).or_default();
-            if !entry.is_empty() {
-                warn!(
-                    "forge doc: duplicate top-level name `{name_str}`; \
+    for (rel, name, prefix, item_id) in items {
+        let page = page_path(&rel, prefix, name.as_str());
+        let name_str = name.as_str().to_string();
+        let entry = map.by_name.entry(name_str.clone()).or_default();
+        if !entry.is_empty() {
+            warn!(
+                "forge doc: duplicate top-level name `{name_str}`; \
                      cross-reference `{{{name_str}}}` will resolve by proximity to the referencing page"
-                );
-            }
-            entry.push(page.clone());
+            );
+        }
+        entry.push(page.clone());
 
-            // Record exact contract -> page so inheritance / id-keyed lookups
-            // don't go through the ambiguous name index.
-            if let ItemId::Contract(cid) = item_id {
-                map.by_contract.insert(cid, page);
-            }
+        // Record exact contract -> page so inheritance / id-keyed lookups
+        // don't go through the ambiguous name index.
+        if let ItemId::Contract(cid) = item_id {
+            map.by_contract.insert(cid, page);
         }
     }
 
     map
-}
-
-fn source_paths(gcx: Gcx<'_>, source_id: SourceId, root: &Path) -> Option<(PathBuf, PathBuf)> {
-    let file = &gcx.hir.source(source_id).file;
-    if let FileName::Real(p) = &file.name {
-        let rel = if let Ok(r) = p.strip_prefix(root) {
-            r.to_path_buf()
-        } else {
-            // Outside-root files (e.g. absolute lib paths) get a synthetic
-            // `lib/<tail>` path that matches what builder.rs emits.
-            let comps: Vec<_> = p.components().collect();
-            let start = comps.len().saturating_sub(3);
-            let tail: PathBuf = comps[start..].iter().collect();
-            PathBuf::from("lib").join(tail)
-        };
-        Some((p.clone(), rel))
-    } else {
-        None
-    }
 }
 
 /// Pick the best candidate page for a given cross-reference lookup.
@@ -262,6 +188,7 @@ pub struct GetterField {
 
 /// Effective NatSpec for an item, resolved by Solar and aligned with the item's callable
 /// signature.
+#[derive(Default)]
 pub struct NatSpecDoc {
     pub notices: Vec<String>,
     pub devs: Vec<String>,
@@ -381,14 +308,7 @@ fn empty_natspec_doc(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
             )
         })
         .unwrap_or_default();
-    NatSpecDoc {
-        notices: Vec::new(),
-        devs: Vec::new(),
-        params,
-        returns,
-        getter_params: Vec::new(),
-        getter_returns: Vec::new(),
-    }
+    NatSpecDoc { params, returns, ..Default::default() }
 }
 
 fn doc_from_view(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
@@ -573,13 +493,11 @@ fn normalize_sol_type(t: &str) -> String {
     let mut out = String::with_capacity(len + 8);
     let mut i = 0;
     while i < len {
-        if bytes[i..].starts_with(b"uint")
-            && !bytes.get(i + 4).copied().map(|b| b.is_ascii_digit()).unwrap_or(false)
-        {
+        if bytes[i..].starts_with(b"uint") && !bytes.get(i + 4).is_some_and(u8::is_ascii_digit) {
             out.push_str("uint256");
             i += 4;
         } else if bytes[i..].starts_with(b"int")
-            && !bytes.get(i + 3).copied().map(|b| b.is_ascii_digit()).unwrap_or(false)
+            && !bytes.get(i + 3).is_some_and(u8::is_ascii_digit)
         {
             out.push_str("int256");
             i += 3;

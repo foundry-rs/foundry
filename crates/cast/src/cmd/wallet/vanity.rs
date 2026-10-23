@@ -3,20 +3,16 @@ use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::json::print_json_success;
-use foundry_common::{sh_println, shell};
+use foundry_common::{fs::write_sensitive_json_file, sh_println, shell};
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
-
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 /// CLI arguments for `cast wallet vanity`.
 #[derive(Clone, Debug, Parser)]
@@ -64,7 +60,7 @@ impl WalletData {
     fn new(wallet: &PrivateKeySigner) -> Self {
         Self {
             address: wallet.address().to_checksum(None),
-            private_key: format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+            private_key: hex::encode_prefixed(wallet.credential().to_bytes()),
         }
     }
 }
@@ -128,17 +124,7 @@ fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
 
     wallets.wallets.push(WalletData::new(wallet));
 
-    let contents = serde_json::to_string_pretty(&wallets)?;
-    let mut options = fs::File::options();
-    options.write(true).create(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-
-    let mut file = options.open(path)?;
-    #[cfg(unix)]
-    file.set_permissions(fs::Permissions::from_mode(0o600))?;
-    file.set_len(0)?;
-    file.write_all(contents.as_bytes())?;
+    write_sensitive_json_file(path, &wallets)?;
     Ok(())
 }
 
@@ -207,6 +193,9 @@ fn parse_pattern(pattern: &str, is_start: bool) -> Result<Pattern> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn single(pattern: &str, is_start: bool) -> Matcher {
         let pattern = parse_pattern(pattern, is_start).unwrap();

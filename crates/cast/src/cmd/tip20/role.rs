@@ -179,8 +179,8 @@ async fn ensure_role_admin<P: Provider<TempoNetwork>>(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::b256;
 
     #[test]
     fn parses_role_names_and_hashes() {
@@ -192,7 +192,7 @@ mod tests {
             assert_eq!(spelling.parse(), Ok(Tip20Role(B256::ZERO)), "{spelling}");
         }
 
-        let custom = b256!("0x00000000000000000000000000000000000000000000000000000000000000ab");
+        let custom = B256::with_last_byte(0xab);
         assert_eq!(custom.to_string().parse(), Ok(Tip20Role(custom)));
         assert_eq!(Tip20Role(custom).name(), None);
         assert_eq!(burn_at.name(), Some("BURN_AT_ROLE"));

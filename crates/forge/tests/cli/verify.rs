@@ -4,7 +4,7 @@
 use crate::utils::{self, EnvExternalities};
 use alloy_chains::NamedChain;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, U256, address, hex};
 use anvil::{NodeConfig, spawn};
 use axum::{
     Form, Router,
@@ -14,6 +14,7 @@ use axum::{
     routing::post,
 };
 use forge_script_sequence::ScriptSequence;
+use foundry_cli::utils::parse_json;
 use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
 use foundry_evm::traces::CallKind;
@@ -205,7 +206,7 @@ async fn can_validate_verifier_settings(prj: _, cmd: _) {
             assert_eq!(query.get("action").map(String::as_str), Some("getabi"));
             assert_eq!(
                 query["address"].parse::<Address>().unwrap(),
-                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>().unwrap()
+                address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
             );
             r#"{"status":"1","message":"OK","result":"[]"}"#
         });
@@ -593,7 +594,7 @@ contract ExternalFactory {
         .post(rpc.as_str())
         .json(&serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "eth_call",
-            "params": [{"to": factory, "data": format!("0x{}", hex::encode(selector))}, "latest"]
+            "params": [{"to": factory, "data": hex::encode_prefixed(selector)}, "latest"]
         }))
         .send()
         .await
@@ -626,7 +627,7 @@ contract ExternalFactory {
     )
     .unwrap();
     let metadata: serde_json::Value =
-        serde_json::from_str(artifact["rawMetadata"].as_str().unwrap()).unwrap();
+        parse_json(artifact["rawMetadata"].as_str().unwrap()).unwrap();
     let compiler_version = format!("v{}", metadata["compiler"]["version"].as_str().unwrap());
 
     #[derive(Default)]
@@ -786,7 +787,7 @@ contract Deploy is Script {{
         .post(rpc.as_str())
         .json(&serde_json::json!({
             "jsonrpc": "2.0", "id": 2, "method": "eth_call",
-            "params": [{"to": child_address, "data": format!("0x{}", hex::encode(value_selector))}, "latest"]
+            "params": [{"to": child_address, "data": hex::encode_prefixed(value_selector)}, "latest"]
         }))
         .send()
         .await

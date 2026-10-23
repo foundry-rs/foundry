@@ -34,7 +34,10 @@ use alloy_sol_types::{SolEvent, sol};
 use anvil::{EthereumHardfork, NodeConfig, PrecompileFactory, spawn};
 use axum::{Json, Router, routing::post};
 use foundry_test_utils::rpc;
-use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileStatus};
+use revm::{
+    precompile::{PrecompileError, PrecompileOutput, PrecompileStatus},
+    primitives::eip7825::TX_GAS_LIMIT_CAP,
+};
 use serde_json::{Value, json};
 use std::{
     sync::{
@@ -106,7 +109,7 @@ async fn test_simulate_block_access_list_hash_rpc() {
     for (address, index) in
         [(HISTORY_STORAGE_ADDRESS, 0), (WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, 2)]
     {
-        expected.iter_mut().find(|account| account.address == address).unwrap().storage_changes =
+        expected.iter_mut().find(|account| account.address() == address).unwrap().storage_changes =
             vec![SlotChanges::new(
                 U256::ZERO,
                 vec![StorageChange::new(BlockAccessIndex::new(index), U256::from(42))],
@@ -119,13 +122,13 @@ async fn test_simulate_block_access_list_hash_rpc() {
     expected.push(AccountChanges {
         storage_reads: vec![U256::ZERO],
         storage_changes: vec![SlotChanges::new(
-            U256::from(1),
+            U256::ONE,
             vec![StorageChange::new(BlockAccessIndex::new(1), U256::from(42))],
         )],
         ..AccountChanges::new(contract)
     });
     expected.push(AccountChanges::new(beneficiary));
-    expected.sort_by_key(|account| account.address);
+    expected.sort_by_key(|account| account.address());
     let expected_hash = compute_block_access_list_hash(&expected);
 
     for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
@@ -198,13 +201,13 @@ async fn test_fork_simulate_native_transfers_rpc() {
                 TransactionRequest {
                     from: Some(from),
                     to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000001"))),
-                    value: Some(U256::from(1)),
+                    value: Some(U256::ONE),
                     ..Default::default()
                 },
                 TransactionRequest {
                     from: Some(from),
                     to: Some(TxKind::from(address!("0x1000000000000000000000000000000000000002"))),
-                    value: Some(U256::from(1)),
+                    value: Some(U256::ONE),
                     ..Default::default()
                 },
             ],
@@ -1502,7 +1505,7 @@ async fn test_simulate_discards_candidate_after_post_block_failure_rpc() {
 async fn test_simulate_empty_state_override_preserves_root_rpc() {
     let (_, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
-    let account = address!("0000000000000000000000000000000000000042").to_string();
+    let account = Address::with_last_byte(0x42).to_string();
     let without_override =
         rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}])).await;
     let with_empty_override = rpc_request(
@@ -1546,8 +1549,8 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
     code.push(0xff);
 
     api.anvil_set_code(contract, code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
     api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
@@ -1600,7 +1603,7 @@ async fn test_simulate_selfdestruct_state_root_matches_mined_rpc() {
         .send_transaction(WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(contract)),
-            value: Some(U256::from(1)),
+            value: Some(U256::ONE),
             gas: Some(21_000),
             gas_price: Some(0),
             ..Default::default()
@@ -1647,7 +1650,7 @@ async fn test_simulate_storage_written_after_selfdestruct_rpc() {
         .get_receipt()
         .await
         .unwrap();
-    api.anvil_set_storage_at(contract, U256::from(1), B256::from(U256::from(5))).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ONE, B256::with_last_byte(5)).await.unwrap();
 
     let transfer = json!({"calls": [{"from": sender, "to": contract, "value": "0x1"}]});
     let single =
@@ -1681,8 +1684,8 @@ async fn test_simulate_state_override_preserves_selfdestructed_storage_rpc() {
     selfdestruct_code.push(0xff);
 
     api.anvil_set_code(contract, selfdestruct_code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
     api.mine_one().await.unwrap();
 
     let selfdestruct = json!({
@@ -1757,7 +1760,7 @@ async fn test_simulate_historical_tombstone_matches_latest_rpc() {
     code.push(0xff);
 
     api.anvil_set_code(contract, code.into()).await.unwrap();
-    api.anvil_set_balance(contract, U256::from(1)).await.unwrap();
+    api.anvil_set_balance(contract, U256::ONE).await.unwrap();
     api.mine_one().await.unwrap();
     handle
         .http_provider()
@@ -1854,7 +1857,7 @@ async fn test_simulate_executes_on_pending_state_rpc() {
         .send_transaction(WithOtherFields::new(TransactionRequest {
             from: Some(sender),
             to: Some(TxKind::Call(receiver)),
-            value: Some(U256::from(1)),
+            value: Some(U256::ONE),
             ..Default::default()
         }))
         .await
@@ -1879,7 +1882,7 @@ async fn test_simulate_executes_on_pending_state_rpc() {
     assert!(response.get("error").is_none(), "{response}");
     assert_eq!(
         response["result"][0]["calls"][0]["returnData"],
-        B256::from(U256::from(1)).to_string()
+        B256::with_last_byte(1).to_string()
     );
 }
 
@@ -2142,6 +2145,49 @@ async fn test_simulate_tracks_amsterdam_gas_dimensions_separately() {
     let cumulative_gas_used = block.calls.iter().map(|call| call.gas_used).sum::<u64>();
     assert!(cumulative_gas_used > gas_limit);
     assert!(block.inner.header.gas_used <= gas_limit);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17716>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_amsterdam_state_gas_reservoir() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let sender = address!("0xc000000000000000000000000000000000000000");
+    let contract = address!("0xc200000000000000000000000000000000000000");
+    let payload = SimulatePayload {
+        block_state_calls: vec![SimBlock {
+            block_overrides: None,
+            state_overrides: Some(
+                StateOverridesBuilder::with_capacity(1)
+                    .append(
+                        contract,
+                        AccountOverride {
+                            // Stores and returns `gasleft()`, which reports only regular gas.
+                            code: Some(Bytes::from_static(&[
+                                0x5a, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60,
+                                0x00, 0xf3,
+                            ])),
+                            ..Default::default()
+                        },
+                    )
+                    .build(),
+            ),
+            calls: vec![TransactionRequest {
+                from: Some(sender),
+                to: Some(TxKind::Call(contract)),
+                gas: Some(30_000_000),
+                ..Default::default()
+            }],
+        }],
+        ..Default::default()
+    };
+
+    let blocks = api.simulate_v1(payload, None).await.unwrap();
+    let call = &blocks[0].calls[0];
+
+    assert!(call.status);
+    // The cap bounds regular gas, out of which the call pays 15,000 intrinsic gas and 2 for `GAS`.
+    assert_eq!(U256::from_be_slice(&call.return_data), U256::from(TX_GAS_LIMIT_CAP - 15_002));
 }
 
 #[tokio::test(flavor = "multi_thread")]

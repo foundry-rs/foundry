@@ -167,7 +167,7 @@ pub(crate) fn execute_symbolic_precompile(
             }
             let flag = input.byte(cx, 212);
             match flag.as_const() {
-                Some(flag) if flag.is_zero() || flag == U256::from(1) => {}
+                Some(flag) if flag.is_zero() || flag == U256::ONE => {}
                 Some(_) => return Ok(None),
                 None => {
                     return Err(SymbolicError::Unsupported(
@@ -219,10 +219,7 @@ pub(crate) fn concrete_precompile_word_at(
     let mut bytes = [0u8; 32];
     for (idx, byte) in bytes.iter_mut().enumerate() {
         let word = input.byte(cx, offset + idx);
-        *byte = word
-            .as_const()
-            .ok_or(SymbolicError::Unsupported("symbolic precompile length header"))?
-            .to::<u8>();
+        *byte = word.as_const_or("symbolic precompile length header")?.to::<u8>();
     }
     Ok(U256::from_be_bytes(bytes))
 }

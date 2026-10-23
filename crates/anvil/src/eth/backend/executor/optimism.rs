@@ -46,7 +46,7 @@ pub(crate) fn blob_gas_used<DB: Database>(
     tx: &FoundryTxEnvelope,
     jovian: bool,
 ) -> Result<u64, alloy_evm::block::BlockExecutionError> {
-    if !jovian || matches!(tx, FoundryTxEnvelope::Deposit(_)) {
+    if !jovian || tx.is_deposit() {
         return Ok(tx.blob_gas_used().unwrap_or_default());
     }
 

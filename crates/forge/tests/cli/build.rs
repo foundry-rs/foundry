@@ -792,16 +792,17 @@ fn build_sizes_respects_amsterdam_code_size_limits(prj: _, cmd: _) {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     prj.update_config(|config| {
         config.evm_version = EvmVersion::Amsterdam;
+        config.experimental = true;
     });
 
     cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
         str![[r#"
 {
   "LargeContract": {
-    "runtime_size": 62,
-    "init_size": 50125,
-    "runtime_margin": 65474,
-    "init_margin": 80947
+    "runtime_size": 76,
+    "init_size": 50139,
+    "runtime_margin": 65460,
+    "init_margin": 80933
   }
 }
 "#]]
@@ -887,7 +888,7 @@ Compiler settings (profile: no-metadata): optimizer=true, optimizer_runs=777, vi
 fn build_sizes_no_forge_std(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27)));
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
     });
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"

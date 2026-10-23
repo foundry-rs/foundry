@@ -15,14 +15,15 @@ use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, EthereumWallet, ReceiptResponse, TransactionBuilder,
     TransactionBuilder4844,
 };
-use alloy_primitives::{Address, Bytes, U256, b256};
+use alloy_primitives::{Address, B256, Bytes, U256, b256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{Authorization, BlockId, TransactionRequest};
+use alloy_rpc_types::{Authorization, BlockId, TransactionRequest, trace::parity::TraceType};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc;
+use revm::context_interface::block::BlobExcessGasAndPrice;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -511,7 +512,7 @@ async fn can_bypass_sidecar_requirement() {
         from: Some(from),
         to: Some(alloy_primitives::TxKind::Call(to)),
         nonce: Some(0),
-        value: Some(U256::from(0)),
+        value: Some(U256::ZERO),
         max_fee_per_blob_gas: Some(gas_price + 1),
         max_fee_per_gas: Some(eip1559_est.max_fee_per_gas),
         max_priority_fee_per_gas: Some(eip1559_est.max_priority_fee_per_gas),
@@ -642,6 +643,74 @@ async fn simulate_v1_derives_blob_hashes_from_sidecars() {
     let transaction = &block["transactions"][0];
     for field in ["blobs", "commitments", "proofs", "cellProofs"] {
         assert!(transaction.get(field).is_none(), "unexpected pooled field {field}");
+    }
+}
+
+// Like geth's eth_call, a blob call without a blob fee cap runs at a zero blob base fee, while
+// calls with a cap and non-blob calls see the block's blob base fee.
+#[tokio::test(flavor = "multi_thread")]
+async fn call_defaults_blob_fee_cap_to_zero() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = provider.get_accounts().await.unwrap();
+
+    // Returns BLOBBASEFEE.
+    let contract = Address::with_last_byte(0x42);
+    api.anvil_set_code(contract, Bytes::from_static(&[0x4a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+        .await
+        .unwrap();
+    let blob_base_fee = U256::from(provider.get_blob_base_fee().await.unwrap());
+    assert!(!blob_base_fee.is_zero());
+
+    let sidecar: BlobTransactionSidecar =
+        SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
+    let blob_call = TransactionRequest {
+        from: Some(accounts[0]),
+        to: Some(contract.into()),
+        blob_versioned_hashes: Some(vec![sidecar.versioned_hash_for_blob(0).unwrap()]),
+        max_fee_per_gas: Some(2_000_000_000),
+        max_priority_fee_per_gas: Some(0),
+        ..Default::default()
+    };
+    let plain_call = TransactionRequest {
+        blob_versioned_hashes: None,
+        max_fee_per_blob_gas: None,
+        ..blob_call.clone()
+    };
+
+    // Like geth, access lists are built at the block's blob base fee. The contract loads slot
+    // BLOBBASEFEE.
+    let sload_blob_base_fee = Address::with_last_byte(0x43);
+    api.anvil_set_code(sload_blob_base_fee, Bytes::from_static(&[0x4a, 0x54, 0x00])).await.unwrap();
+    let request = TransactionRequest { to: Some(sload_blob_base_fee.into()), ..blob_call.clone() };
+    let result = api.create_access_list(WithOtherFields::new(request), None, None).await.unwrap();
+    assert_eq!(result.access_list.0[0].storage_keys, [B256::from(blob_base_fee)]);
+
+    for (request, expected) in [
+        (blob_call.clone(), U256::ZERO),
+        (TransactionRequest { max_fee_per_blob_gas: Some(0), ..blob_call.clone() }, U256::ZERO),
+        (
+            TransactionRequest {
+                max_fee_per_gas: None,
+                max_priority_fee_per_gas: None,
+                max_fee_per_blob_gas: Some(1_000_000_000),
+                ..blob_call.clone()
+            },
+            blob_base_fee,
+        ),
+        (
+            TransactionRequest { max_fee_per_blob_gas: Some(1_000_000_000), ..blob_call },
+            blob_base_fee,
+        ),
+        (plain_call, blob_base_fee),
+    ] {
+        let request = WithOtherFields::new(request);
+        let output = provider.call(request.clone()).await.unwrap();
+        assert_eq!(U256::from_be_slice(&output), expected);
+        let traced =
+            api.trace_call(request, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
+        assert_eq!(U256::from_be_slice(&traced.output), expected);
     }
 }
 
@@ -1046,6 +1115,20 @@ async fn estimate_gas_reserves_blob_fee() {
         assert!(gas >= 21_000);
     }
 
+    // A sidecar-only request reserves the blob fee for the hashes its sidecar commits to. Input
+    // data keeps it off the plain transfer path, so the balance caps the estimate.
+    let sidecar: BlobTransactionSidecar =
+        SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
+    let tx = TransactionRequest {
+        max_fee_per_blob_gas: Some(2_000_000_000),
+        blob_versioned_hashes: None,
+        sidecar: Some(sidecar.into()),
+        input: Bytes::from_static(&[1]).into(),
+        ..blob_request.clone()
+    };
+    let gas = provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap();
+    assert!(gas >= 21_000);
+
     // An authorization list makes the request execute as EIP-7702, which pays no blob fee.
     let authorization =
         Authorization { chain_id: U256::from(31337), address: accounts[2], nonce: 0 };
@@ -1056,4 +1139,71 @@ async fn estimate_gas_reserves_blob_fee() {
         ..blob_request
     };
     provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap();
+}
+
+// A legacy gas price prices a blob call, with its blob fee cap priced separately.
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_blob_call_runs_at_gas_price() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = provider.get_accounts().await.unwrap();
+
+    // Returns GASPRICE.
+    let contract = Address::with_last_byte(0x42);
+    api.anvil_set_code(contract, Bytes::from_static(&[0x3a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+        .await
+        .unwrap();
+    let sidecar: BlobTransactionSidecar =
+        SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
+    let gas_price = 2_000_000_000u128;
+    let request = WithOtherFields::new(TransactionRequest {
+        from: Some(accounts[0]),
+        to: Some(contract.into()),
+        gas_price: Some(gas_price),
+        blob_versioned_hashes: Some(vec![sidecar.versioned_hash_for_blob(0).unwrap()]),
+        max_fee_per_blob_gas: Some(1_000_000_000),
+        ..Default::default()
+    });
+
+    let output = provider.call(request.clone()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&output), U256::from(gas_price));
+    let traced =
+        api.trace_call(request, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
+    assert_eq!(U256::from_be_slice(&traced.output), U256::from(gas_price));
+}
+
+// Receipts and loaded state must use the active fork's blob parameters. At this excess blob gas,
+// Prague's update fraction gives 7 wei while Cancun's would give 19 wei.
+#[tokio::test(flavor = "multi_thread")]
+async fn blob_fees_use_active_blob_params() {
+    let node_config = || NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config()).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = provider.get_accounts().await.unwrap();
+
+    let blob_update_fraction = u64::try_from(api.backend.blob_params().update_fraction).unwrap();
+    api.backend.fees().set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+        10_000_000,
+        blob_update_fraction,
+    ));
+
+    let sidecar = SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(accounts[0])
+        .with_to(accounts[1])
+        .with_blob_sidecar_4844(sidecar);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert_eq!(receipt.blob_gas_price, Some(7));
+
+    let (loaded, _handle) = spawn(node_config()).await;
+    loaded.anvil_load_state(api.anvil_dump_state(None).await.unwrap()).await.unwrap();
+    assert_eq!(loaded.blob_base_fee().unwrap(), api.blob_base_fee().unwrap());
 }

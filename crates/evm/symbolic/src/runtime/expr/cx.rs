@@ -24,7 +24,7 @@ impl SymCx {
     pub(crate) fn new() -> Self {
         let mut words = HashCons::new();
         let zero = SymExpr { kind: words.make(SymExprKind::Const(U256::ZERO)) };
-        let one = SymExpr { kind: words.make(SymExprKind::Const(U256::from(1))) };
+        let one = SymExpr { kind: words.make(SymExprKind::Const(U256::ONE)) };
 
         let mut bools = HashCons::new();
         let bool_true = SymBoolExpr { kind: bools.make(SymBoolExprKind::Const(true)) };

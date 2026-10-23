@@ -26,13 +26,16 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{Config, filter::GlobMatcher};
-use foundry_evm::{fork::ResolvedFork, opts::EvmOpts};
+use foundry_evm::{
+    backend::Backend, core::evm::FoundryEvmNetwork, executors::ExecutorBuilder, fork::Fork,
+    opts::EvmOpts,
+};
 
 use crate::{
     cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
-        mutant::{Mutant, MutationResult},
+        mutant::{Mutant, MutationResult, MutationType},
         runner::{MutationEvmConfig, run_mutations_parallel_with_progress},
         type_analysis::{collect_mutation_exclusions, normalize_path},
     },
@@ -55,7 +58,6 @@ struct ExecutionCacheFingerprint<'a> {
     resolved_fork: Option<alloy_primitives::B256>,
     filter_args: FilterArgsFingerprint<'a>,
     rerun_failures: Option<&'a [RerunFailure]>,
-    num_workers: usize,
     artifacts: &'a [ArtifactCacheFingerprint],
 }
 
@@ -129,18 +131,21 @@ pub struct MutationRunResult {
 /// - Per-file mutation handling with caching
 /// - Parallel mutation execution
 /// - Result aggregation and reporting
-pub async fn run_mutation_testing(
+pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
-    resolved_fork: Option<ResolvedFork>,
+    backend: Backend<FEN>,
+    executor_builder: ExecutorBuilder<FEN>,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
     let create2_deployer_available =
-        evm_opts.can_use_create2_deployer_resolved(resolved_fork.as_ref()).await?;
+        backend.can_use_create2_deployer(evm_opts.create2_deployer).await?;
+    let fork = backend.fork()?;
     let mutation_evm = MutationEvmConfig {
         opts: evm_opts.clone(),
-        resolved_fork: resolved_fork.clone(),
+        backend,
+        executor_builder,
         create2_deployer_available,
     };
     let num_workers = mutation_config.effective_workers();
@@ -176,10 +181,9 @@ pub async fn run_mutation_testing(
         &config,
         &execution_cache_output,
         &evm_opts,
-        resolved_fork.as_ref(),
+        fork.as_ref(),
         &mutation_config.filter_args,
         mutation_config.rerun_failures.as_deref(),
-        num_workers,
     )?;
     let mut mutation_exclusions = collect_mutation_exclusions(&config, output).unwrap_or_default();
 
@@ -329,7 +333,9 @@ pub async fn run_mutation_testing(
             match result.result {
                 MutationResult::Dead => handler.add_dead_mutant(result.mutant),
                 MutationResult::Alive => {
-                    handler.mark_span_survived(result.mutant.span);
+                    if !matches!(result.mutant.mutation, MutationType::FunctionBody(_)) {
+                        handler.mark_span_survived(result.mutant.span);
+                    }
                     handler.add_survived_mutant(result.mutant);
                 }
                 MutationResult::Invalid => handler.add_invalid_mutant(result.mutant),
@@ -403,16 +409,15 @@ pub async fn run_mutation_testing(
 /// invariant settings, test filters, fs permissions, sender/balance/env values,
 /// and future config fields unless explicitly skipped by `Config` itself. The
 /// artifact fingerprint covers the same filter-selected source and test build
-/// IDs that baseline and mutant runs compile. Worker count is included because
-/// adaptive span skipping is concurrency-sensitive.
+/// IDs that baseline and mutant runs compile. Worker count is not included: every
+/// mutant is tested independently, so the results do not depend on it.
 fn mutation_execution_cache_key(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&ResolvedFork>,
+    resolved_fork: Option<&Fork>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
-    num_workers: usize,
 ) -> Result<String> {
     let artifacts = output
         .artifact_ids()
@@ -427,10 +432,9 @@ fn mutation_execution_cache_key(
     mutation_execution_cache_key_from_parts_with_rerun_failures(
         config,
         evm_opts,
-        resolved_fork.map(ResolvedFork::fingerprint),
+        resolved_fork.map(Fork::fingerprint),
         filter_args,
         rerun_failures,
-        num_workers,
         artifacts,
     )
 }
@@ -440,7 +444,6 @@ fn mutation_execution_cache_key_from_parts(
     config: &Config,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
-    num_workers: usize,
     artifacts: Vec<ArtifactCacheFingerprint>,
 ) -> Result<String> {
     mutation_execution_cache_key_from_parts_with_rerun_failures(
@@ -449,7 +452,6 @@ fn mutation_execution_cache_key_from_parts(
         None,
         filter_args,
         None,
-        num_workers,
         artifacts,
     )
 }
@@ -460,7 +462,6 @@ fn mutation_execution_cache_key_from_parts_with_rerun_failures(
     resolved_fork: Option<alloy_primitives::B256>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
-    num_workers: usize,
     mut artifacts: Vec<ArtifactCacheFingerprint>,
 ) -> Result<String> {
     artifacts.sort();
@@ -471,7 +472,6 @@ fn mutation_execution_cache_key_from_parts_with_rerun_failures(
         resolved_fork,
         filter_args: filter_args_fingerprint(filter_args),
         rerun_failures,
-        num_workers,
         artifacts: &artifacts,
     };
     let encoded = serde_json::to_vec(&fingerprint)
@@ -494,7 +494,7 @@ fn filter_args_fingerprint(filter_args: &FilterArgs) -> FilterArgsFingerprint<'_
     }
 }
 
-fn project_relative_path(root: &Path, path: &Path) -> Option<PathBuf> {
+pub(super) fn project_relative_path(root: &Path, path: &Path) -> Option<PathBuf> {
     if path.is_relative() {
         return Some(path.to_path_buf());
     }
@@ -639,7 +639,6 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    use crate::mutation::mutant::MutationType;
     use solar::{ast::Span, interface::BytePos};
 
     fn artifact(build_id: &str) -> ArtifactCacheFingerprint {
@@ -690,12 +689,11 @@ mod tests {
             &first,
             &evm_opts,
             &filter_args,
-            1,
             artifacts.clone(),
         )
         .unwrap();
         let second_key =
-            mutation_execution_cache_key_from_parts(&second, &evm_opts, &filter_args, 1, artifacts)
+            mutation_execution_cache_key_from_parts(&second, &evm_opts, &filter_args, artifacts)
                 .unwrap();
 
         assert_ne!(first_key, second_key);
@@ -715,12 +713,11 @@ mod tests {
             &config,
             &first,
             &filter_args,
-            1,
             artifacts.clone(),
         )
         .unwrap();
         let second_key =
-            mutation_execution_cache_key_from_parts(&config, &second, &filter_args, 1, artifacts)
+            mutation_execution_cache_key_from_parts(&config, &second, &filter_args, artifacts)
                 .unwrap();
 
         assert_ne!(first_key, second_key);
@@ -739,7 +736,6 @@ mod tests {
             Some(alloy_primitives::B256::with_last_byte(1)),
             &filter_args,
             None,
-            1,
             artifacts.clone(),
         )
         .unwrap();
@@ -749,7 +745,6 @@ mod tests {
             Some(alloy_primitives::B256::with_last_byte(2)),
             &filter_args,
             None,
-            1,
             artifacts,
         )
         .unwrap();
@@ -767,7 +762,6 @@ mod tests {
             &config,
             &evm_opts,
             &filter_args,
-            1,
             vec![artifact("build-a")],
         )
         .unwrap();
@@ -775,7 +769,6 @@ mod tests {
             &config,
             &evm_opts,
             &filter_args,
-            1,
             vec![artifact("build-b")],
         )
         .unwrap();
@@ -793,35 +786,13 @@ mod tests {
         let second = vec![artifact("build-b"), artifact("build-a")];
 
         let first_key =
-            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, 1, first)
+            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, first)
                 .unwrap();
         let second_key =
-            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, 1, second)
+            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, second)
                 .unwrap();
 
         assert_eq!(first_key, second_key);
-    }
-
-    #[test]
-    fn execution_cache_key_changes_when_worker_count_changes() {
-        let config = Config::default();
-        let evm_opts = EvmOpts::default();
-        let filter_args = filter_args();
-        let artifacts = vec![artifact("build-a")];
-
-        let first_key = mutation_execution_cache_key_from_parts(
-            &config,
-            &evm_opts,
-            &filter_args,
-            1,
-            artifacts.clone(),
-        )
-        .unwrap();
-        let second_key =
-            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, 4, artifacts)
-                .unwrap();
-
-        assert_ne!(first_key, second_key);
     }
 
     #[test]
@@ -838,18 +809,12 @@ mod tests {
             &config,
             &evm_opts,
             &first_filter,
-            1,
             artifacts.clone(),
         )
         .unwrap();
-        let second_key = mutation_execution_cache_key_from_parts(
-            &config,
-            &evm_opts,
-            &second_filter,
-            1,
-            artifacts,
-        )
-        .unwrap();
+        let second_key =
+            mutation_execution_cache_key_from_parts(&config, &evm_opts, &second_filter, artifacts)
+                .unwrap();
 
         assert_ne!(first_key, second_key);
     }
@@ -868,18 +833,12 @@ mod tests {
             &config,
             &evm_opts,
             &first_filter,
-            1,
             artifacts.clone(),
         )
         .unwrap();
-        let second_key = mutation_execution_cache_key_from_parts(
-            &config,
-            &evm_opts,
-            &second_filter,
-            1,
-            artifacts,
-        )
-        .unwrap();
+        let second_key =
+            mutation_execution_cache_key_from_parts(&config, &evm_opts, &second_filter, artifacts)
+                .unwrap();
 
         assert_ne!(first_key, second_key);
     }
@@ -905,7 +864,6 @@ mod tests {
             None,
             &filter_args,
             Some(&first_failures),
-            1,
             artifacts.clone(),
         )
         .unwrap();
@@ -915,7 +873,6 @@ mod tests {
             None,
             &filter_args,
             Some(&second_failures),
-            1,
             artifacts,
         )
         .unwrap();

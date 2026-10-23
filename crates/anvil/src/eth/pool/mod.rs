@@ -109,10 +109,7 @@ impl<T> Pool<T> {
     #[cfg(feature = "base")]
     pub fn all_transactions(&self) -> Vec<Arc<PoolTransaction<T>>> {
         let pool = self.inner.read();
-        pool.pending_transactions
-            .transactions()
-            .chain(pool.ready_transactions.get_transactions())
-            .collect()
+        pool.pending_transactions.transactions().chain(pool.ready_transactions()).collect()
     }
 
     /// Returns the number of tx that are ready and queued for further execution
@@ -320,7 +317,7 @@ impl<T: Typed2718> Pool<T> {
             let pool = self.inner.read();
             pool.pending_transactions
                 .transactions()
-                .chain(pool.ready_transactions.get_transactions())
+                .chain(pool.ready_transactions())
                 .filter_map(|tx| {
                     (tx.pending_transaction.transaction.ty() == tx_type).then_some(tx.hash())
                 })

@@ -91,14 +91,14 @@ mod tests {
 
     #[test]
     fn state_snapshot_serializes_maps_in_key_order() {
-        let low_address = Address::from_word(B256::from(U256::from(1)));
-        let high_address = Address::from_word(B256::from(U256::from(2)));
-        let low_slot = U256::from(1);
+        let low_address = Address::with_last_byte(1);
+        let high_address = Address::with_last_byte(2);
+        let low_slot = U256::ONE;
         let high_slot = U256::from(2);
         let mut snapshot = StateSnapshot::default();
 
         snapshot.accounts.insert(high_address, AccountInfo::from_balance(U256::from(2)));
-        snapshot.accounts.insert(low_address, AccountInfo::from_balance(U256::from(1)));
+        snapshot.accounts.insert(low_address, AccountInfo::from_balance(U256::ONE));
         snapshot.storage.insert(
             high_address,
             [(high_slot, U256::from(200)), (low_slot, U256::from(100))].into_iter().collect(),
@@ -107,8 +107,8 @@ mod tests {
             low_address,
             [(high_slot, U256::from(200)), (low_slot, U256::from(100))].into_iter().collect(),
         );
-        snapshot.block_hashes.insert(high_slot, B256::from(U256::from(200)));
-        snapshot.block_hashes.insert(low_slot, B256::from(U256::from(100)));
+        snapshot.block_hashes.insert(high_slot, B256::with_last_byte(200));
+        snapshot.block_hashes.insert(low_slot, B256::with_last_byte(100));
 
         let json = serde_json::to_string(&snapshot).unwrap();
         let storage_start = json.find("\"storage\"").unwrap();

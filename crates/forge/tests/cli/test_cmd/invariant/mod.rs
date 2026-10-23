@@ -485,7 +485,30 @@ contract InvariantSelectorsWeightTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
+    cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantSelectorsWeightTest.t.sol:InvariantSelectorsWeightTest
+[PASS] invariant_selectors_weight() (runs: 1, calls: 10, reverts: 0)
+
+╭------------+-----------+-------+---------+----------╮
+| Contract   | Selector  | Calls | Reverts | Discards |
++=====================================================+
+| HandlerOne | selector1 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector2 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector3 | 3     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector4 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector5 | 1     | 0       | 0        |
+╰------------+-----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Tests original and new counterexample lengths are displayed on failure.
@@ -1226,7 +1249,7 @@ fn invariant_selector_focus_workers_respect_user_filters(prj: _, cmd: _) {
         config.invariant.depth = 4;
         config.invariant.workers =
             foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::from(1u32));
+        config.fuzz.seed = Some(U256::ONE);
     });
     prj.add_test(
         "InvariantSelectorFocusFiltersTest.t.sol",
@@ -3142,7 +3165,7 @@ PersistedSecondaryNestedRevertTest invariants: 1/2 invariants broken
 #[forgetest_init]
 fn secondary_persisted_skips_generic_reshrink(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.invariant.runs = 100;
         config.invariant.depth = 10;
         config.invariant.shrink_run_limit = 0;
@@ -3476,6 +3499,44 @@ contract FailureEventTest is Test {
 "#]]);
 }
 
+// An invariant that already fails in the initial state must emit its failure event when the
+// campaign starts, even if no other invariant breaks later.
+#[forgetest_init]
+fn failure_event_reports_initial_state_failure(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 5;
+    });
+    prj.add_test(
+        "InitialFailureTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Handler {
+    function noop() public {}
+}
+
+contract InitialFailureTest is Test {
+    function setUp() public {
+        targetContract(address(new Handler()));
+    }
+
+    function invariant_initial() public pure {
+        require(false, "initial broken");
+    }
+
+    function invariant_holds() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure().stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"failure","invariant":"invariant_initial","target":"test/InitialFailureTest.t.sol:InitialFailureTest","reason":"initial broken"}
+...
+"#]]);
+}
+
 // Persisted corpus entries must not replay calls the current invariant settings no longer allow.
 #[forgetest_init]
 fn invariant_corpus_respects_current_senders_and_selectors(prj: _, cmd: _) {
@@ -3536,7 +3597,22 @@ contract CorpusPolicyTest is Test {{
 
     // Changing only the selector must not replay calls to the previous selector.
     add_test("address(0xB0B)", "other");
-    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/CorpusPolicyTest.t.sol:CorpusPolicyTest
+[PASS] invariant_only_current_policy() (runs: 32, calls: 640, reverts: 0, failed corpus replays: 2)
+
+╭--------------------+----------+-------+---------+----------╮
+| Contract           | Selector | Calls | Reverts | Discards |
++============================================================+
+| CorpusPolicyTarget | other    | 640   | 0       | 0        |
+╰--------------------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
 }
 
 // Calls hoisted from handler sub-calls must respect `targetSenders`.
@@ -3591,5 +3667,12 @@ contract HoistSenderTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mc", "HoistSenderTest"]).assert_success();
+    cmd.args(["test", "--mc", "HoistSenderTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/HoistSenderTest.t.sol:HoistSenderTest
+[PASS] invariant_only_target_sender() (runs: 32, calls: 640, reverts: 0)
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

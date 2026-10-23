@@ -293,17 +293,17 @@ impl FeeManager {
 
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.state.read().rules.spec_id as u8) >= (SpecId::LONDON as u8)
+        self.state.read().rules.spec_id.is_enabled_in(SpecId::LONDON)
     }
 
     pub fn is_eip4844(&self) -> bool {
-        (self.state.read().rules.spec_id as u8) >= (SpecId::CANCUN as u8)
+        self.state.read().rules.spec_id.is_enabled_in(SpecId::CANCUN)
     }
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+        if state.rules.spec_id.is_enabled_in(SpecId::CANCUN) {
             state.blob_excess_gas_and_price.blob_gasprice
         } else {
             0
@@ -312,7 +312,7 @@ impl FeeManager {
 
     pub fn base_fee(&self) -> u64 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 }
+        if state.rules.spec_id.is_enabled_in(SpecId::LONDON) { state.base_fee } else { 0 }
     }
 
     pub const fn is_min_priority_fee_enforced(&self) -> bool {
@@ -326,13 +326,12 @@ impl FeeManager {
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
         let state = self.state.read();
-        ((state.rules.spec_id as u8) >= (SpecId::CANCUN as u8))
-            .then_some(state.blob_excess_gas_and_price)
+        state.rules.spec_id.is_enabled_in(SpecId::CANCUN).then_some(state.blob_excess_gas_and_price)
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) >= (SpecId::CANCUN as u8) {
+        if state.rules.spec_id.is_enabled_in(SpecId::CANCUN) {
             state.blob_excess_gas_and_price.blob_gasprice
         } else {
             0
@@ -367,32 +366,16 @@ impl FeeManager {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.is_enabled_in(SpecId::LONDON) || state.base_fee == 0 {
             return 0;
         }
         calculate_next_block_base_fee_per_gas(state.rules, gas_used, gas_limit, last_fee_per_gas)
     }
 
-    /// Calculates the next block base fee from the parent block without applying the configured
-    /// zero-fee sentinel.
-    #[cfg(test)]
-    pub(crate) fn calculate_next_block_base_fee_per_gas(
-        &self,
-        gas_used: u64,
-        gas_limit: u64,
-        last_fee_per_gas: u64,
-    ) -> u64 {
-        let rules = self.state.read().rules;
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
-            return 0;
-        }
-        calculate_next_block_base_fee_per_gas(rules, gas_used, gas_limit, last_fee_per_gas)
-    }
-
     /// Calculates the next block base fee from a complete parent header.
     pub(crate) fn get_next_block_base_fee_from_header<H: BlockHeader>(&self, header: &H) -> u64 {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.is_enabled_in(SpecId::LONDON) || state.base_fee == 0 {
             return 0;
         }
         calculate_parent_header_fees(state.rules, header).base_fee
@@ -403,7 +386,7 @@ impl FeeManager {
     pub(crate) fn get_parent_header_fees<H: BlockHeader>(&self, header: &H) -> ParentHeaderFees {
         let state = self.state.read();
         let mut fees = calculate_parent_header_fees(state.rules, header);
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+        if !state.rules.spec_id.is_enabled_in(SpecId::LONDON) || state.base_fee == 0 {
             fees.base_fee = 0;
         }
         fees
@@ -416,7 +399,7 @@ impl FeeManager {
         header: &H,
     ) -> u64 {
         let rules = self.state.read().rules;
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+        if !rules.spec_id.is_enabled_in(SpecId::LONDON) {
             return 0;
         }
         calculate_parent_header_fees(rules, header).base_fee
@@ -430,7 +413,7 @@ impl FeeManager {
     ) -> ParentHeaderFees {
         let rules = self.state.read().rules;
         let mut fees = calculate_parent_header_fees(rules, header);
-        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+        if !rules.spec_id.is_enabled_in(SpecId::LONDON) {
             fees.base_fee = 0;
         }
         fees
@@ -741,7 +724,6 @@ impl FeeDetails {
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
         let gas_price = if no_fees { Some(0) } else { gas_price };
         let max_fee_per_gas = if no_fees { Some(0) } else { max_fee_per_gas };
-        let max_fee_per_blob_gas = if no_fees { None } else { max_fee_per_blob_gas };
 
         Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas }
     }
@@ -761,13 +743,16 @@ impl FeeDetails {
         max_fee_per_blob_gas: Option<u128>,
     ) -> Result<Self, BlockchainError> {
         match (request_gas_price, request_max_fee, request_priority, max_fee_per_blob_gas) {
-            (gas_price, None, None, None) => {
-                // Legacy request, all default to gas price.
+            (Some(_), Some(_), _, _) | (Some(_), _, Some(_), _) => {
+                Err(BlockchainError::ConflictingFeeFields)
+            }
+            (gas_price, None, None, max_fee_per_blob_gas) => {
+                // Legacy request, all default to gas price. A blob fee cap is priced separately.
                 Ok(Self {
                     gas_price,
                     max_fee_per_gas: gas_price,
                     max_priority_fee_per_gas: gas_price,
-                    max_fee_per_blob_gas: None,
+                    max_fee_per_blob_gas,
                 })
             }
             (_, max_fee, max_priority, max_fee_per_blob_gas) => {
@@ -849,17 +834,18 @@ mod tests {
 
     #[test]
     fn raw_next_base_fee_respects_london_activation() {
+        let parent = alloy_consensus::Header {
+            gas_used: 30_000_000,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..Default::default()
+        };
+
         let berlin = fee_manager(SpecId::BERLIN);
-        assert_eq!(
-            berlin.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
-            0
-        );
+        assert_eq!(berlin.calculate_next_block_base_fee_from_header(&parent), 0);
 
         let london = fee_manager(SpecId::LONDON);
-        assert_ne!(
-            london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
-            0
-        );
+        assert_ne!(london.calculate_next_block_base_fee_from_header(&parent), 0);
     }
 
     #[cfg(feature = "optimism")]
@@ -868,10 +854,7 @@ mod tests {
         let fees = fee_manager(SpecId::BERLIN);
         let jovian = [1, 0, 0, 0, 250, 0, 0, 0, 2, 0, 0, 0, 0, 0, 76, 75, 64];
         fees.set_optimism_base_fee_rules(&jovian);
-        let header = alloy_consensus::Header {
-            extra_data: Bytes::copy_from_slice(&jovian),
-            ..Default::default()
-        };
+        let header = alloy_consensus::Header { extra_data: jovian.into(), ..Default::default() };
 
         let parent_fees = fees.get_parent_header_fees(&header);
         assert_eq!(parent_fees.base_fee, 0);
@@ -927,5 +910,21 @@ mod tests {
     fn next_random(state: &mut u64) -> u64 {
         *state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         *state
+    }
+
+    #[test]
+    fn fee_details_reject_gas_price_with_dynamic_fees() {
+        for (max_fee, priority) in [(Some(2), None), (None, Some(1)), (Some(2), Some(1))] {
+            assert!(matches!(
+                FeeDetails::new(Some(2), max_fee, priority, None),
+                Err(BlockchainError::ConflictingFeeFields)
+            ));
+        }
+    }
+
+    #[test]
+    fn fee_details_price_legacy_blob_calls_by_gas_price() {
+        let fees = FeeDetails::new(Some(2), None, None, Some(1)).unwrap();
+        assert_eq!(fees.split(), (Some(2), Some(2), Some(2), Some(1)));
     }
 }

@@ -472,7 +472,14 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
             "--match-test",
             "testEip712HashType_byCustomPathAndTypeName",
         ])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[PASS] testEip712HashType_byCustomPathAndTypeName() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -529,7 +536,17 @@ contract Eip712HashStructDomainTest is DSTest {
 "#,
         );
 
-    cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712HashStructDomainTest.sol:Eip712HashStructDomainTest
+[PASS] testHashEIP712Domain() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -805,7 +822,15 @@ contract Eip712HashTypedDataTest is DSTest {
 "#,
     );
 
-    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for src/Eip712HashTypedData.sol:Eip712HashTypedDataTest
+[PASS] testHashEIP712Message() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
 }
 
 // repro: <https://github.com/foundry-rs/foundry/issues/11366>

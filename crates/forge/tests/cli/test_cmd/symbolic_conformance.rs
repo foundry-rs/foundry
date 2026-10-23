@@ -1,6 +1,6 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness};
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use std::{env, process::Command};
 
 fn symbolic_conformance_enabled() -> bool {
@@ -23,67 +23,6 @@ fn should_skip() -> bool {
         return true;
     }
     false
-}
-
-#[derive(Clone, Copy)]
-enum ConformanceStatus {
-    Pass,
-    Counterexample,
-    RevertAll,
-}
-
-struct ConformanceMatrixCase<'a> {
-    feature: &'a str,
-    match_test: &'a str,
-    expected: ConformanceStatus,
-    required: &'a [&'a str],
-    forbidden: &'a [&'a str],
-}
-
-fn assert_conformance_matrix_case(stdout: &str, case: &ConformanceMatrixCase<'_>) {
-    match case.expected {
-        ConformanceStatus::Pass => {
-            assert_relevant_lines(
-                stdout,
-                foundry_test_utils::str![[r#"
-[PASS]
-"#]],
-            );
-        }
-        ConformanceStatus::Counterexample => {
-            assert_relevant_lines(
-                stdout,
-                foundry_test_utils::str![[r#"
-[FAIL
-"#]],
-            );
-        }
-        ConformanceStatus::RevertAll => {
-            assert_relevant_lines(
-                stdout,
-                foundry_test_utils::str![[r#"
-RevertAll
-"#]],
-            );
-            assert_relevant_lines(
-                stdout,
-                foundry_test_utils::str![[r#"
-all symbolic paths reverted
-"#]],
-            );
-        }
-    }
-
-    for required in case.required {
-        assert!(stdout.contains(required), "{} is missing `{required}`\n{stdout}", case.feature);
-    }
-    for forbidden in case.forbidden {
-        assert!(
-            !stdout.contains(forbidden),
-            "{} unexpectedly had `{forbidden}`\n{stdout}",
-            case.feature
-        );
-    }
 }
 
 #[forgetest_init]
@@ -111,18 +50,15 @@ contract SymbolicConformanceBlock is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBlock"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBlock(uint256,uint256,uint256)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkBlock"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceBlock.t.sol:SymbolicConformanceBlock
+[PASS] checkBlock(uint256,uint256,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -276,63 +212,25 @@ contract SymbolicConformanceHalmosFeatureMatrix is Test {
 "#,
     );
 
-    let cases = [
-        ConformanceMatrixCase {
-            feature: "dynamic ABI",
-            match_test: "checkMatrixDynamicAbi",
-            expected: ConformanceStatus::Pass,
-            required: &["checkMatrixDynamicAbi"],
-            forbidden: &["Stuck", "RevertAll"],
-        },
-        ConformanceMatrixCase {
-            feature: "ERC20 mapping/accounting counterexample",
-            match_test: "checkMatrixErc20SupplyAccounting",
-            expected: ConformanceStatus::Counterexample,
-            required: &["checkMatrixErc20SupplyAccounting(uint256,address)"],
-            forbidden: &["Stuck", "RevertAll"],
-        },
-        ConformanceMatrixCase {
-            feature: "ERC721 approval counterexample",
-            match_test: "checkMatrixErc721ClearsApproval",
-            expected: ConformanceStatus::Counterexample,
-            required: &["checkMatrixErc721ClearsApproval(address,address)"],
-            forbidden: &["Stuck", "RevertAll"],
-        },
-        ConformanceMatrixCase {
-            feature: "SVM createCalldata dispatch modeling",
-            match_test: "checkMatrixCreateCalldataDispatch",
-            expected: ConformanceStatus::Pass,
-            required: &["checkMatrixCreateCalldataDispatch()"],
-            forbidden: &["symbolic external CALL selector", "Stuck", "RevertAll"],
-        },
-        ConformanceMatrixCase {
-            feature: "empty unknown target call",
-            match_test: "checkMatrixEmptyUnknownTarget",
-            expected: ConformanceStatus::Pass,
-            required: &["checkMatrixEmptyUnknownTarget(uint256)"],
-            forbidden: &["unsupported external CALL", "Stuck", "RevertAll"],
-        },
-        ConformanceMatrixCase {
-            feature: "revert-all reporting",
-            match_test: "checkMatrixRevertAll",
-            expected: ConformanceStatus::RevertAll,
-            required: &["checkMatrixRevertAll(uint256)"],
-            forbidden: &["Stuck"],
-        },
-    ];
-
-    for case in &cases {
-        let mut cmd = prj.forge_command();
-        cmd.args(["test", "--symbolic", "--match-test", case.match_test]);
-        let output = match case.expected {
-            ConformanceStatus::Pass => cmd.assert_success(),
-            ConformanceStatus::Counterexample | ConformanceStatus::RevertAll => {
-                cmd.assert_failure()
-            }
-        };
-        let stdout = output.get_output().stdout_lossy();
-        assert_conformance_matrix_case(&stdout, case);
-    }
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkMatrixDynamicAbi|checkMatrixErc20SupplyAccounting|checkMatrixErc721ClearsApproval|checkMatrixCreateCalldataDispatch|checkMatrixEmptyUnknownTarget|checkMatrixRevertAll)\\(",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicConformanceHalmosFeatureMatrix.t.sol:SymbolicConformanceHalmosFeatureMatrix
+[PASS] checkMatrixCreateCalldataDispatch() ([METRICS])
+[PASS] checkMatrixDynamicAbi(bytes,string,(bytes,string,uint256[])) ([METRICS])
+[PASS] checkMatrixEmptyUnknownTarget(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkMatrixErc20SupplyAccounting(uint256,address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMatrixErc721ClearsApproval(address,address) ([METRICS])
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkMatrixRevertAll(uint256) ([METRICS])
+Suite result: FAILED. 3 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered());
 }
 
 #[forgetest_init]
@@ -369,40 +267,40 @@ contract SymbolicConformanceHalmosTotalPrice {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBuggyTotal"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkBuggyTotal",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosTotalPrice.t.sol:SymbolicConformanceHalmosTotalPrice
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBuggyTotal(uint96,uint32) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkBuggyTotal(uint96,uint32)
-"#]],
-    );
     assert!(!stdout.contains("Stuck"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkFixedTotal"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkFixedTotal(uint96,uint32)
-"#]],
-    );
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkFixedTotal",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosTotalPrice.t.sol:SymbolicConformanceHalmosTotalPrice
+[PASS] checkFixedTotal(uint96,uint32) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -438,18 +336,23 @@ contract SymbolicConformanceHalmosPowerOfTwo {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkPowerOfTwoLoop"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkPowerOfTwoLoop",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosPowerOfTwo.t.sol:SymbolicConformanceHalmosPowerOfTwo
+[PASS] checkPowerOfTwoLoop(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkPowerOfTwoLoop(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic loop bound exceeded"), "{stdout}");
 }
 
@@ -513,38 +416,38 @@ contract SymbolicConformanceHalmosVault is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkDepositPreservesSharePrice"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDepositPreservesSharePrice",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosVault.t.sol:SymbolicConformanceHalmosVault
+[PASS] checkDepositPreservesSharePrice() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkDepositPreservesSharePrice()
-"#]],
-    );
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMintCanDiluteSharePrice",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosVault.t.sol:SymbolicConformanceHalmosVault
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMintCanDiluteSharePrice() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMintCanDiluteSharePrice"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMintCanDiluteSharePrice()
-"#]],
-    );
     assert!(!stdout.contains("Stuck"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
 }
@@ -596,18 +499,23 @@ contract SymbolicConformanceHalmosForkSetup is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkEtchedStorageInvariant"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkEtchedStorageInvariant",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosForkSetup.t.sol:SymbolicConformanceHalmosForkSetup
+[PASS] checkEtchedStorageInvariant(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkEtchedStorageInvariant(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.etch"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
 }
@@ -679,24 +587,23 @@ contract SymbolicConformanceHalmosElection is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCannotVoteTwiceWithAlternateSignature"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkCannotVoteTwiceWithAlternateSignature",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosElection.t.sol:SymbolicConformanceHalmosElection
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCannotVoteTwiceWithAlternateSignature(uint256,address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkCannotVoteTwiceWithAlternateSignature(uint256,address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
     assert!(!stdout.contains("Stuck"), "{stdout}");
 }
@@ -797,46 +704,43 @@ contract SymbolicConformanceHalmosMulticaller {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMulticallReturndata"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMulticallReturndata",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosMulticaller.t.sol:SymbolicConformanceHalmosMulticaller
+[PASS] checkMulticallReturndata(uint64,bytes) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMulticallReturndata(uint64,bytes)
-"#]],
-    );
     assert!(!stdout.contains("unsupported external CALL"), "{stdout}");
     assert!(!stdout.contains("Stuck"), "{stdout}");
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkMulticallFindsFailedCall"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMulticallFindsFailedCall",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosMulticaller.t.sol:SymbolicConformanceHalmosMulticaller
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xc298ec3b000000000000000000000000000000000000000000000000000000000000000d args=[13]] checkMulticallFindsFailedCall(uint64) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMulticallFindsFailedCall(uint64)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[13]
-"#]],
-    );
     assert!(!stdout.contains("unsupported external CALL"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
 }
@@ -916,36 +820,27 @@ contract SymbolicConformanceHalmosReentrancy is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_vaultBacksAttackerAccounting"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_vaultBacksAttackerAccounting",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceHalmosReentrancy.t.sol:SymbolicConformanceHalmosReentrancy
+[FAIL: assertion failed: 4000000000000000000 < 115792089237316195423570985008687907853269984665640564039456584007913129639936]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=depositOne() [ARGS]
+		[SENDER] [SENDER] calldata=withdrawOne() [ARGS]
+ invariant_vaultBacksAttackerAccounting() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-invariant_vaultBacksAttackerAccounting()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-depositOne()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-withdrawOne()
-"#]],
-    );
     assert!(!stdout.contains("Stuck"), "{stdout}");
 }
 
@@ -978,18 +873,15 @@ contract SymbolicConformanceArithmetic {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkArithmetic"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkArithmetic(uint256,int8,bytes32)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkArithmetic"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceArithmetic.t.sol:SymbolicConformanceArithmetic
+[PASS] checkArithmetic(uint256,int8,bytes32) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1019,18 +911,15 @@ contract SymbolicConformanceDynamicAbi {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkDynamic"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkDynamic(bytes,string,uint256[],(bytes,uint256[]))
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkDynamic"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceDynamicAbi.t.sol:SymbolicConformanceDynamicAbi
+[PASS] checkDynamic(bytes,string,uint256[],(bytes,uint256[])) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1069,36 +958,15 @@ contract SymbolicConformanceSelector {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkNoBackdoor"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkNoBackdoor(bytes4,uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[0x
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-42
-"#]],
-    );
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkNoBackdoor"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceSelector.t.sol:SymbolicConformanceSelector
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x8267e2eef6b19c7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a args=[0xf6b19c74, 42]] checkNoBackdoor(bytes4,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1146,18 +1014,27 @@ contract SymbolicConformanceErc20Invariant is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_totalSupplyConstant"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_totalSupplyConstant",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceErc20Invariant.t.sol:SymbolicConformanceErc20Invariant
+[PASS] invariant_totalSupplyConstant() ([METRICS])
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] invariant_totalSupplyConstant()
-"#]],
-    );
+╭------------------------------+----------+--------+---------+----------╮
+| Contract                     | Selector | Calls  | Reverts | Discards |
++=======================================================================+
+| SymbolicConformanceMiniErc20 | transfer | [..]
+╰------------------------------+----------+--------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1255,18 +1132,33 @@ contract SymbolicConformanceErc721Invariant is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_mintedOwnerIsNeverZero"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_mintedOwnerIsNeverZero",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceErc721Invariant.t.sol:SymbolicConformanceErc721Invariant
+[PASS] invariant_mintedOwnerIsNeverZero() ([METRICS])
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] invariant_mintedOwnerIsNeverZero()
-"#]],
-    );
+╭----------------------------------+---------------------+-------+---------+----------╮
+| Contract                         | Selector            | Calls | Reverts | Discards |
++=====================================================================================+
+| SymbolicConformanceErc721Handler | approveBobFromOwner | [..]
+|----------------------------------+---------------------+-------+---------+----------|
+| SymbolicConformanceErc721Handler | setOperatorForOwner | [..]
+|----------------------------------+---------------------+-------+---------+----------|
+| SymbolicConformanceErc721Handler | transferBobToOwner  | [..]
+|----------------------------------+---------------------+-------+---------+----------|
+| SymbolicConformanceErc721Handler | transferOwnerToBob  | [..]
+╰----------------------------------+---------------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1343,16 +1235,27 @@ contract SymbolicConformanceReentrancyInvariant is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_vaultBacksHandlerBalance"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_vaultBacksHandlerBalance",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicConformanceReentrancyInvariant.t.sol:SymbolicConformanceReentrancyInvariant
+[PASS] invariant_vaultBacksHandlerBalance() ([METRICS])
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] invariant_vaultBacksHandlerBalance()
-"#]],
-    );
+╭-------------------------------------+-------------+-------+---------+----------╮
+| Contract                            | Selector    | Calls | Reverts | Discards |
++================================================================================+
+| SymbolicConformanceReentrantHandler | depositOne  | [..]
+|-------------------------------------+-------------+-------+---------+----------|
+| SymbolicConformanceReentrantHandler | withdrawOne | [..]
+╰-------------------------------------+-------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

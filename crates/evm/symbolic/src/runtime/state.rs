@@ -317,7 +317,7 @@ impl PathState {
 
     pub(crate) fn inherit_branch_target_progress(&mut self, child: &Self) {
         if self.branch_target == child.branch_target && child.branch_target_reached {
-            self.branch_target_reached = true;
+            self.mark_branch_target_reached();
         }
     }
 
@@ -410,7 +410,7 @@ impl PathState {
                 SymExprKind::Not(_) => None,
                 SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
-                    Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
+                    Some(modulus) => usize::try_from(modulus - U256::ONE).ok(),
                     None => self
                         .expr_upper_bound_usize_cached(modulus, bounds, ordering, remaining)
                         .and_then(|bound| bound.checked_sub(1)),
@@ -452,7 +452,7 @@ impl PathState {
                     }
                     SymBinOp::URem => match right.as_const() {
                         Some(divisor) if divisor.is_zero() => Some(0),
-                        Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
+                        Some(divisor) => usize::try_from(divisor - U256::ONE).ok(),
                         None => {
                             self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)
                         }
@@ -843,7 +843,7 @@ impl PathState {
             let upper = if bits.is_zero() {
                 U256::ZERO
             } else {
-                U256::from(1) << usize::try_from(bits).expect("checked bit width")
+                U256::ONE << usize::try_from(bits).expect("checked bit width")
             };
             self.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, upper));
         }
@@ -884,8 +884,7 @@ impl PathState {
         if bits.is_zero() {
             self.constraints.push(SymBoolExpr::eq_word_const(cx, &value, U256::ZERO));
         } else if bits < U256::from(256) {
-            let magnitude =
-                U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
+            let magnitude = U256::ONE << (usize::try_from(bits).expect("checked bit width") - 1);
             let lt = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, magnitude);
             let ge = SymBoolExpr::cmp_word_const(
                 cx,
@@ -1071,10 +1070,10 @@ impl ExpectedRevert {
                     return None;
                 }
                 let prefix_len = SymExpr::constant(cx, U256::from(prefix.len()));
-                conditions.push(SymBoolExpr::cmp(
+                conditions.push(SymBoolExpr::cmp_word_expr(
                     cx,
                     SymCmpOp::Uge,
-                    return_data.len_word.clone(),
+                    &return_data.len_word,
                     prefix_len,
                 ));
                 conditions.extend((0..prefix.len()).map(|offset| {
@@ -1627,6 +1626,7 @@ pub(crate) struct SymbolicWorldState {
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
+    replay_symbolic_storage_keys: HashMap<Symbol, Vec<(Address, SymExpr)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1712,7 +1712,11 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn replay_storage_symbols(&self) -> SymbolicVars {
-        self.replay_storage_slots.keys().copied().collect()
+        self.replay_storage_slots
+            .keys()
+            .chain(self.replay_symbolic_storage_keys.keys())
+            .copied()
+            .collect()
     }
 
     pub(crate) fn replay_storage_assignments(
@@ -1734,6 +1738,15 @@ impl SymbolicWorld {
                             "conflicting symbolic storage replay assignments".to_string(),
                         ));
                     }
+                }
+            }
+        }
+        // Replay validates aliases between symbolic keys that take the same concrete value.
+        for (symbol, reads) in &self.replay_symbolic_storage_keys {
+            let Some(value) = model.get(symbol).copied() else { continue };
+            for (address, key) in reads {
+                if let Some(slot) = key.eval_model_if_complete(model)? {
+                    assignments.entry((*address, slot)).or_insert(value);
                 }
             }
         }
@@ -1877,13 +1890,16 @@ impl SymbolicWorld {
         };
         let symbol = symbolic_storage_symbol(cx, symbol_address, key);
         if let Some(slot) = concrete_key.or_else(|| key.as_const()) {
-            if has_arbitrary_storage {
+            if self.arbitrary_storage_all || has_arbitrary_storage {
                 self.record_replay_storage_slot(symbol, address, slot);
             }
             if let Some(source) = copied_source {
                 self.record_replay_storage_slot(symbol, source, slot);
                 self.record_replay_storage_slot(symbol, address, slot);
             }
+        } else if self.arbitrary_storage_all && copied_source.is_none() {
+            // Generic storage replays reads at symbolic keys too.
+            self.record_replay_symbolic_storage_key(symbol, address, key);
         }
         let value = SymExpr::get_var(cx, symbol);
         if let Some(source) = copied_source {
@@ -1905,10 +1921,33 @@ impl SymbolicWorld {
             .push(SymbolicReplayStorageSlot { address, slot });
     }
 
+    fn record_replay_symbolic_storage_key(
+        &mut self,
+        symbol: Symbol,
+        address: Address,
+        key: &SymExpr,
+    ) {
+        if self.replay_symbolic_storage_keys.get(&symbol).is_some_and(|reads| {
+            reads.iter().any(|(existing, existing_key)| *existing == address && existing_key == key)
+        }) {
+            return;
+        }
+        Arc::make_mut(&mut self.state)
+            .replay_symbolic_storage_keys
+            .entry(symbol)
+            .or_default()
+            .push((address, key.clone()));
+    }
+
     fn merge_replay_metadata_from(&mut self, other: &Self) {
         for (symbol, slots) in &other.replay_storage_slots {
             for slot in slots {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
+            }
+        }
+        for (symbol, reads) in &other.replay_symbolic_storage_keys {
+            for (address, key) in reads {
+                self.record_replay_symbolic_storage_key(*symbol, *address, key);
             }
         }
         let state = Arc::make_mut(&mut self.state);
@@ -2345,7 +2384,11 @@ impl SymbolicWorld {
 }
 
 fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> Symbol {
-    stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes())
+    stable_symbol(
+        cx,
+        "storage",
+        format!("{address:?}:{:?}", ExpressionDigests::identity([key])).as_bytes(),
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -2365,7 +2408,7 @@ pub(crate) struct SymbolicBlock {
 impl SymbolicBlock {
     pub(crate) fn new(cx: &mut SymCx) -> Self {
         Self {
-            chain_id: SymExpr::constant(cx, U256::from(1)),
+            chain_id: SymExpr::one(cx),
             coinbase: Address::ZERO,
             timestamp: SymExpr::zero(cx),
             number: SymExpr::zero(cx),
@@ -2388,11 +2431,8 @@ impl SymbolicBlock {
             .cheatcodes
             .as_ref()
             .and_then(|cheats| cheats.block.as_ref())
-            .unwrap_or(&evm_env.block_env);
-        let difficulty = block
-            .prevrandao()
-            .map(|hash| U256::from_be_bytes(hash.0))
-            .unwrap_or_else(|| block.difficulty());
+            .unwrap_or(evm_env.block_env());
+        let difficulty = block.prevrandao().map(Into::into).unwrap_or_else(|| block.difficulty());
 
         Self {
             chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),

@@ -18,7 +18,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+        uses: tempoxyz/gh-actions/actions/secure-runner@2ab28a31ae569be9f780c7675b684471060afa40
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -39,6 +39,5 @@ jobs:
             Cargo.lock
           commit-message: "chore(deps): bump solar dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
           title: "chore(deps): bump solar dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
-          labels: L-ignore
           body-path: ${{ steps.bump.outputs.changelog }}
           branch: deps/bump-solar

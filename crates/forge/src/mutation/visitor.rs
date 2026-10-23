@@ -5,7 +5,7 @@ use crate::mutation::{
 };
 use eyre::Report;
 use foundry_config::MutatorType;
-use solar::ast::{Expr, ItemContract, VariableDefinition, visit::Visit, yul};
+use solar::ast::{Expr, ItemContract, ItemFunction, VariableDefinition, visit::Visit, yul};
 use std::{ops::ControlFlow, path::PathBuf};
 
 #[cfg(test)]
@@ -52,33 +52,12 @@ impl<'src> MutantVisitor<'src> {
         }
     }
 
-    /// Use all mutators from registry (all operators enabled)
-    #[cfg(test)]
-    pub fn default(path: PathBuf) -> Self {
-        Self {
-            mutation_to_conduct: Vec::new(),
-            errors: Vec::new(),
-            mutator_registry: MutatorRegistry::default(),
-            path,
-            source: None,
-            contract_filter: None,
-            in_allowed_contract: true,
-            mutation_exclusions: MutationExclusionSet::new(),
-        }
-    }
-
     /// Use only a set of mutators
     #[cfg(test)]
     pub fn new_with_mutators(path: PathBuf, mutators: Vec<Box<dyn Mutator>>) -> Self {
         Self {
-            mutation_to_conduct: Vec::new(),
-            errors: Vec::new(),
             mutator_registry: MutatorRegistry::new_with_mutators(mutators),
-            path,
-            source: None,
-            contract_filter: None,
-            in_allowed_contract: true,
-            mutation_exclusions: MutationExclusionSet::new(),
+            ..Self::with_operators(path, &[])
         }
     }
 
@@ -164,6 +143,23 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
         let res = self.walk_item_contract(contract);
         self.in_allowed_contract = prev;
         res
+    }
+
+    fn visit_item_function(
+        &mut self,
+        function: &'ast ItemFunction<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        if self.in_allowed_contract && function.body.is_some() {
+            let mut builder = MutationContext::builder()
+                .with_path(self.path.clone())
+                .with_span(function.body_span)
+                .with_function(function);
+            if let Some(src) = self.source {
+                builder = builder.with_source(src);
+            }
+            self.collect_mutations(&builder.build().expect("function body context"));
+        }
+        self.walk_item_function(function)
     }
 
     fn visit_variable_definition(
@@ -351,7 +347,7 @@ contract Test {
                 .unwrap();
             let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
             drop(parser);
-            let mut visitor = MutantVisitor::default(path)
+            let mut visitor = MutantVisitor::with_operators(path, &MutatorType::all())
                 .with_source(source)
                 .with_mutation_exclusions(mutation_exclusions);
 
@@ -518,5 +514,130 @@ contract Test {
             assert!(unary_mutations.contains(&solar::ast::UnOpKind::BitNot));
             assert!(unary_mutations.contains(&solar::ast::UnOpKind::PostDec));
         });
+    }
+
+    #[test]
+    fn function_body_replacements_preserve_headers_and_skip_unsupported_functions() {
+        let source = r#"
+abstract contract Target {
+    constructor() { revert(); }
+    modifier guarded() { require(true); _; }
+    function effect() public guarded { revert(); }
+    function boolean() external pure returns (bool) { return 2 > 1; }
+    function unsigned() internal pure returns (uint8 result) { result = 7; }
+    function signed() private pure returns (int256) { return -7; }
+    function account() public view returns (address) { return msg.sender; }
+    function payableAccount() public view returns (address payable) { return payable(msg.sender); }
+    function tuple() public virtual returns (uint, bool);
+    function dynamic() public pure returns (bytes memory) { return hex"1234"; }
+    function multiple() public pure returns (uint, bool) { return (7, true); }
+    function testSomething() public { revert(); }
+    function invariantSomething() public { revert(); }
+    function setUp() public { revert(); }
+    function empty() public {}
+    function emptyCommented() public { /* No work. */ }
+    function implicitReturn() public pure returns (uint256 result) {}
+    receive() external payable { revert(); }
+    fallback() external { revert(); }
+}
+contract Other { function ignored() public { revert(); } }
+"#;
+        let mutants = function_body_mutants(source);
+        let first = &mutants[0];
+        let mut mutated = source.to_string();
+        mutated.replace_range(
+            first.span.lo().0 as usize..first.span.hi().0 as usize,
+            &first.mutation.to_string(),
+        );
+        assert_eq!(
+            mutated,
+            source.replacen(
+                "function effect() public guarded { revert(); }",
+                "function effect() public guarded {}",
+                1,
+            )
+        );
+        assert_eq!(
+            mutants.iter().map(|mutant| mutant.mutation.to_string()).collect::<Vec<_>>(),
+            [
+                "{}",
+                "{ return true; }",
+                "{ return false; }",
+                "{ return 0; }",
+                "{ return 1; }",
+                "{ return 0; }",
+                "{ return 1; }",
+                "{ return -1; }",
+                "{ return address(0); }",
+                "{ return payable(address(0)); }",
+                "{}",
+                "{}",
+                "{}",
+                "{ return 1; }",
+            ]
+        );
+    }
+
+    #[test]
+    fn function_body_replacements_skip_equivalent_constants() {
+        for (ty, expression, expected) in [
+            ("bool", "(true)", vec!["false"]),
+            ("bool", "(/* Always on. */ true)", vec!["false"]),
+            ("bool", "bool((false))", vec!["true"]),
+            ("uint256", "0x0", vec!["1"]),
+            ("uint8", "uint8(0)", vec!["1"]),
+            ("uint256", "1_0e-1", vec!["0"]),
+            ("int256", "-(int8((0x1)))", vec!["0", "1"]),
+            ("int256", "int256(-1)", vec!["0", "1"]),
+            ("int256", "-(-1)", vec!["0", "-1"]),
+            ("int256", "-0", vec!["1", "-1"]),
+            ("address", "address(uint160(0x0))", vec![]),
+            ("address payable", "payable(address((0)))", vec![]),
+            // Keep replacements when evaluating the original can have side effects.
+            ("bool", "other()", vec!["true", "false"]),
+            ("uint8", "uint8(other())", vec!["0", "1"]),
+        ] {
+            let source = format!(
+                "contract Target {{ function target() public returns ({ty}) {{ return {expression}; }} }}"
+            );
+            let replacements = function_body_mutants(&source)
+                .iter()
+                .map(|mutant| mutant.mutation.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                replacements,
+                expected.iter().map(|value| format!("{{ return {value}; }}")).collect::<Vec<_>>(),
+                "{source}"
+            );
+        }
+    }
+
+    fn function_body_mutants(source: &str) -> Vec<Mutant> {
+        let sess = Session::builder().with_silent_emitter(None).build();
+        sess.enter(|| {
+            let arena = Arena::new();
+            let mut parser = Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::Real("target.sol".into()),
+                || Ok(source.to_string()),
+            )
+            .unwrap();
+            let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+            drop(parser);
+            let mut visitor =
+                MutantVisitor::with_operators("target.sol".into(), &[MutatorType::FunctionBody])
+                    .with_source(source)
+                    .with_contract_filter(|name| name == "Target");
+            let _ = visitor.visit_source_unit(&ast);
+            assert!(visitor.take_errors().is_empty());
+            for mutant in &visitor.mutation_to_conduct {
+                assert_eq!(
+                    mutant.original,
+                    &source[mutant.span.lo().0 as usize..mutant.span.hi().0 as usize]
+                );
+            }
+            visitor.mutation_to_conduct
+        })
     }
 }

@@ -1,7 +1,9 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
+use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 #[casttest]
@@ -125,7 +127,7 @@ async fn cast_run_uses_chain_rpc_endpoint(prj: _, cmd: _) {
             TransactionRequest::default()
                 .from(sender)
                 .to(address!("000000000000000000000000000000000000dEaD"))
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .into(),
         )
         .await
@@ -182,7 +184,7 @@ Executing previous transactions from the block.
 // tests cast can decode external libraries traces with project cached selectors
 #[forgetest_init]
 async fn flaky_decode_external_libraries_with_cached_selectors(prj: _, cmd: _) {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     prj.add_source(
         "ExternalLib",
@@ -236,19 +238,26 @@ contract CounterInExternalLibScript is Script {
     ])
     .assert_success();
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(1))
-        .await
+    // Automining may put the library and contract deployments in separate blocks.
+    let broadcast: serde_json::Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/CounterInExternalLibScript.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let tx_hash = broadcast["transactions"]
+        .as_array()
         .unwrap()
-        .unwrap()
-        .tx_hash();
+        .iter()
+        .find(|tx| tx["contractName"] == "CounterInExternalLib")
+        .expect("contract deployment transaction")["hash"]
+        .as_str()
+        .expect("contract deployment transaction hash");
 
     // Build and cache project selectors.
     cmd.forge_fuse().args(["build"]).assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
     // Assert cast with local artifacts can decode external lib signature.
     cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args(["run", tx_hash, "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -283,12 +292,9 @@ async fn flaky_cast_run_impersonated_tx(cmd: _) {
     let tx = TransactionRequest::default()
         .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
         .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-        .with_input(
-            Bytes::from_str(
-                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-            )
-            .unwrap(),
-        );
+        .with_input(bytes!(
+            "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c"
+        ));
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -457,7 +463,7 @@ async fn cast_run_replays_elastic_chain_id_on_anvil(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
 
     cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()]).assert_success().stdout_eq(
@@ -483,7 +489,7 @@ async fn cast_run_rejects_elastic_chains(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -514,7 +520,7 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -536,6 +542,47 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
     }
 }
 
+// Tracing replays exact chain history, so it ignores the number-based state opt-in.
+#[casttest]
+async fn cast_run_keeps_hash_addressed_state(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let mut endpoint = handle.http_endpoint();
+    for method in ["anvil_nodeInfo", "anvil_metadata"] {
+        endpoint = spawn_rpc_proxy_method_not_found_before(endpoint, method, usize::MAX).await;
+    }
+    let mut recorded = Vec::new();
+    for method in ["eth_getBalance", "eth_getTransactionCount", "eth_getCode", "eth_getStorageAt"] {
+        let (next_endpoint, requests) = spawn_rpc_proxy_recording_method(endpoint, method).await;
+        endpoint = next_endpoint;
+        recorded.push(requests);
+    }
+
+    cmd.env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint]).assert_success();
+
+    let mut reads = 0;
+    for requests in recorded {
+        let requests = requests.lock().unwrap();
+        reads += requests.len();
+        assert!(
+            requests.iter().all(|params| params.as_array().unwrap().last().unwrap().is_object()),
+            "{requests:?}"
+        );
+    }
+    assert!(reads > 0);
+}
+
 // A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
 // overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
 // transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
@@ -544,18 +591,13 @@ async fn cast_run_warns_on_receipt_mismatch(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     // MCOPY(0, 0, 0) STOP
-    api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000aa"),
-        hex!("0x6000600060005e00").into(),
-    )
-    .await
-    .unwrap();
+    api.anvil_set_code(Address::with_last_byte(0xaa), bytes!("0x6000600060005e00")).await.unwrap();
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
     let mut tx_hashes = Vec::new();
     for (to, input) in [
-        (address!("0x00000000000000000000000000000000000000aa"), Bytes::new()),
-        (address!("0x00000000000000000000000000000000000000cc"), vec![1u8; 1000].into()),
+        (Address::with_last_byte(0xaa), Bytes::new()),
+        (Address::with_last_byte(0xcc), vec![1u8; 1000].into()),
     ] {
         let receipt = provider
             .send_transaction(
@@ -627,7 +669,7 @@ async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
     let output = cmd
         .args([
             "run",
-            &receipt.transaction_hash().to_string(),
+            &receipt.tx_hash().to_string(),
             "--rpc-url",
             &handle.http_endpoint(),
             "--evm-version",
@@ -665,4 +707,85 @@ Transaction successfully executed.
 ERC-8021 attribution: baseapp (app), privy (wallet), flashbots (service), titan (service)
 
 "#]]);
+}
+
+// The transaction returned by the RPC must be the one that was requested.
+#[casttest]
+async fn cast_run_rejects_mismatched_transaction(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let mut tx_hashes = Vec::new();
+    for to in [Address::with_last_byte(0xaa), Address::with_last_byte(0xbb)] {
+        let receipt = provider
+            .send_transaction(TransactionRequest::default().with_from(from).with_to(to).into())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push(receipt.transaction_hash());
+    }
+    let [requested, returned] = tx_hashes[..] else { unreachable!() };
+    let returned_tx = provider.get_transaction_by_hash(returned).await.unwrap().unwrap();
+    let (endpoint, _) = spawn_rpc_proxy_canned_method(
+        handle.http_endpoint(),
+        "eth_getTransactionByHash",
+        serde_json::to_value(returned_tx).unwrap(),
+    )
+    .await;
+
+    for args in [&[][..], &["--debug-trace-transaction"]] {
+        cmd.cast_fuse()
+            .args(["run", &requested.to_string(), "--rpc-url", &endpoint])
+            .args(args)
+            .assert_failure()
+            .stderr_eq(format!(
+                "Error: RPC returned transaction {returned} for requested {requested}\n"
+            ));
+    }
+}
+
+// A forked Anvil replays upstream transactions with the hardfork of the upstream chain: Cancun
+// charges 21000 where EIP-2780 charges 15000.
+#[casttest]
+async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
+    for (hardfork, gas) in
+        [(EthereumHardfork::Cancun, 21_000), (EthereumHardfork::Amsterdam, 15_000)]
+    {
+        let (upstream_api, upstream) =
+            anvil::spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let mut accounts = upstream.dev_accounts();
+        let tx = TransactionRequest::default()
+            .with_from(accounts.next().unwrap())
+            .with_to(accounts.next().unwrap());
+        let receipt = upstream
+            .http_provider()
+            .send_transaction(tx.into())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert_eq!(receipt.gas_used, gas);
+        // Fork after the transaction's block, so that the fork serves it as upstream history.
+        upstream_api.evm_mine(None).await.unwrap();
+
+        let (_, fork) = anvil::spawn(
+            NodeConfig::test()
+                .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+                .with_eth_rpc_url(Some(upstream.http_endpoint())),
+        )
+        .await;
+        cmd.cast_fuse()
+            .args([
+                "run",
+                &receipt.transaction_hash.to_string(),
+                "--rpc-url",
+                &fork.http_endpoint(),
+            ])
+            .with_no_redact()
+            .assert_success()
+            .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n"));
+    }
 }

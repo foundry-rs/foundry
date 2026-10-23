@@ -145,6 +145,20 @@ impl InvariantCampaignState {
         self.cancellation.request_stop();
     }
 
+    /// Returns whether fail-fast or Ctrl-C stopped the campaign before its timeout or
+    /// `planned_runs`.
+    ///
+    /// The deadline and terminal failures latch the campaign stop flag, while early exit does not,
+    /// so a timed campaign without a latched stop was interrupted.
+    pub fn interrupted(&self, runs: usize, planned_runs: u32) -> bool {
+        self.early_exit().should_stop()
+            && if self.timed {
+                !self.cancellation.stop_requested()
+            } else {
+                runs < planned_runs as usize
+            }
+    }
+
     pub fn should_emit_metrics_report(&self, interval: Duration) -> bool {
         let mut last_report =
             self.last_metrics_report.lock().expect("metrics report lock poisoned");
@@ -630,6 +644,24 @@ mod tests {
         assert_eq!(state.throughput_totals(), (2, 50));
         assert_eq!(state.increment_runs(), 1);
         assert_eq!(state.total_runs(), 1);
+    }
+
+    #[test]
+    fn campaign_state_reports_early_exit_before_completion_as_interrupted() {
+        let early_exit = EarlyExit::new(true);
+        let untimed = InvariantCampaignState::new(early_exit.clone(), None);
+        let timed = InvariantCampaignState::new(early_exit.clone(), Some(3600));
+        let expired = InvariantCampaignState::new(early_exit.clone(), Some(0));
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(expired.should_stop());
+        assert!(!untimed.interrupted(4, 100));
+        assert!(!timed.interrupted(4, 100));
+
+        early_exit.record_failure();
+        assert!(untimed.interrupted(4, 100));
+        assert!(!untimed.interrupted(100, 100));
+        assert!(timed.interrupted(100, 100));
+        assert!(!expired.interrupted(4, 100));
     }
 
     #[test]

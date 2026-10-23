@@ -22,7 +22,7 @@ use std::{str::FromStr, time::Duration};
 #[tokio::test(flavor = "multi_thread")]
 async fn executes_rpc_notification_without_response() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let account = address!("0000000000000000000000000000000000000001");
+    let account = Address::with_last_byte(1);
     let balance = U256::from(42);
 
     let response = reqwest::Client::new()
@@ -376,7 +376,7 @@ async fn test_load_state_removes_canonical_mappings_above_restored_head() {
     let transaction_hash = receipt.transaction_hash;
 
     assert!(api.anvil_load_state(older_dump).await.unwrap());
-    assert_eq!(api.block_number().unwrap(), U256::from(1));
+    assert_eq!(api.block_number().unwrap(), U256::ONE);
     assert!(api.block_by_number(2.into()).await.unwrap().is_none());
     assert!(api.block_transaction_count_by_number(2.into()).await.unwrap().is_none());
     assert!(api.transaction_by_block_number_and_index(2.into(), 0.into()).await.unwrap().is_none());
@@ -498,7 +498,7 @@ async fn can_load_state_without_block_history_at_runtime() {
     state["block"]["coinbase"] = json!(loaded_beneficiary);
 
     let (api, _handle) = spawn(NodeConfig::test()).await;
-    api.backend.set_coinbase(address!("0000000000000000000000000000000000000001"));
+    api.backend.set_coinbase(Address::with_last_byte(1));
     api.mine_one().await.unwrap();
     let parent =
         api.block_by_number(alloy_eips::BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
@@ -546,7 +546,7 @@ async fn state_without_block_history_restores_osaka_blob_excess_gas() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_nonempty_block_history_without_best_block() {
     let (source, _handle) = spawn(NodeConfig::test()).await;
-    source.backend.set_coinbase(address!("0000000000000000000000000000000000000002"));
+    source.backend.set_coinbase(Address::with_last_byte(2));
     source.mine_one().await.unwrap();
     source.mine_one().await.unwrap();
     source.mine_one().await.unwrap();
@@ -557,7 +557,7 @@ async fn rejects_nonempty_block_history_without_best_block() {
         state.blocks.iter().find(|block| block.header.number == 2).unwrap().header.hash_slow();
 
     let (api, _handle) = spawn(NodeConfig::test()).await;
-    let original_coinbase = address!("0000000000000000000000000000000000000001");
+    let original_coinbase = Address::with_last_byte(1);
     api.backend.set_coinbase(original_coinbase);
     api.mine_one().await.unwrap();
     let original =
@@ -656,7 +656,7 @@ async fn test_make_sure_historical_state_is_not_cleared_on_dump() {
     assert_eq!(block_number, Uint::from(3));
 
     // Makes sure historical states of the new instance are not cleared.
-    let code = provider.get_code_at(*address).block_id(BlockId::number(2)).await.unwrap();
+    let code = provider.get_code_at(*address).number(2).await.unwrap();
 
     assert_ne!(code, Bytes::new());
 }
@@ -767,7 +767,7 @@ async fn test_fork_load_state() {
 
     let init_balance_alice = provider.get_balance(alice).await.unwrap();
 
-    let value = Unit::ETHER.wei().saturating_mul(U256::from(1)); // 1 ether
+    let value = Unit::ETHER.wei().saturating_mul(U256::ONE); // 1 ether
     let tx = TransactionRequest::default().with_to(alice).with_value(value).with_from(bob);
     let tx = WithOtherFields::new(tx);
 
@@ -1049,7 +1049,7 @@ async fn computes_next_base_fee_after_loading_state() {
 
     let base_fee_empty_chain = api.backend.fees().base_fee();
 
-    let value = Unit::ETHER.wei().saturating_mul(U256::from(1)); // 1 ether
+    let value = Unit::ETHER.wei().saturating_mul(U256::ONE); // 1 ether
     let tx = TransactionRequest::default().with_to(alice).with_value(value).with_from(bob);
     let tx = WithOtherFields::new(tx);
 
@@ -1155,7 +1155,7 @@ async fn test_backward_compatibility_mixed_formats_deserialization_v1_2() {
     let block_env = state.block.unwrap();
 
     assert_eq!(block_env.number, U256::from(3));
-    assert_eq!(block_env.beneficiary, address!("0x1111111111111111111111111111111111111111"));
+    assert_eq!(block_env.beneficiary, Address::repeat_byte(0x11));
     assert_eq!(block_env.timestamp, U256::from(1751619509));
     assert_eq!(block_env.gas_limit, 0x1c9c380);
     assert_eq!(block_env.basefee, 1_000_000_000);
@@ -1194,8 +1194,8 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
     let state: SerializableState = serde_json::from_str(&partial_old_format.to_string()).unwrap();
 
     let block_env = state.block.unwrap();
-    assert_eq!(block_env.number, U256::from(1));
-    assert_eq!(block_env.beneficiary, address!("0x0000000000000000000000000000000000000000"));
+    assert_eq!(block_env.number, U256::ONE);
+    assert_eq!(block_env.beneficiary, Address::ZERO);
     assert_eq!(block_env.timestamp, U256::from(0x688c83b5));
     assert_eq!(block_env.gas_limit, 0x1c9c380);
     assert_eq!(block_env.basefee, 0x3b9aca00);
@@ -1456,8 +1456,8 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
 
     // Verify the old state was loaded correctly with `coinbase` to `beneficiary` conversion.
     let block_env = deserialized_state.block.unwrap();
-    assert_eq!(block_env.number, U256::from(1));
-    assert_eq!(block_env.beneficiary, address!("0000000000000000000000000000000000000001"));
+    assert_eq!(block_env.number, U256::ONE);
+    assert_eq!(block_env.beneficiary, Address::with_last_byte(1));
     assert_eq!(block_env.gas_limit, 0x1c9c380);
     assert_eq!(block_env.basefee, 0x3b9aca00);
 
@@ -1468,13 +1468,13 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
     assert_eq!(deserialized_state.accounts.len(), 13);
 
     // Test specific accounts from the old dump.
-    let deployer_addr = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap();
+    let deployer_addr = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
     let deployer_account = deserialized_state.accounts.get(&deployer_addr).unwrap();
     assert_eq!(deployer_account.nonce, 1);
     assert_eq!(deployer_account.balance, U256::from_str("0x21e19e03b1e9e55d17f").unwrap());
 
     // Test contract account.
-    let contract_addr = "0x5fbdb2315678afecb367f032d93f642f64180aa3".parse().unwrap();
+    let contract_addr = address!("0x5fbdb2315678afecb367f032d93f642f64180aa3");
     let contract_account = deserialized_state.accounts.get(&contract_addr).unwrap();
     assert_eq!(contract_account.nonce, 1);
     assert_eq!(contract_account.balance, U256::ZERO);
@@ -1489,7 +1489,7 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
 
     // Verify the state was loaded correctly.
     let block_number = api.block_number().unwrap();
-    assert_eq!(block_number, U256::from(1));
+    assert_eq!(block_number, U256::ONE);
 
     // Verify account balances are preserved.
     let provider = _handle.http_provider();
@@ -1530,7 +1530,7 @@ async fn blockhash_opcode_consistent_after_load_state() {
 
     // Runtime code returning BLOCKHASH(1):
     // PUSH1 1, BLOCKHASH, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
-    let code = Bytes::from_str("0x60014060005260206000f3").unwrap();
+    let code = bytes!("0x60014060005260206000f3");
     let target = address!("00000000000000000000000000000000000b10c4");
 
     let mut overrides = StateOverride::default();
@@ -1569,7 +1569,7 @@ async fn blockhash_opcode_consistent_after_loading_older_state() {
 
     // Runtime code returning BLOCKHASH(1):
     // PUSH1 1, BLOCKHASH, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
-    let code = Bytes::from_str("0x60014060005260206000f3").unwrap();
+    let code = bytes!("0x60014060005260206000f3");
     let target = address!("00000000000000000000000000000000000b10c4");
 
     let mut overrides = StateOverride::default();

@@ -94,7 +94,7 @@ impl AccessListArgs {
             Some(chain) => chain.id(),
             None => provider.get_chain_id().await?,
         };
-        let (sender, _) = read_only_sender::<N>(&browser, wallet, &tx.tempo, chain_id).await?;
+        let (sender, _) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?

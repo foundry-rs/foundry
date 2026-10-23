@@ -148,7 +148,7 @@ contract PrecompileTraceTest is Test {
         vm.mockFunction(address(0x100), address(0x02), callData);
         (bool success, bytes memory result) = address(0x100).call(callData);
         assertTrue(success);
-        assertEq(result.length, 0);
+        assertEq(result, abi.encodePacked(sha256(callData)));
     }
 
     function test_mocked_p256_call() public {
@@ -277,7 +277,7 @@ Traces:
         .stdout_eq(str![[r#"
 ...
     ├─ [..] 0x0000000000000000000000000000000000000100::ordinaryCode()
-    │   └─ ← [Return]
+    │   └─ ← [Return] true
 ...
 "#]]);
 
@@ -369,7 +369,16 @@ contract PrecompileCheatcodeLoadTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"]).assert_success();
+    cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/PrecompileCheatcodeLoad.t.sol:PrecompileCheatcodeLoadTest
+[PASS] test_load_allows_precompile_target() ([GAS])
+[PASS] test_mutation_cheatcodes_reject_precompile_target() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -820,5 +829,14 @@ contract ArbSysGasTest is Test {
     );
 
     cmd.env("FOUNDRY_CHAIN_ID", "42161");
-    cmd.args(["test", "--mt", "test_arbsys_", "--isolate"]).assert_success();
+    cmd.args(["test", "--mt", "test_arbsys_", "--isolate"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/ArbSysGas.t.sol:ArbSysGasTest
+[PASS] test_arbsys_arb_block_number_gas() ([GAS])
+[PASS] test_arbsys_isolated_call_gas() ([GAS])
+[PASS] test_arbsys_isolated_create_gas() ([GAS])
+[PASS] test_arbsys_other_selector_uses_code() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

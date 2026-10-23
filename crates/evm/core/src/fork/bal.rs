@@ -1,6 +1,6 @@
 //! Validates and caches BAL post-state, and prepares transaction forks' parent-block BALs.
 
-use super::ResolvedFork;
+use super::Fork;
 use crate::opts::ForkContext;
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
@@ -25,7 +25,7 @@ use std::time::Duration;
 /// Fetches and validates a parent BAL without mutating a database or propagating BAL failures.
 pub(super) async fn prepare<P: Provider<AnyNetwork>>(
     provider: &P,
-    resolved: &ResolvedFork,
+    resolved: &Fork,
     block: &AnyRpcBlock,
 ) -> Option<BlockAccessList> {
     if !eligible_source(resolved.context())
@@ -129,7 +129,7 @@ fn cache_bal_accounts(accounts: &mut AddressHashMap<AccountInfo>, bal: &BlockAcc
         if let (Some(balance), Some(nonce), Some(code)) =
             (account.balance_post_state(), account.nonce_post_state(), account.code_changes.last())
         {
-            accounts.entry(account.address).or_insert_with(|| {
+            accounts.entry(account.address()).or_insert_with(|| {
                 let code = Bytecode::new_raw(code.new_code.clone());
                 AccountInfo {
                     balance,
@@ -151,7 +151,7 @@ fn cache_bal_storage(storage: &mut AddressHashMap<U256Map<U256>>, bal: &BlockAcc
     let mut inserted_slots = 0;
     for account in bal {
         if !account.storage_changes.is_empty() {
-            let cached_slots = storage.entry(account.address).or_insert_with(|| {
+            let cached_slots = storage.entry(account.address()).or_insert_with(|| {
                 U256Map::with_capacity_and_hasher(account.storage_changes.len(), Default::default())
             });
             let slots_before = cached_slots.len();

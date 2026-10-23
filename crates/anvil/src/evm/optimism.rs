@@ -2,7 +2,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
 
     use super::super::tests::{
         CustomPrecompileFactory, ETH_PRAGUE_PRECOMPILE, PAYLOAD, PRECOMPILE_ADDR,
@@ -15,7 +14,7 @@ mod tests {
     use op_revm::{OpSpecId, OpTransaction};
     use revm::{
         context::{BlockEnv, CfgEnv, TxEnv},
-        database::{EmptyDB, EmptyDBTyped},
+        database::EmptyDB,
         inspector::NoOpInspector,
         primitives::hardfork::SpecId,
     };
@@ -27,7 +26,7 @@ mod tests {
     fn create_op_evm(
         _spec: SpecId,
         op_spec: OpSpecId,
-    ) -> (OpTx, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap, OpTx>) {
+    ) -> (OpTx, OpEvm<EmptyDB, NoOpInspector, PrecompilesMap, OpTx>) {
         let tx = OpTx(OpTransaction::<TxEnv> {
             base: TxEnv {
                 kind: TxKind::Call(PRECOMPILE_ADDR),
