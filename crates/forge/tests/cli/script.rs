@@ -7976,6 +7976,7 @@ async fn script_check_contract_sizes_uses_amsterdam_code_size_limit(prj: _, cmd:
     write_large_runtime_deploy_script(&prj, 50_000);
     prj.update_config(|config| {
         config.evm_version = EvmVersion::Amsterdam;
+        config.experimental = true;
     });
 
     let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000_000))).await;
@@ -8015,6 +8016,7 @@ async fn script_check_contract_sizes_uses_network_specific_spec(prj: _, cmd: _) 
     ] {
         prj.update_config(|config| {
             config.evm_version = EvmVersion::Amsterdam;
+            config.experimental = true;
             config.networks = networks;
             config.hardfork = hardfork.map(|hardfork| hardfork.parse().unwrap());
         });
@@ -8036,7 +8038,7 @@ async fn script_check_contract_sizes_uses_network_specific_spec(prj: _, cmd: _) 
         let assert = cmd.assert_success();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
         assert!(
-            stderr.contains("above the contract size limit (50308 > 24576)"),
+            stderr.contains("above the contract size limit (50322 > 24576)"),
             "missing size warning for {hardfork:?}: {stderr}"
         );
     }

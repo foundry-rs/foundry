@@ -1316,6 +1316,11 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
+ "commonware-parallel",
+ "commonware-utils",
  "ctrlc",
  "ethereum_ssz",
  "evm2",
@@ -1344,11 +1349,13 @@ dependencies = [
  "parking_lot",
  "rand 0.8.8",
  "rand 0.9.5",
+ "rand_chacha 0.10.0",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
  "tempfile",
  "tempo-alloy",
+ "tempo-dkg-onchain-artifacts 1.16.1 (git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88)",
  "tempo-evm",
  "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-precompiles",
@@ -5756,7 +5763,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -6005,7 +6012,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6037,7 +6044,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -6046,7 +6053,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6066,7 +6073,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6079,7 +6086,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6428,7 +6435,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6543,7 +6550,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/mablr/foundry-core?rev=8b3b454477b6b289b777a57818bf9a07dca0c866#8b3b454477b6b289b777a57818bf9a07dca0c866"
+source = "git+https://github.com/mablr/foundry-core?rev=d5941a649e83b8bf6a60546fdb991df1f708144f#d5941a649e83b8bf6a60546fdb991df1f708144f"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -12856,7 +12863,7 @@ dependencies = [
  "reth-network-peers",
  "serde",
  "serde_json",
- "tempo-dkg-onchain-artifacts",
+ "tempo-dkg-onchain-artifacts 1.16.1 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-hardfork 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
 ]
@@ -12923,6 +12930,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tempo-dkg-onchain-artifacts"
+version = "1.16.1"
+source = "git+https://github.com/mablr/tempo?rev=2c25f7cd8267b205a6b95e08bbc73baf887bea88#2c25f7cd8267b205a6b95e08bbc73baf887bea88"
+dependencies = [
+ "bytes",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-utils",
+]
+
+[[package]]
 name = "tempo-evm"
 version = "1.16.1"
 source = "git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c#158118b957dad5080a6d29d02d59a4783669276c"
@@ -12949,7 +12967,7 @@ dependencies = [
  "reth-storage-api",
  "tempo-chainspec 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-contracts 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
- "tempo-dkg-onchain-artifacts",
+ "tempo-dkg-onchain-artifacts 1.16.1 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "tempo-precompiles",
  "tempo-primitives 1.16.0 (git+https://github.com/mablr/tempo?rev=158118b957dad5080a6d29d02d59a4783669276c)",
  "thiserror 2.0.21",

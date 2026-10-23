@@ -598,7 +598,7 @@ async fn can_get_node_info() {
         network: Some("ethereum".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2061,7 +2061,7 @@ async fn can_get_node_info_tempo_t0() {
         network: Some("tempo".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2109,7 +2109,7 @@ async fn can_get_node_info_tempo_t1() {
         network: Some("tempo".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2146,7 +2146,7 @@ async fn can_get_node_info_monad() {
         network: Some("monad".to_string()),
     };
 
-    assert_eq!(node_info, expected_node_info);
+    assert_eq!(node_info.inner, expected_node_info);
 }
 
 #[tokio::test(flavor = "multi_thread")]

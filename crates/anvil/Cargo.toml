@@ -44,6 +44,15 @@ tempo-evm.workspace = true
 tempo-hardfork.workspace = true
 tempo-precompiles-evm2.workspace = true
 
+# Tempo consensus certificate primitives.
+commonware-codec.workspace = true
+commonware-cryptography = { workspace = true, features = ["bls12381", "std"] }
+commonware-math.workspace = true
+commonware-parallel.workspace = true
+commonware-utils.workspace = true
+rand_chacha.workspace = true
+tempo-dkg-onchain-artifacts.workspace = true
+
 # Base
 base-common-chains = { workspace = true, optional = true, features = ["std"] }
 base-common-consensus = { workspace = true, optional = true, features = ["k256", "serde", "std"] }

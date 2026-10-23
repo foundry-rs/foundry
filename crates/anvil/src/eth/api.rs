@@ -88,7 +88,7 @@ use anvil_core::{
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
-    types::{ReorgOptions, TransactionData},
+    types::{NodeBlobParams, ReorgOptions, TransactionData},
 };
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -526,7 +526,7 @@ impl<N: Network> EthApi<N> {
     /// Retrieves the Anvil node configuration params.
     ///
     /// Handler for RPC call: `anvil_nodeInfo`
-    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
+    pub async fn anvil_node_info(&self) -> Result<WithOtherFields<NodeInfo>> {
         node_info!("anvil_nodeInfo");
         let _lifecycle = self.lifecycle_lock.read().await;
 
@@ -535,7 +535,7 @@ impl<N: Network> EthApi<N> {
         let tx_order = self.transaction_order.read();
         let hard_fork = self.backend.hardfork().name();
 
-        Ok(NodeInfo {
+        let mut node_info = WithOtherFields::new(NodeInfo {
             current_block_number: self.backend.best_number(),
             current_block_timestamp: evm_env.block_env.timestamp.saturating_to(),
             current_block_hash: self.backend.best_hash(),
@@ -564,7 +564,17 @@ impl<N: Network> EthApi<N> {
             // Always emit the execution profile. Older Anvil versions omitted plain Ethereum, so
             // consumers must still treat `None` as legacy unspecified metadata.
             network: Some(self.backend.execution_profile_name().to_string()),
-        })
+        });
+        // Forks of this node price blobs with these params, which can differ from those of the
+        // reported hardfork when this node is itself a fork.
+        node_info
+            .other
+            .insert_value(
+                "blobParams".to_string(),
+                NodeBlobParams::from(self.backend.blob_params()),
+            )
+            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        Ok(node_info)
     }
 
     /// Retrieves metadata about the Anvil instance.

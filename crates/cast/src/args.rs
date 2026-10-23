@@ -382,8 +382,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
             print_scalar(out)?;
         }
-        // TODO(json): multi-line output (one line per topic + data field), needs structured object
-        // envelope
         CastSubcommand::Abi(AbiSubcommand::AbiEncodeEvent { sig, args }) => {
             let event = get_event(&sig)?;
             if event.inputs.len() != args.len() {
@@ -1294,7 +1292,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 value.wrapping_shr(bits.saturating_to())
             })?)?;
         }
-        // TODO(json): multi-line source code or directory expansion, needs structured envelope
         CastSubcommand::Misc(MiscSubcommand::Source {
             address,
             directory,

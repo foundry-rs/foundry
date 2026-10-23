@@ -36,6 +36,7 @@ use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
 };
 use alloy_transport::TransportError;
+use anvil_core::types::NodeBlobParams;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
@@ -44,9 +45,8 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm_core::{
-    backend::account_fetch_policy_for_source,
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    utils::{get_blob_params, get_blob_params_by_hardfork},
+    backend::account_fetch_policy_for_source, constants::DEFAULT_CREATE2_DEPLOYER,
+    utils::get_blob_params_by_hardfork,
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -155,19 +155,25 @@ impl AnvilNodeInfoProbe {
         Self { identified, skip, inconclusive: false }
     }
 
-    async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
+    async fn request(
+        &mut self,
+        provider: &RetryProvider,
+    ) -> Result<Option<(NodeInfo, Option<BlobParams>)>> {
         if self.skip {
             return Ok(None);
         }
         let Ok(response) = tokio::time::timeout(
             FORK_IDENTITY_PROBE_TIMEOUT,
-            provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()),
+            provider.raw_request::<_, Value>("anvil_nodeInfo".into(), ()),
         )
         .await
         else {
             self.inconclusive = true;
             return Ok(None);
         };
+        let response = response.and_then(|value| {
+            decode_node_info(value).map_err(|err| TransportError::deser_err(err, "anvil_nodeInfo"))
+        });
         match response {
             Ok(node_info) => {
                 self.identified = true;
@@ -182,6 +188,20 @@ impl AnvilNodeInfoProbe {
             }
         }
     }
+}
+
+/// Decodes an `anvil_nodeInfo` response and the blob params that newer Anvil versions add to it.
+///
+/// `WithOtherFields<NodeInfo>` cannot decode it: serde's flatten buffer rejects the `u128` retry
+/// backoff that fork endpoints report.
+fn decode_node_info(mut value: Value) -> serde_json::Result<(NodeInfo, Option<BlobParams>)> {
+    let blob_params = value
+        .as_object_mut()
+        .and_then(|fields| fields.remove("blobParams"))
+        .map(serde_json::from_value::<NodeBlobParams>)
+        .transpose()?
+        .map(BlobParams::from);
+    Ok((serde_json::from_value(value)?, blob_params))
 }
 
 /// One-shot source data for a transaction-hash fork replay.
@@ -1687,7 +1707,7 @@ impl NodeConfig {
         source_chain_id_override: Option<u64>,
         node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> Result<ForkEndpointIdentity> {
-        let Some(node_info) = node_info_probe.request(provider).await? else {
+        let Some((node_info, blob_params)) = node_info_probe.request(provider).await? else {
             let source_chain_id = source_chain_id_override.unwrap_or(fallback_execution_chain_id);
             let explicit_fallback = self.has_explicit_network_selection().then_some(self.networks);
             let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
@@ -1702,6 +1722,7 @@ impl NodeConfig {
                 network: network_profile.map(|profile| profile.execution_network()),
                 network_profile,
                 hardfork: None,
+                blob_params: None,
                 instance_id: None,
                 source_fork_block_number: None,
                 source_fork_block_hash: None,
@@ -1768,6 +1789,7 @@ impl NodeConfig {
             network: Some(network),
             network_profile: Some(network_profile),
             hardfork: Some(hardfork),
+            blob_params,
             instance_id,
             source_fork_block_number,
             source_fork_block_hash,
@@ -2175,8 +2197,19 @@ latest block number: {latest_block}"
 
         // Blob rules and fee state belong to the selected fork context even when the target block
         // predates Cancun. Always replace both so a reset cannot retain the previous fork's
-        // schedule or excess gas.
-        let blob_params = get_blob_params(source_chain_id, block.header.timestamp());
+        // schedule or excess gas. The source headers' excess blob gas was produced under the source
+        // chain's rules, so prefer its public schedule. For chains without one, use the blob params
+        // an Anvil endpoint reports: it can be a fork that executes a different hardfork than the
+        // blob schedule it inherited, so its hardfork is only a fallback for older versions.
+        let blob_params =
+            source_hardfork(effective_network, source_chain_id, block.header.timestamp())
+                .map(get_blob_params_by_hardfork)
+                .or(fork_identity.blob_params)
+                .unwrap_or_else(|| {
+                    get_blob_params_by_hardfork(
+                        fork_identity.hardfork.unwrap_or(effective_hardfork),
+                    )
+                });
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
@@ -2826,6 +2859,7 @@ mod tests {
             network: Some(NetworkVariant::Ethereum),
             network_profile: Some(NetworkConfigs::default()),
             hardfork: None,
+            blob_params: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -2870,6 +2904,7 @@ mod tests {
             network: Some(NetworkVariant::Ethereum),
             network_profile: Some(NetworkConfigs::default()),
             hardfork: Some(EthereumHardfork::Prague.into()),
+            blob_params: None,
             instance_id: Some(B256::with_last_byte(1)),
             source_fork_block_number: None,
             source_fork_block_hash: None,
