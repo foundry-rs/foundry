@@ -13,7 +13,8 @@ mod handler;
 mod storage;
 mod target;
 
-forgetest_init!(jev_missing_key_falls_back_to_rng, |prj, cmd| {
+#[forgetest_init]
+fn jev_missing_key_falls_back_to_rng(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 3;
@@ -56,7 +57,49 @@ Warning: Jev guidance disabled (missing credential, transport failure, or invali
         ])
         .assert_success()
         .stderr_eq(str![""]);
-});
+}
+
+#[forgetest_init]
+fn jev_false_invariant_fails_and_replays(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 3;
+    });
+    prj.add_test(
+        "JevBoolean.t.sol",
+        r#"
+contract JevBooleanHandler {
+    uint256 public count;
+    function increment() external { count++; }
+}
+contract JevBooleanTest {
+    JevBooleanHandler handler;
+    function setUp() public { handler = new JevBooleanHandler(); }
+    function invariant_bool() public view returns (bool) { return handler.count() == 0; }
+}
+"#,
+    );
+    for _ in 0..2 {
+        cmd.forge_fuse().cmd().env_remove("OPENROUTER_API_KEY");
+        cmd.args([
+            "test",
+            "--mc",
+            "JevBooleanTest",
+            "--invariant-workers",
+            "1",
+            "--invariant-tx-generator",
+            "jev",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: invariant returned false]
+...
+ invariant_bool() [..]
+...
+"#]]);
+    }
+}
 
 fn assert_invariant(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[

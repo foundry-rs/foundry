@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Selector, keccak256};
-use foundry_config::InvariantConfig;
+use foundry_config::{InvariantConfig, InvariantTxGenerator};
 use foundry_evm_core::{
     decode::{ASSERTION_FAILED_PREFIX, EMPTY_REVERT_DATA, RevertDecoder},
     evm::FoundryEvmNetwork,
@@ -82,7 +82,18 @@ impl<'a> InvariantRunCtx<'a> {
         call_result: RawCallResult<FEN>,
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> FailedInvariantCaseData {
-        let revert_reason = self.decode_revert_reason(&call_result, assertion_failure);
+        let revert_reason = if !call_result.reverted
+            && !assertion_failure
+            && self.config.tx_generator == InvariantTxGenerator::Jev
+            && broken_fn.outputs.len() == 1
+            && broken_fn.outputs[0].ty == "bool"
+            && call_result.result.len() >= 32
+            && call_result.result[..32].iter().all(|byte| *byte == 0)
+        {
+            "invariant returned false".to_string()
+        } else {
+            self.decode_revert_reason(&call_result, assertion_failure)
+        };
         let origin = broken_fn.name.as_str();
         FailedInvariantCaseData {
             test_error: TestError::Fail(

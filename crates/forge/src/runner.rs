@@ -3164,6 +3164,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             fail_on_revert: false,
                             expect_assertion_failure: false,
                             call_after_invariant: false,
+                            bool_return_is_failure: false,
                             rd: Some(self.revert_decoder()),
                         },
                     )
