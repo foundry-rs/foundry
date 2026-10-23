@@ -1088,6 +1088,9 @@ struct MiningCommitHook {
     resume: Arc<Notify>,
 }
 
+#[cfg(test)]
+type StorageAccessHook = Box<dyn Fn() + Send + Sync>;
+
 /// Gives access to the [revm::Database]
 pub struct Backend<N: Network> {
     /// Access to [`revm::Database`] abstraction.
@@ -1159,6 +1162,12 @@ pub struct Backend<N: Network> {
     /// Test-only synchronization point after database commit and before canonical publication.
     #[cfg(test)]
     mining_commit_hook: Arc<Mutex<Option<MiningCommitHook>>>,
+    /// Test-only observer immediately before the mined state root is computed.
+    #[cfg(test)]
+    mining_state_root_hook: Arc<Mutex<Option<StorageAccessHook>>>,
+    /// Test-only observer between consensus and canonical rollback updates.
+    #[cfg(test)]
+    rollback_unwind_hook: Arc<Mutex<Option<StorageAccessHook>>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
     /// Keeps startup fork-cache rollback armed until startup initialization completes.
@@ -1199,6 +1208,10 @@ impl<N: Network> Clone for Backend<N> {
             mining: self.mining.clone(),
             #[cfg(test)]
             mining_commit_hook: self.mining_commit_hook.clone(),
+            #[cfg(test)]
+            mining_state_root_hook: self.mining_state_root_hook.clone(),
+            #[cfg(test)]
+            rollback_unwind_hook: self.rollback_unwind_hook.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
             startup_fork_cache_user: self.startup_fork_cache_user.clone(),
         }
@@ -4713,6 +4726,10 @@ impl<N: Network> Backend<N> {
             mining: Arc::new(tokio::sync::Mutex::new(())),
             #[cfg(test)]
             mining_commit_hook: Default::default(),
+            #[cfg(test)]
+            mining_state_root_hook: Default::default(),
+            #[cfg(test)]
+            rollback_unwind_hook: Default::default(),
             disable_pool_balance_checks,
             startup_fork_cache_user,
         };
@@ -5987,13 +6004,11 @@ where
             self.states.write().insert(best_hash, state);
         }
 
-        {
-            let mut db = self.db.write().await;
-            for state in state_changes {
-                db.commit(state);
-            }
-            db.insert_block_hash(U256::from(block_number), block_hash);
+        let mut db = self.db.write().await;
+        for state in state_changes {
+            db.commit(state);
         }
+        db.insert_block_hash(U256::from(block_number), block_hash);
 
         let BlockInfo { block, transactions, receipts } = block_info;
         let header = block.header.clone();
@@ -6055,6 +6070,7 @@ where
             next_block_excess_blob_gas,
             blob_params.update_fraction as u64,
         ));
+        drop(db);
         self.notify_on_new_block(header.into_inner(), block_hash);
 
         Ok(())
@@ -6411,18 +6427,23 @@ where
                     block_access_list.as_ref(),
                 );
 
+                if let FoundryHeader::Tempo(header) = &mut block_info.block.header {
+                    let storage = self.blockchain.storage.read();
+                    let tempo = storage.tempo.as_ref().expect("Tempo chain is initialized");
+                    tempo.prepare(header, TempoHardfork::from(hardfork))?;
+                }
+
+                // The database guard protects the prepared consensus state until publication.
+                // Keep the expensive execution commit and state root outside the storage lock.
+                commit_cache(&mut **db, cache)?;
+                #[cfg(test)]
+                if let Some(hook) = self.mining_state_root_hook.lock().as_ref() {
+                    hook();
+                }
+                let state_root = db.maybe_state_root().unwrap_or_default();
                 match &mut block_info.block.header {
-                    FoundryHeader::Tempo(header) => {
-                        let mut storage = self.blockchain.storage.write();
-                        let tempo = storage.tempo.as_mut().expect("Tempo chain is initialized");
-                        let prepared = tempo.prepare(header, TempoHardfork::from(hardfork))?;
-                        commit_cache(&mut **db, cache)?;
-                        prepared.finalize(db.maybe_state_root().unwrap_or_default());
-                    }
-                    FoundryHeader::Ethereum(header) => {
-                        commit_cache(&mut **db, cache)?;
-                        header.state_root = db.maybe_state_root().unwrap_or_default();
-                    }
+                    FoundryHeader::Tempo(header) => header.inner.state_root = state_root,
+                    FoundryHeader::Ethereum(header) => header.state_root = state_root,
                 }
 
                 // Update the new blockhash in the db itself.
@@ -6496,6 +6517,13 @@ where
                 hook.resume.notified().await;
             }
             let mut storage = self.blockchain.storage.write();
+            if let FoundryHeader::Tempo(header) = &header {
+                storage
+                    .tempo
+                    .as_mut()
+                    .expect("Tempo chain is initialized")
+                    .finalize(header, TempoHardfork::from(hardfork));
+            }
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
@@ -7752,17 +7780,23 @@ where
 
         // Acquire the only awaited mutation lock before publishing any part of the rewind.
         let mut db = self.db.write().await;
-        if let Some(tempo) = &mut self.blockchain.storage.write().tempo {
-            tempo.unwind(&common_block)?;
-        }
         {
             // Collect the logs of the blocks that are about to be removed from the canonical
             // chain, while their transactions and receipts are still in storage
             let removed_logs = self.removed_logs_since(common_block.header.number());
 
             // Unwind the storage back to the common ancestor first
-            let removed_blocks =
-                self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+            let removed_blocks = {
+                let mut storage = self.blockchain.storage.write();
+                if let Some(tempo) = &mut storage.tempo {
+                    tempo.unwind(&common_block)?;
+                }
+                #[cfg(test)]
+                if let Some(hook) = self.rollback_unwind_hook.lock().as_ref() {
+                    hook();
+                }
+                storage.unwind_to(common_block.header.number(), hash)
+            };
 
             // Clean up in-memory and on-disk states for removed blocks
             let removed_hashes: Vec<_> =

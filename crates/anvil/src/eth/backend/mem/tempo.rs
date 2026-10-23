@@ -1,8 +1,14 @@
 //! Tempo consensus owned by the canonical in-memory chain.
 //!
-//! Mining prepares all fallible consensus metadata before committing execution, and holds an
-//! exclusive borrow of the prepared header and signer until the final state root is installed.
-//! Database and canonical storage publication share the database lock with snapshots and rewinds.
+//! Mining checks consensus metadata before committing execution and signs the final header in the
+//! same storage write guard that publishes its block. Cache commits and state-root computation do
+//! not hold the storage lock, so readers can still access the published chain.
+//!
+//! All live consensus mutations, including future rotation RPCs, must acquire the database write
+//! lock before the storage lock. Mining retains that database guard from preparation through
+//! publication, preventing snapshots, rewinds, resets, imports, or rotations from changing the
+//! prepared height or key schedule. Only initialization before the backend is shared and private
+//! staged copies are exempt; publishing a staged copy still requires the database write lock.
 
 use crate::eth::{backend::tempo_consensus::TempoConsensus, error::BlockchainError};
 use alloy_consensus::BlockHeader;
@@ -56,15 +62,24 @@ impl TempoChain {
     }
 
     /// Checks every fallible consensus input before execution is committed.
-    pub(super) fn prepare<'a>(
-        &'a mut self,
-        header: &'a mut TempoHeader,
+    pub(super) fn prepare(
+        &self,
+        header: &mut TempoHeader,
         hardfork: TempoHardfork,
-    ) -> Result<PreparedTempoHeader<'a>, BlockchainError> {
+    ) -> Result<(), BlockchainError> {
         self.consensus
             .prepare_header(header, hardfork)
-            .map_err(|error| BlockchainError::Internal(error.to_string()))?;
-        Ok(PreparedTempoHeader { consensus: &mut self.consensus, header, hardfork })
+            .map_err(|error| BlockchainError::Internal(error.to_string()))
+    }
+
+    /// Signs a prepared header while its block is published under the same storage write guard.
+    ///
+    /// The caller must retain the database write guard from preparation through publication and
+    /// only install the execution state root in the prepared header, using the same hardfork.
+    pub(super) fn finalize(&mut self, header: &TempoHeader, hardfork: TempoHardfork) {
+        self.consensus.finalize(header, hardfork).expect(
+            "the database write lock preserves the prepared height and committee; metadata and hardfork are unchanged",
+        );
     }
 }
 
@@ -73,23 +88,6 @@ impl fmt::Debug for TempoChain {
         f.debug_struct("TempoChain")
             .field("identity", &self.consensus.identity())
             .finish_non_exhaustive()
-    }
-}
-
-/// Exclusive access prevents the prepared metadata or committee from changing before completion.
-pub(super) struct PreparedTempoHeader<'a> {
-    consensus: &'a mut TempoConsensus,
-    header: &'a mut TempoHeader,
-    hardfork: TempoHardfork,
-}
-
-impl PreparedTempoHeader<'_> {
-    /// Installs the committed execution root and signs the complete native header.
-    pub(super) fn finalize(self, state_root: B256) {
-        self.header.inner.state_root = state_root;
-        self.consensus.finalize(self.header, self.hardfork).expect(
-            "prepared height, metadata, hardfork and committee remain exclusively borrowed",
-        );
     }
 }
 
@@ -110,7 +108,13 @@ mod tests {
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
     use foundry_primitives::FoundryNetwork;
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
     use tokio::{sync::Notify, time::timeout};
 
     fn consensus(api: &EthApi<FoundryNetwork>) -> TempoConsensus {
@@ -150,6 +154,8 @@ mod tests {
         let mining = tokio::spawn(async move { mining_api.mine_one().await });
         timeout(Duration::from_secs(10), hook.reached.notified()).await.unwrap();
         assert_eq!(api.backend.best_number(), 0);
+        assert!(consensus(&api).latest().is_none());
+        assert!(api.backend.get_block(1).is_none());
         let mut snapshot = Box::pin(api.evm_snapshot());
         assert!(futures::poll!(snapshot.as_mut()).is_pending());
         hook.resume.notify_one();
@@ -167,6 +173,46 @@ mod tests {
         assert_certified_head(&api);
     }
 
+    #[tokio::test]
+    async fn tempo_state_root_keeps_published_storage_readable() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        let storage = Arc::clone(&api.backend.blockchain.storage);
+        let reached = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&reached);
+        *api.backend.mining_state_root_hook.lock() = Some(Box::new(move || {
+            let storage = storage.try_read().expect("state-root computation must not lock storage");
+            let (height, certificate) = storage.tempo.as_ref().unwrap().consensus.latest().unwrap();
+            assert_eq!(storage.best_number, 1);
+            assert_eq!(height, storage.best_number);
+            assert_eq!(certificate.digest, storage.best_hash);
+            assert!(storage.blocks.contains_key(&certificate.digest));
+            observed.store(true, Ordering::Relaxed);
+        }));
+        api.mine_one().await.unwrap();
+        assert!(reached.load(Ordering::Relaxed));
+        assert_certified_head(&api);
+    }
+
+    #[tokio::test]
+    async fn tempo_rollback_publishes_consensus_and_head_together() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        for _ in 0..2 {
+            api.mine_one().await.unwrap();
+        }
+        let storage = Arc::clone(&api.backend.blockchain.storage);
+        let reached = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&reached);
+        *api.backend.rollback_unwind_hook.lock() = Some(Box::new(move || {
+            assert!(storage.try_read().is_none(), "a partial rollback must not be visible");
+            observed.store(true, Ordering::Relaxed);
+        }));
+        api.anvil_rollback(Some(1)).await.unwrap();
+        assert!(reached.load(Ordering::Relaxed));
+        assert_eq!(api.backend.best_number(), 1);
+        assert_certified_head(&api);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn rejected_consensus_preparation_does_not_commit_execution() {
         let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
@@ -178,7 +224,10 @@ mod tests {
         .unwrap();
         let previous_hash = api.backend.best_hash();
         let previous_root = api.backend.db.read().await.maybe_state_root();
-        api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(5);
+        {
+            let _db = api.backend.db.write().await;
+            api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(5);
+        }
         let error = api.mine_one().await.unwrap_err();
         assert!(matches!(error, BlockchainError::Internal(message)
             if message == "expected Tempo consensus height 6, got 1"));
@@ -186,7 +235,10 @@ mod tests {
         assert_eq!(api.backend.best_hash(), previous_hash);
         assert_eq!(api.backend.db.read().await.maybe_state_root(), previous_root);
         assert!(consensus(&api).latest().is_none());
-        api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(0);
+        {
+            let _db = api.backend.db.write().await;
+            api.backend.blockchain.storage.write().tempo.as_mut().unwrap().reanchor(0);
+        }
         api.mine_one().await.unwrap();
         assert_eq!(api.backend.get_block(1).unwrap().body.transactions.len(), 1);
         assert_certified_head(&api);
@@ -202,29 +254,33 @@ mod tests {
         .await;
         api.mine_one().await.unwrap();
         let first = consensus(&api).finalization(1).unwrap().digest;
-        let scheduled = api
-            .backend
-            .blockchain
-            .storage
-            .write()
-            .tempo
-            .as_mut()
-            .unwrap()
-            .consensus
-            .rotate()
-            .unwrap();
+        let scheduled = {
+            let _db = api.backend.db.write().await;
+            api.backend
+                .blockchain
+                .storage
+                .write()
+                .tempo
+                .as_mut()
+                .unwrap()
+                .consensus
+                .rotate()
+                .unwrap()
+        };
         let snapshot = api.evm_snapshot().await.unwrap();
-        let replaced = api
-            .backend
-            .blockchain
-            .storage
-            .write()
-            .tempo
-            .as_mut()
-            .unwrap()
-            .consensus
-            .rotate()
-            .unwrap();
+        let replaced = {
+            let _db = api.backend.db.write().await;
+            api.backend
+                .blockchain
+                .storage
+                .write()
+                .tempo
+                .as_mut()
+                .unwrap()
+                .consensus
+                .rotate()
+                .unwrap()
+        };
         assert_ne!(scheduled, replaced);
         assert!(api.evm_revert(snapshot).await.unwrap());
         assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
