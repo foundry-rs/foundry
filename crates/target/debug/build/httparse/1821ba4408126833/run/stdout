@@ -1,0 +1,4 @@
+cargo:rustc-cfg=httparse_simd_neon_intrinsics
+cargo:rustc-cfg=httparse_simd
+cargo:rustc-cfg=httparse_simd_target_feature_sse42
+cargo:rustc-cfg=httparse_simd_target_feature_avx2

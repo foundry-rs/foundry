@@ -1421,7 +1421,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![exists]))
             }
             activeForkCall::SELECTOR => {
-                let id = executor.active_fork_id().ok_or(SymbolicError::Unsupported(
+                let id = executor.active_fork_id.ok_or(SymbolicError::Unsupported(
                     "symbolic vm.activeFork requires an active forked executor",
                 ))?;
                 let id = SymExpr::constant(&mut self.cx, id);
@@ -1435,7 +1435,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.selectFork id",
                 )?;
-                if executor.is_active_fork(id) {
+                if executor.active_fork_id == Some(id) {
                     return Ok(CheatcodeOutcome::Continue(Vec::new()));
                 }
                 Err(SymbolicError::Unsupported(
@@ -1445,13 +1445,14 @@ impl SymbolicExecutor {
             rollFork_0Call::SELECTOR | rollFork_2Call::SELECTOR => {
                 let with_id = selector == rollFork_2Call::SELECTOR;
                 let active_fork = !with_id
-                    || executor.is_active_fork(read_abi_constrained_word_arg(
-                        &mut self.cx,
-                        state,
-                        args_offset,
-                        0,
-                        "symbolic vm.rollFork id",
-                    )?);
+                    || executor.active_fork_id
+                        == Some(read_abi_constrained_word_arg(
+                            &mut self.cx,
+                            state,
+                            args_offset,
+                            0,
+                            "symbolic vm.rollFork id",
+                        )?);
                 let block_number = read_abi_constrained_word_arg(
                     &mut self.cx,
                     state,

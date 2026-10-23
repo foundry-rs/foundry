@@ -1,0 +1,12 @@
+cargo:rustc-check-cfg=cfg(nightly)
+cargo:rustc-check-cfg=cfg(track_caller)
+cargo:rustc-check-cfg=cfg(generic_member_access)
+cargo:rustc-check-cfg=cfg(eyre_no_fmt_args_capture)
+cargo:rustc-check-cfg=cfg(backtrace)
+cargo:rustc-check-cfg=cfg(eyre_no_fmt_arguments_as_str)
+cargo:rustc-check-cfg=cfg(doc_cfg)
+cargo:rustc-check-cfg=cfg(track_caller)
+cargo:rustc-cfg=track_caller
+cargo:rustc-cfg=eyre_no_fmt_arguments_as_str
+cargo:rustc-cfg=eyre_no_fmt_args_capture
+cargo:rustc-cfg=backtrace

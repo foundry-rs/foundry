@@ -119,10 +119,10 @@ impl SymbolicExecutor {
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
             let runtime = &outcome.state.frame.return_data;
-            let spec_id: SpecId = executor.spec_id();
+            let spec_id = executor.spec_id;
             let mut rejected_runtime = false;
             if matches!(outcome.status, CallStatus::Success) {
-                if runtime_exceeds_code_size_limit(executor.max_code_size(), spec_id, runtime) {
+                if runtime_exceeds_code_size_limit(executor.max_code_size, spec_id, runtime) {
                     outcome.status = CallStatus::Revert;
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
                 } else if runtime_has_rejected_prefix(&mut self.cx, spec_id, runtime)? {

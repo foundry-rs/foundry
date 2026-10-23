@@ -888,7 +888,7 @@ impl SymbolicExecutor {
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
-        let spec_id: SpecId = executor.spec_id();
+        let spec_id = executor.spec_id;
         if precompile_number_for_spec(code_address, spec_id).is_some() {
             let input_len = in_size.size_word(&mut self.cx);
             let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);

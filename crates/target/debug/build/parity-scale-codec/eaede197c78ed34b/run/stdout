@@ -1,0 +1,2 @@
+cargo:rustc-check-cfg=cfg(nightly)
+cargo:rustc-cfg=nightly

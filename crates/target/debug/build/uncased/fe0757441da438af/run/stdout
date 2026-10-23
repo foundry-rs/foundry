@@ -1,0 +1,2 @@
+cargo:rustc-cfg=nightly
+cargo:rustc-cfg=const_fn_transmute

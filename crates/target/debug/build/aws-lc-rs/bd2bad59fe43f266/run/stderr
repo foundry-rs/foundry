@@ -1,0 +1,8 @@
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_INCLUDE
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_LIBCRYPTO
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_LIBCRYPTO_PATH
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_LIBDIR
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_LINK_KIND
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_ROOT
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_SYSTEM_LIBS
+cargo:rerun-if-env-changed=DEP_AWS_LC_0_45_0_CONF

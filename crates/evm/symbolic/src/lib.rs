@@ -193,7 +193,8 @@ pub struct SymbolicInvariantTarget {
 
 /// Input for best-effort invariant candidate search after one symbolic handler call.
 pub struct SymbolicInvariantCandidateInput<'a> {
-    /// Concrete Foundry executor containing the replayed invariant frontier prefix.
+    /// Read-only view of the concrete Foundry executor containing the replayed invariant frontier
+    /// prefix.
     pub executor: ExecutorView<'a>,
     /// Address of the deployed invariant test contract.
     pub invariant_address: Address,
@@ -247,7 +248,8 @@ pub struct SymbolicInvariantCandidateSearchResult {
 
 /// Input for bounded symbolic invariant execution.
 pub struct SymbolicInvariantRunInput<'a> {
-    /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
+    /// Read-only view of the concrete Foundry executor used as the source of deployed bytecode and
+    /// backend state.
     pub executor: ExecutorView<'a>,
     /// Address of the deployed invariant test contract.
     pub invariant_address: Address,

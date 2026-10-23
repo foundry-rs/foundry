@@ -56,7 +56,8 @@ impl SymbolicBranchTarget {
 }
 
 pub struct SymbolicRunInput<'a> {
-    /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
+    /// Read-only view of the concrete Foundry executor used as the source of deployed bytecode and
+    /// backend state.
     pub executor: ExecutorView<'a>,
     /// Address of the deployed test contract whose runtime bytecode will be explored.
     pub target: Address,

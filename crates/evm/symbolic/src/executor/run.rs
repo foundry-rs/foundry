@@ -361,7 +361,7 @@ impl SymbolicExecutor {
     ) -> Result<SymbolicRunResult, SymbolicError> {
         let account = input
             .executor
-            .backend()
+            .backend
             .basic_ref(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;

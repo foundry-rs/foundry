@@ -1,0 +1,2 @@
+cargo:rerun-if-changed=build.rs
+cargo:rustc-env=SOLC_SEMVER_VERSION=0.8.38

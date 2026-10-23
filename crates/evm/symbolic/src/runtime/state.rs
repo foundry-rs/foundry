@@ -934,12 +934,6 @@ pub(crate) struct SymbolicStorageHook {
     pub(crate) callback_selector: [u8; 4],
 }
 
-impl SymbolicStorageHook {
-    pub(crate) const fn new(callback_target: Address, callback_selector: [u8; 4]) -> Self {
-        Self { callback_target, callback_selector }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SymbolicLog {
     topics: Arc<[SymExpr]>,
@@ -1787,14 +1781,14 @@ impl SymbolicWorld {
         }
         if let Some(key) = concrete_key {
             return executor
-                .backend()
+                .backend
                 .storage_ref(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         if let Some(key) = key.as_const() {
             executor
-                .backend()
+                .backend
                 .storage_ref(address, key)
                 .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
@@ -1826,7 +1820,7 @@ impl SymbolicWorld {
                 overwrite_arbitrary_storage == Some(false) || is_copied_storage;
             if preserve_nonzero_slot {
                 let concrete = executor
-                    .backend()
+                    .backend
                     .storage_ref(address, slot)
                     .map_err(|err| SymbolicError::Backend(err.to_string()))?;
                 if !concrete.is_zero() {
@@ -1925,7 +1919,7 @@ impl SymbolicWorld {
 
     pub(crate) fn backend_balance(&self, executor: &ExecutorView<'_>, address: Address) -> U256 {
         executor
-            .backend()
+            .backend
             .basic_ref(address)
             .ok()
             .flatten()
@@ -2014,7 +2008,7 @@ impl SymbolicWorld {
             return Ok(*nonce);
         }
         executor
-            .backend()
+            .backend
             .basic_ref(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))
             .map(|account| account.map(|account| account.nonce).unwrap_or_default())
@@ -2143,7 +2137,7 @@ impl SymbolicWorld {
         }
 
         let Some(account) = executor
-            .backend()
+            .backend
             .basic_ref(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
         else {
@@ -2177,7 +2171,7 @@ impl SymbolicWorld {
         if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
             return Ok(SymCode::concrete(cx, vec![0]));
         }
-        let spec_id: SpecId = executor.spec_id();
+        let spec_id = executor.spec_id;
         if precompile_number_for_spec(address, spec_id).is_some() {
             return Ok(SymCode::empty(cx));
         }
@@ -2188,7 +2182,7 @@ impl SymbolicWorld {
             return Ok(code.clone());
         }
         let account = executor
-            .backend()
+            .backend
             .basic_ref(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         if let Some(account) = account.as_ref()
@@ -2322,12 +2316,12 @@ impl SymbolicWorld {
         let mut addresses = HashSet::<Address>::default();
         addresses.extend(self.code_cache.keys().copied());
         addresses.extend(self.existing_accounts.iter().copied());
-        addresses.extend(executor.account_addresses().iter().copied());
+        addresses.extend(executor.account_addresses.iter().copied());
         let mut addresses = addresses.into_iter().collect::<Vec<_>>();
         addresses.sort_unstable();
 
         let mut targets = Vec::new();
-        let spec_id: SpecId = executor.spec_id();
+        let spec_id = executor.spec_id;
         for address in addresses {
             if address == CHEATCODE_ADDRESS
                 || address == SYMBOLIC_VM_COMPAT_ADDRESS
@@ -2384,7 +2378,7 @@ impl SymbolicBlock {
     pub(crate) fn from_executor(cx: &mut SymCx, executor: &ExecutorView<'_>) -> Self {
         let block = &executor.block;
         Self {
-            chain_id: SymExpr::constant(cx, U256::from(executor.chain_id())),
+            chain_id: SymExpr::constant(cx, U256::from(executor.chain_id)),
             coinbase: block.coinbase,
             timestamp: SymExpr::constant(cx, block.timestamp),
             number: SymExpr::constant(cx, block.number),
@@ -2426,7 +2420,7 @@ impl SymbolicBlock {
             return Ok(SymExpr::zero(cx));
         };
         let hash = executor
-            .backend()
+            .backend
             .block_hash_ref(block_number)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
         Ok(SymExpr::constant(cx, U256::from_be_slice(hash.as_slice())))

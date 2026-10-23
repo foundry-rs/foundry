@@ -3,16 +3,17 @@ use foundry_evm::core::backend::DatabaseError;
 
 /// Network-independent, read-only view of a concrete Foundry executor.
 ///
-/// The view is built once at the public entry points so the symbolic executor does not have to be
-/// monomorphized for every [`FoundryEvmNetwork`].
+/// The view is built by the caller of the public entry points so the symbolic executor does not
+/// have to be monomorphized for every [`FoundryEvmNetwork`].
 pub struct ExecutorView<'a> {
-    backend: &'a dyn DatabaseRef<Error = DatabaseError>,
-    spec_id: SpecId,
-    chain_id: u64,
-    memory_limit: u64,
-    max_code_size: usize,
-    active_fork_id: Option<U256>,
-    account_addresses: Vec<Address>,
+    pub(crate) backend: &'a dyn DatabaseRef<Error = DatabaseError>,
+    pub(crate) spec_id: SpecId,
+    pub(crate) chain_id: u64,
+    pub(crate) memory_limit: u64,
+    pub(crate) max_code_size: usize,
+    pub(crate) active_fork_id: Option<U256>,
+    /// Addresses cached by the in-memory database and the active fork database.
+    pub(crate) account_addresses: Vec<Address>,
     pub(crate) block: ExecutorBlock,
     pub(crate) gas_price: u128,
     pub(crate) isolate: bool,
@@ -73,83 +74,52 @@ impl<'a> ExecutorView<'a> {
             isolate: cheats.is_some_and(|cheats| cheats.core.config.isolate),
             blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
             arbitrary_storage_targets: cheats
-                .map(|cheats| cheats.arbitrary_storage_target_overwrite_modes().collect())
-                .unwrap_or_default(),
+                .into_iter()
+                .flat_map(|cheats| cheats.arbitrary_storage_target_overwrite_modes())
+                .collect(),
             arbitrary_storage_copies: cheats
-                .map(|cheats| cheats.arbitrary_storage_copied_target_sources().collect())
-                .unwrap_or_default(),
+                .into_iter()
+                .flat_map(|cheats| cheats.arbitrary_storage_copied_target_sources())
+                .collect(),
             storage_load_hooks: cheats
-                .map(|cheats| {
-                    cheats
-                        .storage_load_hooks()
-                        .map(|(target, h)| {
-                            (
-                                target,
-                                SymbolicStorageHook::new(h.callback_target, h.callback_selector),
-                            )
-                        })
-                        .collect()
+                .into_iter()
+                .flat_map(|cheats| cheats.storage_load_hooks())
+                .map(|(target, hook)| {
+                    (
+                        target,
+                        SymbolicStorageHook {
+                            callback_target: hook.callback_target,
+                            callback_selector: hook.callback_selector,
+                        },
+                    )
                 })
-                .unwrap_or_default(),
+                .collect(),
             storage_store_hooks: cheats
-                .map(|cheats| {
-                    cheats
-                        .storage_store_hooks()
-                        .map(|(target, h)| {
-                            (
-                                target,
-                                SymbolicStorageHook::new(h.callback_target, h.callback_selector),
-                            )
-                        })
-                        .collect()
+                .into_iter()
+                .flat_map(|cheats| cheats.storage_store_hooks())
+                .map(|(target, hook)| {
+                    (
+                        target,
+                        SymbolicStorageHook {
+                            callback_target: hook.callback_target,
+                            callback_selector: hook.callback_selector,
+                        },
+                    )
                 })
-                .unwrap_or_default(),
+                .collect(),
             mapping_storage_store_hooks: cheats
-                .map(|cheats| {
-                    cheats
-                        .mapping_storage_store_hooks()
-                        .map(|(target, root, h)| {
-                            (
-                                (target, root.into()),
-                                SymbolicStorageHook::new(h.callback_target, h.callback_selector),
-                            )
-                        })
-                        .collect()
+                .into_iter()
+                .flat_map(|cheats| cheats.mapping_storage_store_hooks())
+                .map(|(target, root, hook)| {
+                    (
+                        (target, root.into()),
+                        SymbolicStorageHook {
+                            callback_target: hook.callback_target,
+                            callback_selector: hook.callback_selector,
+                        },
+                    )
                 })
-                .unwrap_or_default(),
+                .collect(),
         }
-    }
-
-    pub(crate) fn backend(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
-        self.backend
-    }
-
-    pub(crate) const fn spec_id(&self) -> SpecId {
-        self.spec_id
-    }
-
-    pub(crate) const fn chain_id(&self) -> u64 {
-        self.chain_id
-    }
-
-    pub(crate) const fn memory_limit(&self) -> u64 {
-        self.memory_limit
-    }
-
-    pub(crate) const fn max_code_size(&self) -> usize {
-        self.max_code_size
-    }
-
-    pub(crate) const fn active_fork_id(&self) -> Option<U256> {
-        self.active_fork_id
-    }
-
-    pub(crate) fn is_active_fork(&self, id: U256) -> bool {
-        self.active_fork_id == Some(id)
-    }
-
-    /// Addresses cached by the in-memory database and the active fork database.
-    pub(crate) fn account_addresses(&self) -> &[Address] {
-        &self.account_addresses
     }
 }

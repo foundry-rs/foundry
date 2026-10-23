@@ -299,7 +299,7 @@ impl SymbolicExecutor {
         offset: &SymExpr,
         size: usize,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let memory_limit = executor.memory_limit();
+        let memory_limit = executor.memory_limit;
         let host_max_offset = (usize::MAX & !31usize).checked_sub(size);
         let constrained_offset = state.constrained_usize_checked(&mut self.cx, offset);
         if constrained_offset.as_ref().is_some_and(|offset| match offset {
@@ -387,7 +387,7 @@ impl SymbolicExecutor {
         offset: &SymExpr,
         size: &SymExpr,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
-        let memory_limit = executor.memory_limit();
+        let memory_limit = executor.memory_limit;
         if let (Some(offset_value), Some(size_value)) = (offset.as_const(), size.as_const()) {
             let valid = size_value.is_zero()
                 || usize::try_from(offset_value)
@@ -457,7 +457,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         state.pc += 1;
 
-        if executor.spec_id() < opcode_activation(op) {
+        if executor.spec_id < opcode_activation(op) {
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::ExceptionalHalt);
         }
@@ -1248,7 +1248,7 @@ impl SymbolicExecutor {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     return Ok(StepOutcome::ExceptionalHalt);
                 }
-                let spec_id: SpecId = executor.spec_id();
+                let spec_id = executor.spec_id;
                 let (beneficiary_word, beneficiary) =
                     state.pop_address_word_or_symbolic_slot(&mut self.cx)?;
                 if spec_id < SpecId::CANCUN
