@@ -1,2 +1,0 @@
-cargo:rerun-if-env-changed=SVM_TARGET_PLATFORM
-cargo:rerun-if-env-changed=SVM_RELEASES_LIST_JSON

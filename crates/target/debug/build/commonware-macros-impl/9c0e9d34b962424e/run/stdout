@@ -1,3 +1,0 @@
-cargo:rerun-if-env-changed=RUSTFLAGS
-cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS
-cargo:rerun-if-env-changed=PROFILE

@@ -1,4 +1,0 @@
-cargo::rerun-if-changed=src/touch_id/shim.swift
-cargo::rerun-if-env-changed=SDKROOT
-cargo::rerun-if-env-changed=DEVELOPER_DIR
-cargo::rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET
