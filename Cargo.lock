@@ -1349,6 +1349,11 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
+ "commonware-parallel",
+ "commonware-utils",
  "ctrlc",
  "ethereum_ssz",
  "eyre",
@@ -1372,6 +1377,7 @@ dependencies = [
  "parking_lot",
  "rand 0.8.8",
  "rand 0.9.5",
+ "rand_chacha 0.10.0",
  "reqwest 0.13.5",
  "revm",
  "revm-inspectors",
@@ -1379,6 +1385,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tempo-alloy",
+ "tempo-dkg-onchain-artifacts",
  "tempo-evm",
  "tempo-hardfork",
  "tempo-precompiles",
@@ -3639,9 +3646,9 @@ dependencies = [
 
 [[package]]
 name = "clipboard-win"
-version = "5.4.1"
+version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
+checksum = "052af7878466feccda12ba7a6a67d019d712f296809559b47c12c8cc196d3a9a"
 dependencies = [
  "error-code",
 ]
@@ -4339,9 +4346,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.3"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bb0e1cc970d482d121d9a1744999169b69a07470b3d644a7894e53fcaf4574"
+checksum = "38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0"
 dependencies = [
  "cmov",
  "subtle",
@@ -5860,6 +5867,7 @@ dependencies = [
  "comfy-table",
  "dunce",
  "eyre",
+ "figment2",
  "flate2",
  "foundry-block-explorers",
  "foundry-common-fmt",

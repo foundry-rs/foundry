@@ -549,6 +549,15 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b20
 ] }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88" }
+tempo-dkg-onchain-artifacts = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88", default-features = false }
+
+# Tempo consensus certificate primitives.
+commonware-codec = { version = "=2026.9.0", default-features = false }
+commonware-cryptography = { version = "=2026.9.0", default-features = false }
+commonware-math = { version = "=2026.9.0", default-features = false }
+commonware-parallel = { version = "=2026.9.0", default-features = false }
+commonware-utils = { version = "=2026.9.0", default-features = false }
+rand_chacha = { version = "=0.10.0", default-features = false }
 
 # Monad
 alloy-monad-evm = { version = "0.8.0", default-features = false, features = [

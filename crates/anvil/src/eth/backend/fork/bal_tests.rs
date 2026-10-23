@@ -55,6 +55,7 @@ fn fork_config(asserter: Asserter, block_hash: B256) -> ClientForkConfig {
             network: None,
             network_profile: None,
             hardfork: None,
+            blob_params: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
