@@ -83,7 +83,7 @@ regex = { workspace = true, default-features = false }
 revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-similar = { version = "3", features = ["inline"] }
+similar = { version = "3", features = ["inline", "unicode"] }
 solar = { workspace = true, features = ["clap"] }
 solar-lsp.workspace = true
 thiserror.workspace = true
@@ -115,7 +115,6 @@ rustix = { version = "1", features = ["process"] }
 alloy-rpc-types.workspace = true
 async-lsp.workspace = true
 axum = { workspace = true, features = ["form"] }
-tokio-util.workspace = true
 futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
 anvil.workspace = true
