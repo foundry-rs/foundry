@@ -4301,7 +4301,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
- "rand_core 0.6.4",
  "typenum",
 ]
 
@@ -5765,6 +5764,7 @@ dependencies = [
 name = "foundry-cli"
 version = "1.8.7"
 dependencies = [
+ "ahash",
  "alloy-chains",
  "alloy-dyn-abi",
  "alloy-eips",
@@ -5796,6 +5796,7 @@ dependencies = [
  "path-slash",
  "rayon",
  "regex",
+ "rustix",
  "rustls",
  "semver 1.0.28",
  "serde",
@@ -10836,7 +10837,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d38e16b72ec1c836ec8490562bfb21003165ea8bc496086bf345680a6e6c41"
 dependencies = [
  "bitvec",
- "paste",
  "phf 0.14.0",
  "revm-primitives 43.0.0",
  "serde",
