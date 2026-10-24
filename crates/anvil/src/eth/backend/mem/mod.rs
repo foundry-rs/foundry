@@ -2020,6 +2020,38 @@ impl<N: Network> Backend<N> {
         block
     }
 
+    /// Returns the base fee and blob excess gas that the child of `parent` inherits.
+    ///
+    /// Derives the zero-base-fee sentinel from `parent` rather than the live fee state, and lets a
+    /// local genesis block pass its own fees to its child, matching node startup.
+    pub(crate) fn next_block_fees_after(
+        &self,
+        parent: &impl BlockHeader,
+    ) -> (u64, BlobExcessGasAndPrice) {
+        let base_fee = parent.base_fee_per_gas().unwrap_or_default();
+        let excess_blob_gas = parent.excess_blob_gas().unwrap_or_default();
+        let blob_params = self.fees.blob_params();
+        let update_fraction = blob_params.update_fraction as u64;
+        if !self.is_fork()
+            && parent.number() == self.genesis_number()
+            && self.fees.tempo_hardfork().is_none()
+        {
+            return (base_fee, BlobExcessGasAndPrice::new(excess_blob_gas, update_fraction));
+        }
+        let next_base_fee = if base_fee == 0 {
+            0
+        } else {
+            self.fees.calculate_next_block_base_fee_from_header(parent)
+        };
+        let next_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+            blob_params,
+            excess_blob_gas,
+            parent.blob_gas_used().unwrap_or_default(),
+            base_fee,
+        );
+        (next_base_fee, BlobExcessGasAndPrice::new(next_excess_blob_gas, update_fraction))
+    }
+
     /// Returns the environment for the next block
     fn next_evm_env(
         &self,
@@ -7660,7 +7692,8 @@ where
     /// Rollback the chain to a common height.
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
-    /// storage, and env.
+    /// storage, env, and next-block fees. Pending next-block overrides, including a base fee set
+    /// with `anvil_setNextBlockBaseFeePerGas`, are discarded.
     pub async fn rollback(
         &self,
         common_block: Block,
@@ -7716,6 +7749,17 @@ where
             env.block_env.gas_limit = common_block.header.gas_limit();
             env.block_env.difficulty = common_block.header.difficulty();
             env.block_env.prevrandao = common_block.header.mix_hash();
+            env.block_env.basefee = common_block.header.base_fee_per_gas().unwrap_or_default();
+            // Keep the blob environment set whenever Cancun is active, even for fork blocks whose
+            // headers omit blob fields, because the EVM requires it.
+            env.block_env.blob_excess_gas_and_price = self.fees.is_eip4844().then(|| {
+                BlobExcessGasAndPrice::new(
+                    common_block.header.excess_blob_gas().unwrap_or_default(),
+                    self.fees.blob_params().update_fraction as u64,
+                )
+            });
+            let (next_base_fee, next_blob_fees) = self.next_block_fees_after(&common_block.header);
+            self.fees.set_next_block_fees(next_base_fee, next_blob_fees);
 
             self.time.reset(env.block_env.timestamp.saturating_to());
             // drop any pending next-block overrides so they do not leak into a block
