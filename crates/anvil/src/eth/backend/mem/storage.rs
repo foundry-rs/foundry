@@ -27,11 +27,8 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use foundry_evm::{
-    backend::MemDb,
-    traces::{
-        CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
-    },
+use foundry_evm::traces::{
+    CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -264,15 +261,6 @@ impl InMemoryBlockStates {
         states.sort_unstable_by_key(|(hash, _)| *hash);
 
         SerializableHistoricalStates::new(states)
-    }
-
-    /// Load states from serialized data
-    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        for (hash, state_snapshot) in states {
-            let mut state_db = StateDb::new(MemDb::default());
-            state_db.init_from_state_snapshot(state_snapshot);
-            self.insert(hash, state_db);
-        }
     }
 }
 
@@ -733,6 +721,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
+    use foundry_evm::backend::MemDb;
     use foundry_primitives::FoundryNetwork;
     use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;

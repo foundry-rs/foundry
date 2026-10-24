@@ -8740,7 +8740,10 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         db.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = historical_states {
-            self.states.write().load_states(historical_states);
+            let mut states = self.states.write();
+            for (hash, state_snapshot) in historical_states {
+                states.insert(hash, db.historical_state(state_snapshot));
+            }
         }
 
         Ok(true)

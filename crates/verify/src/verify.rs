@@ -568,16 +568,6 @@ impl VerifyArgs {
         self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
     }
 
-    /// Verifies using the resolved configuration of the build that produced the deployment.
-    pub async fn run_with_config(self, config: Config) -> Result<()> {
-        let config = Config::from_provider(
-            config.to_figment(foundry_config::FigmentProviders::None).merge(&self),
-        )?;
-        let context = self.resolve_context_with_config(config).await?;
-        let config = context.config.clone();
-        self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
-    }
-
     /// Runs verification using caller-provided Standard JSON input.
     pub async fn run_with_external_context(
         self,
@@ -818,14 +808,7 @@ impl VerifyArgs {
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
-        self.resolve_context_with_config(self.load_config_with_dependencies()?).await
-    }
-
-    /// Resolves verification inputs from an already selected endpoint profile.
-    pub async fn resolve_context_with_config(
-        &self,
-        mut config: Config,
-    ) -> Result<VerificationContext> {
+        let mut config = self.load_config_with_dependencies()?;
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;

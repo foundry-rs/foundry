@@ -528,6 +528,19 @@ where
         .collect()
 }
 
+/// Rejects preparing new transactions without the Tempo sponsor recorded when the deployment was
+/// created, so that resume never changes who pays.
+fn ensure_recorded_sponsor(recorded: Option<Address>, current: Option<Address>) -> Result<()> {
+    if let Some(recorded) = recorded
+        && current != Some(recorded)
+    {
+        eyre::bail!(
+            "this deployment is sponsored by {recorded}; pass `--tempo.sponsor {recorded}` with `--tempo.sponsor-signer` or `--tempo.sponsor-sig` to prepare its remaining transactions"
+        );
+    }
+    Ok(())
+}
+
 const fn should_broadcast_sequentially(
     estimate_via_rpc: bool,
     slow: bool,
@@ -609,6 +622,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 )
             })
             .collect::<Vec<_>>();
+        let rpc_urls = (0..self.sequence.sequences().len())
+            .map(|sequence| self.sequence.rpc_url(sequence).to_owned())
+            .collect::<Vec<_>>();
+        let rpc_urls = &rpc_urls;
         let futs = self
             .sequence
             .sequences_mut()
@@ -616,7 +633,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             .zip(submission_hashes)
             .enumerate()
             .map(|(sequence_idx, (sequence, ((durable_hashes, replayable_hashes), blocked)))| async move {
-                let rpc_url = sequence.rpc_url();
+                let rpc_url = &rpc_urls[sequence_idx];
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
                 progress_ref
@@ -648,6 +665,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
         if self.script_config.tempo.expiring_nonce {
             reject_expiring_call_before_create(self.sequence.sequences())?;
+        }
+        // Only operations without a saved or delegated attempt are sponsored again.
+        let needs_sponsorship =
+            self.sequence.sequences().iter().enumerate().any(|(sequence_index, deployment)| {
+                remaining_operation_indices(&self.sequence, sequence_index).into_iter().any(
+                    |index| {
+                        deployment.transactions[index].tx().is_unsigned()
+                            && self.sequence.signed_payload(sequence_index, index).is_none()
+                            && self.sequence.delegated_status(sequence_index, index).is_none()
+                    },
+                )
+            });
+        if needs_sponsorship {
+            ensure_recorded_sponsor(self.sequence.sponsor(), self.script_config.tempo.sponsor)?;
         }
         let remaining_transactions = remaining_unsigned_transactions_for_recovery(&self.sequence);
         let ordering_addresses = remaining_sender_addresses(&self.sequence);
@@ -771,22 +802,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         .map(|signed| (signed.payload.clone(), signed.hash))
                 })
                 .collect::<Vec<_>>();
+            let rpc_url = self.sequence.rpc_url(i).to_owned();
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(
-                ProviderBuilder::from_config_with_url(
-                    &self.script_config.config,
-                    sequence.rpc_url(),
-                )?
-                .build()?,
+                ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
+                    .build()?,
             );
             let unlocked_submission_provider = Arc::new(
-                ProviderBuilder::from_config_with_url(
-                    &self.script_config.config,
-                    sequence.rpc_url(),
-                )?
-                .max_retry(0)
-                .build()?,
+                ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
+                    .max_retry(0)
+                    .build()?,
             );
 
             let seq_progress = progress.get_sequence_progress(i, sequence);
@@ -1328,8 +1354,7 @@ impl BundledState<TempoEvmNetwork> {
             }
         }
 
-        let rpc_url = sequence.rpc_url().to_owned();
-        let _ = sequence;
+        let rpc_url = self.sequence.rpc_url(0).to_owned();
         if let Some((attempt_id, hash)) = batch_resolution {
             let provider = ProviderBuilder::<TempoNetwork>::from_config_with_url(
                 &self.script_config.config,
@@ -1386,7 +1411,7 @@ impl BundledState<TempoEvmNetwork> {
         let provider = Arc::new(
             ProviderBuilder::<TempoNetwork>::from_config_with_url(
                 &self.script_config.config,
-                sequence.rpc_url(),
+                &rpc_url,
             )?
             .build()?,
         );
@@ -1475,6 +1500,8 @@ impl BundledState<TempoEvmNetwork> {
             }
         }
 
+        ensure_recorded_sponsor(self.sequence.sponsor(), self.script_config.tempo.sponsor)?;
+
         // Reborrow after the potential save above.
         let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
 
@@ -1559,7 +1586,12 @@ impl BundledState<TempoEvmNetwork> {
                 max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
                 ..Default::default()
             },
-            fee_token: self.script_config.tempo.fee_token,
+            // Keep the fee token recorded with the remaining calls; `apply` overrides it with
+            // `--tempo.fee-token`.
+            fee_token: match sequence.transactions[batch_start].tx() {
+                TransactionMaybeSigned::Unsigned(tx) => tx.fee_token,
+                TransactionMaybeSigned::Signed { .. } => None,
+            },
             calls: calls.clone(),
             nonce_key: self.script_config.tempo.expiring_nonce.then_some(U256::MAX),
             valid_before: self.script_config.tempo.valid_before.and_then(NonZeroU64::new),
@@ -2034,7 +2066,7 @@ mod tests {
             ..Default::default()
         };
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(sequence, false, None).unwrap();
         let payload = Bytes::from_static(SIGNED_TX);
         sequence.persist_signed_payload(0, 0, payload, true).unwrap();
 
@@ -2051,7 +2083,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, true).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, true, None).unwrap();
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
 
         assert!(remaining_unsigned_transactions_for_recovery(&sequence).is_empty());
@@ -2067,7 +2099,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, true).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, true, None).unwrap();
         sequence.persist_batch_delegated_request(0, 0, Default::default()).unwrap();
         let (_, attempt, _) = sequence.batch_attempt(0).unwrap();
 
@@ -2091,7 +2123,7 @@ mod tests {
             ..Default::default()
         };
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(sequence, false, None).unwrap();
         sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
 
         let required = remaining_unsigned_transactions_for_recovery(&sequence);
@@ -2142,7 +2174,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
         sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
         let second_hash = sequence
             .persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX), true)
@@ -2166,7 +2198,7 @@ mod tests {
         };
         deployment.transactions[1].hash = Some(deployment.receipts[0].transaction_hash());
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
 
         assert_eq!(remaining_operation_indices(&sequence, 0), [0]);
     }
@@ -2180,7 +2212,7 @@ mod tests {
             ..Default::default()
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
         let first_hash =
             sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX), true).unwrap();
         let mut first_receipt = receipt();

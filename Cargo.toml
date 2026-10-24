@@ -501,7 +501,7 @@ soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
-tokio = "1"
+tokio = "1.53.3"
 toml = "1.1"
 toml_edit = "0.25"
 tower = "0.5"
@@ -593,10 +593,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "2287a3a8e737a98a32bdff3f8724468ec4488160" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
@@ -605,15 +605,15 @@ foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", 
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "306a7585e26644634ec04a73f1b3c04f93f7cd00" }
 
 ## alloy-core
-# alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
-# alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
-# alloy-primitives = { path = "../../alloy-rs/core/crates/primitives" }
-# alloy-sol-macro = { path = "../../alloy-rs/core/crates/sol-macro" }
-# alloy-sol-macro-expander = { path = "../../alloy-rs/core/crates/sol-macro-expander" }
-# alloy-sol-macro-input = { path = "../../alloy-rs/core/crates/sol-macro-input" }
-# alloy-sol-type-parser = { path = "../../alloy-rs/core/crates/sol-type-parser" }
-# alloy-sol-types = { path = "../../alloy-rs/core/crates/sol-types" }
-# syn-solidity = { path = "../../alloy-rs/core/crates/syn-solidity" }
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-sol-macro = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-sol-macro-expander = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-sol-macro-input = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
 
 ## alloy
 # alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "395521c" }
