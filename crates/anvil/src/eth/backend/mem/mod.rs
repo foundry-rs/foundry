@@ -1,5 +1,5 @@
 //! In-memory blockchain backend.
-use self::{in_memory_db::StateRootDb, state::trie_storage};
+use self::{in_memory_db::StateRootDb, state::trie_storage, tempo::TempoChain};
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
@@ -873,6 +873,7 @@ mod monad;
 pub mod optimism;
 pub mod state;
 pub mod storage;
+mod tempo;
 
 /// Helper trait that combines revm::DatabaseRef with Debug.
 /// This is needed because alloy-evm requires Debug on Database implementations.
@@ -1087,6 +1088,9 @@ struct MiningCommitHook {
     resume: Arc<Notify>,
 }
 
+#[cfg(test)]
+type StorageAccessHook = Box<dyn Fn() + Send + Sync>;
+
 /// Gives access to the [revm::Database]
 pub struct Backend<N: Network> {
     /// Access to [`revm::Database`] abstraction.
@@ -1158,6 +1162,12 @@ pub struct Backend<N: Network> {
     /// Test-only synchronization point after database commit and before canonical publication.
     #[cfg(test)]
     mining_commit_hook: Arc<Mutex<Option<MiningCommitHook>>>,
+    /// Test-only observer immediately before the mined state root is computed.
+    #[cfg(test)]
+    mining_state_root_hook: Arc<Mutex<Option<StorageAccessHook>>>,
+    /// Test-only observer between consensus and canonical rollback updates.
+    #[cfg(test)]
+    rollback_unwind_hook: Arc<Mutex<Option<StorageAccessHook>>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
     /// Keeps startup fork-cache rollback armed until startup initialization completes.
@@ -1198,6 +1208,10 @@ impl<N: Network> Clone for Backend<N> {
             mining: self.mining.clone(),
             #[cfg(test)]
             mining_commit_hook: self.mining_commit_hook.clone(),
+            #[cfg(test)]
+            mining_state_root_hook: self.mining_state_root_hook.clone(),
+            #[cfg(test)]
+            rollback_unwind_hook: self.rollback_unwind_hook.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
             startup_fork_cache_user: self.startup_fork_cache_user.clone(),
         }
@@ -1976,9 +1990,13 @@ impl<N: Network> Backend<N> {
     ///
     /// Returns the id of the snapshot created.
     pub async fn create_state_snapshot(&self) -> U256 {
+        let mut db = self.db.write().await;
         let num = self.best_number();
         let hash = self.best_hash();
-        let id = self.db.write().await.snapshot_state();
+        let id = db.snapshot_state();
+        if let Some(tempo) = &mut self.blockchain.storage.write().tempo {
+            tempo.snapshot(id);
+        }
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
             id,
@@ -2430,6 +2448,7 @@ impl<N: Network> Backend<N> {
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let number = header.number();
         let withdrawals_root = header.withdrawals_root();
+        let consensus_context = header.as_tempo().and_then(|header| header.consensus_context);
         let tempo_fields = header
             .as_tempo()
             .map(|header| {
@@ -2490,6 +2509,14 @@ impl<N: Network> Backend<N> {
             block.other.insert(
                 "timestampMillisPart".to_string(),
                 serde_json::Value::String(format!("0x{timestamp_millis_part:x}")),
+            );
+        }
+
+        if let Some(consensus_context) = consensus_context {
+            block.other.insert(
+                "consensusContext".to_string(),
+                serde_json::to_value(consensus_context)
+                    .expect("Tempo consensus context serializes"),
             );
         }
 
@@ -4647,6 +4674,15 @@ impl<N: Network> Backend<N> {
                 cfg.get_hardfork(),
             )
         };
+        if networks.is_tempo() {
+            let cfg = node_config.read().await;
+            let mut storage = blockchain.storage.write();
+            storage.tempo = Some(TempoChain::new(
+                cfg.tempo_consensus_seed(),
+                cfg.tempo_epoch_length,
+                storage.best_number,
+            ));
+        }
         let startup_cache_lease = if fork.read().is_some() {
             let db = db.read().await;
             let inner = db
@@ -4690,6 +4726,10 @@ impl<N: Network> Backend<N> {
             mining: Arc::new(tokio::sync::Mutex::new(())),
             #[cfg(test)]
             mining_commit_hook: Default::default(),
+            #[cfg(test)]
+            mining_state_root_hook: Default::default(),
+            #[cfg(test)]
+            rollback_unwind_hook: Default::default(),
             disable_pool_balance_checks,
             startup_fork_cache_user,
         };
@@ -5327,8 +5367,19 @@ impl<N: Network> Backend<N> {
         *self.evm_env.write() = evm_env;
         *self.fork.write() = Some(fork);
         *self.last_fork_cache_source.write() = fork_cache_source;
-        *self.blockchain.storage.write() =
-            BlockchainStorage::forked(fork_block_number, fork_block_hash, fork_total_difficulty);
+        {
+            let mut storage = self.blockchain.storage.write();
+            let mut replacement = BlockchainStorage::forked(
+                fork_block_number,
+                fork_block_hash,
+                fork_total_difficulty,
+            );
+            replacement.tempo = storage.tempo.take();
+            if let Some(tempo) = &mut replacement.tempo {
+                tempo.reanchor(fork_block_number);
+            }
+            *storage = replacement;
+        }
         self.states.write().clear();
         self.active_state_snapshots.lock().clear();
         self.time.reset(timestamp);
@@ -5497,7 +5548,7 @@ impl<N: Network> Backend<N> {
             fees,
             evm_env,
             hardfork,
-            storage,
+            mut storage,
             timestamp,
             flush_old_cache,
         } = staged;
@@ -5513,7 +5564,14 @@ impl<N: Network> Backend<N> {
         *self.evm_env.write() = evm_env;
         *self.hardfork.write() = hardfork;
         *self.fork.write() = None;
-        *self.blockchain.storage.write() = storage;
+        {
+            let mut live_storage = self.blockchain.storage.write();
+            storage.tempo = live_storage.tempo.take();
+            if let Some(tempo) = &mut storage.tempo {
+                tempo.reanchor(storage.best_number);
+            }
+            *live_storage = storage;
+        }
         self.states.write().clear();
         self.active_state_snapshots.lock().clear();
         self.time.reset(timestamp);
@@ -5542,7 +5600,8 @@ impl<N: Network> Backend<N> {
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
         let removed_logs = self.removed_logs_since(num);
-        if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
+        let mut db = self.db.write().await;
+        if !db.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
             return Ok(false);
         }
         {
@@ -5551,7 +5610,13 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_blocks = {
+            let mut storage = self.blockchain.storage.write();
+            if let Some(tempo) = &mut storage.tempo {
+                tempo.restore(id, num);
+            }
+            storage.unwind_to(num, hash)
+        };
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
         self.states.write().remove_block_states(&removed_hashes);
         if !removed_logs.is_empty() {
@@ -5939,13 +6004,11 @@ where
             self.states.write().insert(best_hash, state);
         }
 
-        {
-            let mut db = self.db.write().await;
-            for state in state_changes {
-                db.commit(state);
-            }
-            db.insert_block_hash(U256::from(block_number), block_hash);
+        let mut db = self.db.write().await;
+        for state in state_changes {
+            db.commit(state);
         }
+        db.insert_block_hash(U256::from(block_number), block_hash);
 
         let BlockInfo { block, transactions, receipts } = block_info;
         let header = block.header.clone();
@@ -5953,6 +6016,9 @@ where
             let mut storage = self.blockchain.storage.write();
             storage.best_number = block_number;
             storage.best_hash = block_hash;
+            if let Some(tempo) = &mut storage.tempo {
+                tempo.reanchor(block_number);
+            }
             if !self.is_eip3675() {
                 storage.total_difficulty =
                     storage.total_difficulty.saturating_add(header.difficulty);
@@ -6004,6 +6070,7 @@ where
             next_block_excess_blob_gas,
             blob_params.update_fraction as u64,
         ));
+        drop(db);
         self.notify_on_new_block(header.into_inner(), block_hash);
 
         Ok(())
@@ -6348,19 +6415,36 @@ where
                     .prune_state_history_config
                     .is_state_history_supported()
                     .then(|| db.current_state());
-                commit_cache(&mut **db, cache)?;
-                let state_root = db.maybe_state_root().unwrap_or_default();
-                let block_info = self.build_block_info(
+                let mut block_info = self.build_block_info(
                     &mining_evm_env,
                     best_hash,
                     block_number,
-                    state_root,
+                    B256::ZERO,
                     block_result,
                     pool_result.txs,
                     pool_result.tx_info,
                     parent_beacon_block_root,
                     block_access_list.as_ref(),
                 );
+
+                if let FoundryHeader::Tempo(header) = &mut block_info.block.header {
+                    let storage = self.blockchain.storage.read();
+                    let tempo = storage.tempo.as_ref().expect("Tempo chain is initialized");
+                    tempo.prepare(header, TempoHardfork::from(hardfork))?;
+                }
+
+                // The database guard protects the prepared consensus state until publication.
+                // Keep the expensive execution commit and state root outside the storage lock.
+                commit_cache(&mut **db, cache)?;
+                #[cfg(test)]
+                if let Some(hook) = self.mining_state_root_hook.lock().as_ref() {
+                    hook();
+                }
+                let state_root = db.maybe_state_root().unwrap_or_default();
+                match &mut block_info.block.header {
+                    FoundryHeader::Tempo(header) => header.inner.state_root = state_root,
+                    FoundryHeader::Ethereum(header) => header.state_root = state_root,
+                }
 
                 // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
@@ -6433,6 +6517,13 @@ where
                 hook.resume.notified().await;
             }
             let mut storage = self.blockchain.storage.write();
+            if let FoundryHeader::Tempo(header) = &header {
+                storage
+                    .tempo
+                    .as_mut()
+                    .expect("Tempo chain is initialized")
+                    .finalize(header, TempoHardfork::from(hardfork));
+            }
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
@@ -7695,8 +7786,17 @@ where
             let removed_logs = self.removed_logs_since(common_block.header.number());
 
             // Unwind the storage back to the common ancestor first
-            let removed_blocks =
-                self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+            let removed_blocks = {
+                let mut storage = self.blockchain.storage.write();
+                if let Some(tempo) = &mut storage.tempo {
+                    tempo.unwind(common_block.header.number())?;
+                }
+                #[cfg(test)]
+                if let Some(hook) = self.rollback_unwind_hook.lock().as_ref() {
+                    hook();
+                }
+                storage.unwind_to(common_block.header.number(), hash)
+            };
 
             // Clean up in-memory and on-disk states for removed blocks
             let removed_hashes: Vec<_> =
@@ -8587,7 +8687,6 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             return Err(err);
         }
         db.delete_state_snapshot(db_snapshot);
-        drop(db);
 
         // Backfill the EVM-level block hash cache from the freshly loaded blocks so that the
         // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already
@@ -8603,7 +8702,26 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 .collect()
         };
 
-        *self.blockchain.storage.write() = storage;
+        let reanchor_tempo = {
+            // The database guard keeps chain identity stable until publication. Compare under a
+            // read guard so existing chain readers need not wait for a large history comparison.
+            let live_storage = self.blockchain.storage.read();
+            live_storage.tempo.is_some()
+                && (storage.best_number != live_storage.best_number
+                    || storage.best_hash != live_storage.best_hash
+                    || storage.genesis_number != live_storage.genesis_number
+                    || storage.genesis_hash != live_storage.genesis_hash
+                    || storage.hashes != live_storage.hashes)
+        };
+        {
+            let mut live_storage = self.blockchain.storage.write();
+            // Keep the live consensus, including snapshots or rotations created since staging.
+            storage.tempo = live_storage.tempo.take();
+            if reanchor_tempo && let Some(tempo) = &mut storage.tempo {
+                tempo.reanchor(storage.best_number);
+            }
+            *live_storage = storage;
+        }
         if let Some(timestamp) = canonical_timestamp {
             self.time.reset(timestamp);
         }
@@ -8619,7 +8737,6 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             self.fees.set_blob_excess_gas_and_price(blob_excess_gas_and_price);
         }
 
-        let mut db = self.db.write().await;
         db.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = historical_states {

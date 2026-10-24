@@ -8,6 +8,7 @@ use crate::{
             },
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
+            tempo_consensus::TempoConsensus,
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
@@ -65,6 +66,7 @@ use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
     net::{IpAddr, Ipv4Addr},
+    num::NonZeroU64,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -92,6 +94,8 @@ pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
+/// Default number of block heights in a Tempo consensus epoch.
+pub const DEFAULT_TEMPO_EPOCH_LENGTH: NonZeroU64 = NonZeroU64::new(21_600).unwrap();
 
 /// Resolves source-chain upgrades without changing another execution family's historical lookup.
 pub(crate) fn source_hardfork(
@@ -380,6 +384,10 @@ pub struct NodeConfig {
     ///
     /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
     pub tempo_fee_payer: Option<Address>,
+    /// Number of block heights in a Tempo consensus epoch.
+    pub tempo_epoch_length: NonZeroU64,
+    /// Optional development consensus seed; otherwise derived from the account mnemonic.
+    pub tempo_consensus_seed: Option<B256>,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where persisted states are cached (used with `max_persisted_states`).
@@ -736,6 +744,8 @@ impl Default for NodeConfig {
             #[cfg(feature = "base")]
             base_activation_admin: None,
             tempo_fee_payer: None,
+            tempo_epoch_length: DEFAULT_TEMPO_EPOCH_LENGTH,
+            tempo_consensus_seed: None,
             silent: false,
             cache_path: None,
             funded_accounts: HashMap::default(),
@@ -1412,6 +1422,31 @@ impl NodeConfig {
     pub const fn with_tempo_fee_payer(mut self, fee_payer: Option<Address>) -> Self {
         self.tempo_fee_payer = fee_payer;
         self
+    }
+
+    /// Sets the number of block heights in a Tempo consensus epoch.
+    #[must_use]
+    pub const fn with_tempo_epoch_length(mut self, epoch_length: NonZeroU64) -> Self {
+        self.tempo_epoch_length = epoch_length;
+        self
+    }
+
+    /// Overrides the development consensus seed on Tempo networks.
+    #[must_use]
+    pub const fn with_tempo_consensus_seed(mut self, seed: Option<B256>) -> Self {
+        self.tempo_consensus_seed = seed;
+        self
+    }
+
+    /// Returns the explicit seed or derives it from the effective dev-account mnemonic.
+    pub fn tempo_consensus_seed(&self) -> B256 {
+        self.tempo_consensus_seed.unwrap_or_else(|| {
+            let mnemonic = self
+                .account_generator
+                .as_ref()
+                .map_or(DEFAULT_MNEMONIC, |generator| generator.get_phrase());
+            TempoConsensus::default_seed(mnemonic)
+        })
     }
 
     /// Returns the effective account used to sponsor Tempo fee-payer requests.
@@ -3074,5 +3109,21 @@ mod tests {
 
         let mode = std::fs::metadata(path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn tempo_consensus_configuration_defaults_and_overrides() {
+        let config = NodeConfig::default();
+        assert_eq!(config.tempo_epoch_length.get(), 21_600);
+        assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(DEFAULT_MNEMONIC));
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let config =
+            config.with_account_generator(AccountGenerator::new(1).phrase(mnemonic)).unwrap();
+        assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(mnemonic));
+        let seed = B256::repeat_byte(7);
+        let config =
+            config.with_tempo_epoch_length(NonZeroU64::MIN).with_tempo_consensus_seed(Some(seed));
+        assert_eq!(config.tempo_epoch_length, NonZeroU64::MIN);
+        assert_eq!(config.tempo_consensus_seed(), seed);
     }
 }
