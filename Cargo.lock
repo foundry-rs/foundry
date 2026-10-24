@@ -6325,6 +6325,7 @@ dependencies = [
  "ciborium",
  "eyre",
  "foundry-block-explorers",
+ "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
