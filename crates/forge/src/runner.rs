@@ -71,10 +71,11 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor, SymbolicInvariantCandidateInput,
-    SymbolicInvariantCounterexampleKind, SymbolicInvariantRunInput, SymbolicInvariantRunResult,
-    SymbolicInvariantStep, SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult,
-    SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
+    ExecutorView, SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor,
+    SymbolicInvariantCandidateInput, SymbolicInvariantCounterexampleKind,
+    SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
+    SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
+    SymbolicStopReason, SymbolicStorageAssignment,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -1960,9 +1961,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         collect_success_input: bool,
         corpus_seeds: Vec<SymbolicConcreteInput>,
         branch_target: Option<SymbolicBranchTarget>,
-    ) -> SymbolicRunInput<'f, FEN> {
+    ) -> SymbolicRunInput<'f> {
         SymbolicRunInput {
-            executor: self.executor.as_ref(),
+            executor: ExecutorView::new(self.executor.as_ref()),
             target: self.address,
             sender,
             function: func,
@@ -3205,7 +3206,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .collect::<Vec<_>>();
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         let result = symbolic.search_invariant_candidates(SymbolicInvariantCandidateInput {
-            executor: prefix_executor,
+            executor: ExecutorView::new(prefix_executor),
             invariant_address: invariant_contract.address,
             invariants: &invariants,
             after_invariant,
@@ -3469,7 +3470,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 frontier.operands.result,
             );
             let search = symbolic.search_branch_target(SymbolicRunInput {
-                executor: &prefix_executor,
+                executor: ExecutorView::new(&prefix_executor),
                 target: call.call_details.target,
                 sender: call.sender,
                 function,
@@ -4309,7 +4310,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             };
             let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
             match symbolic.run_invariant(SymbolicInvariantRunInput {
-                executor: &evm.executor,
+                executor: ExecutorView::new(&evm.executor),
                 invariant_address: self.address,
                 sender: self.sender,
                 invariant: anchor,
