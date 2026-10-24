@@ -14,6 +14,11 @@ ignore = [
     # declaration handling can allocate without a bound. No fixed quick-junit,
     # inferno, or soldeer release is available for either advisory yet.
     "RUSTSEC-2026-0195",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0387 crypto-bigint
+    # constant-time issues. 0.5.5 comes from elliptic-curve 0.13 via
+    # alloy-signer and has no patched release. Update 0.7.5 to the patched
+    # 0.7.6 once CI can download it; keep this ignore until alloy drops 0.5.
+    "RUSTSEC-2026-0387",
 ]
 
 # This section is considered when running `cargo deny check bans`.
