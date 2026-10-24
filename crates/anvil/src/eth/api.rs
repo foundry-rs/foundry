@@ -5988,10 +5988,15 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn loaded_state_releases_only_invalidated_pool_snapshots() {
-        for (config, preserves_snapshots) in
-            [(NodeConfig::test(), true), (NodeConfig::test_tempo(), false)]
-        {
+        for (config, preserves_snapshots) in [
+            (NodeConfig::test(), true),
+            (NodeConfig::test_tempo(), true),
+            (NodeConfig::test_tempo(), false),
+        ] {
             let (api, handle) = spawn(config.with_no_mining(true)).await;
+            api.mine_one().await.unwrap();
+            let account = Address::repeat_byte(0x22);
+            api.anvil_set_balance(account, U256::ONE).await.unwrap();
             let sender = handle.dev_wallets().next().unwrap().address();
             let hash = api
                 .send_transaction(WithOtherFields::new(
@@ -6001,14 +6006,25 @@ mod tests {
                 .unwrap();
             let transaction = Arc::downgrade(&api.pool.ready_transactions().next().unwrap());
             let snapshot = api.evm_snapshot().await.unwrap();
+            api.anvil_set_balance(account, U256::from(2)).await.unwrap();
             let state = api.anvil_dump_state(None).await.unwrap();
             api.pool.clear();
             assert!(transaction.upgrade().is_some());
+            if !preserves_snapshots {
+                api.mine_one().await.unwrap();
+            }
+            let previous_hash = api.backend.best_hash();
 
             assert!(api.anvil_load_state(state).await.unwrap());
+            assert_eq!(api.backend.best_hash() == previous_hash, preserves_snapshots);
+            assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
             assert_eq!(transaction.upgrade().is_some(), preserves_snapshots);
             assert_eq!(api.evm_revert(snapshot).await.unwrap(), preserves_snapshots);
             assert_eq!(api.pool.get_transaction(hash).is_some(), preserves_snapshots);
+            assert_eq!(
+                api.balance(account, None).await.unwrap(),
+                if preserves_snapshots { U256::ONE } else { U256::from(2) },
+            );
         }
     }
 }

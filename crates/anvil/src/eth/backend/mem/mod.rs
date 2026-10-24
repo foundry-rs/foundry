@@ -8664,13 +8664,6 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             (parent_fees, blob_excess_gas_and_price)
         });
 
-        let reset_tempo_snapshots = if let Some(tempo) = &mut storage.tempo {
-            tempo.reanchor(storage.best_number);
-            true
-        } else {
-            false
-        };
-
         let historical_states = state.historical_states.take();
         let mut db = self.db.write().await;
         let db_snapshot = db.snapshot_state();
@@ -8709,7 +8702,26 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 .collect()
         };
 
-        *self.blockchain.storage.write() = storage;
+        let reset_tempo_snapshots = {
+            // The database guard keeps chain identity stable until publication. Compare under a
+            // read guard so existing chain readers need not wait for a large history comparison.
+            let live_storage = self.blockchain.storage.read();
+            live_storage.tempo.is_some()
+                && (storage.best_number != live_storage.best_number
+                    || storage.best_hash != live_storage.best_hash
+                    || storage.genesis_number != live_storage.genesis_number
+                    || storage.genesis_hash != live_storage.genesis_hash
+                    || storage.hashes != live_storage.hashes)
+        };
+        {
+            let mut live_storage = self.blockchain.storage.write();
+            // Keep the live consensus, including snapshots or rotations created since staging.
+            storage.tempo = live_storage.tempo.take();
+            if reset_tempo_snapshots && let Some(tempo) = &mut storage.tempo {
+                tempo.reanchor(storage.best_number);
+            }
+            *live_storage = storage;
+        }
         if let Some(timestamp) = canonical_timestamp {
             self.time.reset(timestamp);
         }

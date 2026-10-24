@@ -54,10 +54,17 @@ impl TempoChain {
         self.snapshots.retain(|snapshot_id, _| *snapshot_id < id);
     }
 
+    /// Rewinds signed history or starts a new unsigned segment below the imported anchor.
     pub(super) fn unwind(&mut self, block: &Block) -> Result<(), BlockchainError> {
-        self.consensus
-            .unwind(block.header.number())
-            .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+        let height = block.header.number();
+        if height < self.consensus.anchor_height() {
+            // Exact snapshots retain their own controller and anchor across ordinary rollbacks.
+            self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
+        } else {
+            self.consensus
+                .unwind(height)
+                .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+        }
         Ok(())
     }
 
@@ -96,7 +103,10 @@ mod tests {
     use super::*;
     use crate::{
         NodeConfig,
-        eth::{api::EthApi, backend::mem::MiningCommitHook},
+        eth::{
+            api::EthApi,
+            backend::{db::SerializableState, mem::MiningCommitHook},
+        },
         spawn,
     };
     use alloy_primitives::Address;
@@ -107,7 +117,7 @@ mod tests {
         backend::RevertStateSnapshotAction,
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
-    use foundry_primitives::FoundryNetwork;
+    use foundry_primitives::{FoundryHeader, FoundryNetwork};
     use std::{
         sync::{
             Arc,
@@ -465,5 +475,226 @@ mod tests {
         replay.mine_one().await.unwrap();
         assert_eq!(replay.backend.best_number(), 6);
         assert_certified_head(&replay);
+    }
+
+    #[tokio::test]
+    async fn tempo_changed_head_import_can_rollback_and_reorg_below_anchor() {
+        let (api, _handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_no_mining(true)
+                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
+        )
+        .await;
+        for _ in 0..4 {
+            api.mine_one().await.unwrap();
+        }
+        let imported_head = api.backend.best_hash();
+        let ancestor = api.backend.get_block(2).unwrap().header.hash_slow();
+        let state = api.backend.serialized_state(false).await.unwrap();
+        assert!(state.historical_states.is_none());
+        api.mine_one().await.unwrap();
+        assert_ne!(api.backend.best_hash(), imported_head);
+        api.backend.load_state(state.clone()).await.unwrap();
+        assert_eq!(api.backend.best_hash(), imported_head);
+        assert!(consensus(&api).latest().is_none());
+
+        // The same process retains execution history even when the dump omits it.
+        api.anvil_rollback(Some(2)).await.unwrap();
+        assert_eq!(api.backend.best_number(), 2);
+        assert_eq!(api.backend.best_hash(), ancestor);
+        assert!(consensus(&api).latest().is_none());
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+        let retained = consensus(&api).finalization(3).unwrap().clone();
+        api.mine_one().await.unwrap();
+        api.anvil_rollback(Some(1)).await.unwrap();
+        assert_eq!(consensus(&api).finalization(3), Some(&retained));
+        assert!(consensus(&api).finalization(4).is_none());
+        assert_certified_head(&api);
+
+        // Importing the saved head again creates another unsigned signing segment.
+        api.backend.load_state(state).await.unwrap();
+        assert_eq!(api.backend.best_hash(), imported_head);
+        assert!(consensus(&api).latest().is_none());
+        api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
+        assert_eq!(api.backend.best_number(), 4);
+        assert!(consensus(&api).finalization(2).is_none());
+        let replacement = consensus(&api).finalization(3).unwrap().clone();
+        assert_eq!(replacement.digest, api.backend.get_block(3).unwrap().header.hash_slow());
+        assert_certified_head(&api);
+    }
+
+    #[test]
+    fn tempo_cross_anchor_rollback_preserves_exact_snapshot_anchor() {
+        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 5);
+        chain.consensus.rotate().unwrap();
+        let next_rotation = chain.consensus.clone().rotate().unwrap();
+        chain.unwind(&unsigned_tempo_block(5)).unwrap();
+        assert_eq!(chain.consensus.clone().rotate().unwrap(), next_rotation);
+        chain.snapshot(U256::ONE);
+        let mut expected = chain.consensus.clone();
+
+        chain.unwind(&unsigned_tempo_block(3)).unwrap();
+        assert!(chain.consensus.latest().is_none());
+        chain.restore(U256::ONE);
+        assert_eq!(chain.consensus.rotate().unwrap(), expected.rotate().unwrap());
+
+        // Restoring the snapshot restores anchor 5, so height 4 is an unsigned ancestor again.
+        chain.unwind(&unsigned_tempo_block(4)).unwrap();
+        assert!(chain.consensus.latest().is_none());
+        let mut header = TempoHeader::default();
+        header.inner.number = 5;
+        chain.prepare(&mut header, TempoHardfork::T4).unwrap();
+        chain.finalize(&header, TempoHardfork::T4);
+        assert_eq!(chain.consensus.latest().unwrap().0, 5);
+    }
+
+    #[test]
+    fn tempo_rollback_above_anchor_preserves_pruning_error() {
+        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 5);
+        for height in 6..=7 {
+            let mut header = TempoHeader::default();
+            header.inner.number = height;
+            chain.prepare(&mut header, TempoHardfork::T4).unwrap();
+            chain.finalize(&header, TempoHardfork::T4);
+        }
+        chain.consensus.prune(7).unwrap();
+        let retained = chain.consensus.finalization(7).unwrap().clone();
+        let identity = chain.consensus.identity();
+
+        let error = chain.unwind(&unsigned_tempo_block(6)).unwrap_err();
+        assert!(matches!(error, BlockchainError::Internal(message)
+            if message == "cannot rewind Tempo consensus from 7 to 6 with earliest retained height 7"));
+        assert_eq!(chain.consensus.latest(), Some((7, &retained)));
+        assert_eq!(chain.consensus.identity(), identity);
+        chain.unwind(&unsigned_tempo_block(7)).unwrap();
+        assert_eq!(chain.consensus.latest(), Some((7, &retained)));
+    }
+
+    #[tokio::test]
+    async fn tempo_unchanged_history_import_preserves_consensus_and_snapshots() {
+        for include_history in [false, true] {
+            let (api, _handle) = spawn(
+                NodeConfig::test_tempo()
+                    .with_no_mining(true)
+                    .with_tempo_epoch_length(NonZeroU64::new(4).unwrap()),
+            )
+            .await;
+            for _ in 0..2 {
+                api.mine_one().await.unwrap();
+            }
+            let first = consensus(&api).finalization(1).unwrap().clone();
+            let head = consensus(&api).finalization(2).unwrap().clone();
+            let account = Address::repeat_byte(0x22);
+            api.anvil_set_balance(account, U256::ONE).await.unwrap();
+            let scheduled = {
+                let _db = api.backend.db.write().await;
+                api.backend
+                    .blockchain
+                    .storage
+                    .write()
+                    .tempo
+                    .as_mut()
+                    .unwrap()
+                    .consensus
+                    .rotate()
+                    .unwrap()
+            };
+            let snapshot = api.evm_snapshot().await.unwrap();
+            let next_rotation = consensus(&api).rotate().unwrap();
+            let mut state = api.backend.serialized_state(false).await.unwrap();
+            state.accounts.get_mut(&account).unwrap().balance = U256::from(2);
+            if !include_history {
+                state = SerializableState { accounts: state.accounts, ..Default::default() };
+            }
+
+            api.backend.load_state(state).await.unwrap();
+            assert_eq!(consensus(&api).finalization(1), Some(&first));
+            assert_eq!(consensus(&api).finalization(2), Some(&head));
+            assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
+            assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
+            assert_certified_head(&api);
+            for _ in 0..2 {
+                api.mine_one().await.unwrap();
+            }
+            assert_eq!(consensus(&api).identity(), scheduled);
+            assert_certified_head(&api);
+
+            assert!(api.evm_revert(snapshot).await.unwrap());
+            assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
+            assert_eq!(consensus(&api).finalization(2), Some(&head));
+            assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
+            assert_certified_head(&api);
+            api.anvil_rollback(Some(1)).await.unwrap();
+            assert_eq!(api.backend.best_number(), 1);
+            assert_eq!(consensus(&api).finalization(1), Some(&first));
+            assert_certified_head(&api);
+        }
+    }
+
+    #[tokio::test]
+    async fn tempo_same_head_import_with_changed_ancestor_invalidates_snapshots() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        for _ in 0..2 {
+            api.mine_one().await.unwrap();
+        }
+        let head = api.backend.best_hash();
+        let signed_ancestor = consensus(&api).finalization(1).unwrap().digest;
+        let snapshot = api.evm_snapshot().await.unwrap();
+        let mut state = api.backend.serialized_state(false).await.unwrap();
+        let ancestor = state.blocks.iter_mut().find(|block| block.header.number() == 1).unwrap();
+        let FoundryHeader::Tempo(header) = &mut ancestor.header else {
+            panic!("expected Tempo header");
+        };
+        header.inner.timestamp += 1;
+        let replacement = ancestor.header.hash_slow();
+        assert_ne!(replacement, signed_ancestor);
+
+        api.backend.load_state(state).await.unwrap();
+        assert_eq!(api.backend.best_hash(), head);
+        assert_eq!(api.backend.get_block(1).unwrap().header.hash_slow(), replacement);
+        assert!(consensus(&api).latest().is_none());
+        assert!(api.backend.list_state_snapshots().is_empty());
+        assert!(!api.evm_revert(snapshot).await.unwrap());
+        assert!(
+            !api.backend
+                .db
+                .write()
+                .await
+                .revert_state(snapshot, RevertStateSnapshotAction::RevertRemove)
+        );
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+    }
+
+    #[tokio::test]
+    async fn tempo_import_preserves_backend_snapshot_created_after_staging() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        api.mine_one().await.unwrap();
+        let db = api.backend.db.write().await;
+
+        // Raw backend snapshots use the database guard; RPC snapshots also hold the mining guard.
+        // Queue the snapshot first, then stage the import before either can mutate the database.
+        let mut snapshot = Box::pin(api.backend.create_state_snapshot());
+        assert!(futures::poll!(snapshot.as_mut()).is_pending());
+        let mut import = Box::pin(api.backend.load_state(SerializableState::default()));
+        assert!(futures::poll!(import.as_mut()).is_pending());
+        drop(db);
+
+        let snapshot = timeout(Duration::from_secs(10), snapshot).await.unwrap();
+        assert!(timeout(Duration::from_secs(10), import).await.unwrap().unwrap());
+        assert!(
+            timeout(Duration::from_secs(10), api.backend.revert_state_snapshot(snapshot))
+                .await
+                .unwrap()
+                .unwrap()
+        );
+        assert_certified_head(&api);
+    }
+
+    fn unsigned_tempo_block(height: u64) -> Block {
+        let mut header = TempoHeader::default();
+        header.inner.number = height;
+        Block::new(header.into(), Default::default())
     }
 }
