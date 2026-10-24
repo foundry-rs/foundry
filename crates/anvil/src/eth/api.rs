@@ -3721,7 +3721,7 @@ impl EthApi<FoundryNetwork> {
 
         self.backend
             .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
-                let mut cache_db = CacheDB::new(state);
+                let mut cache_db = CacheDB::new(&*state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
                 }
@@ -4942,7 +4942,7 @@ impl EthApi<FoundryNetwork> {
                 .with_database_at_and_context(
                     Some(block_request),
                     |state, mut block, monad_context| {
-                        let mut cache_db = CacheDB::new(state);
+                        let mut cache_db = CacheDB::new(&*state);
                         if let Some(state_overrides) = overrides.state {
                             apply_state_overrides(
                                 state_overrides.into_iter().collect(),

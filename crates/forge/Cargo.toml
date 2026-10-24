@@ -50,7 +50,7 @@ forge-lint.workspace = true
 forge-verify.workspace = true
 forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
-foundry-cli.workspace = true
+foundry-cli = { workspace = true, features = ["soldeer"] }
 foundry-debugger.workspace = true
 foundry-tui.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
@@ -80,7 +80,7 @@ inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
-revm = { workspace = true, features = ["parse"] }
+revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline", "unicode"] }

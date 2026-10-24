@@ -3,7 +3,7 @@
 use super::Backend;
 use crate::eth::{
     backend::{
-        db::{AnvilCacheDB, Db},
+        db::{AnvilCacheDB, Db, StateRef},
         executor::{BlockExecutionKind, ExecutedPoolTransactions},
         time::{PendingBlockTimestamp, TimeManager},
     },
@@ -11,7 +11,7 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_eips::{Decodable2718, Encodable2718};
-use alloy_evm::{Database, EthEvmFactory, Evm, EvmEnv, EvmFactory};
+use alloy_evm::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use anvil_core::eth::transaction::PendingTransaction;
@@ -40,17 +40,15 @@ use std::sync::Arc;
 
 impl<N: Network> Backend<N> {
     /// Base path of [`Backend::transact_call_with_inspector_ref`].
-    pub(super) fn transact_base_with_inspector_ref<'db, I, DB>(
+    pub(super) fn transact_base_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn super::DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx: BaseTransaction<TxEnv>,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<BaseContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<BaseContext<WrapDatabaseRef<&'db dyn super::DatabaseRef>>>,
     {
         let upgrade = self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
         if tx.eip8130.is_some() && upgrade < BaseUpgrade::Zenith {
@@ -102,7 +100,7 @@ impl<N: Network> Backend<N> {
             parent_hash,
             true,
         )?;
-        let mut candidate_db = AnvilCacheDB::new(db, *evm_env.spec_id());
+        let mut candidate_db = AnvilCacheDB::<StateRef<'_>>::new(db, *evm_env.spec_id());
         self.execute_with_block_executor(
             &mut candidate_db,
             &evm_env,

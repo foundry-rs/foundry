@@ -8,7 +8,7 @@ use crate::{
             cheats::{CheatEcrecover, CheatsManager, NextBlockOverrides},
             db::{
                 AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, MaybeFullDatabase,
-                SerializableState, StateDb,
+                SerializableState, StateDb, StateRef,
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
@@ -66,7 +66,7 @@ use alloy_eips::{
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
-    block::{BalIndexedDatabase, BlockExecutionResult, BlockExecutor, StateDB},
+    block::{BlockExecutionResult, BlockExecutor, StateDB},
     eth::{EthEvm, EthEvmContext},
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
@@ -879,7 +879,6 @@ pub mod storage;
 /// With trait upcasting now stable, we can now upcast from this trait to revm::DatabaseRef.
 pub trait DatabaseRef: revm::DatabaseRef<Error = DatabaseError> + Debug {}
 impl<T> DatabaseRef for T where T: revm::DatabaseRef<Error = DatabaseError> + Debug {}
-impl DatabaseRef for dyn crate::eth::backend::db::Db {}
 
 // Gas per transaction not creating a contract.
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
@@ -2077,22 +2076,10 @@ impl<N: Network> Backend<N> {
     fn prepare_block_replay<'a>(
         &self,
         block: &Block,
-        parent_state: &'a StateDb,
-    ) -> Result<(CacheDB<&'a StateDb>, EvmEnv, FoundryHardfork), BlockchainError> {
-        self.prepare_block_replay_with_db(block, parent_state)
-    }
-
-    /// Creates an overlay and applies block-start transitions for a locally mined block replay.
-    fn prepare_block_replay_with_db<DB>(
-        &self,
-        block: &Block,
-        db: DB,
-    ) -> Result<(CacheDB<DB>, EvmEnv, FoundryHardfork), BlockchainError>
-    where
-        DB: DatabaseRef<Error = DatabaseError> + Debug,
-    {
+        parent_state: StateRef<'a>,
+    ) -> Result<(CacheDB<StateRef<'a>>, EvmEnv, FoundryHardfork), BlockchainError> {
         let (evm_env, hardfork) = self.tx_replay_evm_env(block);
-        let mut cache_db = AnvilCacheDB::new(db, *evm_env.spec_id());
+        let mut cache_db = AnvilCacheDB::<StateRef<'_>>::new(parent_state, *evm_env.spec_id());
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
@@ -2113,17 +2100,14 @@ impl<N: Network> Backend<N> {
     }
 
     /// Replays the stored transaction prefix `[0, end)` into an existing block overlay.
-    fn replay_mined_transaction_prefix<DB>(
+    fn replay_mined_transaction_prefix(
         &self,
-        cache_db: &mut CacheDB<DB>,
+        cache_db: &mut CacheDB<StateRef<'_>>,
         evm_env: &EvmEnv,
         hardfork: FoundryHardfork,
         block: &Block,
         end: usize,
-    ) -> Result<(), BlockchainError>
-    where
-        DB: DatabaseRef<Error = DatabaseError> + Debug,
-    {
+    ) -> Result<(), BlockchainError> {
         let monad_context = self.active_monad_context_for_mined_block(block)?;
         for (index, transaction) in block.body.transactions[..end].iter().enumerate() {
             let pending = self.pending_mined_transaction(transaction.clone())?;
@@ -2774,17 +2758,15 @@ impl<N: Network> Backend<N> {
     ///
     /// Creates an Ethereum EVM, injects precompiles, and transacts with a
     /// plain [`TxEnv`].
-    fn transact_eth_with_inspector_ref<'db, I, DB>(
+    fn transact_eth_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
     {
         self.transact_eth_with_inspector_ref_and_precompile_overrides(
             db,
@@ -2795,35 +2777,31 @@ impl<N: Network> Backend<N> {
         )
     }
 
-    fn transact_eth_with_inspector_ref_and_precompile_overrides<'db, I, DB>(
+    fn transact_eth_with_inspector_ref_and_precompile_overrides<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TxEnv,
         overrides: &SimulationPrecompileOverrides,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
     {
         let mut evm = self.prepare_eth_evm(db, evm_env, inspector, overrides)?;
         Ok(evm.transact(tx_env)?)
     }
 
-    fn transact_eth_simulation_with_inspector_ref<'db, I, DB>(
+    fn transact_eth_simulation_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TxEnv,
         overrides: &SimulationPrecompileOverrides,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
     {
         let evm = self.prepare_eth_evm(db, evm_env, inspector, overrides)?;
         let mut evm = evm.into_inner();
@@ -2839,17 +2817,18 @@ impl<N: Network> Backend<N> {
     }
 
     /// Creates an Ethereum EVM with the active precompiles and simulation overrides.
-    fn prepare_eth_evm<'db, 'inspector, I, DB>(
+    fn prepare_eth_evm<'db, 'inspector, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &'inspector mut I,
         overrides: &SimulationPrecompileOverrides,
-    ) -> Result<EthEvm<WrapDatabaseRef<&'db DB>, &'inspector mut I, PrecompilesMap>, BlockchainError>
+    ) -> Result<
+        EthEvm<WrapDatabaseRef<&'db dyn DatabaseRef>, &'inspector mut I, PrecompilesMap>,
+        BlockchainError,
+    >
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
     {
         let mut evm = EthEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
@@ -2869,9 +2848,9 @@ impl<N: Network> Backend<N> {
     /// Executes an envelope through the active network EVM with optional Monad block context.
     ///
     /// Returns both the execution result and the base [`TxEnv`].
-    fn transact_envelope_with_inspector_ref_and_context<'db, I, DB>(
+    fn transact_envelope_with_inspector_ref_and_context<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         pending: &PendingTransaction<FoundryTxEnvelope>,
@@ -2880,9 +2859,7 @@ impl<N: Network> Backend<N> {
         >,
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
     {
         self.transact_envelope_with_inspector_ref_and_context_kind(
             db,
@@ -2894,27 +2871,25 @@ impl<N: Network> Backend<N> {
     }
 
     /// Replays a mined envelope through the active network's canonical replay entry point.
-    fn replay_envelope_with_inspector_ref_and_context<'db, I, DB>(
+    fn replay_envelope_with_inspector_ref_and_context<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         pending: &PendingTransaction<FoundryTxEnvelope>,
         execution: EnvelopeExecution<'_>,
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
     {
         self.transact_envelope_with_inspector_ref_and_context_kind(
             db, evm_env, inspector, pending, execution,
         )
     }
 
-    fn transact_envelope_with_inspector_ref_and_context_kind<'db, I, DB>(
+    fn transact_envelope_with_inspector_ref_and_context_kind<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         pending: &PendingTransaction<FoundryTxEnvelope>,
@@ -2923,9 +2898,7 @@ impl<N: Network> Backend<N> {
         >,
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
     {
         #[cfg(any(feature = "base", feature = "optimism"))]
         let (tx, sender) = (pending.transaction.as_ref(), *pending.sender());
@@ -2994,17 +2967,15 @@ impl<N: Network> Backend<N> {
     }
 
     /// Creates a Tempo EVM, injects precompiles, and transacts with a native [`TempoTxEnv`].
-    fn transact_tempo_with_inspector_ref<'db, I, DB>(
+    fn transact_tempo_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TempoTxEnv,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<TempoContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
     {
         let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
@@ -3019,9 +2990,9 @@ impl<N: Network> Backend<N> {
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
     /// executes pool transactions. Returns the execution results and drops the EVM.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    fn execute_with_block_executor<DB>(
+    fn execute_with_block_executor(
         &self,
-        db: DB,
+        db: &mut AnvilCacheDB<StateRef<'_>>,
         evm_env: &EvmEnv,
         parent_hash: B256,
         hardfork: FoundryHardfork,
@@ -3037,10 +3008,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<
         (ExecutedPoolTransactions<FoundryTxEnvelope>, BlockExecutionResult<FoundryReceiptEnvelope>),
         BlockchainError,
-    >
-    where
-        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
-    {
+    > {
         let spec_id = *evm_env.spec_id();
         #[cfg(feature = "monad")]
         if self.is_monad() {
@@ -3702,9 +3670,9 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    fn transact_call_with_inspector_ref<'db, I, DB>(
+    fn transact_call_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: CallTxEnv,
@@ -3713,9 +3681,7 @@ impl<N: Network> Backend<N> {
         >,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
     {
         self.transact_call_with_inspector_ref_at_hardfork(
             db,
@@ -3727,9 +3693,9 @@ impl<N: Network> Backend<N> {
         )
     }
 
-    fn transact_call_with_inspector_ref_at_hardfork<'db, I, DB>(
+    fn transact_call_with_inspector_ref_at_hardfork<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: CallTxEnv,
@@ -3739,9 +3705,7 @@ impl<N: Network> Backend<N> {
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))] hardfork: FoundryHardfork,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: BackendInspector<WrapDatabaseRef<&'db dyn DatabaseRef>>,
     {
         match tx_env {
             CallTxEnv::Eth(tx_env) => {
@@ -4159,7 +4123,7 @@ impl<N: Network> Backend<N> {
         }
 
         self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
-            let cache_db = CacheDB::new(state);
+            let cache_db = CacheDB::new(&*state);
             let mut inspector =
                 TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
             let PreparedCall { evm_env, tx_env, .. } =
@@ -4250,7 +4214,7 @@ impl<N: Network> Backend<N> {
         let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
 
         self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
-            let cache_db = CacheDB::new(state);
+            let cache_db = CacheDB::new(&*state);
             let mut evm_env = self.evm_env.read().clone();
             evm_env.block_env = block_env;
             // A signed transaction cannot be impersonated, so reject senders with code that is not
@@ -4281,7 +4245,7 @@ impl<N: Network> Backend<N> {
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
         self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
-            let mut cache_db = CacheDB::new(state);
+            let mut cache_db = CacheDB::new(&*state);
             let mut results = Vec::with_capacity(calls.len());
             let mut calls = calls.into_iter().peekable();
 
@@ -4402,9 +4366,8 @@ impl<N: Network> Backend<N> {
         f: F,
     ) -> Result<T, BlockchainError>
     where
-        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
-        for<'a> F:
-            FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
+        for<'a> I: BackendInspector<WrapDatabaseRef<&'a dyn DatabaseRef>> + 'a,
+        for<'a> F: FnOnce(ResultAndState<HaltReason>, CacheDB<StateRef<'a>>, I, TxEnv, EvmEnv) -> T,
     {
         let block = {
             let storage = self.blockchain.storage.read();
@@ -4423,7 +4386,7 @@ impl<N: Network> Backend<N> {
 
         let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
             let (mut cache_db, evm_env, hardfork) =
-                self.prepare_block_replay_with_db(&block, Box::new(parent_state))?;
+                self.prepare_block_replay(&block, parent_state)?;
             self.replay_mined_transaction_prefix(&mut cache_db, &evm_env, hardfork, &block, index)?;
 
             let target_tx = block.body.transactions[index].clone();
@@ -5901,7 +5864,7 @@ where
 
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
-            let mut overlay = AnvilCacheDB::new(&**db, *replay_env.spec_id());
+            let mut overlay = AnvilCacheDB::<StateRef<'_>>::new(&**db, *replay_env.spec_id());
             let ExecutedHistoricalReplay {
                 block_result,
                 transactions,
@@ -6010,9 +5973,9 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn execute_with_replay_block_executor<DB>(
+    fn execute_with_replay_block_executor(
         &self,
-        db: DB,
+        db: &mut AnvilCacheDB<StateRef<'_>>,
         evm_env: &EvmEnv,
         parent_hash: B256,
         arbitrum_rpc_block_number: Option<u64>,
@@ -6023,10 +5986,7 @@ where
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))] monad_context: Option<
             MonadReplayContext,
         >,
-    ) -> Result<ExecutedHistoricalReplay>
-    where
-        DB: StateDB<Error = DatabaseError> + BalIndexedDatabase,
-    {
+    ) -> Result<ExecutedHistoricalReplay> {
         #[cfg(feature = "monad")]
         if self.is_monad() {
             return self.execute_with_monad_replay_block_executor(
@@ -6302,7 +6262,8 @@ where
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
-                let mut candidate_db = AnvilCacheDB::new(&**db, *mining_evm_env.spec_id());
+                let mut candidate_db =
+                    AnvilCacheDB::<StateRef<'_>>::new(&**db, *mining_evm_env.spec_id());
                 if matches!(
                     hardfork,
                     FoundryHardfork::Ethereum(hardfork) if hardfork >= EthereumHardfork::Amsterdam
@@ -6574,7 +6535,7 @@ where
         let db = self.db.read().await;
         let evm_env = self.next_evm_env(&**db)?;
 
-        let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
+        let mut cache_db = AnvilCacheDB::<StateRef<'_>>::new(&**db, *evm_env.spec_id());
 
         let parent_hash = self.blockchain.storage.read().best_hash;
         let block_number = self.best_number().saturating_add(1);
@@ -6695,7 +6656,7 @@ where
         self.with_database_at_and_context(block_request, |state, mut block, monad_context| {
             let block_number = block.number;
             let (exit, out, gas, state) = {
-                let mut cache_db = CacheDB::new(state);
+                let mut cache_db = CacheDB::new(&*state);
                 if let Some(state_overrides) = overrides.state {
                     apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
                 }
@@ -6745,7 +6706,7 @@ where
         }
 
         self.with_database_at_and_context(block_request, |state, block, monad_context| {
-            let cache_db = CacheDB::new(state);
+            let cache_db = CacheDB::new(&*state);
             self.trace_call_with_state(
                 request,
                 fee_details,
@@ -6834,8 +6795,8 @@ where
         }
 
         let trace = |parent_state: &StateDb| -> Result<GethTrace, BlockchainError> {
-            let db = Box::new(parent_state) as Box<dyn MaybeFullDatabase + '_>;
-            let (mut cache_db, evm_env, hardfork) = self.prepare_block_replay_with_db(block, db)?;
+            let (mut cache_db, evm_env, hardfork) =
+                self.prepare_block_replay(block, parent_state)?;
             self.replay_mined_transaction_prefix(
                 &mut cache_db,
                 &evm_env,
@@ -6874,7 +6835,7 @@ where
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         mut block: BlockEnv,
-        mut cache_db: CacheDB<Box<dyn MaybeFullDatabase + '_>>,
+        mut cache_db: CacheDB<StateRef<'_>>,
         tracing_options: GethDebugTracingOptions,
         state_overrides: Option<StateOverride>,
         block_overrides: Option<BlockOverrides>,
@@ -7632,7 +7593,7 @@ where
 
         let trace = |parent_state: &StateDb| -> Result<RpcAccountInfo, BlockchainError> {
             let (mut cache_db, evm_env, hardfork) =
-                self.prepare_block_replay_with_db(block, Box::new(parent_state))?;
+                self.prepare_block_replay(block, parent_state)?;
             self.replay_mined_transaction_prefix(
                 &mut cache_db,
                 &evm_env,
@@ -8706,7 +8667,7 @@ impl Backend<FoundryNetwork> {
                 evm_env.block_env = block_env;
                 let coinbase = evm_env.block_env.beneficiary;
                 let base_fee = evm_env.block_env.basefee;
-                let mut cache_db = CacheDB::new(state);
+                let mut cache_db = CacheDB::new(&*state);
                 let initial_coinbase = revm::DatabaseRef::basic_ref(&cache_db, coinbase)?
                     .map(|account| account.balance)
                     .unwrap_or_default();
@@ -8806,7 +8767,7 @@ impl Backend<FoundryNetwork> {
         self.with_database_at_and_context(
             block_request,
             |state, mut block_env, mut monad_context| {
-                let mut cache_db = CacheDB::new(state);
+                let mut cache_db = CacheDB::new(&*state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override, &mut cache_db)?;
                 }
@@ -8914,7 +8875,7 @@ impl Backend<FoundryNetwork> {
                 base_timestamp,
                 block_interval,
             )?;
-            let mut cache_db = BalDatabase::new(CacheDB::new(state));
+            let mut cache_db = BalDatabase::new(CacheDB::new(&*state));
             cache_db.cache.block_hashes.insert(U256::from(base_number), base_hash);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
             // A single block cannot amortize building an incremental trie.
@@ -9869,10 +9830,10 @@ where
             FromTxWithEncoded::from_encoded_tx(tx, *pending.sender(), tx.encoded_2718().into());
         let evm_env = evm_env.clone();
         self.with_database_at(None, move |state, _| {
-            let cache_db = CacheDB::new(state);
+            let cache_db = CacheDB::new(&*state);
             let mut inspector = self.build_inspector();
             let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(&cache_db),
+                WrapDatabaseRef(&cache_db as &dyn DatabaseRef),
                 Self::build_tempo_evm_env(&evm_env, self.tempo_hardfork()),
                 &mut inspector,
             );
