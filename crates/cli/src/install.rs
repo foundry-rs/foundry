@@ -11,7 +11,6 @@ use foundry_common::fs;
 use foundry_config::{Config, impl_figment_convert_basic};
 use regex::Regex;
 use semver::Version;
-use soldeer_commands::{Command, Verbosity, commands::install::Install};
 use std::{
     io::{ErrorKind, IsTerminal},
     path::{Path, PathBuf},
@@ -19,6 +18,9 @@ use std::{
     sync::LazyLock,
 };
 use yansi::Paint;
+
+#[cfg(feature = "soldeer")]
+use soldeer_commands::{Command, Verbosity, commands::install::Install};
 
 static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
@@ -388,6 +390,7 @@ pub fn install_missing_dependencies<E>(
 }
 
 /// Checks if a dependency has soldeer.lock and installs soldeer dependencies if needed.
+#[cfg(feature = "soldeer")]
 async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
     let soldeer_lock = dep_path.join("soldeer.lock");
 
@@ -412,6 +415,19 @@ async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
 
         result.map_err(|e| eyre::eyre!("Failed to run soldeer install: {e}"))?;
         sh_status!("    Soldeer dependencies installed successfully")?;
+    }
+
+    Ok(())
+}
+
+/// Warns that soldeer dependencies are not installed because soldeer support is not compiled in.
+#[cfg(not(feature = "soldeer"))]
+async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
+    if dep_path.join("soldeer.lock").exists() {
+        sh_warn!(
+            "    Found soldeer.lock, but this build does not include soldeer; \
+             skipping soldeer dependencies"
+        )?;
     }
 
     Ok(())

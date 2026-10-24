@@ -86,10 +86,10 @@ use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::channel},
+    sync::{Arc, LazyLock, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -3196,7 +3196,10 @@ impl Provider for TestArgs {
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
-    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
+    static OPCODES: LazyLock<HashMap<&str, OpCode>> = LazyLock::new(|| {
+        (0..=u8::MAX).filter_map(OpCode::new).map(|op| (op.as_str(), op)).collect()
+    });
+    OPCODES.get(s).copied().ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {
@@ -3669,6 +3672,14 @@ impl JunitOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_opcode_names_exactly() {
+        assert_eq!(parse_opcode("SSTORE"), Ok(OpCode::SSTORE));
+        assert_eq!(parse_opcode("PUSH32"), Ok(OpCode::PUSH32));
+        assert_eq!(parse_opcode("sstore"), Err("invalid opcode: sstore".to_string()));
+        assert_eq!(parse_opcode("NOPE"), Err("invalid opcode: NOPE".to_string()));
+    }
 
     /// Parses `args` with the given environment variables set, restoring the previous values.
     fn parse_with_env(vars: &[(&str, &str)], args: &[&str]) -> TestArgs {
