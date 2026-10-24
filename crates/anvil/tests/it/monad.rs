@@ -22,7 +22,10 @@ use alloy_rpc_types::{
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverride},
     trace::{
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{
+            GethDebugBuiltInTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions,
+            GethTrace,
+        },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{Action, TraceResults, TraceType},
     },
@@ -2495,4 +2498,154 @@ fn large_contract_init_code(runtime_len: usize) -> Bytes {
     code.extend_from_slice(&[0x60, 0x00, 0xf3]);
     code.resize(HEADER_LEN + runtime_len as usize, 0);
     Bytes::from(code)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_receipts_report_charged_gas() {
+    for hardfork in [MonadHardfork::MonadEight, MonadHardfork::MonadNine, MonadHardfork::MonadTen] {
+        assert_monad_receipt_gas(NodeConfig::test_monad().with_hardfork(Some(hardfork.into())))
+            .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_receipts_report_charged_gas() {
+    let (origin_api, origin_handle) = spawn(monad_nine_config()).await;
+    origin_api.mine_one().await.unwrap();
+    assert_monad_receipt_gas(
+        monad_nine_config().with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+    )
+    .await;
+}
+
+async fn assert_monad_receipt_gas(config: NodeConfig) {
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let sender = accounts[0];
+    let gas_limit = 100_000u64;
+    let base_fee = 1_000_000_000u128;
+    let priority_fee = 2_000_000_000u128;
+    let price = base_fee + priority_fee;
+    let value = U256::from(123);
+    let beneficiary = Address::repeat_byte(0x77);
+    api.anvil_set_coinbase(beneficiary).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(base_fee)).await.unwrap();
+
+    // Plain transfer, REVERT, INVALID, and a storage clear with a log and refund opportunity.
+    let cases = [
+        (accounts[1], Bytes::new(), true),
+        (Address::repeat_byte(0x71), bytes!("5f5ffd"), false),
+        (Address::repeat_byte(0x72), bytes!("fe"), false),
+        (Address::repeat_byte(0x73), bytes!("5f5f555f5fa000"), true),
+    ];
+    api.anvil_set_storage_at(cases[3].0, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    for (to, code, _) in &cases {
+        api.anvil_set_code(*to, code.clone()).await.unwrap();
+    }
+    let balance_before = provider.get_balance(sender).await.unwrap();
+    let beneficiary_before = provider.get_balance(beneficiary).await.unwrap();
+    let mut hashes = Vec::new();
+    for (index, (to, _, _)) in cases.iter().enumerate() {
+        let mut tx = TransactionRequest::default()
+            .with_from(sender)
+            .with_to(*to)
+            .with_nonce(index as u64)
+            .with_value(value)
+            .with_gas_limit(gas_limit);
+        if index % 2 == 0 {
+            tx = tx.with_gas_price(price);
+        } else {
+            tx = tx.with_max_fee_per_gas(price * 10).with_max_priority_fee_per_gas(priority_fee);
+        }
+        if index == 0 {
+            assert_eq!(provider.estimate_gas(tx.clone().into()).await.unwrap(), 21_000);
+        }
+        hashes.push(*provider.send_transaction(tx.into()).await.unwrap().tx_hash());
+    }
+
+    let total_gas = gas_limit * cases.len() as u64;
+    let pending = provider.get_block_by_number(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending.header.gas_used, total_gas);
+    api.mine_one().await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_used, total_gas);
+    assert_eq!(block.transactions.len(), cases.len());
+    let mut cumulative = 0;
+    for (index, hash) in hashes.into_iter().enumerate() {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert_eq!(receipt.status(), cases[index].2);
+        assert_eq!(receipt.gas_used, gas_limit);
+        assert_eq!(receipt.effective_gas_price, price);
+        cumulative += gas_limit;
+        assert_eq!(receipt.cumulative_gas_used(), cumulative);
+        assert_eq!(receipt.inner.logs().len(), usize::from(index == 3));
+        let trace = provider
+            .debug_trace_transaction(hash, GethDebugTracingOptions::default())
+            .await
+            .unwrap();
+        let GethTrace::Default(trace) = trace else { panic!("expected default trace") };
+        assert_eq!(trace.gas, gas_limit);
+        let trace = provider
+            .debug_trace_transaction(
+                hash,
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+            )
+            .await
+            .unwrap();
+        let GethTrace::CallTracer(trace) = trace else { panic!("expected call trace") };
+        assert_eq!(trace.gas_used, U256::from(gas_limit));
+    }
+    assert_eq!(
+        balance_before - provider.get_balance(sender).await.unwrap(),
+        U256::from(total_gas) * U256::from(price) + value * U256::from(2)
+    );
+    assert_eq!(
+        provider.get_balance(beneficiary).await.unwrap() - beneficiary_before,
+        U256::from(total_gas) * U256::from(priority_fee)
+    );
+    let history = api
+        .fee_history(U256::ONE, BlockNumberOrTag::Number(block.header.number), vec![])
+        .await
+        .unwrap();
+    assert_eq!(history.gas_used_ratio, vec![total_gas as f64 / block.header.gas_limit as f64]);
+    let details = api.ots_get_block_details(BlockNumberOrTag::Latest).await.unwrap();
+    assert_eq!(details.total_fees, U256::from(total_gas) * U256::from(price));
+    assert_eq!(provider.get_storage_at(cases[3].0, U256::ZERO).await.unwrap(), U256::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_transaction_receipts_report_charged_gas() {
+    let (_origin_api, origin_handle) = spawn(monad_nine_config()).await;
+    let provider = origin_handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(accounts[0])
+                .with_to(accounts[1])
+                .with_gas_limit(100_000)
+                .with_value(U256::ONE)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let config = monad_nine_config()
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+        .with_fork_transaction_hash(Some(receipt.transaction_hash))
+        .with_no_mining(true);
+    let (_api, handle) = spawn(config).await;
+    let fork_provider = handle.http_provider();
+    let replayed =
+        fork_provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(replayed.gas_used, 100_000);
+    assert_eq!(replayed.cumulative_gas_used(), 100_000);
+    let block = fork_provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_used, 100_000);
 }
