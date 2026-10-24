@@ -1077,16 +1077,13 @@ async fn test_fork_load_state_preserves_fork_blocks_below_head() {
                     .unwrap(),
                 Some(origin_tx.clone())
             );
-            // Number-and-index forwarding currently excludes the fork head.
-            if (number as u64) < fork_boundary {
-                assert_eq!(
-                    forked_provider
-                        .get_transaction_by_block_number_and_index((number as u64).into(), 0)
-                        .await
-                        .unwrap(),
-                    Some(origin_tx)
-                );
-            }
+            assert_eq!(
+                forked_provider
+                    .get_transaction_by_block_number_and_index((number as u64).into(), 0)
+                    .await
+                    .unwrap(),
+                Some(origin_tx)
+            );
         }
     }
 }
