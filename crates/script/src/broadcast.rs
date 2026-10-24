@@ -931,6 +931,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
                             }
 
+                            // `vm.attachBlob` transactions also need a blob fee.
+                            if tx.blob_sidecar().is_some() && tx.max_fee_per_blob_gas().is_none() {
+                                tx.set_max_fee_per_blob_gas(provider.get_blob_base_fee().await?);
+                            }
+
                             self.script_config.tempo.apply::<FEN::Network>(
                                 &mut tx,
                                 expiring_nonce_discriminators
