@@ -18,6 +18,7 @@ pub mod coverage;
 pub mod create;
 pub mod doc;
 pub mod eip712;
+pub mod exploit;
 pub mod flatten;
 pub mod fmt;
 pub mod fuzz;
