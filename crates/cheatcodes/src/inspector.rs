@@ -1473,6 +1473,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
                 && call.transfer_from() == broadcast.original_caller
             {
+                // Delegatecalls and callcodes run in the caller's context and cannot be
+                // represented as a transaction from the broadcaster.
+                if matches!(call.scheme, CallScheme::DelegateCall | CallScheme::CallCode) {
+                    let msg = "`delegatecall`s and `callcode`s cannot be broadcast; use a regular `call` instead";
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(msg),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
+                    });
+                }
+
                 // Reset deploy from code flag for upcoming calls.
                 broadcast.deploy_from_code = false;
 
