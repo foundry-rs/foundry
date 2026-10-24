@@ -36,7 +36,7 @@ pub(crate) struct TempoChain {
     epoch_length: NonZeroU64,
     consensus: TempoConsensus,
     latest_block: Option<Block>,
-    snapshots: HashMap<U256, TempoSnapshot>,
+    snapshots: HashMap<U256, (TempoConsensus, Option<Block>)>,
 }
 
 impl TempoChain {
@@ -58,25 +58,18 @@ impl TempoChain {
     }
 
     pub(super) fn snapshot(&mut self, id: U256) {
-        self.snapshots.insert(
-            id,
-            TempoSnapshot {
-                consensus: self.consensus.clone(),
-                latest_block: self.latest_block.clone(),
-            },
-        );
+        self.snapshots.insert(id, (self.consensus.clone(), self.latest_block.clone()));
     }
 
     /// Restores saved consensus, or starts unsigned if an import discarded that history.
     ///
     /// The caller supplies the saved database height, which may differ from the imported head.
     pub(super) fn restore(&mut self, id: U256, height: u64) {
-        let snapshot = self.snapshots.remove(&id).unwrap_or_else(|| TempoSnapshot {
-            consensus: TempoConsensus::at_height(self.seed, self.epoch_length, height),
-            latest_block: None,
+        let (consensus, latest_block) = self.snapshots.remove(&id).unwrap_or_else(|| {
+            (TempoConsensus::at_height(self.seed, self.epoch_length, height), None)
         });
-        self.consensus = snapshot.consensus;
-        self.latest_block = snapshot.latest_block;
+        self.consensus = consensus;
+        self.latest_block = latest_block;
         self.snapshots.retain(|snapshot_id, _| *snapshot_id < id);
     }
 
@@ -132,12 +125,6 @@ impl fmt::Debug for TempoChain {
             .field("identity", &self.consensus.identity())
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Clone)]
-struct TempoSnapshot {
-    consensus: TempoConsensus,
-    latest_block: Option<Block>,
 }
 
 impl<N: Network> Backend<N> {
