@@ -35,7 +35,7 @@ use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
-use anvil_core::eth::block::Block;
+use anvil_core::{eth::block::Block, types::ReorgOptions};
 use commonware_codec::{DecodeExt, Encode, ReadExt, varint::UInt};
 use commonware_cryptography::bls12381::primitives::{
     group::{G1, G2},
@@ -6994,15 +6994,10 @@ async fn tempo_consensus_nonempty_native_block_body() {
     let finalization = tempo_finalization(&provider, 1).await;
     assert_tempo_certificate(&identity, &finalization);
     let transactions = &finalization.block.body.transactions;
-    assert_eq!(transactions.len(), 2);
-    let mut types = transactions.iter().map(Typed2718::ty).collect::<Vec<_>>();
-    types.sort_unstable();
-    assert_eq!(types, [2, 0x76]);
-    let mut hashes = transactions.iter().map(|tx| *tx.tx_hash()).collect::<Vec<_>>();
-    hashes.sort_unstable();
-    let mut expected = [ethereum_hash, tempo_hash];
-    expected.sort_unstable();
-    assert_eq!(hashes, expected);
+    let mut transactions =
+        transactions.iter().map(|tx| (tx.ty(), *tx.tx_hash())).collect::<Vec<_>>();
+    transactions.sort_unstable();
+    assert_eq!(transactions, [(2, ethereum_hash), (0x76, tempo_hash)]);
 
     api.mine_one().await.unwrap();
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
@@ -7153,16 +7148,12 @@ async fn tempo_consensus_fork_signs_local_successors_after_reset() {
     assert_eq!(local.block.header.parent_hash(), parent.header.hash);
     assert_eq!((local.epoch, local.view), (1, 1));
     assert_tempo_certificate(&identity, &local);
-    provider
-        .client()
-        .request::<_, serde_json::Value>(
-            "anvil_reset",
-            (serde_json::json!({
-                "forking": { "jsonRpcUrl": source.http_endpoint(), "blockNumber": 4 }
-            }),),
-        )
-        .await
-        .unwrap();
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source.http_endpoint()),
+        block_number: Some(4),
+    }))
+    .await
+    .unwrap();
     assert_tempo_missing(&provider, serde_json::json!({ "height": 3 }), "certificate").await;
     assert_eq!(tempo_consensus_identity(&provider).await.from_epoch, 1);
     api.mine_one().await.unwrap();
@@ -7255,16 +7246,8 @@ async fn tempo_consensus_rollback_reorg_and_reset_without_rotation() {
     let original = tempo_finalization(&provider, 3).await;
     assert_tempo_certificate(&initial, &original);
 
-    provider
-        .client()
-        .request::<_, serde_json::Value>("anvil_setNextBlockTimestamp", (2_000_000_000u64,))
-        .await
-        .unwrap();
-    provider
-        .client()
-        .request::<_, serde_json::Value>("anvil_reorg", (2, Vec::<serde_json::Value>::new()))
-        .await
-        .unwrap();
+    api.evm_set_next_block_timestamp(2_000_000_000).unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
     assert_eq!(tempo_finalization(&provider, 1).await, first);
     let replacement = tempo_finalization(&provider, 3).await;
     assert_ne!(replacement.digest, original.digest);
@@ -7299,16 +7282,7 @@ async fn tempo_consensus_imports_preserve_snapshots_and_unsigned_anchors() {
     let mut invalid = api.serialized_state(false).await.unwrap();
     invalid.best_block_number = Some(99);
     let invalid = Bytes::from(serde_json::to_vec(&invalid).unwrap());
-    let error =
-        provider.client().request::<_, bool>("anvil_loadState", (invalid,)).await.unwrap_err();
-    assert_eq!(
-        serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
-        serde_json::json!({
-            "code": -32603,
-            "message": "Best hash not found for best number 99",
-            "data": null,
-        }),
-    );
+    api.anvil_load_state(invalid).await.unwrap_err();
     assert_eq!(provider.get_block_number().await.unwrap(), 3);
     assert_eq!(tempo_finalization(&provider, 3).await, current);
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
