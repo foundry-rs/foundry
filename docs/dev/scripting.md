@@ -219,7 +219,7 @@ replayed.
 The saved RPC is part of the sensitive sequence. A single-chain resume uses the `--rpc-url`
 endpoint for Forge-managed reconciliation and submission, after checking that it reports the saved
 chain, without rewriting the saved endpoint. Browser-wallet submission stays wallet-controlled, and
-multichain resume keeps the saved endpoints.
+multichain resume keeps the saved endpoints and warns when `--rpc-url` is passed.
 
 ## Tempo and multichain behavior
 
