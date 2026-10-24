@@ -67,6 +67,20 @@ fn properties_args(prj: &TestProject, script: &str) -> Vec<String> {
     .to_vec()
 }
 
+/// Writes the verifier script and returns the arguments that select it. The script starts in the
+/// verifier's workspace and appends a line to `verifier-runs` in the project for each run.
+fn verifier_args(prj: &TestProject, script: &str) -> Vec<String> {
+    let verifier = prj.root().join("verifier.sh");
+    let runs = prj.root().join("verifier-runs");
+    let prelude =
+        format!("#!/bin/sh\nset -eu\n[ \"$1\" = --stub ]\necho run >> {}\n", runs.display());
+    fs::write(&verifier, format!("{prelude}{script}")).unwrap();
+    fs::set_permissions(&verifier, fs::Permissions::from_mode(0o755)).unwrap();
+    ["--verifier-command", verifier.to_str().unwrap(), "--verifier-arg=--stub"]
+        .map(String::from)
+        .to_vec()
+}
+
 /// Returns `cache/properties/report.json`.
 fn report(prj: &TestProject) -> serde_json::Value {
     let report = fs::read_to_string(prj.root().join("cache/properties/report.json")).unwrap();
@@ -1127,4 +1141,223 @@ added 1 generated test file(s):
   test/generated/agent-1/FeeSpec.t.sol
 
 "#]]);
+}
+
+/// Two agents write a test for each name in `names`, and a third writes a test for another bug. The
+/// tests fail, and every name is a bug group with two agents. The third agent's group is below the
+/// quorum.
+fn bug_agents(prj: &TestProject, names: &[&str]) -> Vec<String> {
+    properties_args(
+        prj,
+        &format!(
+            r#"
+for name in {}; do
+    lower=$(printf '%s' "$name" | tr 'A-Z' 'a-z')
+    if [ "$agent" = 3 ]; then lower=single; name=Single; fi
+    cat > "$out/$name.t.sol" <<SOL
+pragma solidity ^0.8.20;
+contract ${{name}}Test {{
+    // @bug Fee.$lower src/Fee.sol:7 — the $lower is wrong.
+    function testBug() public pure {{
+        require(false);
+    }}
+}}
+SOL
+done
+"#,
+            names.join(" ")
+        ),
+    )
+}
+
+// A verifier runs once per group that reaches the quorum, in a fresh workspace that holds only the
+// tests of the group. Forge lists confirmed groups first, then groups that need validation with the
+// open fact, then rejected groups with the disproof, and records each verdict. A group without a
+// verdict needs validation. Groups below the quorum are not verified.
+#[forgetest_init]
+fn properties_verifies_groups_that_reach_the_quorum(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    for path in ["CLAUDE.md", ".env"] {
+        fs::write(prj.root().join(path), "secret-marker").unwrap();
+    }
+    let mut args = bug_agents(&prj, &["Confirmed", "Missing", "Rejected", "Unresolved"]);
+    args.extend(verifier_args(
+        &prj,
+        r#"
+# The prompt, the group file, and the verdict file are named in the task.
+grep -q 'Your job is to DISPROVE it' "$FORGE_PROPERTIES_VERIFY_PROMPT"
+grep -qF -- "$FORGE_PROPERTIES_GROUP" "$FORGE_PROPERTIES_VERIFY_PROMPT"
+grep -qF -- "$FORGE_PROPERTIES_VERDICT" "$FORGE_PROPERTIES_VERIFY_PROMPT"
+grep -q '"claim"' "$FORGE_PROPERTIES_GROUP"
+# The workspace holds the tests of this group only, and no agent settings or hidden files.
+[ "$(ls test/generated)" = "agent-1
+agent-2" ]
+[ "$(ls test/generated/agent-1 | wc -l)" -eq 1 ]
+[ "$(ls test/generated/agent-2 | wc -l)" -eq 1 ]
+[ ! -e CLAUDE.md ] && [ ! -e .env ]
+name=$(ls test/generated/agent-1)
+grep -qF -- "- file: test/generated/agent-1/$name" "$FORGE_PROPERTIES_VERIFY_PROMPT"
+case "$name" in
+Confirmed.t.sol)
+    cat > "$FORGE_PROPERTIES_VERDICT" <<'JSON'
+{"verdict": "confirmed", "reason": "Every disproof failed.", "evidence": [{"file": "src/Fee.sol", "line": 7, "quote": "f = amount / 100;"}], "unresolved": ""}
+JSON
+    ;;
+Unresolved.t.sol)
+    cat > "$FORGE_PROPERTIES_VERDICT" <<'JSON'
+{"verdict": "needs_validation", "reason": "The docs are silent.", "unresolved": "Whether the docs promise the floor."}
+JSON
+    ;;
+Rejected.t.sol)
+    cat > "$FORGE_PROPERTIES_VERDICT" <<'JSON'
+{"verdict": "rejected", "reason": "The cap is documented.", "evidence": [{"file": "src/Fee.sol", "line": 25, "quote": "Charges 1% of `amount`,\n  capped at 100 ether."}]}
+JSON
+    ;;
+esac
+printf '{"input_tokens": 500, "output_tokens": 100, "cost_usd": 0.02}' > "$FORGE_PROPERTIES_USAGE"
+"#,
+    ));
+    cmd.args(args).args(["--agents", "3"]).assert_success().stdout_eq(str![[r#"
+confirmed (2/3 agents): @bug Fee.confirmed src/Fee.sol:7 — the confirmed is wrong.
+  agent 1: ConfirmedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.confirmed src/Fee.sol:7 — the confirmed is wrong.
+    file: cache/properties/agent-1/tests/Confirmed.t.sol
+  agent 2: ConfirmedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.confirmed src/Fee.sol:7 — the confirmed is wrong.
+    file: cache/properties/agent-2/tests/Confirmed.t.sol
+  verifier: Every disproof failed.
+    evidence: src/Fee.sol:7: f = amount / 100;
+needs validation (2/3 agents): @bug Fee.missing src/Fee.sol:7 — the missing is wrong.
+  agent 1: MissingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.missing src/Fee.sol:7 — the missing is wrong.
+    file: cache/properties/agent-1/tests/Missing.t.sol
+  agent 2: MissingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.missing src/Fee.sol:7 — the missing is wrong.
+    file: cache/properties/agent-2/tests/Missing.t.sol
+  verifier error: the verifier wrote no verdict: see cache/properties/verify-2/verifier.log
+needs validation (2/3 agents): @bug Fee.unresolved src/Fee.sol:7 — the unresolved is wrong.
+  agent 1: UnresolvedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.unresolved src/Fee.sol:7 — the unresolved is wrong.
+    file: cache/properties/agent-1/tests/Unresolved.t.sol
+  agent 2: UnresolvedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.unresolved src/Fee.sol:7 — the unresolved is wrong.
+    file: cache/properties/agent-2/tests/Unresolved.t.sol
+  verifier: The docs are silent.
+    unresolved: Whether the docs promise the floor.
+rejected (2/3 agents): @bug Fee.rejected src/Fee.sol:7 — the rejected is wrong.
+  agent 1: RejectedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.rejected src/Fee.sol:7 — the rejected is wrong.
+    file: cache/properties/agent-1/tests/Rejected.t.sol
+  agent 2: RejectedTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.rejected src/Fee.sol:7 — the rejected is wrong.
+    file: cache/properties/agent-2/tests/Rejected.t.sol
+  verifier: The cap is documented.
+    evidence: src/Fee.sol:25: Charges 1% of `amount`, capped at 100 ether.
+1 possible bug(s) below the quorum of 2:
+single-agent (1/3 agents): @bug Fee.single src/Fee.sol:7 — the single is wrong.
+  agent 3: SingleTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.single src/Fee.sol:7 — the single is wrong.
+    file: cache/properties/agent-3/tests/Single.t.sol
+verifier usage: 2000 input tokens, 400 output tokens, 0.08 USD
+no generated test file was kept
+
+"#]]);
+
+    let report = report(&prj);
+    assert_eq!(
+        report["possible_bugs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|group| group["verification"]["verdict"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["confirmed", "needs_validation", "needs_validation", "rejected"]
+    );
+    assert!(report["below_quorum"][0].get("verification").is_none());
+    assert_data_eq!(
+        report["possible_bugs"][0]["verification"].to_string(),
+        str![[
+            r#"{"verdict":"confirmed","reason":"Every disproof failed.","evidence":[{"file":"src/Fee.sol","line":7,"quote":"f = amount / 100;"}],"unresolved":"","usage":{"input_tokens":500,"output_tokens":100,"cost_usd":0.02}}"#
+        ]]
+    );
+    // One run for each group above the quorum.
+    let runs = fs::read_to_string(prj.root().join("verifier-runs")).unwrap();
+    assert_eq!(runs.lines().count(), 4);
+    assert!(prj.root().join("cache/properties/verify-1/prompt.md").exists());
+}
+
+// A verifier that leaves no usable verdict leaves its group in need of validation, with the reason.
+// An invalid verdict, a rejection without evidence, a timeout, and a failed exit all count. Forge
+// still reads a valid verdict that a timed-out or failed verifier wrote.
+#[forgetest_init]
+fn properties_verifier_errors_need_validation(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let mut args = bug_agents(&prj, &["Failing", "Invalid", "NoEvidence", "Slow"]);
+    args.extend(verifier_args(
+        &prj,
+        r#"
+name=$(ls test/generated/agent-1)
+confirmed='{"verdict": "confirmed", "reason": "Every disproof failed."}'
+case "$name" in
+Failing.t.sol) printf '%s' "$confirmed" > "$FORGE_PROPERTIES_VERDICT"; echo "quota exceeded" >&2; exit 3 ;;
+Invalid.t.sol) printf '{"verdict": "maybe"}' > "$FORGE_PROPERTIES_VERDICT" ;;
+NoEvidence.t.sol) printf '{"verdict": "rejected", "reason": "Not a bug."}' > "$FORGE_PROPERTIES_VERDICT" ;;
+Slow.t.sol) printf '%s' "$confirmed" > "$FORGE_PROPERTIES_VERDICT"; sleep 30 ;;
+esac
+"#,
+    ));
+    cmd.args(args).args(["--agents", "3", "--timeout", "5"]).assert_success().stdout_eq(str![[r#"
+confirmed (2/3 agents): @bug Fee.failing src/Fee.sol:7 — the failing is wrong.
+  agent 1: FailingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.failing src/Fee.sol:7 — the failing is wrong.
+    file: cache/properties/agent-1/tests/Failing.t.sol
+  agent 2: FailingTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.failing src/Fee.sol:7 — the failing is wrong.
+    file: cache/properties/agent-2/tests/Failing.t.sol
+  verifier: Every disproof failed.
+  verifier error: verifier command failed (exit status: 3): see cache/properties/verify-1/verifier.log
+confirmed (2/3 agents): @bug Fee.slow src/Fee.sol:7 — the slow is wrong.
+  agent 1: SlowTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.slow src/Fee.sol:7 — the slow is wrong.
+    file: cache/properties/agent-1/tests/Slow.t.sol
+  agent 2: SlowTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.slow src/Fee.sol:7 — the slow is wrong.
+    file: cache/properties/agent-2/tests/Slow.t.sol
+  verifier: Every disproof failed.
+  verifier error: the verifier reached the timeout: see cache/properties/verify-4/verifier.log
+needs validation (2/3 agents): @bug Fee.invalid src/Fee.sol:7 — the invalid is wrong.
+  agent 1: InvalidTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.invalid src/Fee.sol:7 — the invalid is wrong.
+    file: cache/properties/agent-1/tests/Invalid.t.sol
+  agent 2: InvalidTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.invalid src/Fee.sol:7 — the invalid is wrong.
+    file: cache/properties/agent-2/tests/Invalid.t.sol
+  verifier error: the verifier wrote an invalid verdict: unknown variant `maybe`, expected one of `confirmed`, `needs_validation`, `rejected` at line 1 column 19: see cache/properties/verify-2/verifier.log
+needs validation (2/3 agents): @bug Fee.noevidence src/Fee.sol:7 — the noevidence is wrong.
+  agent 1: NoEvidenceTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.noevidence src/Fee.sol:7 — the noevidence is wrong.
+    file: cache/properties/agent-1/tests/NoEvidence.t.sol
+  agent 2: NoEvidenceTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.noevidence src/Fee.sol:7 — the noevidence is wrong.
+    file: cache/properties/agent-2/tests/NoEvidence.t.sol
+  verifier: Not a bug.
+  verifier error: the verifier rejected the group without evidence: see cache/properties/verify-3/verifier.log
+1 possible bug(s) below the quorum of 2:
+single-agent (1/3 agents): @bug Fee.single src/Fee.sol:7 — the single is wrong.
+  agent 3: SingleTest::testBug (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: @bug Fee.single src/Fee.sol:7 — the single is wrong.
+    file: cache/properties/agent-3/tests/Single.t.sol
+no generated test file was kept
+
+"#]]);
+
+    assert_eq!(
+        report(&prj)["possible_bugs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|group| group["verification"]["verdict"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["confirmed", "confirmed", "needs_validation", "needs_validation"]
+    );
 }

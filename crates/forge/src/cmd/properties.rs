@@ -2,7 +2,7 @@
 //! in parallel, each in one session in its own copy of the project, and prove each bug with a
 //! failing test. Forge runs the tests of every agent again in a fresh copy on every seed, reports a
 //! bug only when enough agents agree on its root cause, and keeps one copy of each passing test
-//! file.
+//! file. An optional verifier then tries to disprove each reported bug.
 
 use crate::{
     cmd::test::RerunFailure,
@@ -35,8 +35,11 @@ use std::{
     io::Write,
     ops::Add,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
-    sync::LazyLock,
+    process::{Command, ExitStatus, Output, Stdio},
+    sync::{
+        LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -97,6 +100,10 @@ const SELECT_ALL_TESTS: [&str; 10] = [
     "--no-match-path",
     "/forge-properties-none/**",
 ];
+
+/// The task of a verifier session. The placeholders are the targets, the group file, the verdict
+/// file, and the tests of the group.
+const VERIFY_PROMPT: &str = include_str!("properties/verify_prompt.md");
 
 /// The errors of cheatcodes that Forge blocks in its workspaces: `vm.ffi` without `--allow-ffi`,
 /// network cheatcodes without `--allow-network`, and env cheatcodes, which see only a few
@@ -162,6 +169,35 @@ pub struct PropertiesArgs {
     #[arg(long, allow_hyphen_values = true, value_name = "ARG")]
     agent_arg: Vec<OsString>,
 
+    /// Executable that tries to disprove each possible bug that reaches the quorum, such as a
+    /// wrapper around any coding agent. Without it, Forge runs no verifier.
+    ///
+    /// Forge runs `PATH [ARG...]` once per group, at most --agents at a time, each in a fresh copy
+    /// of the project that also holds the tests of the group, with these environment variables:
+    ///
+    /// FORGE_PROPERTIES_VERIFY_PROMPT  the task: try to disprove the claims of the group
+    /// FORGE_PROPERTIES_GROUP          JSON file with the agents, the claims, the tests, and the
+    ///                                 failure output of the group
+    /// FORGE_PROPERTIES_VERDICT        file where the verifier writes its verdict as JSON:
+    ///                                 {"verdict": "confirmed" | "needs_validation" | "rejected",
+    ///                                  "reason": "...",
+    ///                                  "evidence": [{"file": "...", "line": N, "quote": "..."}],
+    ///                                  "unresolved": "..."}
+    /// FORGE_PROPERTIES_USAGE          file where the verifier can write its model usage as JSON,
+    ///                                 as for an agent
+    ///
+    /// When the verifier exits or reaches --timeout, Forge ends its process group and reads the
+    /// verdict. Forge lists the confirmed groups first, then the groups that need validation with
+    /// the open fact, then the rejected groups with the disproof. A missing or invalid verdict,
+    /// and a rejection without evidence, count as needs_validation. Groups below the quorum are
+    /// not verified.
+    #[arg(long, value_name = "PATH", verbatim_doc_comment)]
+    verifier_command: Option<PathBuf>,
+
+    /// Argument passed to the verifier command. Can be given more than once.
+    #[arg(long, allow_hyphen_values = true, requires = "verifier_command", value_name = "ARG")]
+    verifier_arg: Vec<OsString>,
+
     /// Deterministic seeds used to run the tests of every agent. Supply at least two.
     #[arg(long, required = true, action = clap::ArgAction::Append, value_name = "SEED")]
     seed: Vec<U256>,
@@ -181,7 +217,8 @@ pub struct PropertiesArgs {
     #[arg(long, value_name = "K")]
     quorum: Option<usize>,
 
-    /// Seconds after which Forge ends an agent session and runs the tests that it wrote.
+    /// Seconds after which Forge ends an agent session and runs the tests that it wrote, or ends a
+    /// verifier and reads its verdict.
     #[arg(long, value_name = "SECS")]
     timeout: Option<u64>,
 
@@ -278,6 +315,89 @@ struct BugGroup {
     agents: Vec<usize>,
     /// The failing tests, by agent. The first test has a claim, if any test has.
     failures: Vec<AgentFailure>,
+    /// What the verifier concluded, if there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification: Option<Verification>,
+}
+
+/// The verdict of a verifier.
+///
+/// The order is the order of the report.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Verdict {
+    /// Every attempt to disprove the claim failed.
+    Confirmed,
+    /// One open fact decides the claim.
+    #[default]
+    NeedsValidation,
+    /// A disproof holds for every claim of the group.
+    Rejected,
+}
+
+/// A quote from a file that supports a verdict.
+#[derive(Debug, Deserialize, Serialize)]
+struct Evidence {
+    #[serde(default)]
+    file: String,
+    #[serde(default)]
+    line: u64,
+    #[serde(default)]
+    quote: String,
+}
+
+/// The verdict file of a verifier.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct Judgment {
+    verdict: Verdict,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    evidence: Vec<Evidence>,
+    /// The open fact of a verdict that needs validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unresolved: Option<String>,
+}
+
+/// What one verifier session left for a bug group.
+#[derive(Debug, Serialize)]
+struct Verification {
+    #[serde(flatten)]
+    judgment: Judgment,
+    /// What went wrong with the verifier, such as a missing verdict. A group whose verifier left
+    /// no valid verdict needs validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<Usage>,
+}
+
+impl Verification {
+    /// Returns the verification of a group whose verifier left no valid verdict.
+    fn failed(error: String) -> Self {
+        Self { judgment: Judgment::default(), error: Some(error), usage: None }
+    }
+}
+
+impl std::fmt::Display for Verification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let judgment = &self.judgment;
+        let mut lines = Vec::new();
+        if !judgment.reason.is_empty() {
+            lines.push(format!("  verifier: {}", judgment.reason));
+        }
+        if let Some(error) = &self.error {
+            lines.push(format!("  verifier error: {error}"));
+        }
+        if let Some(unresolved) = judgment.unresolved.as_deref().filter(|fact| !fact.is_empty()) {
+            lines.push(format!("    unresolved: {unresolved}"));
+        }
+        for evidence in &judgment.evidence {
+            let quote = evidence.quote.split_whitespace().collect::<Vec<_>>().join(" ");
+            lines.push(format!("    evidence: {}:{}: {quote}", evidence.file, evidence.line));
+        }
+        write!(f, "{}", lines.join("\n"))
+    }
 }
 
 /// The tests of some files, run on every seed.
@@ -304,6 +424,8 @@ struct Session {
     rejected: Vec<Rejected>,
     /// The files whose tests pass on every seed, with the files that they import.
     kept: Vec<TestFile>,
+    /// Every file that the agent wrote and Forge ran.
+    files: Vec<TestFile>,
 }
 
 impl PropertiesArgs {
@@ -339,10 +461,16 @@ impl PropertiesArgs {
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
         let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
         let cache_root = config.cache_path.join("properties");
+        let verifier_command = self
+            .verifier_command
+            .as_ref()
+            .map(|command| command.canonicalize().wrap_err("failed to resolve verifier command"))
+            .transpose()?;
         let mut campaign = Campaign {
             args: &self,
             config: &config,
             forge,
+            verifier_command,
             generated_tests,
             cache_root,
             quorum,
@@ -363,11 +491,16 @@ impl PropertiesArgs {
     }
 }
 
+/// The size and modification time of each project file, by path relative to the root.
+type Fingerprint = BTreeMap<PathBuf, (u64, Option<SystemTime>)>;
+
 /// The settings of one `forge properties` run.
 struct Campaign<'a> {
     args: &'a PropertiesArgs,
     config: &'a Config,
     forge: PathBuf,
+    /// The verifier command, if the run has a verifier.
+    verifier_command: Option<PathBuf>,
     /// The directory of generated tests, relative to the project root. Workspaces leave out the
     /// project's copy of it, so every agent starts without earlier generated tests.
     generated_tests: PathBuf,
@@ -446,22 +579,19 @@ impl Campaign<'_> {
                 Err(error) => errors.push(format!("agent {id}: {error:#}")),
             }
         }
-        let after = project_fingerprint(self.config);
-        let tainted = after
-            .iter()
-            .filter(|(path, metadata)| fingerprint.get(*path) != Some(*metadata))
-            .map(|(path, _)| path)
-            .chain(fingerprint.keys().filter(|path| !after.contains_key(*path)))
-            .cloned()
-            .collect::<Vec<_>>();
-        self.report(&sessions, &tainted)?;
+        self.report(&sessions, &inputs, &fingerprint)?;
         ensure!(errors.is_empty(), "{}", errors.join("\n"));
         Ok(())
     }
 
     /// Prints the possible bugs that reach the quorum and writes one copy of each kept file to the
-    /// project.
-    fn report(&self, sessions: &[Session], tainted: &[PathBuf]) -> Result<()> {
+    /// project. A verifier runs first, and the project files must match `fingerprint` after it.
+    fn report(
+        &self,
+        sessions: &[Session],
+        inputs: &AgentInputs,
+        fingerprint: &Fingerprint,
+    ) -> Result<()> {
         let failures = sessions
             .iter()
             .flat_map(|session| &session.possible_bugs)
@@ -475,9 +605,20 @@ impl Campaign<'_> {
         let (blocked, failures) = failures
             .into_iter()
             .partition::<Vec<_>, _>(|failure| BLOCKED_CHEATCODE.is_match(&failure.failure.reason));
-        let (possible_bugs, below_quorum) = group_failures(failures)
+        let (mut possible_bugs, below_quorum) = group_failures(failures)
             .into_iter()
             .partition::<Vec<_>, _>(|group| group.agents.len() >= self.quorum);
+        if let Some(command) = &self.verifier_command {
+            self.verify_groups(command, &mut possible_bugs, sessions, inputs);
+        }
+        let after = project_fingerprint(self.config);
+        let tainted = after
+            .iter()
+            .filter(|(path, metadata)| fingerprint.get(*path) != Some(*metadata))
+            .map(|(path, _)| path)
+            .chain(fingerprint.keys().filter(|path| !after.contains_key(*path)))
+            .cloned()
+            .collect::<Vec<_>>();
         let print_group = |label: &str, group: &BugGroup| -> Result<()> {
             let lead = &group.failures[0].failure;
             let summary = lead.claim.as_deref().unwrap_or(&lead.test);
@@ -485,10 +626,19 @@ impl Campaign<'_> {
             for failure in &group.failures {
                 sh_println!("{failure}")?;
             }
+            if let Some(verification) = &group.verification {
+                sh_println!("{verification}")?;
+            }
             Ok(())
         };
         for group in &possible_bugs {
-            print_group("possible bug", group)?;
+            let label = match group.verification.as_ref().map(|v| v.judgment.verdict) {
+                None => "possible bug",
+                Some(Verdict::Confirmed) => "confirmed",
+                Some(Verdict::NeedsValidation) => "needs validation",
+                Some(Verdict::Rejected) => "rejected",
+            };
+            print_group(label, group)?;
         }
         let report_path = self.cache_root.join("report.json");
         let report_display = report_path.strip_prefix(&self.config.root).unwrap_or(&report_path);
@@ -553,6 +703,18 @@ impl Campaign<'_> {
                 total.cost_usd
             )?;
         }
+        if let Some(total) = possible_bugs
+            .iter()
+            .filter_map(|group| group.verification.as_ref()?.usage)
+            .reduce(Usage::add)
+        {
+            sh_println!(
+                "verifier usage: {} input tokens, {} output tokens, {:.2} USD",
+                total.input_tokens,
+                total.output_tokens,
+                total.cost_usd
+            )?;
+        }
 
         // Keep one copy of each file. A file that another file of the same agent imports stays,
         // so the imports still resolve. A file that the project has already is not written.
@@ -563,12 +725,9 @@ impl Campaign<'_> {
             for file in files {
                 let normalized =
                     COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
-                let imported = files.iter().any(|other| {
-                    other.path != file.path
-                        && IMPORT.captures_iter(&other.content).any(|import| {
-                            Path::new(&import[1]).file_name() == file.path.file_name()
-                        })
-                });
+                let imported = files
+                    .iter()
+                    .any(|other| other.path != file.path && imports(&other.content, &file.path));
                 let path = self.config.root.join(&file.path);
                 // A linked directory on the path must not lead outside the project.
                 ensure_inside(&self.config.root, &path, &file.path)?;
@@ -692,53 +851,12 @@ impl Campaign<'_> {
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log);
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = command.spawn().wrap_err("failed to run agent command")?;
-        #[cfg(unix)]
-        let group = Pid::from_child(&child);
-        #[cfg(unix)]
-        SESSIONS.lock().unwrap().push(group);
-        let status = match args.timeout {
-            Some(timeout) => {
-                let deadline = Instant::now() + Duration::from_secs(timeout);
-                loop {
-                    match child.try_wait() {
-                        Ok(None) if Instant::now() < deadline => thread::sleep(SESSION_POLL),
-                        status => break status,
-                    }
-                }
-            }
-            None => child.wait().map(Some),
-        };
-        // The session ends with the agent command: no process that it started keeps running.
-        #[cfg(unix)]
-        {
-            let _ = kill_process_group(group, Signal::KILL);
-            SESSIONS.lock().unwrap().retain(|running| *running != group);
-        }
-        let status = match status? {
-            Some(status) => Some(status),
-            None => {
-                #[cfg(not(unix))]
-                let _ = child.kill();
-                child.wait()?;
-                None
-            }
-        };
+        let status = run_session(&mut command, args.timeout, "agent")?;
         let log_display = log_path.strip_prefix(&self.config.root).unwrap_or(&log_path);
         let error = status.filter(|status| !status.success()).map(|status| {
             format!("agent command failed ({status}): see {}", log_display.display())
         });
-        let usage = match fs::read(&usage_path) {
-            Ok(usage) => serde_json::from_slice::<Usage>(&usage)
-                .inspect_err(|error| {
-                    let _ = sh_warn!("agent {id} wrote invalid usage JSON: {error}");
-                })
-                .ok(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error).wrap_err("failed to read agent usage"),
-        };
+        let usage = read_usage(&usage_path, &format!("agent {id}"))?;
         let mut session = Session {
             id,
             error,
@@ -747,11 +865,13 @@ impl Campaign<'_> {
             possible_bugs: vec![],
             rejected: vec![],
             kept: vec![],
+            files: vec![],
         };
-        let files = collect_tests(workspace.path(), &out, id, &mut session.rejected)?;
+        session.files = collect_tests(workspace.path(), &out, id, &mut session.rejected)?;
+        let files = &session.files;
         // Forge writes only passing files to the project, so the copies keep the failing tests.
         let copy = |path: &Path| cache.join("tests").join(path.strip_prefix(&out).unwrap_or(path));
-        for file in &files {
+        for file in files {
             let path = copy(&file.path);
             fs::create_dir_all(path.parent().expect("test path has a parent"))?;
             fs::write(&path, &file.content)?;
@@ -760,14 +880,14 @@ impl Campaign<'_> {
             return Ok(session);
         }
 
-        let workspace = self.workspace(&files)?;
+        let workspace = self.workspace(files)?;
         let run = match self.build_errors(workspace.path())? {
-            None => self.run_tests(workspace.path(), &files)?,
+            None => self.run_tests(workspace.path(), files)?,
             // A file that does not compile, such as one that the agent was writing at the
             // timeout, must not hide the other tests. Each file that no other file imports then
             // runs on its own, with the files that it imports.
             Some(_) => {
-                let imports = collected_imports(self.config, workspace.path(), &files)?;
+                let imports = collected_imports(self.config, workspace.path(), files)?;
                 let no_imports = BTreeSet::new();
                 let mut run = TestRun::default();
                 for root in files
@@ -799,8 +919,8 @@ impl Campaign<'_> {
             let paths = files.iter().map(|file| file.path.clone()).collect();
             session.rejected.push(Rejected { agent: id, paths, reason: run.errors.join("; ") });
         }
-        let kept = kept_files(self.config, workspace.path(), &files, &run)?;
-        session.kept = files.into_iter().filter(|file| kept.contains(&file.path)).collect();
+        let kept = kept_files(self.config, workspace.path(), files, &run)?;
+        session.kept = files.iter().filter(|file| kept.contains(&file.path)).cloned().collect();
         let root = &self.config.root;
         session.possible_bugs = run
             .possible_bugs
@@ -967,6 +1087,139 @@ impl Campaign<'_> {
             .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"));
         command
     }
+
+    /// Runs one verifier per group, at most `--agents` at a time, and orders the groups by
+    /// verdict. A verifier error leaves the group in need of validation.
+    fn verify_groups(
+        &self,
+        command: &Path,
+        groups: &mut [BugGroup],
+        sessions: &[Session],
+        inputs: &AgentInputs,
+    ) {
+        let next = AtomicUsize::new(0);
+        let verifications = {
+            let groups = &*groups;
+            thread::scope(|scope| {
+                let workers = (0..self.args.agents.min(groups.len()))
+                    .map(|_| {
+                        scope.spawn(|| {
+                            let mut done = Vec::new();
+                            loop {
+                                let index = next.fetch_add(1, Ordering::Relaxed);
+                                let Some(group) = groups.get(index) else { break };
+                                let verification = self
+                                    .verify(command, index + 1, group, sessions, inputs)
+                                    .unwrap_or_else(|error| {
+                                        Verification::failed(format!("{error:#}"))
+                                    });
+                                done.push((index, verification));
+                            }
+                            done
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                workers
+                    .into_iter()
+                    .flat_map(|worker| worker.join().expect("verifier thread panicked"))
+                    .collect::<Vec<_>>()
+            })
+        };
+        for (index, verification) in verifications {
+            groups[index].verification = Some(verification);
+        }
+        // The sort is stable, so groups with one verdict keep their order.
+        groups.sort_by_key(|group| group.verification.as_ref().map(|v| v.judgment.verdict));
+    }
+
+    /// Runs the verifier on one group in a fresh workspace that holds the tests of the group, then
+    /// reads its verdict.
+    fn verify(
+        &self,
+        command: &Path,
+        id: usize,
+        group: &BugGroup,
+        sessions: &[Session],
+        inputs: &AgentInputs,
+    ) -> Result<Verification> {
+        // The prompt, the log, the usage, and the verdict of an earlier run go.
+        let cache = self.cache_root.join(format!("verify-{id}"));
+        if cache.exists() {
+            fs::remove_dir_all(&cache)?;
+        }
+        fs::create_dir_all(&cache)?;
+        let workspace = self.workspace(&group_files(sessions, group))?;
+        let prompt_path = cache.join("prompt.md");
+        let group_path = cache.join("group.json");
+        let verdict_path = cache.join("verdict.json");
+        let usage_path = cache.join("usage.json");
+        let log_path = cache.join("verifier.log");
+        fs::write(&prompt_path, verify_prompt(group, &inputs.targets, &group_path, &verdict_path))?;
+        let failures = group.failures.iter().map(|failure| {
+            serde_json::json!({
+                "agent": failure.agent,
+                "test": failure.failure.test,
+                "path": failure.failure.path,
+                "claim": failure.failure.claim,
+                "failure": failure.failure.reason,
+            })
+        });
+        let group_json = serde_json::json!({
+            "targets": inputs.targets,
+            "agents": group.agents,
+            "failures": failures.collect::<Vec<_>>(),
+        });
+        fs::write(&group_path, serde_json::to_vec_pretty(&group_json)?)?;
+        let log = fs::File::create(&log_path)?;
+
+        let mut command = Command::new(command);
+        command
+            .args(&self.args.verifier_arg)
+            .current_dir(workspace.path())
+            .env("FORGE_PROPERTIES_VERIFY_PROMPT", &prompt_path)
+            .env("FORGE_PROPERTIES_GROUP", &group_path)
+            .env("FORGE_PROPERTIES_VERDICT", &verdict_path)
+            .env("FORGE_PROPERTIES_USAGE", &usage_path)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log);
+        let status = run_session(&mut command, self.args.timeout, "verifier")?;
+        let usage = read_usage(&usage_path, &format!("verifier {id}"))?;
+
+        let mut errors = Vec::new();
+        match status {
+            None => errors.push("the verifier reached the timeout".to_string()),
+            Some(status) if !status.success() => {
+                errors.push(format!("verifier command failed ({status})"))
+            }
+            Some(_) => {}
+        }
+        let judgment = match fs::read(&verdict_path) {
+            Ok(verdict) => match serde_json::from_slice::<Judgment>(&verdict) {
+                // A disproof needs a quote that the group can check.
+                Ok(judgment)
+                    if judgment.verdict == Verdict::Rejected && judgment.evidence.is_empty() =>
+                {
+                    errors.push("the verifier rejected the group without evidence".to_string());
+                    Judgment { verdict: Verdict::NeedsValidation, ..judgment }
+                }
+                Ok(judgment) => judgment,
+                Err(error) => {
+                    errors.push(format!("the verifier wrote an invalid verdict: {error}"));
+                    Judgment::default()
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                errors.push("the verifier wrote no verdict".to_string());
+                Judgment::default()
+            }
+            Err(error) => return Err(error).wrap_err("failed to read verifier verdict"),
+        };
+        let log_display = log_path.strip_prefix(&self.config.root).unwrap_or(&log_path);
+        let error = (!errors.is_empty())
+            .then(|| format!("{}: see {}", errors.join("; "), log_display.display()));
+        Ok(Verification { judgment, error, usage })
+    }
 }
 
 /// Groups the failing tests of all agents by root cause with the root-cause matcher. Groups with a
@@ -990,7 +1243,7 @@ fn group_failures(failures: Vec<AgentFailure>) -> Vec<BugGroup> {
                 key(a).cmp(&key(b))
             });
             let agents = failures.iter().map(|failure| failure.agent).collect::<BTreeSet<_>>();
-            BugGroup { agents: agents.into_iter().collect(), failures }
+            BugGroup { agents: agents.into_iter().collect(), failures, verification: None }
         })
         .collect::<Vec<_>>();
     groups.sort_by(|a, b| {
@@ -1195,7 +1448,7 @@ fn ensure_inside(root: &Path, path: &Path, orig: &Path) -> Result<()> {
 
 /// Returns the size and modification time of each project file, by path relative to the root.
 /// Hidden entries and the build and cache directories are skipped, and links are not followed.
-fn project_fingerprint(config: &Config) -> BTreeMap<PathBuf, (u64, Option<SystemTime>)> {
+fn project_fingerprint(config: &Config) -> Fingerprint {
     let mut files = BTreeMap::new();
     let mut pending = vec![config.root.clone()];
     while let Some(dir) = pending.pop() {
@@ -1468,6 +1721,132 @@ fn shorten(text: &str) -> String {
     let head = text.chars().take(HALF).collect::<String>();
     let tail = text.chars().skip(chars - HALF).collect::<String>();
     format!("{head}\n[...]\n{tail}")
+}
+
+/// Returns the task of a verifier session.
+fn verify_prompt(
+    group: &BugGroup,
+    targets: &[PathBuf],
+    group_path: &Path,
+    verdict: &Path,
+) -> String {
+    let targets = targets.iter().map(|path| format!("- {}\n", path.display())).collect::<String>();
+    let members = group
+        .failures
+        .iter()
+        .map(|failure| {
+            let claim = failure.failure.claim.as_deref().unwrap_or("(none)");
+            let reason = failure.failure.reason.trim().chars().take(600).collect::<String>();
+            format!(
+                "- file: {}\n  test: {}\n  claim: {claim}\n  failure: {reason}\n",
+                failure.failure.path.display(),
+                failure.failure.test
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The tests come last, so a placeholder in a failure reason stays as it is.
+    VERIFY_PROMPT
+        .replace("{targets}", &targets)
+        .replace("{group}", &group_path.display().to_string())
+        .replace("{verdict}", &verdict.display().to_string())
+        .replace("{members}", &members)
+}
+
+/// Returns the files of a group: the files of its failing tests, with the files of the same agent
+/// that they import, directly or not.
+fn group_files(sessions: &[Session], group: &BugGroup) -> Vec<TestFile> {
+    let mut files = Vec::new();
+    for session in sessions.iter().filter(|session| group.agents.contains(&session.id)) {
+        let mut paths = group
+            .failures
+            .iter()
+            .filter(|failure| failure.agent == session.id)
+            .map(|failure| &failure.failure.path)
+            .collect::<BTreeSet<_>>();
+        loop {
+            let imported = session
+                .files
+                .iter()
+                .filter(|file| !paths.contains(&file.path))
+                .filter(|file| {
+                    session.files.iter().any(|other| {
+                        paths.contains(&other.path) && imports(&other.content, &file.path)
+                    })
+                })
+                .map(|file| &file.path)
+                .collect::<Vec<_>>();
+            if imported.is_empty() {
+                break;
+            }
+            paths.extend(imported);
+        }
+        files.extend(session.files.iter().filter(|file| paths.contains(&file.path)).cloned());
+    }
+    files
+}
+
+/// Returns whether the source has an import directive that names the file of `path`.
+fn imports(source: &str, path: &Path) -> bool {
+    IMPORT.captures_iter(source).any(|import| Path::new(&import[1]).file_name() == path.file_name())
+}
+
+/// Runs a session command in its own process group until it exits or reaches the timeout in
+/// seconds, then ends the process group, so no process that the session started keeps running.
+/// Returns `None` if the session reached the timeout.
+fn run_session(
+    command: &mut Command,
+    timeout: Option<u64>,
+    session: &str,
+) -> Result<Option<ExitStatus>> {
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn().wrap_err_with(|| format!("failed to run {session} command"))?;
+    #[cfg(unix)]
+    let group = Pid::from_child(&child);
+    #[cfg(unix)]
+    SESSIONS.lock().unwrap().push(group);
+    let status = match timeout {
+        Some(timeout) => {
+            let deadline = Instant::now() + Duration::from_secs(timeout);
+            loop {
+                match child.try_wait() {
+                    Ok(None) if Instant::now() < deadline => thread::sleep(SESSION_POLL),
+                    status => break status,
+                }
+            }
+        }
+        None => child.wait().map(Some),
+    };
+    // The session ends with the command: no process that it started keeps running.
+    #[cfg(unix)]
+    {
+        let _ = kill_process_group(group, Signal::KILL);
+        SESSIONS.lock().unwrap().retain(|running| *running != group);
+    }
+    Ok(match status? {
+        Some(status) => Some(status),
+        None => {
+            #[cfg(not(unix))]
+            let _ = child.kill();
+            child.wait()?;
+            None
+        }
+    })
+}
+
+/// Reads the usage file of an agent or verifier. A missing file is no usage, and an invalid one
+/// is a warning.
+fn read_usage(path: &Path, session: &str) -> Result<Option<Usage>> {
+    match fs::read(path) {
+        Ok(usage) => Ok(serde_json::from_slice::<Usage>(&usage)
+            .inspect_err(|error| {
+                let _ = sh_warn!("{session} wrote invalid usage JSON: {error}");
+            })
+            .ok()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).wrap_err_with(|| format!("failed to read {session} usage")),
+    }
 }
 
 #[cfg(test)]
