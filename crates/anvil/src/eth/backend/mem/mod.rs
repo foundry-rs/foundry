@@ -7789,7 +7789,7 @@ where
             let removed_blocks = {
                 let mut storage = self.blockchain.storage.write();
                 if let Some(tempo) = &mut storage.tempo {
-                    tempo.unwind(&common_block)?;
+                    tempo.unwind(common_block.header.number())?;
                 }
                 #[cfg(test)]
                 if let Some(hook) = self.rollback_unwind_hook.lock().as_ref() {

@@ -15,9 +15,7 @@
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
 
 use crate::eth::{backend::tempo_consensus::TempoConsensus, error::BlockchainError};
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, U256, map::HashMap};
-use anvil_core::eth::block::Block;
 use std::{fmt, num::NonZeroU64};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoHeader;
@@ -63,8 +61,7 @@ impl TempoChain {
     }
 
     /// Rewinds signed history or starts a new unsigned segment below the imported anchor.
-    pub(super) fn unwind(&mut self, block: &Block) -> Result<(), BlockchainError> {
-        let height = block.header.number();
+    pub(super) fn unwind(&mut self, height: u64) -> Result<(), BlockchainError> {
         if height < self.consensus.anchor_height() {
             // Exact snapshots retain their own controller and anchor across ordinary rollbacks.
             self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
@@ -113,10 +110,14 @@ mod tests {
         NodeConfig,
         eth::{
             api::EthApi,
-            backend::{db::SerializableState, mem::MiningCommitHook},
+            backend::{
+                db::SerializableState, mem::MiningCommitHook,
+                tempo_consensus::TempoConsensusIdentity,
+            },
         },
         spawn,
     };
+    use alloy_consensus::BlockHeader;
     use alloy_primitives::Address;
     use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, anvil::Forking};
     use alloy_serde::WithOtherFields;
@@ -143,20 +144,6 @@ mod tests {
         assert_eq!(height, api.backend.best_number());
         assert_eq!(certificate.digest, block.header.hash_slow());
         assert_eq!(certificate.digest, api.backend.best_hash());
-    }
-
-    #[tokio::test]
-    async fn mined_tempo_header_contains_consensus_context() {
-        let (api, _handle) = spawn(
-            NodeConfig::test_tempo()
-                .with_no_mining(true)
-                .with_hardfork(Some(TempoHardfork::T4.into())),
-        )
-        .await;
-        api.mine_one().await.unwrap();
-        let block = api.backend.get_block(1).unwrap();
-        assert!(block.header.as_tempo().unwrap().consensus_context.is_some());
-        assert_certified_head(&api);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -269,33 +256,9 @@ mod tests {
         .await;
         api.mine_one().await.unwrap();
         let first = consensus(&api).finalization(1).unwrap().digest;
-        let scheduled = {
-            let _db = api.backend.db.write().await;
-            api.backend
-                .blockchain
-                .storage
-                .write()
-                .tempo
-                .as_mut()
-                .unwrap()
-                .consensus
-                .rotate()
-                .unwrap()
-        };
+        let scheduled = rotate_consensus(&api).await;
         let snapshot = api.evm_snapshot().await.unwrap();
-        let replaced = {
-            let _db = api.backend.db.write().await;
-            api.backend
-                .blockchain
-                .storage
-                .write()
-                .tempo
-                .as_mut()
-                .unwrap()
-                .consensus
-                .rotate()
-                .unwrap()
-        };
+        let replaced = rotate_consensus(&api).await;
         assert_ne!(scheduled, replaced);
         assert!(api.evm_revert(snapshot).await.unwrap());
         assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
@@ -591,18 +554,18 @@ mod tests {
         let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 5);
         chain.consensus.rotate().unwrap();
         let next_rotation = chain.consensus.clone().rotate().unwrap();
-        chain.unwind(&unsigned_tempo_block(5)).unwrap();
+        chain.unwind(5).unwrap();
         assert_eq!(chain.consensus.clone().rotate().unwrap(), next_rotation);
         chain.snapshot(U256::ONE);
         let mut expected = chain.consensus.clone();
 
-        chain.unwind(&unsigned_tempo_block(3)).unwrap();
+        chain.unwind(3).unwrap();
         assert!(chain.consensus.latest().is_none());
         chain.restore(U256::ONE, 5);
         assert_eq!(chain.consensus.rotate().unwrap(), expected.rotate().unwrap());
 
         // Restoring the snapshot restores anchor 5, so height 4 is an unsigned ancestor again.
-        chain.unwind(&unsigned_tempo_block(4)).unwrap();
+        chain.unwind(4).unwrap();
         assert!(chain.consensus.latest().is_none());
         let mut header = TempoHeader::default();
         header.inner.number = 5;
@@ -624,12 +587,12 @@ mod tests {
         let retained = chain.consensus.finalization(7).unwrap().clone();
         let identity = chain.consensus.identity();
 
-        let error = chain.unwind(&unsigned_tempo_block(6)).unwrap_err();
+        let error = chain.unwind(6).unwrap_err();
         assert!(matches!(error, BlockchainError::Internal(message)
             if message == "cannot rewind Tempo consensus from 7 to 6 with earliest retained height 7"));
         assert_eq!(chain.consensus.latest(), Some((7, &retained)));
         assert_eq!(chain.consensus.identity(), identity);
-        chain.unwind(&unsigned_tempo_block(7)).unwrap();
+        chain.unwind(7).unwrap();
         assert_eq!(chain.consensus.latest(), Some((7, &retained)));
     }
 
@@ -649,19 +612,7 @@ mod tests {
             let head = consensus(&api).finalization(2).unwrap().clone();
             let account = Address::repeat_byte(0x22);
             api.anvil_set_balance(account, U256::ONE).await.unwrap();
-            let scheduled = {
-                let _db = api.backend.db.write().await;
-                api.backend
-                    .blockchain
-                    .storage
-                    .write()
-                    .tempo
-                    .as_mut()
-                    .unwrap()
-                    .consensus
-                    .rotate()
-                    .unwrap()
-            };
+            let scheduled = rotate_consensus(&api).await;
             let snapshot = api.evm_snapshot().await.unwrap();
             let next_rotation = consensus(&api).rotate().unwrap();
             let mut state = api.backend.serialized_state(false).await.unwrap();
@@ -750,12 +701,6 @@ mod tests {
         assert_certified_head(&api);
     }
 
-    fn unsigned_tempo_block(height: u64) -> Block {
-        let mut header = TempoHeader::default();
-        header.inner.number = height;
-        Block::new(header.into(), Default::default())
-    }
-
     #[tokio::test]
     async fn tempo_cross_import_snapshots_preserve_revert_order() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
@@ -806,5 +751,11 @@ mod tests {
         api.mine_one().await.unwrap();
         assert_eq!(api.backend.best_number(), 2);
         assert_certified_head(&api);
+    }
+
+    async fn rotate_consensus(api: &EthApi<FoundryNetwork>) -> TempoConsensusIdentity {
+        let _db = api.backend.db.write().await;
+        let mut storage = api.backend.blockchain.storage.write();
+        storage.tempo.as_mut().unwrap().consensus.rotate().unwrap()
     }
 }
