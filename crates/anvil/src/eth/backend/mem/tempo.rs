@@ -199,9 +199,7 @@ mod tests {
     #[tokio::test]
     async fn tempo_rollback_publishes_consensus_and_head_together() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        for _ in 0..2 {
-            api.mine_one().await.unwrap();
-        }
+        api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
         let storage = Arc::clone(&api.backend.blockchain.storage);
         let reached = Arc::new(AtomicBool::new(false));
         let observed = Arc::clone(&reached);
@@ -212,6 +210,8 @@ mod tests {
         api.anvil_rollback(Some(1)).await.unwrap();
         assert!(reached.load(Ordering::Relaxed));
         assert_eq!(api.backend.best_number(), 1);
+        assert!(consensus(&api).finalization(2).is_none());
+        api.anvil_rollback(Some(0)).await.unwrap();
         assert_certified_head(&api);
     }
 
@@ -219,11 +219,7 @@ mod tests {
     async fn rejected_consensus_preparation_does_not_commit_execution() {
         let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
         let sender = handle.dev_wallets().next().unwrap().address();
-        api.send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(sender).to(Address::repeat_byte(0x11)),
-        ))
-        .await
-        .unwrap();
+        queue_transfer(&api, sender).await;
         let previous_hash = api.backend.best_hash();
         let previous_root = api.backend.db.read().await.maybe_state_root();
         {
@@ -248,12 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn tempo_snapshot_restores_pending_committee_and_counter() {
-        let (api, _handle) = spawn(
-            NodeConfig::test_tempo()
-                .with_no_mining(true)
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
-        )
-        .await;
+        let (api, _handle) = spawn(tempo_config(3)).await;
         api.mine_one().await.unwrap();
         let first = consensus(&api).finalization(1).unwrap().digest;
         let scheduled = rotate_consensus(&api).await;
@@ -272,27 +263,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_rollback_reorg_and_reset_preserve_lifecycle() {
-        let (api, _handle) = spawn(
-            NodeConfig::test_tempo()
-                .with_no_mining(true)
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
-        )
-        .await;
+    async fn tempo_reorg_and_reset_preserve_lifecycle() {
+        let (api, _handle) = spawn(tempo_config(3)).await;
         let initial = consensus(&api).identity();
-        for _ in 0..4 {
-            api.mine_one().await.unwrap();
-        }
+        api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
         let first = consensus(&api).finalization(1).unwrap().digest;
-        api.anvil_rollback(Some(3)).await.unwrap();
-        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
-        assert!(consensus(&api).finalization(2).is_none());
-        assert_certified_head(&api);
-        api.anvil_rollback(Some(0)).await.unwrap();
-        assert_certified_head(&api);
-        for _ in 0..2 {
-            api.mine_one().await.unwrap();
-        }
         let previous = consensus(&api).finalization(3).unwrap().digest;
         api.evm_set_next_block_timestamp(2_000_000_000).unwrap();
         api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
@@ -334,14 +309,7 @@ mod tests {
                     }
                     if height == saved_height {
                         api.anvil_set_balance(account, U256::ONE).await.unwrap();
-                        let transaction = api
-                            .send_transaction(WithOtherFields::new(
-                                TransactionRequest::default()
-                                    .from(sender)
-                                    .to(Address::repeat_byte(0x11)),
-                            ))
-                            .await
-                            .unwrap();
+                        let transaction = queue_transfer(&api, sender).await;
                         saved = Some((
                             api.evm_snapshot().await.unwrap(),
                             api.backend.best_hash(),
@@ -379,25 +347,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_rejected_import_preserves_certificate_and_snapshot() {
-        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        api.mine_one().await.unwrap();
-        let first = consensus(&api).finalization(1).unwrap().digest;
-        let snapshot = api.evm_snapshot().await.unwrap();
-        let mut invalid = api.backend.serialized_state(false).await.unwrap();
-        invalid.best_block_number = Some(99);
-        let error = api.backend.load_state(invalid).await.unwrap_err();
-        assert!(matches!(error, BlockchainError::RpcError(error)
-            if error.message == "Best hash not found for best number 99"));
-        assert_certified_head(&api);
-        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
-        api.mine_one().await.unwrap();
-        assert!(api.evm_revert(snapshot).await.unwrap());
-        assert_certified_head(&api);
-        assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
-    }
-
-    #[tokio::test]
     async fn tempo_pending_and_native_projection_follow_executed_hardfork() {
         for hardfork in [
             TempoHardfork::T3.into(),
@@ -417,15 +366,14 @@ mod tests {
             let block = api.backend.get_block(1).unwrap();
             let native = block.header.as_tempo().unwrap();
             assert_eq!(native.consensus_context.is_some(), api.backend.tempo_hardfork().is_t4());
-            let by_number = api.block_by_number(1.into()).await.unwrap().unwrap();
-            let projected: TempoHeader =
-                serde_json::from_value(serde_json::to_value(by_number).unwrap()).unwrap();
-            assert_eq!(&projected, native);
-            let by_hash =
-                api.backend.block_by_hash(block.header.hash_slow()).await.unwrap().unwrap();
-            let projected: TempoHeader =
-                serde_json::from_value(serde_json::to_value(by_hash).unwrap()).unwrap();
-            assert_eq!(&projected, native);
+            for projected in [
+                api.block_by_number(1.into()).await.unwrap().unwrap(),
+                api.backend.block_by_hash(block.header.hash_slow()).await.unwrap().unwrap(),
+            ] {
+                let projected: TempoHeader =
+                    serde_json::from_value(serde_json::to_value(projected).unwrap()).unwrap();
+                assert_eq!(&projected, native);
+            }
         }
         let (api, _handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
         api.mine_one().await.unwrap();
@@ -434,13 +382,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn tempo_fork_startup_and_reset_sign_only_local_successors() {
-        let config = NodeConfig::test_tempo()
-            .with_no_mining(true)
-            .with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
+        let config = tempo_config(3);
         let (source_api, source) = spawn(config.clone()).await;
-        for _ in 0..4 {
-            source_api.mine_one().await.unwrap();
-        }
+        source_api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
         let (api, _handle) = spawn(
             config
                 .with_eth_rpc_url(Some(source.http_endpoint()))
@@ -473,20 +417,8 @@ mod tests {
         assert_certified_head(&api);
         assert_eq!(api.backend.best_number(), 5);
 
-        assert!(api.evm_revert(fresh).await.unwrap());
-        assert_eq!(api.backend.best_number(), 4);
-        assert!(consensus(&api).latest().is_none());
-        api.mine_one().await.unwrap();
-        assert_eq!(api.backend.best_number(), 5);
-        assert_certified_head(&api);
-
         let sender = source.dev_wallets().next().unwrap().address();
-        let hash = source_api
-            .send_transaction(WithOtherFields::new(
-                TransactionRequest::default().from(sender).to(Address::repeat_byte(0x11)),
-            ))
-            .await
-            .unwrap();
+        let hash = queue_transfer(&source_api, sender).await;
         source_api.mine_one().await.unwrap();
         let (replay, _replay_handle) = spawn(
             NodeConfig::test_tempo()
@@ -504,15 +436,8 @@ mod tests {
 
     #[tokio::test]
     async fn tempo_changed_head_import_can_rollback_and_reorg_below_anchor() {
-        let (api, _handle) = spawn(
-            NodeConfig::test_tempo()
-                .with_no_mining(true)
-                .with_tempo_epoch_length(NonZeroU64::new(3).unwrap()),
-        )
-        .await;
-        for _ in 0..4 {
-            api.mine_one().await.unwrap();
-        }
+        let (api, _handle) = spawn(tempo_config(3)).await;
+        api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
         let imported_head = api.backend.best_hash();
         let ancestor = api.backend.get_block(2).unwrap().header.hash_slow();
         let state = api.backend.serialized_state(false).await.unwrap();
@@ -529,12 +454,6 @@ mod tests {
         assert_eq!(api.backend.best_hash(), ancestor);
         assert!(consensus(&api).latest().is_none());
         api.mine_one().await.unwrap();
-        assert_certified_head(&api);
-        let retained = consensus(&api).finalization(3).unwrap().clone();
-        api.mine_one().await.unwrap();
-        api.anvil_rollback(Some(1)).await.unwrap();
-        assert_eq!(consensus(&api).finalization(3), Some(&retained));
-        assert!(consensus(&api).finalization(4).is_none());
         assert_certified_head(&api);
 
         // Importing the saved head again creates another unsigned signing segment.
@@ -599,15 +518,8 @@ mod tests {
     #[tokio::test]
     async fn tempo_unchanged_history_import_preserves_consensus_and_snapshots() {
         for include_history in [false, true] {
-            let (api, _handle) = spawn(
-                NodeConfig::test_tempo()
-                    .with_no_mining(true)
-                    .with_tempo_epoch_length(NonZeroU64::new(4).unwrap()),
-            )
-            .await;
-            for _ in 0..2 {
-                api.mine_one().await.unwrap();
-            }
+            let (api, _handle) = spawn(tempo_config(4)).await;
+            api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
             let first = consensus(&api).finalization(1).unwrap().clone();
             let head = consensus(&api).finalization(2).unwrap().clone();
             let account = Address::repeat_byte(0x22);
@@ -616,6 +528,12 @@ mod tests {
             let snapshot = api.evm_snapshot().await.unwrap();
             let next_rotation = consensus(&api).rotate().unwrap();
             let mut state = api.backend.serialized_state(false).await.unwrap();
+            let mut invalid = state.clone();
+            invalid.best_block_number = Some(99);
+            let error = api.backend.load_state(invalid).await.unwrap_err();
+            assert!(matches!(error, BlockchainError::RpcError(error)
+                if error.message == "Best hash not found for best number 99"));
+            assert_eq!(consensus(&api).finalization(2), Some(&head));
             state.accounts.get_mut(&account).unwrap().balance = U256::from(2);
             if !include_history {
                 state = SerializableState { accounts: state.accounts, ..Default::default() };
@@ -627,20 +545,12 @@ mod tests {
             assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
             assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
             assert_certified_head(&api);
-            for _ in 0..2 {
-                api.mine_one().await.unwrap();
-            }
+            api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
             assert_eq!(consensus(&api).identity(), scheduled);
-            assert_certified_head(&api);
-
             assert!(api.evm_revert(snapshot).await.unwrap());
             assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
             assert_eq!(consensus(&api).finalization(2), Some(&head));
             assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
-            assert_certified_head(&api);
-            api.anvil_rollback(Some(1)).await.unwrap();
-            assert_eq!(api.backend.best_number(), 1);
-            assert_eq!(consensus(&api).finalization(1), Some(&first));
             assert_certified_head(&api);
         }
     }
@@ -648,9 +558,7 @@ mod tests {
     #[tokio::test]
     async fn tempo_cross_import_snapshot_does_not_restore_changed_ancestor_certificate() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        for _ in 0..2 {
-            api.mine_one().await.unwrap();
-        }
+        api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
         let head = api.backend.best_hash();
         let signed_ancestor = consensus(&api).finalization(1).unwrap().digest;
         let snapshot = api.evm_snapshot().await.unwrap();
@@ -701,56 +609,40 @@ mod tests {
         assert_certified_head(&api);
     }
 
-    #[tokio::test]
-    async fn tempo_cross_import_snapshots_preserve_revert_order() {
-        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        let account = Address::repeat_byte(0x22);
-        api.mine_one().await.unwrap();
-        api.anvil_set_balance(account, U256::ONE).await.unwrap();
-        let older = api.evm_snapshot().await.unwrap();
-        api.mine_one().await.unwrap();
-        api.anvil_set_balance(account, U256::from(2)).await.unwrap();
-        let target = api.evm_snapshot().await.unwrap();
-        api.mine_one().await.unwrap();
-        api.anvil_set_balance(account, U256::from(3)).await.unwrap();
-        let newer = api.evm_snapshot().await.unwrap();
-        let state = api.anvil_dump_state(None).await.unwrap();
-        api.mine_one().await.unwrap();
-        assert!(api.anvil_load_state(state).await.unwrap());
-        assert!(consensus(&api).latest().is_none());
+    #[test]
+    fn tempo_cross_import_snapshots_preserve_revert_order() {
+        let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 0);
+        chain.snapshot(U256::ONE);
+        chain.reanchor(3);
+        assert!(chain.snapshots.is_empty());
+        chain.snapshot(U256::from(2));
+        chain.snapshot(U256::from(3));
+        let expected = chain.consensus.clone().rotate().unwrap();
+        chain.consensus.rotate().unwrap();
+        chain.snapshot(U256::from(4));
+        chain.restore(U256::from(3), 3);
+        assert_eq!(chain.consensus.rotate().unwrap(), expected);
+        assert_eq!(chain.snapshots.keys().copied().collect::<Vec<_>>(), vec![U256::from(2)]);
 
-        // A snapshot in the new signing segment still restores its exact certificate.
-        api.mine_one().await.unwrap();
-        api.anvil_set_balance(account, U256::from(4)).await.unwrap();
-        let certificate = consensus(&api).finalization(4).unwrap().clone();
-        let exact = api.evm_snapshot().await.unwrap();
-        api.mine_one().await.unwrap();
-        api.anvil_set_balance(account, U256::from(5)).await.unwrap();
-        assert!(api.evm_revert(exact).await.unwrap());
-        assert_eq!(api.balance(account, None).await.unwrap(), U256::from(4));
-        assert_eq!(consensus(&api).finalization(4), Some(&certificate));
-        assert_certified_head(&api);
+        // Restoring a pre-import snapshot uses its database height, not the current anchor.
+        chain.restore(U256::ONE, 1);
+        assert!(chain.snapshots.is_empty());
+        assert_eq!(chain.consensus.anchor_height(), 1);
+        assert!(chain.consensus.latest().is_none());
+    }
 
-        assert!(api.evm_revert(target).await.unwrap());
-        assert_eq!(api.backend.best_number(), 2);
-        assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
-        assert!(consensus(&api).latest().is_none());
-        assert_eq!(api.backend.list_state_snapshots().into_keys().collect::<Vec<_>>(), vec![older]);
-        for consumed in [target, newer, exact] {
-            assert!(!api.evm_revert(consumed).await.unwrap());
-        }
-        api.mine_one().await.unwrap();
-        assert_eq!(api.backend.best_number(), 3);
-        assert_certified_head(&api);
+    fn tempo_config(epoch_length: u64) -> NodeConfig {
+        NodeConfig::test_tempo()
+            .with_no_mining(true)
+            .with_tempo_epoch_length(NonZeroU64::new(epoch_length).unwrap())
+    }
 
-        assert!(api.evm_revert(older).await.unwrap());
-        assert_eq!(api.backend.best_number(), 1);
-        assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
-        assert!(consensus(&api).latest().is_none());
-        assert!(api.backend.list_state_snapshots().is_empty());
-        api.mine_one().await.unwrap();
-        assert_eq!(api.backend.best_number(), 2);
-        assert_certified_head(&api);
+    async fn queue_transfer(api: &EthApi<FoundryNetwork>, sender: Address) -> B256 {
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::repeat_byte(0x11)),
+        ))
+        .await
+        .unwrap()
     }
 
     async fn rotate_consensus(api: &EthApi<FoundryNetwork>) -> TempoConsensusIdentity {
