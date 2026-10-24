@@ -1726,8 +1726,9 @@ async fn test_rollback() {
     let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(head, block4);
 
-    // Get block 1 for comparison
+    // Get blocks 1 and 2 for comparison.
     let block1 = provider.get_block(1.into()).await.unwrap().unwrap();
+    let original_block2 = provider.get_block(2.into()).await.unwrap().unwrap();
 
     // Rollback to block 1
     let depth = 3; // from block 4 to block 1
@@ -1736,6 +1737,53 @@ async fn test_rollback() {
     // Assert we're at block 1 and the block contents are kept the same
     let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(head, block1);
+
+    // Latest execution sees block 1's base fee, not the discarded head's.
+    let basefee_call = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(handle.dev_accounts().next().unwrap())
+            .with_deploy_code(Bytes::from_static(&[0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+            .gas_price(10_000_000_000),
+    );
+    let basefee = api.call(basefee_call, None, Default::default()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&basefee), U256::from(block1.header.base_fee_per_gas.unwrap()));
+
+    // The replacement block 2 inherits its base fee from block 1, like the original block 2.
+    api.mine_one().await.unwrap();
+    let block2 = provider.get_block(2.into()).await.unwrap().unwrap();
+    assert_eq!(block2.header.base_fee_per_gas, original_block2.header.base_fee_per_gas);
+
+    // Rolling back to genesis restores the startup fee for block 1.
+    api.anvil_rollback(Some(2)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let replacement_block1 = provider.get_block(1.into()).await.unwrap().unwrap();
+    assert_eq!(replacement_block1.header.base_fee_per_gas, block1.header.base_fee_per_gas);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_prices_json_transactions_from_common_block() {
+    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(20_000_000_000))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+
+    for _ in 0..3 {
+        api.mine_one().await.unwrap();
+    }
+    let original_block2 = provider.get_block(2.into()).await.unwrap().unwrap();
+
+    // The fee-less transaction must be priced for the new block 2, not for the next block of the
+    // discarded chain.
+    let tx = TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1));
+    api.anvil_reorg(ReorgOptions {
+        depth: 2,
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
+    })
+    .await
+    .unwrap();
+
+    let block2 = provider.get_block(2.into()).await.unwrap().unwrap();
+    assert_eq!(block2.header.base_fee_per_gas, original_block2.header.base_fee_per_gas);
+    assert_eq!(block2.transactions.len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -246,11 +246,16 @@ impl<N: Network> EthApi<N> {
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
+        self.gas_price_for_base_fee(self.backend.base_fee())
+    }
+
+    /// Returns the gas price for a block with the given base fee.
+    fn gas_price_for_base_fee(&self, base_fee: u64) -> u128 {
         if self.backend.is_eip1559() {
             if self.backend.is_min_priority_fee_enforced() {
-                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+                (base_fee as u128).saturating_add(self.lowest_suggestion_tip())
             } else {
-                self.backend.base_fee() as u128
+                base_fee as u128
             }
         } else {
             self.backend.fees().raw_gas_price()
@@ -4551,6 +4556,19 @@ impl EthApi<FoundryNetwork> {
         };
         #[cfg(not(feature = "monad"))]
         let fee_defaults = None;
+        // Price fee-less transactions for the blocks mined on top of the common block, not for the
+        // head that is about to be discarded.
+        let fee_defaults = fee_defaults.or_else(|| {
+            let (base_fee, blob_fees) = self.backend.next_block_fees_after(&common_block.header);
+            Some(TransactionFeeDefaults {
+                gas_price: self.gas_price_for_base_fee(base_fee),
+                blob_gas_price: self
+                    .backend
+                    .fees()
+                    .blob_params()
+                    .calc_blob_fee(blob_fees.excess_blob_gas),
+            })
+        });
 
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
