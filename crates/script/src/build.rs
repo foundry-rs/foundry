@@ -227,6 +227,7 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         );
 
         let compiler = ProjectCompiler::new()
+            .allow_linked_libraries(script_config.config.allow_linked_libraries)
             .external_compilers(&script_config.config)
             .files(sources_to_compile)
             .dynamic_test_linking(script_config.config.dynamic_test_linking);
