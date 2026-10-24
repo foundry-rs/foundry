@@ -5613,7 +5613,7 @@ impl<N: Network> Backend<N> {
         let removed_blocks = {
             let mut storage = self.blockchain.storage.write();
             if let Some(tempo) = &mut storage.tempo {
-                tempo.restore(id);
+                tempo.restore(id, num);
             }
             storage.unwind_to(num, hash)
         };
@@ -8702,7 +8702,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 .collect()
         };
 
-        let reset_tempo_snapshots = {
+        let reanchor_tempo = {
             // The database guard keeps chain identity stable until publication. Compare under a
             // read guard so existing chain readers need not wait for a large history comparison.
             let live_storage = self.blockchain.storage.read();
@@ -8717,7 +8717,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             let mut live_storage = self.blockchain.storage.write();
             // Keep the live consensus, including snapshots or rotations created since staging.
             storage.tempo = live_storage.tempo.take();
-            if reset_tempo_snapshots && let Some(tempo) = &mut storage.tempo {
+            if reanchor_tempo && let Some(tempo) = &mut storage.tempo {
                 tempo.reanchor(storage.best_number);
             }
             *live_storage = storage;
@@ -8738,11 +8738,6 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
 
         db.set_block_hashes(block_hashes);
-        if reset_tempo_snapshots {
-            for (id, _) in self.active_state_snapshots.lock().drain() {
-                db.delete_state_snapshot(id);
-            }
-        }
 
         if let Some(historical_states) = historical_states {
             self.states.write().load_states(historical_states);

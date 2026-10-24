@@ -4,6 +4,10 @@
 //! same storage write guard that publishes its block. Cache commits and state-root computation do
 //! not hold the storage lock, so readers can still access the published chain.
 //!
+//! Imports that change canonical history start an unsigned signing segment. Database snapshots
+//! remain usable, but reverting across that import boundary starts a new segment at the restored
+//! height. Snapshots within the current segment restore consensus exactly.
+//!
 //! All live consensus mutations, including future rotation RPCs, must acquire the database write
 //! lock before the storage lock. Mining retains that database guard from preparation through
 //! publication, preventing snapshots, rewinds, resets, imports, or rotations from changing the
@@ -18,7 +22,7 @@ use std::{fmt, num::NonZeroU64};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoHeader;
 
-/// Local certificates, key schedule, and exact development snapshots for one canonical chain.
+/// Local certificates, key schedule, and consensus snapshots for the current signing history.
 #[derive(Clone)]
 pub(crate) struct TempoChain {
     seed: B256,
@@ -37,7 +41,7 @@ impl TempoChain {
         }
     }
 
-    /// Resets local trust at an unsigned imported or replacement chain head.
+    /// Resets local trust at an unsigned chain head and clears saved consensus histories.
     pub(super) fn reanchor(&mut self, height: u64) {
         self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
         self.snapshots.clear();
@@ -47,10 +51,14 @@ impl TempoChain {
         self.snapshots.insert(id, self.consensus.clone());
     }
 
-    pub(super) fn restore(&mut self, id: U256) {
-        let snapshot =
-            self.snapshots.remove(&id).expect("the database snapshot has consensus state");
-        self.consensus = snapshot;
+    /// Restores saved consensus, or starts unsigned if an import discarded that history.
+    ///
+    /// The caller supplies the saved database height, which may differ from the imported head.
+    pub(super) fn restore(&mut self, id: U256, height: u64) {
+        self.consensus = self
+            .snapshots
+            .remove(&id)
+            .unwrap_or_else(|| TempoConsensus::at_height(self.seed, self.epoch_length, height));
         self.snapshots.retain(|snapshot_id, _| *snapshot_id < id);
     }
 
@@ -113,10 +121,7 @@ mod tests {
     use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, anvil::Forking};
     use alloy_serde::WithOtherFields;
     use anvil_core::types::ReorgOptions;
-    use foundry_evm::{
-        backend::RevertStateSnapshotAction,
-        hardfork::{EthereumHardfork, FoundryHardfork},
-    };
+    use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
     use foundry_primitives::{FoundryHeader, FoundryNetwork};
     use std::{
         sync::{
@@ -331,38 +336,83 @@ mod tests {
         assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
         assert_ne!(consensus(&api).finalization(3).unwrap().digest, previous);
         assert_certified_head(&api);
+        let stale = api.evm_snapshot().await.unwrap();
         api.anvil_reset(None).await.unwrap();
+        assert!(api.backend.list_state_snapshots().is_empty());
+        assert!(!api.evm_revert(stale).await.unwrap());
+        let fresh = api.evm_snapshot().await.unwrap();
+        assert_eq!(fresh, stale);
         assert!(consensus(&api).latest().is_none());
         assert_eq!(consensus(&api).identity(), initial);
+        api.mine_one().await.unwrap();
+        assert_certified_head(&api);
+        assert!(api.evm_revert(fresh).await.unwrap());
+        assert_eq!(api.backend.best_number(), 0);
+        assert!(consensus(&api).latest().is_none());
         api.mine_one().await.unwrap();
         assert_certified_head(&api);
     }
 
     #[tokio::test]
-    async fn tempo_load_state_reanchors_and_invalidates_snapshots() {
-        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
-        api.mine_one().await.unwrap();
-        let state = api.backend.serialized_state(false).await.unwrap();
-        api.mine_one().await.unwrap();
-        let old_snapshot = api.evm_snapshot().await.unwrap();
-        api.backend.load_state(state).await.unwrap();
-        assert_eq!(api.backend.best_number(), 1);
-        assert!(consensus(&api).latest().is_none());
-        assert!(api.backend.list_state_snapshots().is_empty());
-        assert!(!api.evm_revert(old_snapshot).await.unwrap());
-        assert!(
-            !api.backend
-                .db
-                .write()
-                .await
-                .revert_state(old_snapshot, RevertStateSnapshotAction::RevertRemove)
-        );
-        let snapshot = api.evm_snapshot().await.unwrap();
-        api.mine_one().await.unwrap();
-        assert_certified_head(&api);
-        assert!(api.evm_revert(snapshot).await.unwrap());
-        assert_eq!(api.backend.best_number(), 1);
-        assert!(consensus(&api).latest().is_none());
+    async fn cross_import_snapshot_restores_state_and_resumes_mining() {
+        for tempo in [false, true] {
+            for (saved_height, imported_height) in [(2, 1), (1, 2)] {
+                let config = if tempo { NodeConfig::test_tempo() } else { NodeConfig::test() };
+                let (api, handle) = spawn(config.with_no_mining(true)).await;
+                let account = Address::repeat_byte(0x22);
+                let sender = handle.dev_wallets().next().unwrap().address();
+                api.anvil_set_balance(account, U256::from(2)).await.unwrap();
+                let mut state = None;
+                let mut saved = None;
+                for height in 1..=2 {
+                    api.mine_one().await.unwrap();
+                    if height == imported_height {
+                        state = Some(api.anvil_dump_state(None).await.unwrap());
+                    }
+                    if height == saved_height {
+                        api.anvil_set_balance(account, U256::ONE).await.unwrap();
+                        let transaction = api
+                            .send_transaction(WithOtherFields::new(
+                                TransactionRequest::default()
+                                    .from(sender)
+                                    .to(Address::repeat_byte(0x11)),
+                            ))
+                            .await
+                            .unwrap();
+                        saved = Some((
+                            api.evm_snapshot().await.unwrap(),
+                            api.backend.best_hash(),
+                            transaction,
+                        ));
+                        api.anvil_set_balance(account, U256::from(2)).await.unwrap();
+                        api.anvil_drop_all_transactions().await.unwrap();
+                    }
+                }
+                api.mine_one().await.unwrap();
+                let (snapshot, saved_hash, transaction) = saved.unwrap();
+
+                assert!(api.anvil_load_state(state.unwrap()).await.unwrap());
+                assert_eq!(api.backend.best_number(), imported_height);
+                assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
+                assert!(api.transaction_by_hash(transaction).await.unwrap().is_none());
+                assert!(api.evm_revert(snapshot).await.unwrap());
+                assert_eq!(api.backend.best_number(), saved_height);
+                assert_eq!(api.backend.best_hash(), saved_hash);
+                assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
+                assert!(api.transaction_by_hash(transaction).await.unwrap().is_some());
+                if tempo {
+                    assert!(consensus(&api).latest().is_none());
+                }
+                api.mine_one().await.unwrap();
+                assert_eq!(api.backend.best_number(), saved_height + 1);
+                let block = api.backend.get_block(saved_height + 1).unwrap();
+                assert_eq!(block.header.parent_hash(), saved_hash);
+                assert_eq!(block.body.transactions.len(), 1);
+                if tempo {
+                    assert_certified_head(&api);
+                }
+            }
+        }
     }
 
     #[tokio::test]
@@ -443,17 +493,29 @@ mod tests {
             source_api.backend.get_block(2).unwrap().header.hash_slow()
         );
         assert_eq!(consensus(&api).latest().unwrap().1.epoch, 1);
+        let stale = api.evm_snapshot().await.unwrap();
         api.anvil_reset(Some(Forking {
             json_rpc_url: Some(source.http_endpoint()),
             block_number: Some(4),
         }))
         .await
         .unwrap();
+        assert!(api.backend.list_state_snapshots().is_empty());
+        assert!(!api.evm_revert(stale).await.unwrap());
+        let fresh = api.evm_snapshot().await.unwrap();
+        assert_eq!(fresh, stale);
         assert!(consensus(&api).latest().is_none());
         assert_eq!(consensus(&api).identity().from_epoch, 1);
         api.mine_one().await.unwrap();
         assert_certified_head(&api);
         assert_eq!(api.backend.best_number(), 5);
+
+        assert!(api.evm_revert(fresh).await.unwrap());
+        assert_eq!(api.backend.best_number(), 4);
+        assert!(consensus(&api).latest().is_none());
+        api.mine_one().await.unwrap();
+        assert_eq!(api.backend.best_number(), 5);
+        assert_certified_head(&api);
 
         let sender = source.dev_wallets().next().unwrap().address();
         let hash = source_api
@@ -536,7 +598,7 @@ mod tests {
 
         chain.unwind(&unsigned_tempo_block(3)).unwrap();
         assert!(chain.consensus.latest().is_none());
-        chain.restore(U256::ONE);
+        chain.restore(U256::ONE, 5);
         assert_eq!(chain.consensus.rotate().unwrap(), expected.rotate().unwrap());
 
         // Restoring the snapshot restores anchor 5, so height 4 is an unsigned ancestor again.
@@ -633,7 +695,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_same_head_import_with_changed_ancestor_invalidates_snapshots() {
+    async fn tempo_cross_import_snapshot_does_not_restore_changed_ancestor_certificate() {
         let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
         for _ in 0..2 {
             api.mine_one().await.unwrap();
@@ -654,15 +716,11 @@ mod tests {
         assert_eq!(api.backend.best_hash(), head);
         assert_eq!(api.backend.get_block(1).unwrap().header.hash_slow(), replacement);
         assert!(consensus(&api).latest().is_none());
-        assert!(api.backend.list_state_snapshots().is_empty());
-        assert!(!api.evm_revert(snapshot).await.unwrap());
-        assert!(
-            !api.backend
-                .db
-                .write()
-                .await
-                .revert_state(snapshot, RevertStateSnapshotAction::RevertRemove)
-        );
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert_eq!(api.backend.best_hash(), head);
+        assert_eq!(api.backend.get_block(1).unwrap().header.hash_slow(), replacement);
+        assert!(consensus(&api).latest().is_none());
+        assert!(consensus(&api).finalization(1).is_none());
         api.mine_one().await.unwrap();
         assert_certified_head(&api);
     }
@@ -696,5 +754,57 @@ mod tests {
         let mut header = TempoHeader::default();
         header.inner.number = height;
         Block::new(header.into(), Default::default())
+    }
+
+    #[tokio::test]
+    async fn tempo_cross_import_snapshots_preserve_revert_order() {
+        let (api, _handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+        let account = Address::repeat_byte(0x22);
+        api.mine_one().await.unwrap();
+        api.anvil_set_balance(account, U256::ONE).await.unwrap();
+        let older = api.evm_snapshot().await.unwrap();
+        api.mine_one().await.unwrap();
+        api.anvil_set_balance(account, U256::from(2)).await.unwrap();
+        let target = api.evm_snapshot().await.unwrap();
+        api.mine_one().await.unwrap();
+        api.anvil_set_balance(account, U256::from(3)).await.unwrap();
+        let newer = api.evm_snapshot().await.unwrap();
+        let state = api.anvil_dump_state(None).await.unwrap();
+        api.mine_one().await.unwrap();
+        assert!(api.anvil_load_state(state).await.unwrap());
+        assert!(consensus(&api).latest().is_none());
+
+        // A snapshot in the new signing segment still restores its exact certificate.
+        api.mine_one().await.unwrap();
+        api.anvil_set_balance(account, U256::from(4)).await.unwrap();
+        let certificate = consensus(&api).finalization(4).unwrap().clone();
+        let exact = api.evm_snapshot().await.unwrap();
+        api.mine_one().await.unwrap();
+        api.anvil_set_balance(account, U256::from(5)).await.unwrap();
+        assert!(api.evm_revert(exact).await.unwrap());
+        assert_eq!(api.balance(account, None).await.unwrap(), U256::from(4));
+        assert_eq!(consensus(&api).finalization(4), Some(&certificate));
+        assert_certified_head(&api);
+
+        assert!(api.evm_revert(target).await.unwrap());
+        assert_eq!(api.backend.best_number(), 2);
+        assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
+        assert!(consensus(&api).latest().is_none());
+        assert_eq!(api.backend.list_state_snapshots().into_keys().collect::<Vec<_>>(), vec![older]);
+        for consumed in [target, newer, exact] {
+            assert!(!api.evm_revert(consumed).await.unwrap());
+        }
+        api.mine_one().await.unwrap();
+        assert_eq!(api.backend.best_number(), 3);
+        assert_certified_head(&api);
+
+        assert!(api.evm_revert(older).await.unwrap());
+        assert_eq!(api.backend.best_number(), 1);
+        assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
+        assert!(consensus(&api).latest().is_none());
+        assert!(api.backend.list_state_snapshots().is_empty());
+        api.mine_one().await.unwrap();
+        assert_eq!(api.backend.best_number(), 2);
+        assert_certified_head(&api);
     }
 }
