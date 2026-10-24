@@ -6,6 +6,7 @@ mod calldata;
 mod cheatcodes;
 mod control;
 mod evm;
+mod executor_view;
 mod expr;
 mod memory;
 mod precompiles;
@@ -19,6 +20,7 @@ pub(crate) use calldata::*;
 pub(crate) use cheatcodes::*;
 pub(crate) use control::*;
 pub(crate) use evm::*;
+pub use executor_view::ExecutorView;
 pub(crate) use expr::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
@@ -53,9 +55,10 @@ impl SymbolicBranchTarget {
     }
 }
 
-pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
-    /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
-    pub executor: &'a Executor<FEN>,
+pub struct SymbolicRunInput<'a> {
+    /// Read-only view of the concrete Foundry executor used as the source of deployed bytecode and
+    /// backend state.
+    pub executor: ExecutorView<'a>,
     /// Address of the deployed test contract whose runtime bytecode will be explored.
     pub target: Address,
     /// Sender used for symbolic execution environment opcodes such as `CALLER` and `ORIGIN`.
