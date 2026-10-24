@@ -258,10 +258,19 @@ fn build_filter(
 fn event_topics(event: &Event, args: &[String]) -> Result<[Topic; 4]> {
     let mut topics = if event.anonymous { vec![] } else { vec![Topic::from(event.selector())] };
     let indexed = event.inputs.iter().filter(|input| input.indexed);
+    let indexed_count = indexed.clone().count();
     eyre::ensure!(
-        topics.len() + indexed.clone().count() <= 4,
+        topics.len() + indexed_count <= 4,
         "event `{}` has too many indexed inputs: a log has at most 4 topics",
         event.name
+    );
+    // `zip` stops at the shorter side, so arguments past the last indexed input would be dropped
+    // without a word and the query would match more logs than the user asked for.
+    eyre::ensure!(
+        args.len() <= indexed_count,
+        "event `{}` has {indexed_count} indexed parameters, but {} filter arguments were provided",
+        event.name,
+        args.len()
     );
     for (input, arg) in indexed.zip(args) {
         let kind = input.resolve()?;
@@ -277,6 +286,13 @@ fn event_topics(event: &Event, args: &[String]) -> Result<[Topic; 4]> {
 
 /// Parses raw topic hashes; empty topics match any value.
 fn raw_topics(topics: Vec<String>) -> Result<[Topic; 4]> {
+    // `resize` truncates, so topics past the fourth would be dropped without a word and the
+    // query would match more logs than the user asked for.
+    eyre::ensure!(
+        topics.len() <= 4,
+        "a log filter supports at most 4 topics, but {} were provided",
+        topics.len()
+    );
     let mut topics = topics
         .into_iter()
         .map(|topic| {
@@ -735,6 +751,26 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn rejects_excess_event_filter_arguments() {
+        // `Transfer` only indexes `from` and `to`; a third argument cannot be expressed as a topic
+        // and would otherwise be dropped without a word, running the query with fewer conditions
+        // than the user asked for.
+        let err = filter(TRANSFER_SIG, &[ADDRESS, OTHER_ADDRESS, "1234"]).unwrap_err();
+        assert!(err.to_string().contains("2 indexed parameters, but 3 filter arguments"), "{err}");
+    }
+
+    #[test]
+    fn rejects_more_than_four_raw_topics() {
+        // A log carries at most 4 topics; the fifth one would otherwise be truncated.
+        let err = filter(
+            TRANSFER_TOPIC,
+            &[TRANSFER_TOPIC, TRANSFER_TOPIC, TRANSFER_TOPIC, TRANSFER_TOPIC],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("at most 4 topics"), "{err}");
     }
 
     #[test]
