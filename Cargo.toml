@@ -460,7 +460,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "8"
@@ -605,15 +605,15 @@ foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", 
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
 
 ## alloy-core
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-alloy-sol-macro = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-alloy-sol-macro-expander = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-alloy-sol-macro-input = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
-syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "6766ed3332923e812d612fa09f988c16c34ffa5f" }
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-macro = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-macro-expander = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-macro-input = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
+syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
 
 ## alloy
 # alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "395521c" }
