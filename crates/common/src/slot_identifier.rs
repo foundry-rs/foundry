@@ -1341,4 +1341,53 @@ mod tests {
             assert!(identifier.identify(&B256::from(U256::from(slot)), None).is_none());
         }
     }
+
+    #[test]
+    fn decodes_packed_signed_and_fixed_bytes_values() {
+        let info = |ty: &str, offset| SlotInfo {
+            label: String::new(),
+            slot_type: StorageTypeInfo {
+                label: ty.to_string(),
+                dyn_sol_type: DynSolType::parse(ty).unwrap(),
+            },
+            offset,
+            slot: "0".to_string(),
+            members: None,
+            decoded: None,
+            keys: None,
+        };
+        let decode = |mut info: SlotInfo, new_value| {
+            info.decode_values(B256::ZERO, new_value);
+            info
+        };
+
+        // `int8 small = -1` packed with `bytes4 tag = 0xdeadbeef`
+        let small = decode(
+            info("int8", 0),
+            b256!("0x000000000000000000000000000000000000000000000000000000deadbeefff"),
+        );
+        let tag = decode(
+            info("bytes4", 0),
+            b256!("0x00000000000000000000000000000000000000000000000000000000deadbeef"),
+        );
+        // `uint128 a = 5` packed with `uint128 b = 1`
+        let a = decode(
+            info("uint128", 0),
+            b256!("0x0000000000000000000000000000000100000000000000000000000000000005"),
+        );
+        // `struct { int16 a; bytes4 b; }` set to `(-2, 0x12345678)`
+        let mut packed = info("(int16,bytes4)", 0);
+        packed.members = Some(vec![info("int16", 0), info("bytes4", 2)]);
+        let packed = decode(
+            packed,
+            b256!("0x000000000000000000000000000000000000000000000000000012345678fffe"),
+        );
+
+        let values = [&small, &tag, &a]
+            .into_iter()
+            .chain(packed.members.as_ref().unwrap())
+            .map(|info| format_token_raw(&info.decoded.as_ref().unwrap().new_value))
+            .collect::<Vec<_>>();
+        assert_eq!(values, ["-1", "0xdeadbeef", "5", "-2", "0x12345678"]);
+    }
 }
