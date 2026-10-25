@@ -5587,6 +5587,10 @@ impl EthApi<FoundryNetwork> {
     /// Returns a locally mined Tempo finalization and its native block.
     ///
     /// Handler for `consensus_getFinalization`; unavailable on non-Tempo networks.
+    /// Genesis and remote fork anchors are unsigned; remote certificates are not forwarded.
+    /// `latest` uses the retained complete body; height queries require a matching stored body.
+    /// Returns JSON-RPC error code 503 if the requested certificate or a complete block matching
+    /// its commitments is unavailable.
     pub async fn consensus_get_finalization(
         &self,
         query: TempoConsensusQuery,
@@ -5602,6 +5606,10 @@ impl EthApi<FoundryNetwork> {
     /// Returns the latest local finalization, with `notarized: null` as on Tempo.
     ///
     /// Handler for `consensus_getLatest`; unavailable on non-Tempo networks.
+    /// Returns `finalized: null` when the current local signing history has no certificate.
+    /// Returns JSON-RPC error code 503 if a certificate exists but its complete block is
+    /// unavailable or no longer matches its commitments, including after rollback to a pruned
+    /// body.
     pub async fn consensus_get_latest(&self) -> Result<TempoConsensusState> {
         node_info!("consensus_getLatest");
         let finalized = self

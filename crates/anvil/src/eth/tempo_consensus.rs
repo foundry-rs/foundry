@@ -1,22 +1,8 @@
 //! Native Tempo consensus RPC response types.
 //!
-//! Local Tempo mining produces a development 1-of-1 finalization over the complete native header.
-//! `consensus_getFinalization` accepts `"latest"` or `{"height": N}`; its certificate is unprefixed
-//! hex, and its block uses Tempo's native header and transaction types. `consensus_getLatest` has
-//! nullable `finalized` and `notarized` fields; local mining only populates `finalized`.
-//!
-//! Genesis and remote fork anchors remain unsigned. Reset and state imports that change canonical
-//! history start a new local signing history; imports preserving canonical history retain the
-//! local signer. Remote certificates are not forwarded. Snapshots restore the signer exactly within
-//! one signing history; cross-import reverts start unsigned. Rollback restores retained key
-//! schedules.
-//!
-//! The latest mined finalization retains its complete body across pruning and snapshot restores.
-//! Rolling back to an older certified block whose pruned body no longer matches its header makes
-//! both latest queries return the native 503 unavailable error. Mining a successor or restoring a
-//! snapshot with a complete body restores availability. Historical queries also return 503 if the
-//! certificate or a body matching its commitments is unavailable. The identity methods expose
-//! public development keys only.
+//! `consensus_getFinalization` returns a [`TempoCertifiedBlock`]. `consensus_getLatest` returns a
+//! [`TempoConsensusState`] with nullable `finalized` and `notarized`; local mining only populates
+//! `finalized`. The certificate bytes are unprefixed hex.
 
 use super::{
     backend::tempo_consensus::TempoFinalization,
