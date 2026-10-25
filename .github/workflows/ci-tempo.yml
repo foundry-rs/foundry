@@ -148,6 +148,8 @@ jobs:
 
   tempo-consensus-compat:
     name: Native Tempo certificate compatibility
+    # PRs and pushes run these integration tests in the ordinary nextest matrix.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
     permissions:
@@ -169,27 +171,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Capture locally mined Tempo certificates
-        env:
-          ANVIL_TEMPO_CONSENSUS_ARTIFACT: ${{ runner.temp }}/tempo-consensus.json
-        run: |
-          cargo test --locked -p anvil --test it tempo::tempo_consensus_mined_certificate_matches_block_hash -- --exact
-          cargo test --locked -p anvil --test it tempo::tempo_consensus_nonempty_native_block_body -- --exact
-          test -s "$ANVIL_TEMPO_CONSENSUS_ARTIFACT"
-          test -s "${ANVIL_TEMPO_CONSENSUS_ARTIFACT%.json}.nonempty.json"
       - name: Verify native certificate and block compatibility
-        env:
-          ANVIL_TEMPO_CONSENSUS_ARTIFACT: ${{ runner.temp }}/tempo-consensus.json
-        run: |
-          cargo run --locked -p anvil-tempo-consensus-compat --example verify
-          ANVIL_TEMPO_CONSENSUS_ARTIFACT="${ANVIL_TEMPO_CONSENSUS_ARTIFACT%.json}.nonempty.json" \
-            cargo run --locked -p anvil-tempo-consensus-compat --example verify
+        run: cargo test --locked -p anvil-tempo-consensus-compat
 
   # If the nightly run fails, this will create an issue to signal so.
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [tempo-check]
+    needs: [tempo-check, tempo-consensus-compat]
     if: failure() && github.event_name == 'schedule'
     permissions:
       contents: read

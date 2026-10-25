@@ -10,19 +10,19 @@ autobins = false
 [lints]
 workspace = true
 
-[[example]]
-name = "verify"
-path = "src/main.rs"
-
 [dev-dependencies]
-alloy-consensus = "=2.5.0"
-alloy-primitives = { version = "=1.7.3", features = ["serde"] }
-commonware-codec = "=2026.9.0"
+alloy-consensus.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-provider.workspace = true
+anvil.workspace = true
+commonware-codec.workspace = true
 commonware-consensus = "=2026.9.0"
-commonware-cryptography = { version = "=2026.9.0", features = ["bls12381", "std"] }
-commonware-math = "=2026.9.0"
-commonware-parallel = "=2026.9.0"
-rand_chacha = "=0.10.0"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2c25f7cd8267b205a6b95e08bbc73baf887bea88", default-features = false, features = ["serde"] }
+commonware-cryptography = { workspace = true, features = ["bls12381", "std"] }
+commonware-math.workspace = true
+commonware-parallel.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempo-hardfork.workspace = true
+tempo-primitives.workspace = true
+tokio.workspace = true

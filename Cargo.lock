@@ -1449,6 +1449,8 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "alloy-provider",
+ "anvil",
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
@@ -1457,7 +1459,9 @@ dependencies = [
  "rand_chacha 0.10.0",
  "serde",
  "serde_json",
+ "tempo-hardfork",
  "tempo-primitives",
+ "tokio",
 ]
 
 [[package]]
