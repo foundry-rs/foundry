@@ -203,10 +203,9 @@ impl FuzzState {
         }
     }
 
-    /// Removes all newly added entries from the dictionary.
+    /// Removes entries that were not promoted into the persistent dictionary prefix.
     ///
-    /// Should be called between fuzz/invariant runs to avoid accumulating data derived from fuzz
-    /// inputs.
+    /// Should be called between invariant runs to discard unselected feedback.
     pub fn revert(&self) {
         if let FuzzStateInner::Invariant(inner) = &self.inner {
             inner.borrow_mut().revert();
@@ -226,6 +225,13 @@ impl FuzzState {
         match &self.inner {
             FuzzStateInner::Stateless(inner) => f(inner),
             FuzzStateInner::Invariant(inner) => f(&inner.borrow()),
+        }
+    }
+
+    /// Retains bounded raw values and addresses from an invariant run with new coverage.
+    pub fn promote_ephemeral_values(&self) {
+        if let FuzzStateInner::Invariant(inner) = &self.inner {
+            inner.borrow_mut().promote_ephemeral_values();
         }
     }
 }
@@ -260,6 +266,10 @@ impl From<EvmFuzzState> for FuzzState {
 // for performance when iterating over the sets.
 /// Maximum number of persistent values from sancov trace-cmp.
 const MAX_PERSISTENT_VALUES: usize = 2048;
+/// Maximum additional state values retained from coverage-producing invariant runs.
+const MAX_COVERAGE_VALUES: usize = 4096;
+/// Maximum additional addresses retained from coverage-producing invariant runs.
+const MAX_COVERAGE_ADDRESSES: usize = 512;
 /// Maximum cached storage slot layout lookups per fuzz dictionary.
 const MAX_SLOT_INFO_CACHE_ENTRIES: usize = 4096;
 
@@ -273,11 +283,9 @@ pub struct FuzzDictionary {
     push_bytecode_hashes: B256IndexSet,
     /// Configuration for the dictionary.
     config: FuzzDictionaryConfig,
-    /// Number of state values initially collected from db.
-    /// Used to revert new collected values at the end of each run.
+    /// Length of the retained state-value prefix, initially seeded from the database.
     db_state_values: usize,
-    /// Number of address values initially collected from db.
-    /// Used to revert new collected addresses at the end of each run.
+    /// Length of the retained address prefix, initially seeded from the database.
     db_addresses: usize,
     /// Number of bytecode hashes initially collected from db.
     /// Used to revert new collected bytecode hashes at the end of each run.
@@ -294,6 +302,10 @@ pub struct FuzzDictionary {
     samples_seeded: bool,
     /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
     persistent_values: B256IndexSet,
+    /// Additional state values retained from coverage-producing runs.
+    coverage_values: usize,
+    /// Additional addresses retained from coverage-producing runs.
+    coverage_addresses: usize,
     /// Parsed storage layout identifiers keyed by the layout allocation.
     slot_identifiers: HashMap<usize, SlotIdentifier>,
     /// Cached non-mapping storage slot identification keyed by layout allocation and slot.
@@ -335,6 +347,8 @@ impl FuzzDictionary {
             sample_values: Default::default(),
             literal_values: Default::default(),
             persistent_values: Default::default(),
+            coverage_values: 0,
+            coverage_addresses: 0,
             slot_identifiers: Default::default(),
             slot_info_cache: Default::default(),
             misses: Default::default(),
@@ -490,7 +504,7 @@ impl FuzzDictionary {
     }
 
     /// Insert values from call state changeset into fuzz dictionary.
-    /// These values are removed at the end of current run.
+    /// These values are discarded at run end unless selected for persistence.
     fn insert_new_state_values(
         &mut self,
         state_changeset: &StateChangeset,
@@ -563,7 +577,7 @@ impl FuzzDictionary {
 
     /// Insert values from push bytes into fuzz dictionary.
     /// Values are collected only once for a given bytecode.
-    /// If values are newly collected then they are removed at the end of current run.
+    /// Newly collected values are discarded at run end unless selected for persistence.
     fn insert_push_bytes_values(&mut self, address: &Address, account_info: &AccountInfo) {
         if !self.config.include_push_bytes {
             return;
@@ -623,7 +637,7 @@ impl FuzzDictionary {
     }
 
     /// Insert address into fuzz dictionary.
-    /// If address is newly collected then it is removed by index at the end of current run.
+    /// Newly collected addresses are discarded at run end unless selected for persistence.
     fn insert_address(&mut self, address: Address) {
         if self.addresses.len() < self.config.max_fuzz_dictionary_addresses {
             self.addresses.insert(address);
@@ -632,7 +646,7 @@ impl FuzzDictionary {
 
     /// Insert raw value into fuzz dictionary.
     ///
-    /// If value is newly collected then it is removed by index at the end of current run.
+    /// Newly collected values are discarded at run end unless selected for persistence.
     ///
     /// Returns true if the value was inserted.
     fn insert_value(&mut self, value: B256) -> bool {
@@ -808,7 +822,7 @@ impl FuzzDictionary {
         &self.addresses
     }
 
-    /// Revert values and addresses collected during the run by truncating to initial db len.
+    /// Reverts values, addresses, and scan-cache entries outside their persistent prefixes.
     pub fn revert(&mut self) {
         self.state_values.truncate(self.db_state_values);
         self.addresses.truncate(self.db_addresses);
@@ -824,6 +838,21 @@ impl FuzzDictionary {
             state.hits = self.hits,
             "FuzzDictionary stats",
         );
+    }
+
+    /// Retains this run's raw feedback within the coverage budget.
+    /// Setup values and sancov operands have separate retention budgets.
+    /// The bytecode scan watermark stays unchanged because a full dictionary can interrupt a scan.
+    fn promote_ephemeral_values(&mut self) {
+        let values = (self.state_values.len() - self.db_state_values)
+            .min(MAX_COVERAGE_VALUES - self.coverage_values);
+        self.db_state_values += values;
+        self.coverage_values += values;
+
+        let addresses = (self.addresses.len() - self.db_addresses)
+            .min(MAX_COVERAGE_ADDRESSES - self.coverage_addresses);
+        self.db_addresses += addresses;
+        self.coverage_addresses += addresses;
     }
 
     #[cfg(test)]
@@ -1063,5 +1092,119 @@ mod tests {
             assert!(dict.persistent_values.contains(&persistent));
             assert!(dict.sample_values[&DynSolType::Uint(8)].contains(&persistent));
         });
+    }
+
+    #[test]
+    fn coverage_promotion_retains_feedback_but_not_scan_cache() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_db_values(Vec::new());
+        let address = Address::repeat_byte(0x11);
+        let account = account_with_code(&[0x61, 0xca, 0xfe]);
+        let learned = B256::from(U256::from(0xcafe_u64));
+        let transient = B256::from(U256::from(0xdead_u64));
+        dictionary.insert_push_bytes_values(&address, &account);
+
+        dictionary.promote_ephemeral_values();
+        dictionary.revert();
+
+        assert!(dictionary.values().contains(&B256::ZERO));
+        assert!(dictionary.values().contains(&learned));
+        assert!(dictionary.addresses().contains(&address));
+        assert!(dictionary.push_bytecode_hashes.is_empty());
+
+        // A later run without coverage must not extend the retained prefixes.
+        dictionary.insert_value(transient);
+        dictionary.insert_address(Address::repeat_byte(0x22));
+        dictionary.revert();
+        assert!(dictionary.values().contains(&learned));
+        assert!(!dictionary.values().contains(&transient));
+        assert_eq!(dictionary.addresses().as_slice(), &[address]);
+
+        // A retained address must still allow newly deployed code to be scanned.
+        dictionary.insert_push_bytes_values(&address, &account_with_code(&[0x61, 0xbe, 0xef]));
+        assert!(dictionary.values().contains(&B256::from(U256::from(0xbeef_u64))));
+    }
+
+    #[test]
+    fn coverage_promotion_is_bounded_across_runs() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_db_values(Vec::new());
+        let baseline_len = dictionary.len();
+        for run in 0..6 {
+            for offset in 1..=1024 {
+                let word = B256::from(U256::from(run * 1024 + offset));
+                dictionary.insert_value(word);
+                dictionary.insert_address(Address::from_word(word));
+            }
+            dictionary.promote_ephemeral_values();
+            dictionary.revert();
+            assert!(dictionary.len() <= baseline_len + MAX_COVERAGE_VALUES);
+            assert!(dictionary.addresses().len() <= MAX_COVERAGE_ADDRESSES);
+        }
+        assert_eq!(dictionary.len(), baseline_len + MAX_COVERAGE_VALUES);
+        assert_eq!(dictionary.addresses().len(), MAX_COVERAGE_ADDRESSES);
+        assert!(!dictionary.values().contains(&B256::from(U256::from(6144))));
+    }
+
+    #[test]
+    fn coverage_promotion_respects_configured_capacity() {
+        for capacity in [0, 1, 8] {
+            let mut dictionary = FuzzDictionary::new(FuzzDictionaryConfig {
+                max_fuzz_dictionary_values: capacity,
+                max_fuzz_dictionary_addresses: capacity,
+                ..Default::default()
+            });
+            dictionary.insert_db_values(Vec::new());
+            for value in 1..=16 {
+                let word = B256::from(U256::from(value));
+                dictionary.insert_value(word);
+                dictionary.insert_address(Address::from_word(word));
+            }
+
+            dictionary.promote_ephemeral_values();
+            dictionary.revert();
+
+            assert_eq!(dictionary.len(), capacity.max(1));
+            assert_eq!(dictionary.addresses().len(), capacity);
+        }
+    }
+
+    #[test]
+    fn trace_cmp_budget_is_independent_of_coverage_promotion() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.insert_db_values(Vec::new());
+        for value in 1..=MAX_COVERAGE_VALUES {
+            dictionary.insert_value(B256::from(U256::from(value)));
+        }
+        dictionary.promote_ephemeral_values();
+        dictionary.revert();
+
+        let trace_cmp = B256::from(U256::from(0xdeadbeef_u64));
+        let transient = B256::from(U256::from(0xbeef_u64));
+        dictionary.insert_value(transient);
+        dictionary.insert_persistent_value(trace_cmp);
+        dictionary.promote_ephemeral_values();
+        dictionary.revert();
+
+        assert_eq!(dictionary.len(), 1 + MAX_COVERAGE_VALUES + 1);
+        assert!(dictionary.values().contains(&trace_cmp));
+        assert!(!dictionary.values().contains(&transient));
+    }
+
+    #[test]
+    fn coverage_promotion_stays_worker_local() {
+        let seed = EvmFuzzState::test();
+        let first = seed.clone().into_invariant();
+        let second = seed.clone().into_invariant();
+        let readonly = seed.stateless_worker();
+        let learned = B256::from(U256::from(0xcafe_u64));
+        first.collect_values([learned]);
+        first.promote_ephemeral_values();
+        first.revert();
+        readonly.promote_ephemeral_values();
+
+        assert!(first.with_dictionary(|dictionary| dictionary.values().contains(&learned)));
+        assert!(!second.with_dictionary(|dictionary| dictionary.values().contains(&learned)));
+        assert!(!readonly.with_dictionary(|dictionary| dictionary.values().contains(&learned)));
     }
 }
