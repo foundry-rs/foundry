@@ -21,7 +21,7 @@ use foundry_common::{
 };
 use foundry_config::TracingConfig;
 use foundry_evm_core::{
-    abi::{Vm, console},
+    abi::console,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     decode::RevertDecoder,
     precompiles::{
@@ -66,6 +66,7 @@ mod base;
 #[cfg(feature = "monad")]
 mod monad;
 pub(crate) mod precompiles;
+mod vm;
 
 /// Address-scoped events keyed by signature and indexed input count; anonymous events have no
 /// signature.
@@ -442,7 +443,7 @@ impl CallTraceDecoder {
 
         let functions = console::hh::abi::functions()
             .into_values()
-            .chain(Vm::abi::functions().into_values())
+            .chain([vm::functions()])
             .chain(IFeeManager::abi::functions().into_values())
             // `IStorageCredits` shares the `balanceOf(address)` selector with `ITIP20`, so it
             // must be chained first to keep `ITIP20`'s `uint256` return as the global fallback.
@@ -1901,7 +1902,7 @@ mod tests {
     use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
-    use foundry_evm_core::precompiles::P256_VERIFY;
+    use foundry_evm_core::{abi::Vm, precompiles::P256_VERIFY};
     use std::borrow::Cow;
     use tempo_precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
