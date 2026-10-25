@@ -1507,6 +1507,9 @@ fn invariant_corpus_reuses_comparison_hints(prj: _, cmd: _) {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 1,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         };
     });
     prj.add_test(
@@ -1538,6 +1541,77 @@ contract ComparisonCorpusTest is Test {
     );
 
     cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn invariant_corpus_reuses_typed_arguments(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 200;
+        config.invariant.depth = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "TypedReuseTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+// A commitment stores only the hash of its secret, so the secret never reaches the dictionary.
+// The bug needs `reveal` to reuse the argument of an earlier `commit`.
+contract Commitments {
+    mapping(bytes32 => bool) public committed;
+    bool public revealed;
+
+    function commit(uint256 secret) external {
+        if (wide(secret)) committed[keccak256(abi.encode(secret))] = true;
+    }
+
+    function reveal(uint256 secret) external {
+        if (wide(secret) && committed[keccak256(abi.encode(secret))]) revealed = true;
+    }
+
+    // Excludes edge values and bytecode constants, which the fuzzer generates often.
+    function wide(uint256 secret) internal pure returns (bool) {
+        return secret >> 128 != 0 && secret >> 255 == 0 && uint64(secret) != 0;
+    }
+}
+
+contract TypedReuseTest is Test {
+    Commitments commitments;
+
+    function setUp() public {
+        commitments = new Commitments();
+        targetContract(address(commitments));
+    }
+
+    function invariant_secret_not_revealed() public view {
+        assertFalse(commitments.revealed());
+    }
+}
+   "#,
+    );
+
+    // The same seed and budget do not find the bug without the reuse mutation.
+    cmd.args(["test", "--mc", "TypedReuseTest", "--fuzz-seed", "4"]).assert_success();
+    std::fs::remove_dir_all(prj.root().join("invariant_corpus")).unwrap();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "TypedReuseTest",
+            "--fuzz-seed",
+            "4",
+            "--invariant-mutation-weight-reuse",
+            "1",
+        ])
         .assert_failure()
         .stdout_eq(str![[r#"
 ...

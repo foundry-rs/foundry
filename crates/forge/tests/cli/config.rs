@@ -221,6 +221,9 @@ mutation_weight_prefix = 1
 mutation_weight_suffix = 1
 mutation_weight_abi = 1
 mutation_weight_cmp = 1
+mutation_weight_reuse = 0
+mutation_weight_swap = 0
+mutation_weight_attacker = 0
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
@@ -259,6 +262,9 @@ mutation_weight_prefix = 1
 mutation_weight_suffix = 1
 mutation_weight_abi = 1
 mutation_weight_cmp = 1
+mutation_weight_reuse = 0
+mutation_weight_swap = 0
+mutation_weight_attacker = 0
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -2305,6 +2311,9 @@ fn test_default_config(prj: _, cmd: _) {
     "mutation_weight_suffix": 1,
     "mutation_weight_abi": 1,
     "mutation_weight_cmp": 1,
+    "mutation_weight_reuse": 0,
+    "mutation_weight_swap": 0,
+    "mutation_weight_attacker": 0,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -2346,6 +2355,9 @@ fn test_default_config(prj: _, cmd: _) {
     "mutation_weight_suffix": 1,
     "mutation_weight_abi": 1,
     "mutation_weight_cmp": 1,
+    "mutation_weight_reuse": 0,
+    "mutation_weight_swap": 0,
+    "mutation_weight_attacker": 0,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,

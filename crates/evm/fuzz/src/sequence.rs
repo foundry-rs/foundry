@@ -2,14 +2,17 @@
 
 use crate::{
     BasicTxDetails, FuzzFixtures,
-    invariant::FuzzRunIdentifiedContracts,
+    invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
     strategies::{
         FuzzState, TxGenerator, constrain_enum_value, generate_msg_value, mutate_param_value,
     },
 };
-use alloy_dyn_abi::{JsonAbiExt, abi::AbiDecoderConfig};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, abi::AbiDecoderConfig};
 use alloy_json_abi::Function;
-use alloy_primitives::{U256, map::HashSet};
+use alloy_primitives::{
+    U256,
+    map::{HashMap, HashSet},
+};
 use eyre::{Result, eyre};
 use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
 use proptest::test_runner::TestRunner;
@@ -17,6 +20,7 @@ use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
 };
+use std::borrow::Cow;
 
 /// A neutral borrowed view of one corpus entry.
 #[derive(Clone, Copy)]
@@ -132,6 +136,9 @@ enum MutationType {
     Suffix,
     Abi,
     Cmp,
+    Reuse,
+    Swap,
+    Attacker,
 }
 
 impl SequenceGenerator {
@@ -192,6 +199,9 @@ impl SequenceGenerator {
             weights.mutation_weight_suffix,
             weights.mutation_weight_abi,
             weights.mutation_weight_cmp,
+            weights.mutation_weight_reuse,
+            weights.mutation_weight_swap,
+            weights.mutation_weight_attacker,
         ];
         let mutations =
             WeightedIndex::new(all).map_err(|e| eyre!("invalid corpus mutation weights: {e}"))?;
@@ -323,7 +333,10 @@ impl SequenceGenerator {
             3 => MutationType::Prefix,
             4 => MutationType::Suffix,
             5 => MutationType::Abi,
-            _ => MutationType::Cmp,
+            6 => MutationType::Cmp,
+            7 => MutationType::Reuse,
+            8 => MutationType::Swap,
+            _ => MutationType::Attacker,
         };
         let a = runner.rng().random_range(0..corpus_len);
         let b = runner.rng().random_range(0..corpus_len);
@@ -363,14 +376,61 @@ impl SequenceGenerator {
                     i,
                 )
             }
-            MutationType::Abi | MutationType::Cmp => {
+            MutationType::Abi
+            | MutationType::Cmp
+            | MutationType::Reuse
+            | MutationType::Swap
+            | MutationType::Attacker => {
                 let i = if runner.rng().random() { a } else { b };
                 let entry = if i == a { primary } else { secondary };
                 let mut seq = entry.transactions.to_vec();
                 let fallback = runner.rng().random_range(0..seq.len());
-                if matches!(kind, MutationType::Abi) {
+                let targets = targets.targets();
+                let mutated = match kind {
+                    MutationType::Cmp => {
+                        let candidates =
+                            entry.comparisons.iter().enumerate().filter(|(_, h)| !h.is_empty());
+                        let count = candidates.clone().count();
+                        let mut mutated = false;
+                        if count > 0 {
+                            let start = runner.rng().random_range(0..count);
+                            for (idx, h) in candidates.cycle().skip(start).take(count) {
+                                let tx = &mut seq[idx];
+                                if let (_, Some(f)) = targets.fuzzed_artifacts(tx) {
+                                    mutated = SequenceMutator::cmp_mutate(
+                                        tx,
+                                        f,
+                                        h,
+                                        runner,
+                                        &self.fixtures,
+                                    )?;
+                                    if mutated {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        mutated
+                    }
+                    MutationType::Reuse => TypedArgs::decode(&seq, &targets).reuse(
+                        &mut seq,
+                        runner,
+                        &self.fixtures,
+                        |_| true,
+                    )?,
+                    MutationType::Swap => {
+                        TypedArgs::decode(&seq, &targets).swap(&mut seq, runner, &self.fixtures)?
+                    }
+                    MutationType::Attacker => {
+                        SequenceMutator::attacker(&mut seq, &targets, runner, &self.fixtures)?
+                    }
+                    _ => false,
+                };
+                // ABI mutation also runs when a comparison or typed mutation does not apply, so the
+                // selected entry is not replayed unchanged.
+                if !mutated && self.weights.mutation_weight_abi > 0 {
                     let tx = &mut seq[fallback];
-                    if let (_, Some(f)) = targets.targets().fuzzed_artifacts(tx)
+                    if let (_, Some(f)) = targets.fuzzed_artifacts(tx)
                         && !f.inputs.is_empty()
                     {
                         SequenceMutator::abi_mutate(
@@ -380,40 +440,7 @@ impl SequenceGenerator {
                             &self.state,
                             &self.fixtures,
                             self.payable_weight,
-                        )?;
-                    }
-                } else {
-                    let candidates =
-                        entry.comparisons.iter().enumerate().filter(|(_, h)| !h.is_empty());
-                    let count = candidates.clone().count();
-                    let mut mutated = false;
-                    if count > 0 {
-                        let start = runner.rng().random_range(0..count);
-                        for (idx, h) in candidates.cycle().skip(start).take(count) {
-                            let tx = &mut seq[idx];
-                            if let (_, Some(f)) = targets.targets().fuzzed_artifacts(tx) {
-                                mutated =
-                                    SequenceMutator::cmp_mutate(tx, f, h, runner, &self.fixtures)?;
-                                if mutated {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if !mutated && self.weights.mutation_weight_abi > 0 {
-                        let tx = &mut seq[fallback];
-                        if let (_, Some(f)) = targets.targets().fuzzed_artifacts(tx)
-                            && !f.inputs.is_empty()
-                        {
-                            SequenceMutator::abi_mutate(
-                                tx,
-                                f,
-                                runner,
-                                &self.state,
-                                &self.fixtures,
-                                self.payable_weight,
-                            )?
-                        }
+                        )?
                     }
                 }
                 (seq, i)
@@ -597,6 +624,185 @@ impl SequenceMutator {
         }
         Ok(false)
     }
+
+    /// Resends a call from another sender of the sequence, or reuses a `bytes` argument of one
+    /// call in another call. Tries the other variant if the drawn one does not apply.
+    fn attacker(
+        sequence: &mut Vec<BasicTxDetails>,
+        targets: &TargetedContracts,
+        runner: &mut TestRunner,
+        fixtures: &FuzzFixtures,
+    ) -> Result<bool> {
+        let resend_first = runner.rng().random_bool(0.5);
+        for resend in [resend_first, !resend_first] {
+            let mutated = if resend {
+                Self::resend(sequence, runner)
+            } else {
+                TypedArgs::decode(sequence, targets)
+                    .reuse(sequence, runner, fixtures, |ty| ty == "bytes")?
+            };
+            if mutated {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Inserts a copy of a call, sent by another sender of the sequence, after the original
+    /// call. The copy does not advance time or block number.
+    fn resend(sequence: &mut Vec<BasicTxDetails>, runner: &mut TestRunner) -> bool {
+        let source = runner.rng().random_range(0..sequence.len());
+        let original = sequence[source].sender;
+        let senders = sequence.iter().map(|tx| tx.sender).filter(|s| *s != original);
+        let count = senders.clone().count();
+        if count == 0 {
+            return false;
+        }
+        let sender = senders.clone().nth(runner.rng().random_range(0..count)).unwrap();
+        let mut copy = sequence[source].clone();
+        copy.sender = sender;
+        copy.warp = None;
+        copy.roll = None;
+        let position = runner.rng().random_range(source + 1..=sequence.len());
+        sequence.insert(position, copy);
+        true
+    }
+}
+
+/// Maximum number of draws a typed mutation makes before it gives up on equal values.
+const TYPED_MUTATION_ATTEMPTS: usize = 8;
+
+/// The position of one top-level argument in a sequence, as `(call, argument)`.
+type ArgSlot = (usize, usize);
+
+/// The top-level arguments of the calls in a sequence, grouped by ABI type.
+struct TypedArgs<'a> {
+    /// The target function and decoded arguments of each call, if the call decodes.
+    calls: Vec<Option<(&'a Function, Vec<DynSolValue>)>>,
+    /// The ABI type and argument slots of each argument group.
+    groups: Vec<(Cow<'a, str>, Vec<ArgSlot>)>,
+}
+
+impl<'a> TypedArgs<'a> {
+    fn decode(sequence: &[BasicTxDetails], targets: &'a TargetedContracts) -> Self {
+        let mut index = HashMap::<Cow<'a, str>, usize>::default();
+        let mut groups = Vec::<(Cow<'a, str>, Vec<_>)>::new();
+        let calls = sequence
+            .iter()
+            .enumerate()
+            .map(|(call, tx)| {
+                let (_, Some(function)) = targets.fuzzed_artifacts(tx) else { return None };
+                let values = function.abi_decode_input(tx.call_details.calldata.get(4..)?).ok()?;
+                for (arg, input) in function.inputs.iter().enumerate() {
+                    let ty = input.selector_type();
+                    let group = *index.entry(ty.clone()).or_insert_with(|| {
+                        groups.push((ty, Vec::new()));
+                        groups.len() - 1
+                    });
+                    groups[group].1.push((call, arg));
+                }
+                Some((function, values))
+            })
+            .collect();
+        Self { calls, groups }
+    }
+
+    fn value(&self, (call, arg): ArgSlot) -> &DynSolValue {
+        &self.calls[call].as_ref().expect("slots only refer to decoded calls").1[arg]
+    }
+
+    /// Picks a random slot of a group accepted by `filter`, and a random other slot of the same
+    /// group accepted by `peer`.
+    fn draw(
+        &self,
+        runner: &mut TestRunner,
+        filter: impl Fn(&str) -> bool,
+        peer: impl Fn(ArgSlot, ArgSlot) -> bool,
+    ) -> Option<(ArgSlot, ArgSlot)> {
+        let candidates = self
+            .groups
+            .iter()
+            .filter(|(ty, slots)| slots.len() > 1 && filter(ty))
+            .flat_map(|(_, slots)| slots.iter().map(move |&slot| (slots, slot)))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return None;
+        }
+        for _ in 0..TYPED_MUTATION_ATTEMPTS {
+            let (slots, first) = candidates[runner.rng().random_range(0..candidates.len())];
+            let peers = slots.iter().filter(|&&slot| slot != first && peer(first, slot));
+            let count = peers.clone().count();
+            if count == 0 {
+                continue;
+            }
+            let second = *peers.clone().nth(runner.rng().random_range(0..count)).unwrap();
+            if self.value(first) != self.value(second) {
+                return Some((first, second));
+            }
+        }
+        None
+    }
+
+    /// Replaces an argument with a same-typed argument of another call.
+    fn reuse(
+        mut self,
+        sequence: &mut [BasicTxDetails],
+        runner: &mut TestRunner,
+        fixtures: &FuzzFixtures,
+        filter: impl Fn(&str) -> bool,
+    ) -> Result<bool> {
+        let Some((target, source)) = self.draw(runner, filter, |a, b| a.0 != b.0) else {
+            return Ok(false);
+        };
+        let value = self.value(source).clone();
+        self.set(target, value);
+        self.encode(sequence, target.0, fixtures)?;
+        Ok(true)
+    }
+
+    /// Exchanges two same-typed arguments, within one call or across calls.
+    fn swap(
+        mut self,
+        sequence: &mut [BasicTxDetails],
+        runner: &mut TestRunner,
+        fixtures: &FuzzFixtures,
+    ) -> Result<bool> {
+        let Some((first, second)) = self.draw(runner, |_| true, |_, _| true) else {
+            return Ok(false);
+        };
+        let first_value = self.value(first).clone();
+        let second_value = self.value(second).clone();
+        self.set(first, second_value);
+        self.set(second, first_value);
+        self.encode(sequence, first.0, fixtures)?;
+        if second.0 != first.0 {
+            self.encode(sequence, second.0, fixtures)?;
+        }
+        Ok(true)
+    }
+
+    fn set(&mut self, (call, arg): ArgSlot, value: DynSolValue) {
+        self.calls[call].as_mut().expect("slots only refer to decoded calls").1[arg] = value;
+    }
+
+    /// Writes the arguments of `call` back to its calldata.
+    fn encode(
+        &self,
+        sequence: &mut [BasicTxDetails],
+        call: usize,
+        fixtures: &FuzzFixtures,
+    ) -> Result<()> {
+        let (function, values) =
+            self.calls[call].as_ref().expect("slots only refer to decoded calls");
+        let values = values
+            .iter()
+            .zip(&function.inputs)
+            .map(|(value, input)| constrain_enum_value(value.clone(), input, fixtures))
+            .collect::<Vec<_>>();
+        sequence[call].call_details.calldata =
+            function.abi_encode_input(&values).map_err(|err| eyre!(err.to_string()))?.into();
+        Ok(())
+    }
 }
 
 /// Operand widths, in bytes, that cmp mutations try to replace.
@@ -669,12 +875,7 @@ fn replace_operand(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        CallDetails,
-        invariant::{TargetedContract, TargetedContracts},
-        strategies::EvmFuzzState,
-    };
-    use alloy_dyn_abi::DynSolValue;
+    use crate::{CallDetails, invariant::TargetedContract, strategies::EvmFuzzState};
     use alloy_json_abi::JsonAbi;
     use alloy_primitives::{Address, Bytes, I256};
     use foundry_config::FuzzDictionaryConfig;
@@ -695,6 +896,9 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 0,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         };
         match kind {
             0 => weights.mutation_weight_splice = 1,
@@ -703,7 +907,10 @@ mod tests {
             3 => weights.mutation_weight_prefix = 1,
             4 => weights.mutation_weight_suffix = 1,
             5 => weights.mutation_weight_abi = 1,
-            _ => weights.mutation_weight_cmp = 1,
+            6 => weights.mutation_weight_cmp = 1,
+            7 => weights.mutation_weight_reuse = 1,
+            8 => weights.mutation_weight_swap = 1,
+            _ => weights.mutation_weight_attacker = 1,
         }
         weights
     }
@@ -732,6 +939,43 @@ mod tests {
 
     fn config() -> FuzzCorpusConfig {
         FuzzCorpusConfig { corpus_dir: Some(PathBuf::from("corpus")), ..Default::default() }
+    }
+
+    /// Targets with `signatures` on one contract at `TYPED_TARGET`.
+    fn typed_targets(signatures: &[&str]) -> TargetedContracts {
+        let mut abi = JsonAbi::new();
+        for signature in signatures {
+            let function = Function::parse(signature).unwrap();
+            abi.functions.entry(function.name.clone()).or_default().push(function);
+        }
+        let mut contracts = TargetedContracts::new();
+        contracts.insert(TYPED_TARGET, TargetedContract::new("Target".into(), abi));
+        contracts
+    }
+
+    const TYPED_TARGET: Address = Address::with_last_byte(42);
+
+    fn typed_call(sender: u8, signature: &str, args: &[DynSolValue]) -> BasicTxDetails {
+        let mut call = tx(sender);
+        call.call_details.target = TYPED_TARGET;
+        call.call_details.calldata =
+            Function::parse(signature).unwrap().abi_encode_input(args).unwrap().into();
+        call
+    }
+
+    fn decoded(signature: &str, call: &BasicTxDetails) -> Vec<DynSolValue> {
+        Function::parse(signature)
+            .unwrap()
+            .abi_decode_input(&call.call_details.calldata[4..])
+            .unwrap()
+    }
+
+    fn uint(value: u64) -> DynSolValue {
+        DynSolValue::Uint(U256::from(value), 256)
+    }
+
+    fn address(byte: u8) -> DynSolValue {
+        DynSolValue::Address(Address::with_last_byte(byte))
     }
 
     #[test]
@@ -1118,6 +1362,9 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 1,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         };
         let generator = SequenceGenerator::invariant(
             generator_tx(9),
@@ -1210,6 +1457,204 @@ mod tests {
             )
             .unwrap();
             assert_eq!(mutated, applicable.contains(&hint));
+        }
+    }
+
+    #[test]
+    fn reuse_copies_same_typed_argument_from_another_call() {
+        let (mint, burn) = ("mint(uint256)", "burn(uint256,address)");
+        let targets = typed_targets(&[mint, burn]);
+        let original =
+            vec![typed_call(1, mint, &[uint(5)]), typed_call(2, burn, &[uint(9), address(3)])];
+        let mut runner = TestRunner::deterministic();
+        let (mut copied_forward, mut copied_backward) = (false, false);
+        for _ in 0..100 {
+            let mut sequence = original.clone();
+            assert!(
+                TypedArgs::decode(&sequence, &targets)
+                    .reuse(&mut sequence, &mut runner, &FuzzFixtures::default(), |_| true)
+                    .unwrap()
+            );
+            let minted = decoded(mint, &sequence[0]);
+            let burned = decoded(burn, &sequence[1]);
+            copied_forward |= burned == [uint(5), address(3)] && minted == [uint(5)];
+            copied_backward |= minted == [uint(9)] && burned == [uint(9), address(3)];
+            assert!(minted == [uint(9)] || burned[0] == uint(5));
+            for (mutated, original) in sequence.iter().zip(&original) {
+                assert_eq!(
+                    (mutated.sender, mutated.warp, mutated.roll, mutated.call_details.value),
+                    (original.sender, original.warp, original.roll, original.call_details.value)
+                );
+            }
+        }
+        assert!(copied_forward && copied_backward);
+    }
+
+    #[test]
+    fn swap_exchanges_same_typed_arguments_within_one_call() {
+        let transfer = "transfer(address,address,uint256)";
+        let targets = typed_targets(&[transfer]);
+        let mut sequence = vec![typed_call(1, transfer, &[address(1), address(2), uint(7)])];
+        assert!(
+            TypedArgs::decode(&sequence, &targets)
+                .swap(&mut sequence, &mut TestRunner::deterministic(), &FuzzFixtures::default())
+                .unwrap()
+        );
+        assert_eq!(decoded(transfer, &sequence[0]), [address(2), address(1), uint(7)]);
+    }
+
+    #[test]
+    fn typed_mutations_skip_equal_and_unmatched_arguments() {
+        let (set, call) = ("set(uint256)", "call(address)");
+        let targets = typed_targets(&[set, call]);
+        let mut runner = TestRunner::deterministic();
+        for original in [
+            vec![typed_call(1, set, &[uint(1)]), typed_call(2, call, &[address(1)])],
+            vec![typed_call(1, set, &[uint(1)]), typed_call(2, set, &[uint(1)])],
+            // Calls that do not decode against a target function are ignored.
+            vec![typed_call(1, set, &[uint(1)]), tx(2)],
+        ] {
+            let mut sequence = original.clone();
+            assert!(
+                !TypedArgs::decode(&sequence, &targets)
+                    .reuse(&mut sequence, &mut runner, &FuzzFixtures::default(), |_| true)
+                    .unwrap()
+            );
+            assert!(
+                !TypedArgs::decode(&sequence, &targets)
+                    .swap(&mut sequence, &mut runner, &FuzzFixtures::default())
+                    .unwrap()
+            );
+            assert_eq!(sequence, original);
+        }
+    }
+
+    #[test]
+    fn attacker_resends_call_from_another_sender() {
+        let mut runner = TestRunner::deterministic();
+        for _ in 0..100 {
+            let mut sequence = vec![tx(1), tx(2), tx(3)];
+            assert!(SequenceMutator::resend(&mut sequence, &mut runner));
+            assert_eq!(sequence.len(), 4);
+            let (position, copy) = sequence
+                .iter()
+                .enumerate()
+                .find(|(_, tx)| tx.warp.is_none())
+                .expect("resend inserts a copy without time advance");
+            let source = sequence
+                .iter()
+                .position(|tx| tx.call_details == copy.call_details && tx.warp.is_some())
+                .unwrap();
+            assert!(source < position);
+            assert_ne!(copy.sender, sequence[source].sender);
+            assert!([tx(1).sender, tx(2).sender, tx(3).sender].contains(&copy.sender));
+            assert_eq!(copy.roll, None);
+        }
+        let mut single_sender = vec![tx(1), tx(1)];
+        assert!(!SequenceMutator::resend(&mut single_sender, &mut runner));
+        assert_eq!(single_sender, [tx(1), tx(1)]);
+    }
+
+    #[test]
+    fn attacker_reuses_bytes_argument_in_another_call() {
+        let (permit, claim) = ("permit(address,uint256,bytes)", "claim(uint256,bytes)");
+        let targets = typed_targets(&[permit, claim]);
+        let signature = DynSolValue::Bytes(vec![0xaa; 65]);
+        let empty = DynSolValue::Bytes(Vec::new());
+        // One sender only, so the resend variant never applies.
+        let original = vec![
+            typed_call(1, permit, &[address(1), uint(1), signature.clone()]),
+            typed_call(1, claim, &[uint(2), empty.clone()]),
+        ];
+        let mut runner = TestRunner::deterministic();
+        let mut replayed = false;
+        for _ in 0..100 {
+            let mut sequence = original.clone();
+            assert!(
+                SequenceMutator::attacker(
+                    &mut sequence,
+                    &targets,
+                    &mut runner,
+                    &FuzzFixtures::default()
+                )
+                .unwrap()
+            );
+            let permitted = decoded(permit, &sequence[0]);
+            let claimed = decoded(claim, &sequence[1]);
+            // Only the `bytes` arguments change.
+            assert_eq!((&permitted[..2], &claimed[0]), (&[address(1), uint(1)][..], &uint(2)));
+            assert!(claimed[1] == signature || permitted[2] == empty);
+            replayed |= claimed[1] == signature;
+        }
+        assert!(replayed);
+    }
+
+    #[test]
+    fn invariant_typed_mutations_apply_without_abi_fallback() {
+        let (mint, burn) = ("mint(uint256)", "burn(uint256,address)");
+        let original =
+            [typed_call(1, mint, &[uint(5)]), typed_call(2, burn, &[uint(9), address(3)])];
+        let corpus = [CorpusEntryView::new(&original, &[]).unwrap()];
+        for kind in 7..10 {
+            let mut config = config();
+            config.mutation_weights = forced_weights(kind);
+            let generator = SequenceGenerator::invariant(
+                generator_tx(9),
+                state(),
+                FuzzRunIdentifiedContracts::new(typed_targets(&[mint, burn]), false),
+                &config,
+            )
+            .unwrap();
+            let plan = generator
+                .start(&mut TestRunner::deterministic(), corpus.len(), |i| Ok(corpus[i]), true)
+                .unwrap();
+            assert_eq!(plan.source(), Some(0));
+            let minted = decoded(mint, &plan.initial()[0]);
+            match kind {
+                7 | 8 => {
+                    let burned = decoded(burn, &plan.initial()[1]);
+                    assert_eq!(plan.initial().len(), 2, "mutation family {kind}");
+                    assert!(minted == [uint(9)] || burned[0] == uint(5), "mutation family {kind}");
+                }
+                // Both calls carry their own sender, so the attacker resends one of them.
+                _ => assert_eq!(plan.initial().len(), 3),
+            }
+        }
+
+        // Without a same-typed pair and without ABI fallback, the entry is replayed unchanged.
+        let unmatched = [typed_call(1, mint, &[uint(5)])];
+        let corpus = [CorpusEntryView::new(&unmatched, &[]).unwrap()];
+        for kind in 7..10 {
+            let mut config = config();
+            config.mutation_weights = forced_weights(kind);
+            let generator = SequenceGenerator::invariant(
+                generator_tx(9),
+                state(),
+                FuzzRunIdentifiedContracts::new(typed_targets(&[mint]), false),
+                &config,
+            )
+            .unwrap();
+            let plan = generator
+                .start(&mut TestRunner::deterministic(), corpus.len(), |i| Ok(corpus[i]), true)
+                .unwrap();
+            assert_eq!(plan.initial(), unmatched, "mutation family {kind}");
+        }
+    }
+
+    #[test]
+    fn zero_typed_weights_preserve_mutation_draws() {
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config(),
+        )
+        .unwrap();
+        let reference = WeightedIndex::new([1u32; 7]).unwrap();
+        let mut actual = TestRunner::deterministic();
+        let mut expected = TestRunner::deterministic();
+        for _ in 0..1000 {
+            assert_eq!(generator.mutations.sample(actual.rng()), reference.sample(expected.rng()));
         }
     }
 }

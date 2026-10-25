@@ -272,6 +272,15 @@ pub struct FuzzCorpusMutationWeights {
     pub mutation_weight_abi: u32,
     /// Weight for comparison-operand guided argument mutation.
     pub mutation_weight_cmp: u32,
+    /// Weight for replacing an invariant call argument with a same-typed argument of another
+    /// call in the sequence.
+    pub mutation_weight_reuse: u32,
+    /// Weight for exchanging two same-typed invariant call arguments, within one call or across
+    /// calls.
+    pub mutation_weight_swap: u32,
+    /// Weight for attacker mutations: resend an invariant call from a different sender, or reuse
+    /// a `bytes` argument (such as a signature) of one call in another call.
+    pub mutation_weight_attacker: u32,
 }
 
 impl FuzzCorpusMutationWeights {
@@ -283,6 +292,9 @@ impl FuzzCorpusMutationWeights {
             + self.mutation_weight_suffix as u64
             + self.mutation_weight_abi as u64
             + self.mutation_weight_cmp as u64
+            + self.mutation_weight_reuse as u64
+            + self.mutation_weight_swap as u64
+            + self.mutation_weight_attacker as u64
     }
 
     /// Returns defaults if every configured weight is zero.
@@ -301,6 +313,9 @@ impl Default for FuzzCorpusMutationWeights {
             mutation_weight_suffix: 1,
             mutation_weight_abi: 1,
             mutation_weight_cmp: 1,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         }
     }
 }

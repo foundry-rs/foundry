@@ -5886,6 +5886,9 @@ mod tests {
                 corpus_random_sequence_weight = 30
                 payable_value_weight = 12
                 mutation_weight_cmp = 7
+                mutation_weight_reuse = 3
+                mutation_weight_swap = 2
+                mutation_weight_attacker = 1
             "#,
             )?;
 
@@ -5903,6 +5906,9 @@ mod tests {
                         payable_value_weight: 12,
                         mutation_weights: FuzzCorpusMutationWeights {
                             mutation_weight_cmp: 7,
+                            mutation_weight_reuse: 3,
+                            mutation_weight_swap: 2,
+                            mutation_weight_attacker: 1,
                             ..Default::default()
                         },
                         ..Default::default()

@@ -3453,6 +3453,9 @@ fn invariant_test_trace_seed_preserves_time_advances(prj: _, cmd: _) {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 1,
             mutation_weight_cmp: 0,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         };
     });
 
@@ -3564,6 +3567,9 @@ fn invariant_test_trace_seed_skips_prague_rolls(prj: _, cmd: _) {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 1,
             mutation_weight_cmp: 0,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         };
     });
 

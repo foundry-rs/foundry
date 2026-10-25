@@ -458,6 +458,18 @@ pub struct CampaignArgs {
     #[arg(long, value_name = "WEIGHT")]
     pub mutation_weight_cmp: Option<u32>,
 
+    /// Invariant corpus mutation weight for same-typed argument reuse.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_reuse: Option<u32>,
+
+    /// Invariant corpus mutation weight for same-typed argument swap.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_swap: Option<u32>,
+
+    /// Invariant corpus mutation weight for attacker call resend and `bytes` argument reuse.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_attacker: Option<u32>,
+
     /// Directory for fuzz branch frontier artifacts.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub frontier_dir: Option<PathBuf>,
@@ -791,6 +803,18 @@ pub struct TestArgs {
     /// Corpus mutation weight for comparison-operand mutation.
     #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", value_name = "WEIGHT")]
     pub invariant_mutation_weight_cmp: Option<u32>,
+
+    /// Corpus mutation weight for same-typed argument reuse.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_REUSE", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_reuse: Option<u32>,
+
+    /// Corpus mutation weight for same-typed argument swap.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_SWAP", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_swap: Option<u32>,
+
+    /// Corpus mutation weight for attacker call resend and `bytes` argument reuse.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_ATTACKER", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_attacker: Option<u32>,
 
     /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC")]
@@ -1377,6 +1401,9 @@ impl TestArgs {
             invariant_mutation_weight_abi: campaign.mutation_weight_abi,
             fuzz_mutation_weight_cmp: campaign.mutation_weight_cmp,
             invariant_mutation_weight_cmp: campaign.mutation_weight_cmp,
+            invariant_mutation_weight_reuse: campaign.mutation_weight_reuse,
+            invariant_mutation_weight_swap: campaign.mutation_weight_swap,
+            invariant_mutation_weight_attacker: campaign.mutation_weight_attacker,
             fuzz_frontier_dir: campaign.frontier_dir.clone(),
             invariant_frontier_dir: campaign.frontier_dir,
             fuzz_frontier_limit: campaign.frontier_limit,
@@ -3140,6 +3167,9 @@ impl Provider for TestArgs {
             "mutation_weight_suffix" => self.invariant_mutation_weight_suffix,
             "mutation_weight_abi" => self.invariant_mutation_weight_abi,
             "mutation_weight_cmp" => self.invariant_mutation_weight_cmp,
+            "mutation_weight_reuse" => self.invariant_mutation_weight_reuse,
+            "mutation_weight_swap" => self.invariant_mutation_weight_swap,
+            "mutation_weight_attacker" => self.invariant_mutation_weight_attacker,
         };
         let symbolic = dict! {
             "enabled" => self.symbolic.then_some(true),
@@ -4010,6 +4040,12 @@ mod tests {
             "2",
             "--invariant-mutation-weight-cmp",
             "7",
+            "--invariant-mutation-weight-reuse",
+            "3",
+            "--invariant-mutation-weight-swap",
+            "2",
+            "--invariant-mutation-weight-attacker",
+            "1",
         ]);
 
         let config = Config::default().merge_inline_provider(&args).unwrap();
@@ -4049,5 +4085,8 @@ mod tests {
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_reuse, 3);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_swap, 2);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_attacker, 1);
     }
 }

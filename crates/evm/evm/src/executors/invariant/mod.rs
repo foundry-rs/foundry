@@ -3103,6 +3103,9 @@ mod tests {
             mutation_weight_suffix: 1,
             mutation_weight_abi: 1,
             mutation_weight_cmp: 0,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         };
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 
@@ -3115,6 +3118,9 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 0,
+            mutation_weight_reuse: 0,
+            mutation_weight_swap: 0,
+            mutation_weight_attacker: 0,
         };
         assert!(invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 
