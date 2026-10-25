@@ -6495,6 +6495,9 @@ where
                     storage.total_difficulty.saturating_add(header.difficulty);
             }
 
+            if let Some(tempo) = &mut storage.tempo {
+                tempo.publish(&block);
+            }
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
             if let Some(block_access_list) = block_access_list {
@@ -7750,7 +7753,7 @@ where
             let removed_blocks = {
                 let mut storage = self.blockchain.storage.write();
                 if let Some(tempo) = &mut storage.tempo {
-                    tempo.unwind(common_block.header.number())?;
+                    tempo.unwind(&common_block)?;
                 }
                 #[cfg(test)]
                 if let Some(hook) = self.rollback_unwind_hook.lock().as_ref() {
