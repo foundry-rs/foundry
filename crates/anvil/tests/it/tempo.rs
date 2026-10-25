@@ -51,8 +51,8 @@ use foundry_evm::core::tempo::{
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use futures::StreamExt;
-use serde::Deserialize;
-use std::{num::NonZeroU64, sync::atomic::Ordering};
+use serde::{Deserialize, Serialize};
+use std::{num::NonZeroU64, path::Path, sync::atomic::Ordering};
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::{
@@ -6963,6 +6963,7 @@ async fn tempo_consensus_mined_certificate_matches_block_hash() {
     let state = serde_json::from_value::<TempoConsensusState>(state).unwrap();
     assert_eq!(state.finalized.as_ref(), Some(&finalization));
     assert!(state.notarized.is_none());
+    export_tempo_consensus_artifact(&identity, &finalization, "json");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -7003,9 +7004,10 @@ async fn tempo_consensus_nonempty_native_block_body() {
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(latest, finalization);
     assert_tempo_missing(&provider, serde_json::json!({ "height": 2 }), "certificate").await;
+    export_tempo_consensus_artifact(&identity, &finalization, "nonempty.json");
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TempoConsensusIdentity {
     identity: Bytes,
@@ -7016,7 +7018,7 @@ struct TempoConsensusIdentity {
     quorum: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct TempoCertifiedBlock {
     epoch: u64,
@@ -7336,4 +7338,22 @@ async fn tempo_consensus_imports_preserve_snapshots_and_unsigned_anchors() {
     assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
     assert_eq!(provider.get_block_number().await.unwrap(), 3);
     assert_tempo_missing(&provider, serde_json::json!("latest"), "certifications").await;
+}
+
+fn export_tempo_consensus_artifact(
+    identity: &TempoConsensusIdentity,
+    finalization: &TempoCertifiedBlock,
+    extension: &str,
+) {
+    if let Some(path) = std::env::var_os("ANVIL_TEMPO_CONSENSUS_ARTIFACT") {
+        std::fs::write(
+            Path::new(&path).with_extension(extension),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "identity": identity,
+                "finalization": finalization,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
 }
