@@ -460,7 +460,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "8"
