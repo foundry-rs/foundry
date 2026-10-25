@@ -314,6 +314,11 @@ impl TempoConsensus {
         }
         Ok(())
     }
+
+    /// Returns the unsigned initial height, independently of the pruning boundary.
+    pub(super) const fn anchor_height(&self) -> u64 {
+        self.initial.height
+    }
 }
 
 /// Public development committee information, without secret key material.

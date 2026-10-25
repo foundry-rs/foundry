@@ -500,6 +500,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_depth"] }
 shlex = "2"
 similar-asserts = "2.0"
+smolgen = { version = "0.1", features = ["build", "gitcl"] }
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
@@ -512,10 +513,6 @@ tower-http = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
-vergen = { package = "vergen-gitcl", version = "10.0.0", default-features = false, features = [
-    "build",
-    "cargo",
-] }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = { version = "0.2", default-features = false, features = [
@@ -596,10 +593,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "334d169fd09868c6a8a6122a3e5c2e4d515c7960" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }

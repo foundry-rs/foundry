@@ -94,7 +94,7 @@ sha2 = "0.11"
 
 [build-dependencies]
 chrono.workspace = true
-vergen = { workspace = true, features = ["build", "emit_and_set"] }
+smolgen = { workspace = true, features = ["emit_and_set"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
