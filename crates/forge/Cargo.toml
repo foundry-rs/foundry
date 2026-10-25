@@ -114,7 +114,6 @@ rustix = { version = "1", features = ["process"] }
 [dev-dependencies]
 alloy-rpc-types.workspace = true
 async-lsp.workspace = true
-axum = { workspace = true, features = ["form"] }
 futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
 anvil.workspace = true
