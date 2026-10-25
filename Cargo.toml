@@ -500,7 +500,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_depth"] }
 shlex = "2"
 similar-asserts = "2.0"
-smolgen = { version = "0.1", features = ["build", "gitcl"] }
+smolgen = { git = "https://github.com/alloy-rs/smolgen", rev = "1101d5c55038e15cebde8abc0061763dd61fa21f", features = ["build", "gitcl"] }
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"

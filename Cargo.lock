@@ -5860,7 +5860,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "smolgen",
+ "smolgen 0.1.1",
  "solar-compiler",
  "tempfile",
  "tempo-alloy",
@@ -11991,6 +11991,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9452d78a58bf7d7ccaf0b935af070b2a37660de91c767a559e0e0c2c5168cd69"
 
 [[package]]
+name = "smolgen"
+version = "0.1.1"
+source = "git+https://github.com/alloy-rs/smolgen?rev=1101d5c55038e15cebde8abc0061763dd61fa21f#1101d5c55038e15cebde8abc0061763dd61fa21f"
+
+[[package]]
 name = "snap"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12133,7 +12138,7 @@ dependencies = [
  "colorchoice",
  "semver 1.0.28",
  "serde",
- "smolgen",
+ "smolgen 0.1.0",
  "strum 0.28.0",
 ]
 
