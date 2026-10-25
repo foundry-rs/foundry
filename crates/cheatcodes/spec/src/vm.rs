@@ -37,6 +37,16 @@ interface Vm {
         RecurrentPrank,
     }
 
+    /// The opcode used for an expected call.
+    enum CallKind {
+        /// CALL.
+        Call,
+        /// DELEGATECALL.
+        DelegateCall,
+        /// STATICCALL.
+        StaticCall,
+    }
+
     /// The kind of account access that occurred.
     enum AccountAccessKind {
         /// The account was called.
@@ -1293,15 +1303,10 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectDelegateCall(address callee, bytes calldata data) external;
 
-    /// Expects a static call to an address with the specified calldata.
+    /// Expects a call of the specified kind to an address with the specified calldata.
     /// Calldata can either be a strict or a partial match.
     #[cheatcode(group = Testing, safety = Unsafe)]
-    function expectStaticCall(address callee, bytes calldata data) external;
-
-    /// Expects a regular call (`CALL` opcode) to an address with the specified calldata.
-    /// Calldata can either be a strict or a partial match.
-    #[cheatcode(group = Testing, safety = Unsafe)]
-    function expectRegularCall(address callee, bytes calldata data) external;
+    function expectCall(CallKind kind, address callee, bytes calldata data) external;
 
     /// Expect a call to an address with the specified `msg.value` and calldata, and a *minimum* amount of gas.
     #[cheatcode(group = Testing, safety = Unsafe)]

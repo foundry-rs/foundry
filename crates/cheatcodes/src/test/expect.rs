@@ -263,9 +263,15 @@ impl Cheatcode for expectDelegateCallCall {
     }
 }
 
-impl Cheatcode for expectStaticCallCall {
+impl Cheatcode for expectCall_6Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
-        let Self { callee, data } = self;
+        let Self { kind, callee, data } = self;
+        let scheme = match kind {
+            CallKind::Call => ExpectedCallScheme::Call,
+            CallKind::DelegateCall => ExpectedCallScheme::DelegateCall,
+            CallKind::StaticCall => ExpectedCallScheme::StaticCall,
+            _ => bail!("invalid call kind"),
+        };
         expect_call(
             state,
             callee,
@@ -273,24 +279,7 @@ impl Cheatcode for expectStaticCallCall {
             None,
             None,
             None,
-            Some(ExpectedCallScheme::StaticCall),
-            1,
-            ExpectedCallType::NonCount,
-        )
-    }
-}
-
-impl Cheatcode for expectRegularCallCall {
-    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
-        let Self { callee, data } = self;
-        expect_call(
-            state,
-            callee,
-            data,
-            None,
-            None,
-            None,
-            Some(ExpectedCallScheme::Call),
+            Some(scheme),
             1,
             ExpectedCallType::NonCount,
         )

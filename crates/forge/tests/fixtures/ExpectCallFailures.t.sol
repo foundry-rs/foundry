@@ -90,14 +90,14 @@ contract ExpectCallFailureTest is DSTest {
     function testShouldFailExpectStaticCallWithCall() public {
         Contract target = new Contract();
         bytes memory data = abi.encodeWithSelector(target.pay.selector, 1);
-        vm.expectStaticCall(address(target), data);
+        vm.expectCall(Vm.CallKind.StaticCall, address(target), data);
         target.pay(1);
     }
 
     function testShouldFailExpectRegularCallWithStaticCall() public {
         Contract target = new Contract();
         bytes memory data = abi.encodeWithSelector(target.add.selector, 1, 2);
-        vm.expectRegularCall(address(target), data);
+        vm.expectCall(Vm.CallKind.Call, address(target), data);
         target.add(1, 2);
     }
 
