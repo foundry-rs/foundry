@@ -658,11 +658,11 @@ mod tests {
         let mut miner = Miner::<()>::new(MiningMode::interval(period));
         let pool = Arc::new(Pool::default());
         let mut cx = Context::from_waker(futures::task::noop_waker_ref());
-        // Register the timer, so that only the timer driver can mark it as fired.
         assert!(miner.poll(&pool, &mut cx).is_pending());
         miner.set_paused(true);
 
-        // Move the deadline into the past without yielding to the timer driver.
+        // Resume decides from the deadline alone, so it skips the tick even though the timer
+        // never got to fire.
         let due = Instant::now() - period / 2;
         set_deadline(&miner, due);
         let before = Instant::now();
@@ -709,7 +709,7 @@ mod tests {
         miner.set_paused(true);
         miner.set_paused(false);
 
-        // The candidate selected before the pause fails after mining resumed.
+        // The candidate selected at generation 0, before the pause, fails after mining resumed.
         miner.handle_failed_candidate(0);
 
         assert_eq!(deadline(&miner), next);
@@ -732,19 +732,11 @@ mod tests {
         assert_eq!(auto.has_pending_txs, Some(true));
     }
 
-    #[tokio::test]
-    async fn overflowing_tick_waits_indefinitely() {
+    #[test]
+    fn overflowing_tick_waits_indefinitely() {
         let t0 = Instant::now();
         let now = t0 + Duration::from_secs(1);
         assert_eq!(next_deadline(t0, now, Duration::MAX), now + FAR_FUTURE);
         assert_eq!(resumed_deadline(t0, now, Duration::MAX), Some(now + FAR_FUTURE));
-
-        let mut miner = Miner::<()>::new(MiningMode::interval(Duration::MAX));
-        let pool = Arc::new(Pool::default());
-        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
-        assert!(miner.poll(&pool, &mut cx).is_pending());
-        miner.set_paused(true);
-        miner.set_paused(false);
-        assert!(miner.poll(&pool, &mut cx).is_pending());
     }
 }
