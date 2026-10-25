@@ -1953,9 +1953,12 @@ fn install_tag_shadowed_by_same_name_default_branch(prj: _, cmd: _) {
             &format!("{alias}-folder=fixture/parent@branch={branch}"),
         ])
         .assert_success();
-        assert_eq!(
+        assert_data_eq!(
             fs::read_to_string(prj.root().join(format!("lib/{alias}-folder/source.txt"))).unwrap(),
-            "branch source\n"
+            str![[r#"
+branch source
+
+"#]]
         );
 
         // Reinstallation must preserve local branch commits and work without contacting origin.
@@ -1998,7 +2001,13 @@ fn install_no_git_branch_cleans_removed_nested_submodule(prj: _, cmd: _) {
     cmd.env("GIT_CONFIG_VALUE_1", "false");
     cmd.args(["install", "--no-git", "fixture/parent@branch=lean"]).assert_success();
     let dep = prj.root().join("lib/parent");
-    assert_eq!(fs::read_to_string(dep.join("source.txt")).unwrap(), "dependency source\n");
+    assert_data_eq!(
+        fs::read_to_string(dep.join("source.txt")).unwrap(),
+        str![[r#"
+dependency source
+
+"#]]
+    );
     assert!(!dep.join("lib/dep/source.txt").exists());
     assert!(!dep.join(".git").exists());
 }
