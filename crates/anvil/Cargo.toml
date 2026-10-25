@@ -153,7 +153,6 @@ alloy-pubsub.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
-tokio = { workspace = true, features = ["full", "test-util"] }
 
 tempo-alloy.workspace = true
 
