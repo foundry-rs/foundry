@@ -4,6 +4,7 @@ use crate::executors::{
     invariant::{
         IInvariantTest, call_after_invariant_function, call_invariant_function,
         error::{handler_edge_fingerprint, snapshot_edge_fingerprint},
+        profit::{ProfitLedger, ProfitViolation},
         result::did_fail_on_assert,
     },
 };
@@ -11,7 +12,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256, map::HashSet};
 use alloy_sol_types::SolCall;
 use foundry_common::ContractsByAddress;
-use foundry_config::InvariantConfig;
+use foundry_config::{InvariantConfig, ProfitOracleConfig};
 use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
@@ -1134,6 +1135,84 @@ fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
     let outcome =
         replay_handler_failure_sequence(executor, calls, sequence, accumulate_warp_roll, None)?;
     Ok(outcome.anchor_asserted && outcome.anchor_fingerprint == expected_fingerprint)
+}
+
+/// Shrinks a sequence that breaks the attacker-profit oracle.
+///
+/// Returns the shrunk sequence and its violation. Falls back to the original sequence when the
+/// shrunk sequence does not reproduce a profit.
+pub(crate) fn shrink_profit_sequence<FEN: FoundryEvmNetwork>(
+    config: &InvariantConfig,
+    calls: &[BasicTxDetails],
+    executor: &Executor<FEN>,
+    progress: &ShrinkProgress<'_>,
+    early_exit: &EarlyExit,
+) -> eyre::Result<(Vec<BasicTxDetails>, Option<ProfitViolation>)> {
+    let accumulate_warp_roll = config.has_delay();
+    let mut sequence = Vec::with_capacity(calls.len());
+    let shrinker = run_shrink_loop(
+        config,
+        calls,
+        progress,
+        accumulate_warp_roll,
+        early_exit,
+        ShrinkErrorPolicy::RestoreRemoved,
+        |shrinker| {
+            sequence.clear();
+            sequence.extend(shrinker.current());
+            check_profit_sequence(
+                executor.clone(),
+                calls,
+                &sequence,
+                accumulate_warp_roll,
+                &config.profit,
+            )
+            .map(|violation| violation.is_some())
+        },
+    );
+
+    let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
+    let all = (0..shrunk.len()).collect::<Vec<_>>();
+    if let Some(violation) =
+        check_profit_sequence(executor.clone(), &shrunk, &all, false, &config.profit)?
+    {
+        return Ok((shrunk, Some(violation)));
+    }
+    let all = (0..calls.len()).collect::<Vec<_>>();
+    let violation = check_profit_sequence(executor.clone(), calls, &all, false, &config.profit)?;
+    Ok((calls.to_vec(), violation))
+}
+
+/// Replays `sequence` (indices into `calls`) and returns the attacker-profit violation at its end,
+/// if any.
+fn check_profit_sequence<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
+    calls: &[BasicTxDetails],
+    sequence: &[usize],
+    accumulate_warp_roll: bool,
+    config: &ProfitOracleConfig,
+) -> eyre::Result<Option<ProfitViolation>> {
+    let start = executor.clone();
+    let mut ledger = ProfitLedger::new(config);
+    replay_sequence::<_, (), _>(
+        &mut executor,
+        calls,
+        sequence,
+        accumulate_warp_roll,
+        |idx, call_result| {
+            if call_result.result.as_ref() != MAGIC_ASSUME {
+                ledger.observe(
+                    &start,
+                    &calls[idx],
+                    call_result.reverted,
+                    &call_result.logs,
+                    &call_result.state_changeset,
+                );
+            }
+            Ok(ReplayDecision::Continue)
+        },
+    )?;
+    Ok(ledger.check(&start, &executor))
 }
 
 /// Executes a call sequence and returns the optimization value (int256) from the invariant

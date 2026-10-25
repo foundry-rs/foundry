@@ -1,11 +1,15 @@
 //! Configuration for invariant testing
 
-use crate::fuzz::{FuzzCorpusConfig, FuzzDictionaryConfig};
+use crate::{
+    Numeric,
+    fuzz::{FuzzCorpusConfig, FuzzDictionaryConfig},
+};
+use alloy_primitives::{Address, U256};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{Error, Visitor},
 };
-use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
+use std::{collections::BTreeMap, fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 /// Worker selection mode for invariant campaign sharding.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -118,6 +122,27 @@ impl FromStr for InvariantDepthMode {
     }
 }
 
+/// Configuration for the built-in attacker-profit invariant oracle.
+///
+/// When enabled, an invariant campaign also fails a sequence if one actor ends with more of some
+/// asset than its baseline and with no less of any other tracked asset. Actors are the senders
+/// the fuzzer uses plus `profit_actors`. Assets are native ETH, the tokens that emit ERC-20
+/// `Transfer` events during the sequence, and `profit_tokens`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfitOracleConfig {
+    /// Whether to check the attacker-profit oracle during invariant campaigns.
+    pub profit_oracle: bool,
+    /// Additional actors to track, for example a handler contract that holds funds.
+    pub profit_actors: Vec<Address>,
+    /// Additional ERC-20 tokens to track.
+    pub profit_tokens: Vec<Address>,
+    /// Per-asset amount that a balance change must exceed to count as a gain or a loss.
+    ///
+    /// Use it for fees, rewards, and airdrops. The zero address is the key for native ETH.
+    #[serde(deserialize_with = "deserialize_profit_tolerance")]
+    pub profit_tolerance: BTreeMap<Address, U256>,
+}
+
 /// Contains for invariant testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
@@ -180,6 +205,9 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// The built-in attacker-profit oracle configuration.
+    #[serde(flatten)]
+    pub profit: ProfitOracleConfig,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +234,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            profit: ProfitOracleConfig::default(),
         }
     }
 }
@@ -221,6 +250,19 @@ impl InvariantConfig {
         matches!(self.max_block_delay, Some(delay) if delay > 0)
             || matches!(self.max_time_delay, Some(delay) if delay > 0)
     }
+}
+
+/// Deserializes `profit_tolerance` amounts from integers, decimal strings, or hex strings.
+fn deserialize_profit_tolerance<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<Address, U256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(BTreeMap::<Address, Numeric>::deserialize(deserializer)?
+        .into_iter()
+        .map(|(asset, amount)| (asset, amount.into()))
+        .collect())
 }
 
 #[cfg(test)]

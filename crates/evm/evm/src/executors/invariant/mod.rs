@@ -53,6 +53,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
+use profit::ProfitLedger;
 use proptest::{
     prelude::Rng,
     test_runner::{RngAlgorithm, TestRng, TestRunner},
@@ -77,7 +78,7 @@ pub use error::{
 mod campaign;
 
 mod replay;
-pub use replay::{ReplayErrorResult, replay_error, replay_run};
+pub use replay::{ReplayErrorResult, replay_error, replay_profit_error, replay_run};
 
 mod result;
 pub use result::{InvariantFuzzTestResult, did_fail_on_assert};
@@ -88,6 +89,9 @@ pub use shrink::{
     SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
     check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
 };
+
+mod profit;
+pub use profit::{ATTACKER_PROFIT, AssetDelta, ProfitViolation, profit_oracle_enabled};
 
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
 /// depth.
@@ -493,6 +497,20 @@ fn record_new_invariant_failures(
             campaign_state.record_invariant_failure(&f.name, invariant_contract.name, &reason);
         }
     }
+    if let Some(failure) = failures.profit_failure() {
+        let reason = failure.revert_reason().unwrap_or_default();
+        campaign_state.record_invariant_failure(ATTACKER_PROFIT, invariant_contract.name, &reason);
+    }
+}
+
+/// Returns the number of predicates that a campaign checks: the invariant functions, plus the
+/// attacker-profit oracle when it is enabled.
+pub(crate) fn invariant_predicate_count(
+    invariant_contract: &InvariantContract<'_>,
+    config: &InvariantConfig,
+) -> usize {
+    invariant_contract.invariant_fns.len()
+        + usize::from(profit_oracle_enabled(config, invariant_contract))
 }
 
 struct InvariantProgressContext<'a> {
@@ -743,6 +761,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     optimization_value: Option<I256>,
     // For optimization mode: the length of the input prefix that produced the best value.
     optimization_prefix_len: usize,
+    // Attacker-profit oracle state, if the oracle is enabled.
+    profit: Option<ProfitLedger>,
 }
 
 /// Recorded call sequence used by corpus feedback and frontier recording.
@@ -763,7 +783,12 @@ struct InvariantCampaignSeed {
 
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     /// Instantiates an invariant test run.
-    fn new(first_input: BasicTxDetails, executor: Executor<FEN>, depth: usize) -> Self {
+    fn new(
+        first_input: BasicTxDetails,
+        executor: Executor<FEN>,
+        depth: usize,
+        profit: Option<ProfitLedger>,
+    ) -> Self {
         let mut inputs = Vec::with_capacity(depth.saturating_add(1));
         inputs.push(first_input);
         Self {
@@ -780,6 +805,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             save_last_run_inputs: false,
             optimization_value: None,
             optimization_prefix_len: 0,
+            profit,
         }
     }
 
@@ -1136,6 +1162,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
+        let profit_enabled = profit_oracle_enabled(&config, &invariant_contract);
+        let predicate_count = invariant_predicate_count(&invariant_contract, &config);
 
         'stop: while should_continue_invariant_worker(campaign_state, runs, plan) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
@@ -1170,6 +1198,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // Before each run, we must reset the backend state.
                 executor.clone(),
                 run_depth as usize,
+                profit_enabled.then(|| ProfitLedger::new(&config.profit)),
             );
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
@@ -1344,12 +1373,22 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             current_run
                                 .fuzz_runs
                                 .push(FuzzCase { gas: result.gas_used, stipend: result.stipend });
+                            if let Some(profit) = &mut current_run.profit {
+                                profit.observe(
+                                    &executor,
+                                    current_run.inputs.last().expect("checked above"),
+                                    result.reverted,
+                                    &result.logs,
+                                    &state_changeset,
+                                );
+                            }
 
                             let continues = if should_check {
                                 let outcome = can_continue(
                                     &invariant_contract,
                                     &mut invariant_test,
                                     current_run,
+                                    &executor,
                                     &config,
                                     result,
                                     &state_changeset,
@@ -1413,9 +1452,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 current_run.save_last_run_inputs = true;
                             }
                             if !continues {
-                                if invariant_contract.invariant_fns.len() == 1
-                                    || config.fail_on_revert
-                                {
+                                if predicate_count == 1 || config.fail_on_revert {
                                     campaign_state.request_terminal_stop();
                                     stop_after_run = true;
                                 }
@@ -1576,7 +1613,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let failure_metrics = campaign_state.failure_metrics();
                 let broken = failure_metrics.unique_failures.len();
                 let handler_bugs = failure_metrics.broken_handlers;
-                let total_invariants = invariant_contract.invariant_fns.len();
+                let total_invariants = predicate_count;
                 if edge_coverage_enabled || best.is_some() || broken > 0 || handler_bugs > 0 {
                     let mut msg = String::new();
                     if let Some(best) = best {

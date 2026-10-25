@@ -2,6 +2,8 @@ use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
     call_after_invariant_function, call_invariant_function,
     error::{InvariantRunCtx, record_handler_assertion_bug},
+    invariant_predicate_count,
+    profit::profit_failure,
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
@@ -266,12 +268,14 @@ pub(crate) struct ContinueOutcome {
 /// For check mode, asserts the invariant and fails if broken.
 ///
 /// `handler_target` / `handler_selector` identify the just-executed call, used to
-/// attribute handler-side assertion failures.
+/// attribute handler-side assertion failures. `start_executor` holds the state at run start, which
+/// the attacker-profit oracle uses as its baseline.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'a>,
     invariant_test: &mut InvariantTest,
     invariant_run: &mut InvariantTestRun<FEN>,
+    start_executor: &Executor<FEN>,
     invariant_config: &InvariantConfig,
     call_result: RawCallResult<FEN>,
     state_changeset: &StateChangeset,
@@ -281,6 +285,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     pre_merge_edges_hash: Option<B256>,
 ) -> Result<ContinueOutcome> {
     let is_optimization = invariant_contract.is_optimization();
+    let predicate_count = invariant_predicate_count(invariant_contract, invariant_config);
 
     // Use the handler-gate variant so a stale committed `GLOBAL_FAIL_SLOT` from a
     // previously-recorded handler bug doesn't poison this gate (which would otherwise silently
@@ -343,6 +348,17 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             if cancelled {
                 return Ok(ContinueOutcome { continues: true, cancelled: true });
             }
+            if let Some(profit) = &mut invariant_run.profit
+                && invariant_test.test_data.failures.profit_failure().is_none()
+                && let Some(violation) = profit.check(start_executor, &invariant_run.executor)
+            {
+                invariant_test.test_data.failures.record_profit_failure(profit_failure(
+                    invariant_contract,
+                    invariant_config,
+                    &invariant_run.inputs,
+                    &violation,
+                ));
+            }
         }
     } else {
         let is_assert_failure = assertion_failure;
@@ -370,10 +386,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             );
 
             // No invariant predicate broke; `broken = None`.
-            let continues = invariant_test
-                .test_data
-                .failures
-                .can_continue(invariant_contract.invariant_fns.len());
+            let continues = invariant_test.test_data.failures.can_continue(predicate_count);
             return Ok(ContinueOutcome { continues, cancelled: false });
         }
 
@@ -434,8 +447,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
         }
     }
 
-    let continues =
-        invariant_test.test_data.failures.can_continue(invariant_contract.invariant_fns.len());
+    let continues = invariant_test.test_data.failures.can_continue(predicate_count);
     Ok(ContinueOutcome { continues, cancelled: false })
 }
 

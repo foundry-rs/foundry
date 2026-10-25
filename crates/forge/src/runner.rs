@@ -49,10 +49,11 @@ use foundry_evm::{
         StatelessReplayTarget, canonical_replay_dirs,
         fuzz::FuzzedExecutor,
         invariant::{
-            CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
+            ATTACKER_PROFIT, CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, ReplayErrorResult,
             check_sequence, did_fail_on_assert, execute_tx, execute_tx_and_register_created,
-            handler_edge_fingerprint, replay_error, replay_handler_failure_sequence, replay_run,
+            handler_edge_fingerprint, profit_oracle_enabled, replay_error,
+            replay_handler_failure_sequence, replay_profit_error, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -3902,8 +3903,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.cr.contract.abi,
         );
         let anchor = invariant_contract.anchor();
+        let profit_oracle = profit_oracle_enabled(invariant_config, &invariant_contract);
         let is_campaign = predicate_count > 1;
-        let invariant_count = is_campaign.then_some(predicate_count);
+        // The attacker-profit oracle counts as a predicate in the campaign summary, but it does not
+        // turn a single-invariant test into a campaign.
+        let invariant_count = is_campaign.then_some(predicate_count + usize::from(profit_oracle));
         let invariant_display_name = if is_campaign {
             Cow::Owned(invariant_campaign_display_name(self.cr.name))
         } else {
@@ -4825,6 +4829,52 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     is_anchor,
                 });
             }
+
+            if let Some(error) = invariant_result.errors.get(ATTACKER_PROFIT)
+                && let Some(calls) = failed_invariant_calls(error)
+            {
+                let mut reason = error.revert_reason().unwrap_or_default();
+                let counterexample = match replay_profit_error(
+                    invariant_config,
+                    self.clone_executor(),
+                    calls,
+                    &invariant_contract,
+                    &self.cr.mcr.known_contracts,
+                    identified_contracts.clone(),
+                    &mut self.result.logs,
+                    &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
+                    &mut self.result.line_coverage,
+                    &mut self.result.deprecated_cheatcodes,
+                    progress.as_ref(),
+                    &self.tcfg.early_exit,
+                    Some((invariant_failures.len() + 1, total_broken)),
+                ) {
+                    Ok((replay, violation)) => {
+                        if let Some(violation) = violation {
+                            reason = violation.to_string();
+                        }
+                        if single_failure {
+                            fork_block_number = replay.fork_block_number.or(fork_block_number);
+                        }
+                        Some(CounterExample::Sequence(calls.len(), replay.counterexample_sequence))
+                    }
+                    Err(err) => {
+                        error!(%err, "Failed to replay attacker-profit failure");
+                        None
+                    }
+                };
+                // Attacker-profit failures are not persisted: a new campaign finds them again.
+                invariant_failures.push(InvariantFailure::Predicate {
+                    name: ATTACKER_PROFIT.to_string(),
+                    reason,
+                    counterexample,
+                    artifact: None,
+                    minimization: None,
+                    persisted_path: PathBuf::new(),
+                    is_anchor: false,
+                });
+            }
         }
 
         let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
@@ -4837,10 +4887,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 invariant_contract
                     .invariant_fns
                     .iter()
-                    .map(|(invariant, _)| {
-                        let failure = failures_by_name.get(invariant.name.as_str());
+                    .map(|(invariant, _)| invariant.name.as_str())
+                    .chain(profit_oracle.then_some(ATTACKER_PROFIT))
+                    .map(|name| {
+                        let failure = failures_by_name.get(name);
                         InvariantPredicateResult {
-                            name: invariant.name.clone(),
+                            name: name.to_string(),
                             status: if failure.is_some() {
                                 TestStatus::Failure
                             } else {

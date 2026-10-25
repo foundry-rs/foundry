@@ -117,7 +117,7 @@ mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers};
+pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers, ProfitOracleConfig};
 
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -5958,6 +5958,62 @@ mod tests {
                 InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap())
             );
             assert!(loaded.invariant.workers_configured);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invariant_profit_oracle_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                profit_actors = ["0x1111111111111111111111111111111111111111"]
+                profit_tokens = ["0x2222222222222222222222222222222222222222"]
+
+                [invariant.profit_tolerance]
+                "0x0000000000000000000000000000000000000000" = 5
+                "0x2222222222222222222222222222222222222222" = "1000000000000000000000"
+
+                [profile.ci.invariant]
+                profit_oracle = true
+            "#,
+            )?;
+
+            let token = address!("0x2222222222222222222222222222222222222222");
+            let expected = ProfitOracleConfig {
+                profit_oracle: false,
+                profit_actors: vec![address!("0x1111111111111111111111111111111111111111")],
+                profit_tokens: vec![token],
+                profit_tolerance: BTreeMap::from([
+                    (Address::ZERO, U256::from(5)),
+                    (token, U256::from(10).pow(U256::from(21))),
+                ]),
+            };
+            let loaded = Config::load().unwrap();
+            assert_eq!(loaded.invariant.profit, expected);
+            assert_eq!(loaded.fuzz, Config::default().fuzz);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.profit,
+                ProfitOracleConfig { profit_oracle: true, ..expected.clone() }
+            );
+
+            jail.set_env("FOUNDRY_PROFILE", "default");
+            jail.set_env("FOUNDRY_INVARIANT_PROFIT_ORACLE", "true");
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.profit,
+                ProfitOracleConfig { profit_oracle: true, ..expected }
+            );
+
+            // The section round-trips through the serialized config.
+            jail.create_file("foundry.toml", &loaded.to_string_pretty().unwrap())?;
+            assert_eq!(Config::load().unwrap().invariant.profit, loaded.invariant.profit);
 
             Ok(())
         });

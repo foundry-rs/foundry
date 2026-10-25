@@ -1,4 +1,4 @@
-use super::InvariantContract;
+use super::{InvariantContract, profit::ATTACKER_PROFIT};
 use crate::{
     executors::RawCallResult,
     inspectors::{EdgeCovHit, EdgeCoverage},
@@ -245,7 +245,7 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
 /// failures and handler-side assertion bugs share one map keyed by this enum.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum FailureKey {
-    /// Keyed by invariant function name.
+    /// Keyed by invariant function name, or by `attacker_profit` for the built-in oracle.
     Invariant(String),
     /// Keyed by handler `(reverter, selector)` site (Echidna/Medusa semantics: one bug
     /// per handler function regardless of code path).
@@ -298,11 +298,12 @@ impl InvariantFailures {
     }
 
     pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
-        let prev = self.failures.insert(FailureKey::Invariant(invariant.name.clone()), failure);
-        self.revision = self.revision.wrapping_add(1);
-        if prev.is_none() {
-            self.invariant_count += 1;
-        }
+        self.record_predicate_failure(invariant.name.clone(), failure);
+    }
+
+    /// Records a failure of the built-in attacker-profit oracle.
+    pub fn record_profit_failure(&mut self, failure: InvariantFuzzError) {
+        self.record_predicate_failure(ATTACKER_PROFIT.to_string(), failure);
     }
 
     pub fn has_failure(&self, invariant: &Function) -> bool {
@@ -311,6 +312,11 @@ impl InvariantFailures {
 
     pub fn get_failure(&self, invariant: &Function) -> Option<&InvariantFuzzError> {
         self.failures.get(&FailureKey::Invariant(invariant.name.clone()))
+    }
+
+    /// Recorded failure of the built-in attacker-profit oracle, if any.
+    pub fn profit_failure(&self) -> Option<&InvariantFuzzError> {
+        self.failures.get(&FailureKey::Invariant(ATTACKER_PROFIT.to_string()))
     }
 
     /// Recorded revert reason for `invariant`, or empty when none. Used by failure events
@@ -379,6 +385,14 @@ impl InvariantFailures {
     /// Returns true if a handler bug has already been recorded for the given site.
     pub fn has_handler_failure(&self, target: Address, selector: Selector) -> bool {
         self.failures.contains_key(&FailureKey::Handler(target, selector))
+    }
+
+    fn record_predicate_failure(&mut self, name: String, failure: InvariantFuzzError) {
+        let prev = self.failures.insert(FailureKey::Invariant(name), failure);
+        self.revision = self.revision.wrapping_add(1);
+        if prev.is_none() {
+            self.invariant_count += 1;
+        }
     }
 }
 
