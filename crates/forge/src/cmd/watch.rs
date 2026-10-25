@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use std::{
     ffi::{OsStr, OsString},
     io::IsTerminal,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, OnceLock, Weak,
         atomic::{AtomicU8, Ordering},
@@ -182,7 +182,11 @@ impl WatchArgs {
         let stop_timeout = Duration::from_secs(5);
         let no_restart = self.no_restart;
         let stop_signal = Signal::Terminate;
+        // Used to tell a real edit apart from an editor rewriting an unmodified buffer
+        // (`:w` in vim, save-on-focus, formatters, `touch`, ...).
+        let content_hashes = Arc::new(Mutex::new(ContentHashes::seeded(paths)));
         config.on_action(move |mut action| {
+            let content_hashes = content_hashes.clone();
             let base_command = base_command.clone();
             let job = action.get_or_create_job(id, move || base_command.clone());
 
@@ -266,6 +270,21 @@ impl WatchArgs {
                 }
             }
 
+            // Skip the re-run when the filesystem events carry no actual content change, so that
+            // saving an unmodified buffer (or a tool touching the file) does not re-run the suite.
+            // Keyboard-triggered reruns and synthetic events always go through.
+            if keyboard_action != Some(KeyboardAction::Rerun)
+                && !action.events.iter().any(|e| e.is_empty())
+            {
+                let any_change = content_hashes
+                    .lock()
+                    .any_changed(action.events.iter().flat_map(|e| e.paths()).map(|(p, _)| p));
+                if !any_change {
+                    debug!("filesystem events carry no content change, skip without doing more");
+                    return action;
+                }
+            }
+
             // Let the child own stdin while it runs. This keeps prompts and the debugger from
             // racing Watchexec's keyboard event source for terminal input.
             set_keyboard_events(&keyboard_config, false);
@@ -293,6 +312,60 @@ impl WatchArgs {
 
         Ok(config)
     }
+}
+
+/// Content hashes of watched files, used to tell a real edit from a no-op save.
+#[derive(Default)]
+struct ContentHashes {
+    hashes: HashMap<PathBuf, u64>,
+}
+
+impl ContentHashes {
+    /// Seeds the cache from the files currently on disk under `roots`.
+    ///
+    /// The initial watch run carries no filesystem events, so without seeding every file would
+    /// look new on the first save after startup.
+    fn seeded(roots: &[PathBuf]) -> Self {
+        let mut hashes = HashMap::<PathBuf, u64>::default();
+        for root in roots {
+            let files = foundry_common::fs::files_with_ext(root, "sol")
+                .chain(foundry_common::fs::files_with_ext(root, "toml"));
+            for path in files {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    hashes.insert(path, hash_contents(&bytes));
+                }
+            }
+        }
+        Self { hashes }
+    }
+
+    /// Updates the cache for `paths` and returns whether any of them changed on disk.
+    ///
+    /// Paths that cannot be read (removed, or not a regular file) always count as changed so
+    /// that deletions are never swallowed.
+    fn any_changed<P: AsRef<Path>>(&mut self, paths: impl IntoIterator<Item = P>) -> bool {
+        let mut any_changed = false;
+        for path in paths {
+            let path = path.as_ref();
+            let Ok(bytes) = std::fs::read(path) else {
+                any_changed = true;
+                continue;
+            };
+            let hash = hash_contents(&bytes);
+            if self.hashes.insert(path.to_path_buf(), hash) != Some(hash) {
+                any_changed = true;
+            }
+        }
+        any_changed
+    }
+}
+
+/// Hashes a file's contents, used by watch mode to tell a real edit from a no-op save.
+fn hash_contents(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn setup_process(job: Job, _command: &Command, keyboard_config: Option<KeyboardConfig>) {
@@ -721,6 +794,41 @@ mod tests {
 
     fn clean(args: &[&str]) -> Vec<OsString> {
         clean_cmd_args(args.iter().copied().map(OsString::from).collect())
+    }
+
+    #[test]
+    fn content_hashes_detect_real_edits_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("A.sol");
+        std::fs::write(&file, "contract A {}").unwrap();
+
+        let mut hashes = ContentHashes::seeded(&[dir.path().to_path_buf()]);
+
+        // An editor rewriting an unmodified buffer must not look like a change.
+        std::fs::write(&file, "contract A {}").unwrap();
+        assert!(!hashes.any_changed([&file]));
+
+        std::fs::write(&file, "contract A { }").unwrap();
+        assert!(hashes.any_changed([&file]));
+
+        // Seeing the same content again is not a change either.
+        assert!(!hashes.any_changed([&file]));
+    }
+
+    #[test]
+    fn content_hashes_treat_unseen_and_removed_paths_as_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("B.sol");
+        std::fs::write(&file, "contract B {}").unwrap();
+
+        let mut hashes = ContentHashes::seeded(&[dir.path().to_path_buf()]);
+
+        // A file created after startup is new content.
+        assert!(hashes.any_changed([dir.path().join("New.sol")]));
+
+        // A removed file must never be swallowed.
+        std::fs::remove_file(&file).unwrap();
+        assert!(hashes.any_changed([&file]));
     }
 
     #[test]
