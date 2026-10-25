@@ -11,10 +11,12 @@
 //! one signing history; cross-import reverts start unsigned. Rollback restores retained key
 //! schedules.
 //!
-//! The latest finalization retains its complete body. Historical queries return the native 503
-//! unavailable error if the certificate or a body matching its commitments is unavailable,
-//! including after transaction-body pruning. The identity methods expose public development keys
-//! only.
+//! The latest mined finalization retains its complete body across pruning and snapshot restores.
+//! Rolling back to an older certified block whose pruned body no longer matches its header makes
+//! both latest queries return the native 503 unavailable error. Mining a successor or restoring a
+//! snapshot with a complete body restores availability. Historical queries also return 503 if the
+//! certificate or a body matching its commitments is unavailable. The identity methods expose
+//! public development keys only.
 
 use super::{
     backend::tempo_consensus::TempoFinalization,

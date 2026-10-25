@@ -175,11 +175,9 @@ impl<N: Network> Backend<N> {
 }
 
 fn tempo_chain<N: Network>(storage: &BlockchainStorage<N>) -> Result<&TempoChain, BlockchainError> {
-    storage.tempo.as_ref().ok_or_else(tempo_unavailable)
-}
-
-fn tempo_unavailable() -> BlockchainError {
-    RpcError::invalid_params("Tempo consensus is only available on the Tempo network").into()
+    storage.tempo.as_ref().ok_or_else(|| {
+        RpcError::invalid_params("Tempo consensus is only available on the Tempo network").into()
+    })
 }
 
 fn latest_finalization(

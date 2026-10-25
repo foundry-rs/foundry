@@ -6931,10 +6931,9 @@ async fn tempo_consensus_mined_certificate_matches_block_hash() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
     let identity = tempo_consensus_identity(&provider).await;
-    let latest: TempoConsensusState =
+    let latest: serde_json::Value =
         provider.client().request("consensus_getLatest", ()).await.unwrap();
-    assert!(latest.finalized.is_none());
-    assert!(latest.notarized.is_none());
+    assert_eq!(latest, serde_json::json!({ "finalized": null, "notarized": null }));
     assert_tempo_missing(&provider, serde_json::json!("latest"), "certifications").await;
     assert_tempo_missing(&provider, serde_json::json!({ "height": 0 }), "certificate").await;
     assert_tempo_missing(&provider, serde_json::json!({ "height": 1 }), "certificate").await;
@@ -6961,8 +6960,10 @@ async fn tempo_consensus_mined_certificate_matches_block_hash() {
     let latest: TempoCertifiedBlock =
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(latest, finalization);
-    let state: TempoConsensusState =
+    let state: serde_json::Value =
         provider.client().request("consensus_getLatest", ()).await.unwrap();
+    assert_eq!(state.get("notarized"), Some(&serde_json::Value::Null));
+    let state = serde_json::from_value::<TempoConsensusState>(state).unwrap();
     assert_eq!(state.finalized.as_ref(), Some(&finalization));
     assert!(state.notarized.is_none());
 }
@@ -7119,7 +7120,36 @@ async fn tempo_consensus_latest_survives_body_pruning_and_snapshot() {
     let retained: TempoCertifiedBlock =
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(retained, latest);
+
+    // Rewinding to an older pruned body cannot recover its complete cached copy.
+    api.mine_one().await.unwrap();
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
+    for (method, params) in [
+        ("consensus_getFinalization", serde_json::json!(["latest"])),
+        ("consensus_getLatest", serde_json::json!([])),
+    ] {
+        let error =
+            provider.client().request::<_, serde_json::Value>(method, params).await.unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+            serde_json::json!({
+                "code": 503,
+                "message": "the consensus subservice was not available, but the request can be retried later",
+                "data": "block",
+            }),
+        );
+    }
+
+    api.mine_one().await.unwrap();
+    let latest: TempoCertifiedBlock =
+        provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
+    assert_eq!(latest.block.header.number(), 2);
+    assert_tempo_certificate(&identity, &latest);
+    let state: TempoConsensusState =
+        provider.client().request("consensus_getLatest", ()).await.unwrap();
+    assert_eq!(state.finalized.as_ref(), Some(&latest));
+
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (2,)).await.unwrap();
     let state: TempoConsensusState =
         provider.client().request("consensus_getLatest", ()).await.unwrap();
     assert!(state.finalized.is_none());
