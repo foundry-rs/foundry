@@ -216,13 +216,15 @@ contract ExpectCallTest is Test {
         bytes memory data = abi.encodeWithSignature("call()");
         vm.expectCall(address(simpleCall), data);
         vm.expectDelegateCall(address(simpleCall), data);
+        vm.expectCall(Vm.CallKind.DelegateCall, address(simpleCall), data);
+        proxyWithDelegateCall.delegateCall(simpleCall);
         proxyWithDelegateCall.delegateCall(simpleCall);
     }
 
     function testExpectStaticCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectStaticCall(address(inner), abi.encodeWithSelector(inner.numberA.selector));
+        vm.expectCall(Vm.CallKind.StaticCall, address(inner), abi.encodeWithSelector(inner.numberA.selector));
         target.sum();
     }
 
@@ -231,14 +233,14 @@ contract ExpectCallTest is Test {
         NestedContract target = new NestedContract(inner);
         bytes memory data = abi.encodeWithSelector(inner.numberB.selector);
         vm.expectCall(address(inner), data);
-        vm.expectStaticCall(address(inner), data);
+        vm.expectCall(Vm.CallKind.StaticCall, address(inner), data);
         target.sum();
     }
 
     function testExpectRegularCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectRegularCall(address(inner), abi.encodeWithSelector(inner.pay.selector, 1));
+        vm.expectCall(Vm.CallKind.Call, address(inner), abi.encodeWithSelector(inner.pay.selector, 1));
         target.forwardPay{value: 1}();
     }
 
@@ -246,7 +248,7 @@ contract ExpectCallTest is Test {
         Contract target = new Contract();
         bytes memory data = abi.encodeWithSelector(target.pay.selector, 2);
         vm.expectCall(address(target), data);
-        vm.expectRegularCall(address(target), data);
+        vm.expectCall(Vm.CallKind.Call, address(target), data);
         target.pay(2);
     }
 }
