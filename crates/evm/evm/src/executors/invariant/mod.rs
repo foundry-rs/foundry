@@ -78,7 +78,7 @@ pub use error::{
 mod campaign;
 
 mod replay;
-pub use replay::{ReplayErrorResult, replay_error, replay_profit_error, replay_run};
+pub use replay::{ReplayErrorResult, replay_error, replay_run, shrink_profit_error};
 
 mod result;
 pub use result::{InvariantFuzzTestResult, did_fail_on_assert};
@@ -91,7 +91,9 @@ pub use shrink::{
 };
 
 mod profit;
-pub use profit::{ATTACKER_PROFIT, AssetDelta, ProfitViolation, profit_oracle_enabled};
+pub use profit::{
+    ATTACKER_PROFIT, AssetDelta, ProfitVictim, ProfitViolation, profit_oracle_enabled,
+};
 
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
 /// depth.

@@ -53,7 +53,7 @@ use foundry_evm::{
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, ReplayErrorResult,
             check_sequence, did_fail_on_assert, execute_tx, execute_tx_and_register_created,
             handler_edge_fingerprint, profit_oracle_enabled, replay_error,
-            replay_handler_failure_sequence, replay_profit_error, replay_run,
+            replay_handler_failure_sequence, replay_run, shrink_profit_error,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -4606,6 +4606,33 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Merge coverage collected during invariant run with test setup coverage.
         self.result.merge_coverages(invariant_result.line_coverage);
 
+        // Shrink the attacker-profit failure and check it once more before it is reported. A
+        // profit that does not reproduce is dropped. The oracle is reported last, so its position
+        // in the shrink progress is the last one.
+        let mut profit_shrunk = None;
+        if let Some(calls) =
+            invariant_result.errors.get(ATTACKER_PROFIT).and_then(failed_invariant_calls)
+        {
+            let total_broken = invariant_result.errors.len();
+            match shrink_profit_error(
+                invariant_config,
+                &self.executor,
+                calls,
+                identified_contracts,
+                progress.as_ref(),
+                &self.tcfg.early_exit,
+                Some((total_broken, total_broken)),
+            ) {
+                Ok(Some((shrunk, violation))) => {
+                    profit_shrunk = Some((calls.len(), shrunk, violation));
+                }
+                Ok(None) => {
+                    invariant_result.errors.remove(ATTACKER_PROFIT);
+                }
+                Err(err) => error!(%err, "Failed to shrink attacker-profit failure"),
+            }
+        }
+
         let mut counterexample = None;
         // Success requires zero predicate breaks *and* zero handler-side assertion bugs.
         let success =
@@ -4830,40 +4857,39 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 });
             }
 
-            if let Some(error) = invariant_result.errors.get(ATTACKER_PROFIT)
-                && let Some(calls) = failed_invariant_calls(error)
-            {
+            if let Some(error) = invariant_result.errors.get(ATTACKER_PROFIT) {
                 let mut reason = error.revert_reason().unwrap_or_default();
-                let counterexample = match replay_profit_error(
-                    invariant_config,
-                    self.clone_executor(),
-                    calls,
-                    &invariant_contract,
-                    &self.cr.mcr.known_contracts,
-                    identified_contracts.clone(),
-                    &mut self.result.logs,
-                    &mut self.result.traces,
-                    &mut self.result.debug_bytecodes,
-                    &mut self.result.line_coverage,
-                    &mut self.result.deprecated_cheatcodes,
-                    progress.as_ref(),
-                    &self.tcfg.early_exit,
-                    Some((invariant_failures.len() + 1, total_broken)),
-                ) {
-                    Ok((replay, violation)) => {
-                        if let Some(violation) = violation {
-                            reason = violation.to_string();
+                let counterexample = profit_shrunk.and_then(|(original_len, calls, violation)| {
+                    reason = violation.to_string();
+                    match replay_run(
+                        &invariant_contract,
+                        anchor,
+                        self.clone_executor(),
+                        &self.cr.mcr.known_contracts,
+                        identified_contracts.clone(),
+                        &mut self.result.logs,
+                        &mut self.result.traces,
+                        &mut self.result.debug_bytecodes,
+                        &mut self.result.line_coverage,
+                        &mut self.result.deprecated_cheatcodes,
+                        &calls,
+                        invariant_config.show_solidity,
+                    ) {
+                        Ok(replay) => {
+                            if single_failure {
+                                fork_block_number = replay.fork_block_number.or(fork_block_number);
+                            }
+                            Some(CounterExample::Sequence(
+                                original_len,
+                                replay.counterexample_sequence,
+                            ))
                         }
-                        if single_failure {
-                            fork_block_number = replay.fork_block_number.or(fork_block_number);
+                        Err(err) => {
+                            error!(%err, "Failed to replay attacker-profit failure");
+                            None
                         }
-                        Some(CounterExample::Sequence(calls.len(), replay.counterexample_sequence))
                     }
-                    Err(err) => {
-                        error!(%err, "Failed to replay attacker-profit failure");
-                        None
-                    }
-                };
+                });
                 // Attacker-profit failures are not persisted: a new campaign finds them again.
                 invariant_failures.push(InvariantFailure::Predicate {
                     name: ATTACKER_PROFIT.to_string(),

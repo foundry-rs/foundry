@@ -117,7 +117,9 @@ mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers, ProfitOracleConfig};
+pub use invariant::{
+    InvariantConfig, InvariantDepthMode, InvariantWorkers, ProfitOracleConfig, ProfitOracleMode,
+};
 
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -5979,12 +5981,14 @@ mod tests {
 
                 [profile.ci.invariant]
                 profit_oracle = true
+                profit_oracle_mode = "any"
             "#,
             )?;
 
             let token = address!("0x2222222222222222222222222222222222222222");
             let expected = ProfitOracleConfig {
                 profit_oracle: false,
+                profit_oracle_mode: ProfitOracleMode::Victim,
                 profit_actors: vec![address!("0x1111111111111111111111111111111111111111")],
                 profit_tokens: vec![token],
                 profit_tolerance: BTreeMap::from([
@@ -6000,7 +6004,11 @@ mod tests {
             let loaded = Config::load().unwrap();
             assert_eq!(
                 loaded.invariant.profit,
-                ProfitOracleConfig { profit_oracle: true, ..expected.clone() }
+                ProfitOracleConfig {
+                    profit_oracle: true,
+                    profit_oracle_mode: ProfitOracleMode::Any,
+                    ..expected.clone()
+                }
             );
 
             jail.set_env("FOUNDRY_PROFILE", "default");

@@ -122,16 +122,34 @@ impl FromStr for InvariantDepthMode {
     }
 }
 
+/// Rule that the attacker-profit oracle uses to decide that a profit is a failure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfitOracleMode {
+    /// A profit fails the sequence only if other tracked parties paid for it over the same
+    /// sequence: other actors whose value went down, counting what their vault shares redeem for,
+    /// and who together lost at least the gain, or one contract that the sequence calls whose
+    /// holdings of the gained asset dropped by at least the gain. Yield minted from nothing, an
+    /// index raise, or a reward emission does not fail.
+    #[default]
+    Victim,
+    /// Every profit fails the sequence, also when no other party lost.
+    Any,
+}
+
 /// Configuration for the built-in attacker-profit invariant oracle.
 ///
 /// When enabled, an invariant campaign also fails a sequence if one actor ends with more of some
-/// asset than its baseline and with no less of any other tracked asset. Actors are the senders
-/// the fuzzer uses plus `profit_actors`. Assets are native ETH, the tokens that emit ERC-20
-/// `Transfer` events during the sequence, and `profit_tokens`.
+/// asset than its baseline and with no less of any other tracked asset, and, in the default
+/// `victim` mode, another tracked party lost over the same sequence. Actors are the senders the
+/// fuzzer uses plus `profit_actors`. Assets are native ETH, the tokens that emit ERC-20 `Transfer`
+/// events during the sequence, and `profit_tokens`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfitOracleConfig {
     /// Whether to check the attacker-profit oracle during invariant campaigns.
     pub profit_oracle: bool,
+    /// Rule that decides when a profit fails the sequence: `victim` (default) or `any`.
+    pub profit_oracle_mode: ProfitOracleMode,
     /// Additional actors to track, for example a handler contract that holds funds.
     pub profit_actors: Vec<Address>,
     /// Additional ERC-20 tokens to track.

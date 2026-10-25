@@ -264,6 +264,7 @@ show_metrics = true
 show_solidity = false
 check_interval = 1
 profit_oracle = false
+profit_oracle_mode = "victim"
 profit_actors = []
 profit_tokens = []
 
@@ -2359,6 +2360,7 @@ fn test_default_config(prj: _, cmd: _) {
     "max_block_delay": null,
     "check_interval": 1,
     "profit_oracle": false,
+    "profit_oracle_mode": "victim",
     "profit_actors": [],
     "profit_tokens": [],
     "profit_tolerance": {}

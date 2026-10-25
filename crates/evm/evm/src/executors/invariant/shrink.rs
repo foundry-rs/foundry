@@ -1137,17 +1137,18 @@ fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
     Ok(outcome.anchor_asserted && outcome.anchor_fingerprint == expected_fingerprint)
 }
 
-/// Shrinks a sequence that breaks the attacker-profit oracle.
+/// Shrinks a sequence that breaks the attacker-profit oracle, then replays the result once more to
+/// check it.
 ///
 /// Returns the shrunk sequence and its violation. Falls back to the original sequence when the
-/// shrunk sequence does not reproduce a profit.
+/// shrunk sequence does not reproduce a profit, and returns `None` when neither does.
 pub(crate) fn shrink_profit_sequence<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
     calls: &[BasicTxDetails],
     executor: &Executor<FEN>,
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
-) -> eyre::Result<(Vec<BasicTxDetails>, Option<ProfitViolation>)> {
+) -> eyre::Result<Option<(Vec<BasicTxDetails>, ProfitViolation)>> {
     let accumulate_warp_roll = config.has_delay();
     let mut sequence = Vec::with_capacity(calls.len());
     let shrinker = run_shrink_loop(
@@ -1176,11 +1177,11 @@ pub(crate) fn shrink_profit_sequence<FEN: FoundryEvmNetwork>(
     if let Some(violation) =
         check_profit_sequence(executor.clone(), &shrunk, &all, false, &config.profit)?
     {
-        return Ok((shrunk, Some(violation)));
+        return Ok(Some((shrunk, violation)));
     }
     let all = (0..calls.len()).collect::<Vec<_>>();
     let violation = check_profit_sequence(executor.clone(), calls, &all, false, &config.profit)?;
-    Ok((calls.to_vec(), violation))
+    Ok(violation.map(|violation| (calls.to_vec(), violation)))
 }
 
 /// Replays `sequence` (indices into `calls`) and returns the attacker-profit violation at its end,
