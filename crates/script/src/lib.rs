@@ -394,7 +394,17 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            let addresses = script_wallets.addresses();
+            let mut addresses = script_wallets.addresses();
+            if addresses.is_empty() && browser_wallet.is_none() {
+                // A keystore without an `address` field, such as one written by `cast wallet`,
+                // must be unlocked to find its address.
+                addresses = script_wallets.signers().map_err(|err| {
+                    eyre::eyre!("{err}").wrap_err(
+                        "failed to unlock the wallet to find the script sender; pass `--sender`, \
+                         or a keystore password file with `--password-file` or `ETH_PASSWORD`",
+                    )
+                })?;
+            }
             if addresses.len() == 1 {
                 evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
