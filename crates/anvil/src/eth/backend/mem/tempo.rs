@@ -13,9 +13,18 @@
 //! publication, preventing snapshots, rewinds, resets, imports, or rotations from changing the
 //! prepared height or key schedule. Only initialization before the backend is shared and private
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
+//! Consensus readers acquire the database read lock before storage.
 
-use crate::eth::{backend::tempo_consensus::TempoConsensus, error::BlockchainError};
+use super::{Backend, storage::BlockchainStorage};
+use crate::eth::{
+    backend::tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
+    error::BlockchainError,
+};
+use alloy_consensus::{BlockHeader, proofs::calculate_transaction_root};
+use alloy_network::Network;
 use alloy_primitives::{B256, U256, map::HashMap};
+use anvil_core::eth::block::{Block, canonical_block};
+use anvil_rpc::error::{ErrorCode, RpcError};
 use std::{fmt, num::NonZeroU64};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoHeader;
@@ -26,7 +35,8 @@ pub(crate) struct TempoChain {
     seed: B256,
     epoch_length: NonZeroU64,
     consensus: TempoConsensus,
-    snapshots: HashMap<U256, TempoConsensus>,
+    latest_block: Option<Block>,
+    snapshots: HashMap<U256, (TempoConsensus, Option<Block>)>,
 }
 
 impl TempoChain {
@@ -35,6 +45,7 @@ impl TempoChain {
             seed,
             epoch_length,
             consensus: TempoConsensus::at_height(seed, epoch_length, height),
+            latest_block: None,
             snapshots: Default::default(),
         }
     }
@@ -42,26 +53,31 @@ impl TempoChain {
     /// Resets local trust at an unsigned chain head and clears saved consensus histories.
     pub(super) fn reanchor(&mut self, height: u64) {
         self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
+        self.latest_block = None;
         self.snapshots.clear();
     }
 
     pub(super) fn snapshot(&mut self, id: U256) {
-        self.snapshots.insert(id, self.consensus.clone());
+        self.snapshots.insert(id, (self.consensus.clone(), self.latest_block.clone()));
     }
 
     /// Restores saved consensus, or starts unsigned if an import discarded that history.
     ///
     /// The caller supplies the saved database height, which may differ from the imported head.
     pub(super) fn restore(&mut self, id: U256, height: u64) {
-        self.consensus = self
-            .snapshots
-            .remove(&id)
-            .unwrap_or_else(|| TempoConsensus::at_height(self.seed, self.epoch_length, height));
+        let (consensus, latest_block) = self.snapshots.remove(&id).unwrap_or_else(|| {
+            (TempoConsensus::at_height(self.seed, self.epoch_length, height), None)
+        });
+        self.consensus = consensus;
+        self.latest_block = latest_block;
         self.snapshots.retain(|snapshot_id, _| *snapshot_id < id);
     }
 
     /// Rewinds signed history or starts a new unsigned segment below the imported anchor.
-    pub(super) fn unwind(&mut self, height: u64) -> Result<(), BlockchainError> {
+    pub(super) fn unwind(&mut self, block: &Block) -> Result<(), BlockchainError> {
+        let height = block.header.number();
+        let is_current =
+            self.consensus.latest().is_some_and(|(current_height, _)| current_height == height);
         if height < self.consensus.anchor_height() {
             // Exact snapshots retain their own controller and anchor across ordinary rollbacks.
             self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
@@ -69,6 +85,9 @@ impl TempoChain {
             self.consensus
                 .unwind(height)
                 .map_err(|error| BlockchainError::Internal(error.to_string()))?;
+        }
+        if !is_current {
+            self.latest_block = self.consensus.latest().map(|_| block.clone());
         }
         Ok(())
     }
@@ -93,6 +112,11 @@ impl TempoChain {
             "the database write lock preserves the prepared height and committee; metadata and hardfork are unchanged",
         );
     }
+
+    /// Retains the latest complete body independently of historical transaction pruning.
+    pub(super) fn publish(&mut self, block: &Block) {
+        self.latest_block = Some(block.clone());
+    }
 }
 
 impl fmt::Debug for TempoChain {
@@ -103,6 +127,92 @@ impl fmt::Debug for TempoChain {
     }
 }
 
+impl<N: Network> Backend<N> {
+    /// Returns the currently active public development committee.
+    pub async fn tempo_consensus_identity(
+        &self,
+    ) -> Result<TempoConsensusIdentity, BlockchainError> {
+        let _db = self.db.read().await;
+        let storage = self.blockchain.storage.read();
+        Ok(tempo_chain(&storage)?.consensus.identity())
+    }
+
+    /// Returns a certificate and its complete canonical block from the same chain snapshot.
+    pub async fn tempo_finalization(
+        &self,
+        height: Option<u64>,
+    ) -> Result<(TempoFinalization, Block), BlockchainError> {
+        let _db = self.db.read().await;
+        let storage = self.blockchain.storage.read();
+        let tempo = tempo_chain(&storage)?;
+        match height {
+            Some(height) => {
+                let finalization = tempo
+                    .consensus
+                    .finalization(height)
+                    .ok_or_else(|| consensus_unavailable("certificate"))?;
+                let block = storage
+                    .hashes
+                    .get(&height)
+                    .and_then(|hash| storage.blocks.get(hash))
+                    .ok_or_else(|| consensus_unavailable("block"))?;
+                certified_block(finalization, block)
+            }
+            None => {
+                latest_finalization(tempo)?.ok_or_else(|| consensus_unavailable("certifications"))
+            }
+        }
+    }
+
+    /// Returns no finalized block until this local signer has produced its first certificate.
+    pub async fn tempo_latest_finalization(
+        &self,
+    ) -> Result<Option<(TempoFinalization, Block)>, BlockchainError> {
+        let _db = self.db.read().await;
+        let storage = self.blockchain.storage.read();
+        latest_finalization(tempo_chain(&storage)?)
+    }
+}
+
+fn tempo_chain<N: Network>(storage: &BlockchainStorage<N>) -> Result<&TempoChain, BlockchainError> {
+    storage.tempo.as_ref().ok_or_else(|| {
+        RpcError::invalid_params("Tempo consensus is only available on the Tempo network").into()
+    })
+}
+
+fn latest_finalization(
+    tempo: &TempoChain,
+) -> Result<Option<(TempoFinalization, Block)>, BlockchainError> {
+    let Some((_, finalization)) = tempo.consensus.latest() else { return Ok(None) };
+    let block = tempo.latest_block.as_ref().ok_or_else(|| consensus_unavailable("block"))?;
+    certified_block(finalization, block).map(Some)
+}
+
+fn certified_block(
+    finalization: &TempoFinalization,
+    block: &Block,
+) -> Result<(TempoFinalization, Block), BlockchainError> {
+    let block = canonical_block(block.clone());
+    if block.header.hash_slow() != finalization.digest
+        || calculate_transaction_root(&block.body.transactions) != block.header.transactions_root()
+        || block.body.calculate_ommers_root() != block.header.ommers_hash()
+        || block.body.calculate_withdrawals_root() != block.header.withdrawals_root()
+    {
+        return Err(consensus_unavailable("block"));
+    }
+    Ok((finalization.clone(), block))
+}
+
+fn consensus_unavailable(content: &str) -> BlockchainError {
+    RpcError {
+        code: ErrorCode::from(503),
+        message: "the consensus subservice was not available, but the request can be retried later"
+            .into(),
+        data: Some(serde_json::Value::String(content.to_owned())),
+    }
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,14 +220,10 @@ mod tests {
         NodeConfig,
         eth::{
             api::EthApi,
-            backend::{
-                db::SerializableState, mem::MiningCommitHook,
-                tempo_consensus::TempoConsensusIdentity,
-            },
+            backend::{db::SerializableState, mem::MiningCommitHook},
         },
         spawn,
     };
-    use alloy_consensus::BlockHeader;
     use alloy_primitives::Address;
     use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, anvil::Forking};
     use alloy_serde::WithOtherFields;
@@ -160,10 +266,24 @@ mod tests {
         assert!(api.backend.get_block(1).is_none());
         let mut snapshot = Box::pin(api.evm_snapshot());
         assert!(futures::poll!(snapshot.as_mut()).is_pending());
+        let mut certificate = Box::pin(api.backend.tempo_finalization(None));
+        let mut identity = Box::pin(api.backend.tempo_consensus_identity());
+        let mut latest = Box::pin(api.backend.tempo_latest_finalization());
+        assert!(futures::poll!(certificate.as_mut()).is_pending());
+        assert!(futures::poll!(identity.as_mut()).is_pending());
+        assert!(futures::poll!(latest.as_mut()).is_pending());
         hook.resume.notify_one();
         let snapshot = timeout(Duration::from_secs(10), async {
             mining.await.unwrap().unwrap();
-            snapshot.await.unwrap()
+            let (snapshot, certificate, identity, latest) =
+                tokio::join!(snapshot, certificate, identity, latest);
+            let (certificate, block) = certificate.unwrap();
+            assert_eq!(block.header.number(), 1);
+            assert_eq!(block.header.hash_slow(), certificate.digest);
+            assert_eq!(api.backend.best_hash(), certificate.digest);
+            assert_eq!(latest.unwrap().unwrap().0.digest, certificate.digest);
+            identity.unwrap();
+            snapshot.unwrap()
         })
         .await
         .unwrap();
@@ -473,18 +593,18 @@ mod tests {
         let mut chain = TempoChain::new(B256::ZERO, NonZeroU64::new(3).unwrap(), 5);
         chain.consensus.rotate().unwrap();
         let next_rotation = chain.consensus.clone().rotate().unwrap();
-        chain.unwind(5).unwrap();
+        chain.unwind(&unsigned_tempo_block(5)).unwrap();
         assert_eq!(chain.consensus.clone().rotate().unwrap(), next_rotation);
         chain.snapshot(U256::ONE);
         let mut expected = chain.consensus.clone();
 
-        chain.unwind(3).unwrap();
+        chain.unwind(&unsigned_tempo_block(3)).unwrap();
         assert!(chain.consensus.latest().is_none());
         chain.restore(U256::ONE, 5);
         assert_eq!(chain.consensus.rotate().unwrap(), expected.rotate().unwrap());
 
         // Restoring the snapshot restores anchor 5, so height 4 is an unsigned ancestor again.
-        chain.unwind(4).unwrap();
+        chain.unwind(&unsigned_tempo_block(4)).unwrap();
         assert!(chain.consensus.latest().is_none());
         let mut header = TempoHeader::default();
         header.inner.number = 5;
@@ -506,12 +626,12 @@ mod tests {
         let retained = chain.consensus.finalization(7).unwrap().clone();
         let identity = chain.consensus.identity();
 
-        let error = chain.unwind(6).unwrap_err();
+        let error = chain.unwind(&unsigned_tempo_block(6)).unwrap_err();
         assert!(matches!(error, BlockchainError::Internal(message)
             if message == "cannot rewind Tempo consensus from 7 to 6 with earliest retained height 7"));
         assert_eq!(chain.consensus.latest(), Some((7, &retained)));
         assert_eq!(chain.consensus.identity(), identity);
-        chain.unwind(7).unwrap();
+        chain.unwind(&unsigned_tempo_block(7)).unwrap();
         assert_eq!(chain.consensus.latest(), Some((7, &retained)));
     }
 
@@ -649,5 +769,11 @@ mod tests {
         let _db = api.backend.db.write().await;
         let mut storage = api.backend.blockchain.storage.write();
         storage.tempo.as_mut().unwrap().consensus.rotate().unwrap()
+    }
+
+    fn unsigned_tempo_block(height: u64) -> Block {
+        let mut header = TempoHeader::default();
+        header.inner.number = height;
+        Block::new(header.into(), Default::default())
     }
 }

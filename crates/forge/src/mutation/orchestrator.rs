@@ -225,10 +225,13 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
         }
         handler.read_source_contract()?;
 
-        // Get build ID for caching
+        // Match ordinary and verbatim Windows paths when looking up the cache build ID.
+        let normalized_path = normalize_path(&path);
         let build_id = output
             .artifact_ids()
-            .find_map(|(id, _)| (id.source == path).then_some(id.build_id))
+            .find_map(|(id, _)| {
+                (normalize_path(&id.source) == normalized_path).then_some(id.build_id)
+            })
             .unwrap_or_default();
 
         // Load persisted survived spans before generating/loading mutants so
@@ -614,10 +617,14 @@ fn resolve_mutate_paths(
     let paths = if let Some(contract_pattern) = &mutation_config.mutate_contract_pattern {
         let matching_sources: HashSet<PathBuf> = output
             .artifact_ids()
-            .filter_map(|(id, _)| contract_pattern.is_match(&id.name).then_some(id.source.clone()))
+            .filter_map(|(id, _)| {
+                contract_pattern.is_match(&id.name).then(|| normalize_path(&id.source))
+            })
             .collect();
-        let paths: Vec<_> =
-            base.into_iter().filter(|entry| matching_sources.contains(entry)).collect();
+        let paths: Vec<_> = base
+            .into_iter()
+            .filter(|entry| matching_sources.contains(&normalize_path(entry)))
+            .collect();
         if paths.is_empty() {
             if mutation_config.mutate_paths.is_empty()
                 && mutation_config.mutate_path_pattern.is_none()
