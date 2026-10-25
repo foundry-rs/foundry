@@ -11986,9 +11986,9 @@ checksum = "e8e2fb0f499abb4d162f2bedad68f5ef91a1682b5a03596ddb67efd37768d100"
 
 [[package]]
 name = "smolgen"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9452d78a58bf7d7ccaf0b935af070b2a37660de91c767a559e0e0c2c5168cd69"
+checksum = "40c9a98255db4f93af8770f11f42b5a7f345cd93b96dafe7b1ae72ef99a16386"
 
 [[package]]
 name = "snap"
