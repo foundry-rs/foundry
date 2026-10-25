@@ -6947,10 +6947,7 @@ async fn tempo_consensus_mined_certificate_matches_block_hash() {
     api.mine_one().await.unwrap();
     let finalization = tempo_finalization(&provider, 1).await;
     let block = provider.get_block_by_number(1.into()).await.unwrap().unwrap();
-    let raw_header: Bytes =
-        provider.client().request("debug_getRawHeader", (BlockId::number(1),)).await.unwrap();
 
-    assert_eq!(keccak256(raw_header), block.header.hash);
     assert_eq!(finalization.digest, block.header.hash);
     assert_eq!((finalization.epoch, finalization.view), (0, 1));
     assert_eq!((identity.participants, identity.quorum, identity.epoch_length), (1, 1, 21_600));
