@@ -700,10 +700,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ///
     /// `context` holds the block context of networks whose execution depends on the block
     /// position, such as Monad's reserve balance; prefix and target transactions are positioned
-    /// in it, and, with a context, the target replays trusted protocol transactions. Prefix
-    /// transactions from known system senders are skipped, except canonical protocol transactions
-    /// of the network, which replay. `target_kind` is the target's kind, which decides the test
-    /// contract.
+    /// in it, and, with a context, the target replays trusted protocol transactions. The caller
+    /// selects which prefix transactions replay; canonical protocol transactions of the network
+    /// replay as such. `target_kind` is the target's kind, which decides the test contract.
     #[instrument(name = "transact_block_replay", level = "debug", skip_all)]
     pub fn transact_with_block_replay(
         &mut self,
@@ -736,9 +735,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let factory = EvmFactoryFor::<FEN>::default();
         for (tx_hash, tx) in replay {
             let is_protocol = ChainFor::<FEN>::is_protocol_transaction(tx);
-            if foundry_common::is_known_system_sender(tx.signer()) && !is_protocol {
-                continue;
-            }
             let backend = self.backend_mut();
             let mut evm = backend.create_evm();
             install_env::<FEN>(backend, &mut evm, evm_env);
@@ -2186,14 +2182,14 @@ mod tests {
         let env = *executor.evm_env();
         let context = || Some(BlockContext::new(Vec::new(), Vec::new(), Vec::new()));
 
-        // The canonical prefix syscall replays, the gas-paying system envelope is skipped, and the
-        // canonical target replays at the prefix's nonce.
+        // The canonical prefix syscall replays, and the canonical target replays at the prefix's
+        // nonce.
         let result = executor
             .transact_with_block_replay(
                 env,
                 &epoch_change,
                 TxKind::Call(STAKING),
-                &[(B256::repeat_byte(1), snapshot), (B256::repeat_byte(2), gas_paying.clone())],
+                &[(B256::repeat_byte(1), snapshot)],
                 context(),
             )
             .unwrap();
