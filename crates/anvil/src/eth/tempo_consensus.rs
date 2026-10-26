@@ -3,6 +3,10 @@
 //! `consensus_getFinalization` returns a [`TempoCertifiedBlock`]. `consensus_getLatest` returns a
 //! [`TempoConsensusState`] with nullable `finalized` and `notarized`; local mining only populates
 //! `finalized`. The certificate bytes are unprefixed hex.
+//!
+//! Identity rotation takes effect in the epoch after the next block's epoch, allowing its
+//! predecessor's boundary block to announce the new key before it signs. Snapshots restore pending
+//! rotations exactly; rollback restores the retained block's key schedule.
 
 use super::{
     backend::tempo_consensus::TempoFinalization,
