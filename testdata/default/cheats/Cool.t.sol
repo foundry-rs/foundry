@@ -119,55 +119,34 @@ contract CoolPersistenceTest is Test {
         assertLt(balanceGas(address(this)), 2600);
     }
 
-    // Only the coinbase the transaction started with stays warm.
-    function testCool_recipientMadeCoinbase() public {
+    // Like REVM's `WarmAddresses`, precompiles and the coinbase the transaction started with stay
+    // warm (EIP-2929, EIP-3651), while `vm.coinbase` and `vm.accessList` only apply to later
+    // transactions, including after an isolated call installed and restored its own.
+    function testCool_keepsTransactionStartWarmth() public {
+        address coinbase = block.coinbase;
         vm.coinbase(address(this));
-        vm.cool(address(this));
-        assertGe(balanceGas(address(this)), 2600);
-    }
-
-    // `vm.accessList` applies to later isolated calls, not to the running transaction.
-    function testCool_recipientInConfiguredAccessList() public {
         Vm.AccessListItem[] memory access = new Vm.AccessListItem[](1);
         access[0] = Vm.AccessListItem(address(this), new bytes32[](0));
         vm.accessList(access);
-        vm.cool(address(this));
-        assertGe(balanceGas(address(this)), 2600);
-    }
-
-    // Warmth from a frame that reverts is reverted with it.
-    function testCool_rewarmedInRevertedFrame() public {
-        CoolProbe probe = new CoolProbe();
-        vm.cool(address(this));
-        try probe.touchAndRevert(address(this)) {} catch {}
-        assertGe(balanceGas(address(this)), 2600);
-    }
-
-    // A fork switch after cooling keeps the persistent test contract cold.
-    function testCool_forkSwitchAfterCool() public {
-        vm.createSelectFork("mainnet");
-        uint256 other = vm.createFork("mainnet", block.number - 1);
-        vm.cool(address(this));
-        vm.selectFork(other);
-        assertGe(balanceGas(address(this)), 2600);
-    }
-
-    // The coinbase the running transaction started with stays protected after an isolated call
-    // installs its own.
-    function testCool_keepsCoinbaseAfterNestedCall() public {
-        address coinbase = block.coinbase;
-        vm.coinbase(address(0xc1));
         CoolProbe probe = new CoolProbe();
         try probe.touchAndRevert(address(0)) {} catch {}
+
+        vm.cool(address(this));
         vm.cool(coinbase);
+        vm.cool(address(1));
+        assertGe(balanceGas(address(this)), 2600);
         assertLt(balanceGas(coinbase), 2600);
+        assertLt(balanceGas(address(1)), 2600);
     }
 
-    // A fork round trip before cooling keeps the persistent test contract cold on the other fork.
-    function testCool_forkRoundTripBeforeCool() public {
+    // Fork switches keep the cooled persistent test contract cold, before and after the running
+    // transaction's warmth was carried across a switch.
+    function testCool_forkSwitchAfterCool() public {
         uint256 first = vm.createSelectFork("mainnet");
         uint256 second = vm.createFork("mainnet", block.number - 1);
+        vm.cool(address(this));
         vm.selectFork(second);
+        assertGe(balanceGas(address(this)), 2600);
         vm.selectFork(first);
         vm.cool(address(this));
         vm.selectFork(second);
@@ -203,6 +182,18 @@ contract CoolPersistenceTest is Test {
         assertLt(target.gasUsed(), 2600);
     }
 
+    // A mined transaction replayed with `vm.transact` keeps its own block's coinbase warm.
+    function testCool_forkTransactKeepsCoinbaseWarm() public {
+        vm.createSelectFork("mainnet", 16260609);
+        // The USDT transfer https://etherscan.io/tx/0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c
+        address usdt = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+        vm.etch(usdt, type(CoolCoinbase).runtimeCode);
+        vm.makePersistent(usdt);
+        vm.allowCheatcodes(usdt);
+        vm.transact(0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+        assertLt(CoolCoinbase(usdt).gasUsed(), 2600);
+    }
+
     function signLegacy(uint256 key, uint256 nonce, address to, bytes memory data) internal returns (bytes memory) {
         bytes[] memory fields = new bytes[](9);
         fields[0] = rlpUint(nonce);
@@ -230,23 +221,12 @@ contract CoolPersistenceTest is Test {
             out[i] = word[start + i];
         }
     }
-
-    // Precompiles and the coinbase the transaction started with stay warm for the whole
-    // transaction (EIP-2929, EIP-3651).
-    function testCool_keepsPrecompileAndCoinbaseWarm() public {
-        address coinbase = block.coinbase;
-        vm.coinbase(address(0xbeef));
-        vm.cool(address(1));
-        vm.cool(coinbase);
-        assertLt(balanceGas(address(1)), 2600);
-        assertLt(balanceGas(coinbase), 2600);
-    }
 }
 
 contract CoolCoinbase is Test {
     uint256 public gasUsed;
 
-    function run() external {
+    function run() public {
         address target = block.coinbase;
         vm.cool(target);
         uint256 used;
@@ -257,6 +237,10 @@ contract CoolCoinbase is Test {
             if eq(targetBalance, 0xdeadbeef) { revert(0, 0) }
         }
         gasUsed = used;
+    }
+
+    fallback() external {
+        run();
     }
 }
 

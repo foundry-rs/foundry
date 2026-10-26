@@ -582,7 +582,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let fork_id = replay.backend().active_fork_id();
         let mut overrides = Default::default();
         cheats.env_overrides.swap(fork_id, &mut overrides);
+        // The mined transaction starts with its own block's coinbase and its access list.
+        let tx_warm_addresses = mem::replace(
+            &mut cheats.tx_warm_addresses,
+            tx_warm_addresses::<FEN>(&prepared.env(), prepared.access_list()),
+        );
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, false);
+        cheats.tx_warm_addresses = tx_warm_addresses;
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
         Ok(backend.backend_mut().store_executed(evm, executed?))

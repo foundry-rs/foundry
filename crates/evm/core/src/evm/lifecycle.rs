@@ -37,6 +37,7 @@ use crate::{
     state_snapshot::StateSnapshots,
 };
 use alloy_consensus::{Typed2718, transaction::Recovered};
+use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{
     Address, KECCAK256_EMPTY, Log, U256,
     map::{AddressMap, AddressSet, Entry, HashSet},
@@ -102,6 +103,8 @@ pub struct PreparedTx<T: EvmTypesHost> {
     inactive: Option<(Option<U256>, AddressSet)>,
     /// The fork whose canonical position and block cursor advance once the transaction executed.
     cursor: Option<ForkCursor<T>>,
+    /// The transaction's EIP-2930 access list, if its caller recorded it.
+    access_list: Option<AccessList>,
 }
 
 /// A fork's canonical position and the network state retaining its block cursor.
@@ -119,6 +122,21 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         self.cursor = Some((id, position, cursor));
     }
 
+    /// Returns the environment the transaction executes in.
+    pub const fn env(&self) -> EvmEnv<T> {
+        evm_env(&self.executor)
+    }
+
+    /// Returns the transaction's EIP-2930 access list, if recorded.
+    pub const fn access_list(&self) -> Option<&AccessList> {
+        self.access_list.as_ref()
+    }
+
+    /// Records the transaction's EIP-2930 access list.
+    pub fn set_access_list(&mut self, access_list: Option<AccessList>) {
+        self.access_list = access_list;
+    }
+
     /// Executes the transaction observed by `inspector` and merges its changes into the running
     /// transaction of `evm` as journaled writes: all of them on the running transaction's
     /// context, where a failed transaction only keeps its nonce increment and fee payment, and
@@ -131,7 +149,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         inspector: Option<&mut dyn Inspector<T>>,
         untracked: bool,
     ) -> eyre::Result<ExecutedNested<T>> {
-        let Self { executor, tx, inactive, cursor } = self;
+        let Self { executor, tx, inactive, cursor, access_list: _ } = self;
         let mut executor: Evm<'_, T> = executor;
         if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
@@ -755,6 +773,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             tx,
             inactive: None,
             cursor: None,
+            access_list: None,
         }
     }
 
@@ -809,7 +828,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             &mut executor.state_mut().overlay_db_mut().cache,
         );
         let inactive = Some((id, self.forks.persistent.clone()));
-        Ok(PreparedTx { executor, tx, inactive, cursor: None })
+        Ok(PreparedTx { executor, tx, inactive, cursor: None, access_list: None })
     }
 
     /// Stores the outcome of a [`PreparedTx`]: an inactive context's new accepted state.

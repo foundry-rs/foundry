@@ -39,7 +39,7 @@ use crate::{
     },
 };
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, Typed2718, transaction::Recovered};
+use alloy_consensus::{BlockHeader, Transaction as _, Typed2718, transaction::Recovered};
 use alloy_eips::BlockNumHash;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, TransactionResponse};
@@ -956,6 +956,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             prepared.set_cursor(id, position, cursor);
         }
 
+        prepared.set_access_list(target.transaction.access_list().cloned());
         let mut backend = CowBackend::new_borrowed(self);
         if !active {
             // The prepared transaction already runs over the target fork's state.
