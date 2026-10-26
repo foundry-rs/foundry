@@ -2172,7 +2172,7 @@ impl SymbolicWorld {
             return Ok(SymCode::concrete(cx, vec![0]));
         }
         let spec_id = executor.spec_id;
-        if precompile_number_for_spec(address, spec_id).is_some() {
+        if is_precompile_for_spec(address, spec_id) {
             return Ok(SymCode::empty(cx));
         }
         if self.destroyed_accounts.contains(&address) {
@@ -2325,7 +2325,7 @@ impl SymbolicWorld {
         for address in addresses {
             if address == CHEATCODE_ADDRESS
                 || address == SYMBOLIC_VM_COMPAT_ADDRESS
-                || precompile_number_for_spec(address, spec_id).is_some()
+                || is_precompile_for_spec(address, spec_id)
             {
                 continue;
             }
