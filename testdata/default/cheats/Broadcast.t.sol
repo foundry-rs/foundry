@@ -563,3 +563,38 @@ contract ScriptSign is ForgeTest {
         assertEq(actual, sender);
     }
 }
+
+library BroadcastLib {
+    event Set(uint256 value);
+
+    function set(uint256 value) public {
+        emit Set(value);
+    }
+}
+
+contract BroadcastDelegatecallTest is ForgeTest {
+    bytes constant ERR = "`delegatecall`s and `callcode`s cannot be broadcast; use a regular `call` instead";
+
+    function broadcastLibraryCall() external {
+        vm.startBroadcast();
+        // External library calls are delegatecalls.
+        BroadcastLib.set(42);
+        vm.stopBroadcast();
+    }
+
+    function testRevertIfBroadcastDelegatecall() public {
+        vm.expectRevert(ERR);
+        this.broadcastLibraryCall();
+    }
+
+    function testRevertIfBroadcastCallcode() public {
+        vm.startBroadcast();
+        bool ok;
+        assembly {
+            // A callcode to an account without code only fails if it is rejected.
+            ok := callcode(gas(), 0xdead, 0, 0, 0, 0, 0)
+        }
+        assertTrue(!ok);
+        vm.stopBroadcast();
+    }
+}

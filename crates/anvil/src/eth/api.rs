@@ -8,13 +8,15 @@ use super::{
         },
     },
     preserve_simulation_request_fields,
+    tempo_consensus::{TempoCertifiedBlock, TempoConsensusState},
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
         backend::{
             self, db::SerializableState, mem::MIN_TRANSACTION_GAS,
-            notifications::ChainNotifications, validate::TransactionValidator,
+            notifications::ChainNotifications, tempo_consensus::TempoConsensusIdentity,
+            validate::TransactionValidator,
         },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
@@ -84,7 +86,7 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
-        EthRequest,
+        EthRequest, TempoConsensusQuery,
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
@@ -241,11 +243,16 @@ impl<N: Network> EthApi<N> {
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
+        self.gas_price_for_base_fee(self.backend.base_fee())
+    }
+
+    /// Returns the gas price for a block with the given base fee.
+    fn gas_price_for_base_fee(&self, base_fee: u64) -> u128 {
         if self.backend.is_eip1559() {
             if self.backend.is_min_priority_fee_enforced() {
-                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+                (base_fee as u128).saturating_add(self.lowest_suggestion_tip())
             } else {
-                self.backend.base_fee() as u128
+                base_fee as u128
             }
         } else {
             self.backend.fees().raw_gas_price()
@@ -2645,6 +2652,13 @@ impl EthApi<FoundryNetwork> {
                 .anvil_set_fee_amm_liquidity(user_token, validator_token, amount)
                 .await
                 .to_rpc_result(),
+            EthRequest::ConsensusGetFinalization(query) => {
+                self.consensus_get_finalization(query).await.to_rpc_result()
+            }
+            EthRequest::ConsensusGetLatest(()) => self.consensus_get_latest().await.to_rpc_result(),
+            EthRequest::TempoConsensusIdentity(()) => {
+                self.anvil_tempo_consensus_identity().await.to_rpc_result()
+            }
         }
     }
 
@@ -3716,7 +3730,7 @@ impl EthApi<FoundryNetwork> {
 
         self.backend
             .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
-                let mut cache_db = CacheDB::new(state);
+                let mut cache_db = CacheDB::new(&*state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override, &mut cache_db)?;
                 }
@@ -4543,6 +4557,19 @@ impl EthApi<FoundryNetwork> {
         };
         #[cfg(not(feature = "monad"))]
         let fee_defaults = None;
+        // Price fee-less transactions for the blocks mined on top of the common block, not for the
+        // head that is about to be discarded.
+        let fee_defaults = fee_defaults.or_else(|| {
+            let (base_fee, blob_fees) = self.backend.next_block_fees_after(&common_block.header);
+            Some(TransactionFeeDefaults {
+                gas_price: self.gas_price_for_base_fee(base_fee),
+                blob_gas_price: self
+                    .backend
+                    .fees()
+                    .blob_params()
+                    .calc_blob_fee(blob_fees.excess_blob_gas),
+            })
+        });
 
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
@@ -4934,7 +4961,7 @@ impl EthApi<FoundryNetwork> {
                 .with_database_at_and_context(
                     Some(block_request),
                     |state, mut block, monad_context| {
-                        let mut cache_db = CacheDB::new(state);
+                        let mut cache_db = CacheDB::new(&*state);
                         if let Some(state_overrides) = overrides.state {
                             apply_state_overrides(state_overrides, &mut cache_db)?;
                         }
@@ -5566,6 +5593,51 @@ impl EthApi<FoundryNetwork> {
             return Ok(nonce);
         }
         self.request_nonce(request.as_ref(), from).await
+    }
+
+    /// Returns a locally mined Tempo finalization and its native block.
+    ///
+    /// Handler for `consensus_getFinalization`; unavailable on non-Tempo networks.
+    /// Genesis and remote fork anchors are unsigned; remote certificates are not forwarded.
+    /// `latest` uses the retained complete body; height queries require a matching stored body.
+    /// Returns JSON-RPC error code 503 if the requested certificate or a complete block matching
+    /// its commitments is unavailable.
+    pub async fn consensus_get_finalization(
+        &self,
+        query: TempoConsensusQuery,
+    ) -> Result<TempoCertifiedBlock> {
+        node_info!("consensus_getFinalization");
+        let height = match query {
+            TempoConsensusQuery::Latest => None,
+            TempoConsensusQuery::Height(height) => Some(height),
+        };
+        self.backend.tempo_finalization(height).await?.try_into()
+    }
+
+    /// Returns the latest local finalization, with `notarized: null` as on Tempo.
+    ///
+    /// Handler for `consensus_getLatest`; unavailable on non-Tempo networks.
+    /// Returns `finalized: null` when the current local signing history has no certificate.
+    /// Returns JSON-RPC error code 503 if a certificate exists but its complete block is
+    /// unavailable or no longer matches its commitments, including after rollback to a pruned
+    /// body.
+    pub async fn consensus_get_latest(&self) -> Result<TempoConsensusState> {
+        node_info!("consensus_getLatest");
+        let finalized = self
+            .backend
+            .tempo_latest_finalization()
+            .await?
+            .map(TempoCertifiedBlock::try_from)
+            .transpose()?;
+        Ok(TempoConsensusState { finalized, notarized: None })
+    }
+
+    /// Returns the public local development committee on Tempo networks.
+    ///
+    /// Handler for `anvil_tempoConsensusIdentity`.
+    pub async fn anvil_tempo_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
+        node_info!("anvil_tempoConsensusIdentity");
+        self.backend.tempo_consensus_identity().await
     }
 }
 

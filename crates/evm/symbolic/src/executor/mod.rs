@@ -206,9 +206,9 @@ impl SymbolicExecutor {
         StepOutcome::Continue
     }
 
-    fn execute_call_path_batch<FEN: FoundryEvmNetwork>(
+    fn execute_call_path_batch(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         code: &SymCode,
         worklist: &mut VecDeque<PathState>,
         deferred_worklist: &mut VecDeque<PathState>,

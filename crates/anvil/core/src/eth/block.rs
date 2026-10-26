@@ -1,8 +1,8 @@
 use super::transaction::TransactionInfo;
 use crate::eth::transaction::MaybeImpersonatedTransaction;
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Typed2718, proofs::ordered_trie_root_with_encoder,
-    transaction::RlpEcdsaEncodableTx,
+    BlockBody, BlockHeader, EMPTY_OMMER_ROOT_HASH, Typed2718,
+    proofs::ordered_trie_root_with_encoder, transaction::RlpEcdsaEncodableTx,
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Network;
@@ -69,7 +69,8 @@ where
     header.set_transactions_root(transactions_root);
     header.set_ommers_hash(EMPTY_OMMER_ROOT_HASH);
 
-    let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
+    let withdrawals = header.withdrawals_root().map(|_| Default::default());
+    let body = BlockBody { transactions, ommers: Vec::new(), withdrawals };
     Block::new(header, body)
 }
 
@@ -77,8 +78,8 @@ where
 mod tests {
 
     use alloy_consensus::{
-        BlobTransactionSidecar, BlobTransactionSidecarVariant, BlockHeader, Header,
-        SignableTransaction, TxEip4844, TxEip4844Variant, proofs::calculate_transaction_root,
+        BlobTransactionSidecar, BlobTransactionSidecarVariant, Header, SignableTransaction,
+        TxEip4844, TxEip4844Variant, proofs::calculate_transaction_root,
     };
     use alloy_primitives::{
         Address, B64, B256, Bloom, Signature, U256, address, b256,
@@ -288,5 +289,18 @@ mod tests {
 
         // check that length of encoding is the same as the output of `length`
         assert_eq!(block.length(), encoded.len());
+    }
+
+    #[test]
+    fn created_block_preserves_withdrawals_commitment() {
+        for withdrawals_root in [None, Some(alloy_consensus::EMPTY_ROOT_HASH)] {
+            let header =
+                Header { base_fee_per_gas: Some(1), withdrawals_root, ..Default::default() };
+            let block = create_block::<FoundryTxEnvelope, _>(header.into(), []);
+            assert_eq!(block.body.calculate_withdrawals_root(), withdrawals_root);
+            let encoded = alloy_rlp::encode(&block);
+            let decoded = <Block>::decode(&mut encoded.as_slice()).unwrap();
+            assert_eq!(decoded.body.withdrawals, block.body.withdrawals);
+        }
     }
 }

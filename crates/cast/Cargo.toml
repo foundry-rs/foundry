@@ -70,7 +70,7 @@ op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-flz = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
 
-aes-gcm = "0.10"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 hkdf = "0.12"
 k256.workspace = true
 sha2 = "0.10"

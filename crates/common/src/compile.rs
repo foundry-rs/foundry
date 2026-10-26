@@ -25,7 +25,6 @@ use foundry_compilers::{
         BytecodeObject, Contract, Error as SolcError, Severity, Source,
         output_selection::OutputSelection, remappings::Remapping,
     },
-    cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
@@ -36,7 +35,7 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
-use foundry_config::{Config, figment::Provider};
+use foundry_config::Config;
 use num_format::{Locale, ToFormattedString};
 use solar::{
     ast::{Arena, ContractKind, ItemKind},
@@ -45,7 +44,7 @@ use solar::{
 };
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
     path::{Component, Path, PathBuf},
@@ -99,6 +98,9 @@ pub struct ProjectCompiler {
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
 
+    /// Whether compiled contracts may depend on externally linked Solidity libraries.
+    allow_linked_libraries: bool,
+
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
 
@@ -134,6 +136,7 @@ impl ProjectCompiler {
             source_order_fallback: Vec::new(),
             selected_paths: Vec::new(),
             dynamic_test_linking: false,
+            allow_linked_libraries: true,
             abi_cache: false,
             external_compilers: None,
             external_writes: true,
@@ -249,6 +252,15 @@ impl ProjectCompiler {
         self
     }
 
+    /// Sets whether compiled contracts may depend on externally linked Solidity libraries.
+    ///
+    /// This does not disable dynamic test linking. With `bail(false)`, violations are reported as
+    /// compiler errors in the returned output.
+    pub const fn allow_linked_libraries(mut self, allow: bool) -> Self {
+        self.allow_linked_libraries = allow;
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -354,7 +366,7 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter_and_settings(
+        let mut output = with_compilation_reporter_and_settings(
             quiet,
             Some(self.project_root.clone()),
             self.print_compiler_settings,
@@ -374,6 +386,13 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
+        let mut linking_error = (!self.allow_linked_libraries && !output.has_compiler_errors())
+            .then(|| linked_libraries_error(&output, &self.project_root))
+            .flatten();
+        if !bail && let Some(message) = linking_error.take() {
+            push_linked_libraries_error(&mut output, message);
+        }
+
         if !quiet && !shell::is_json() {
             if output.is_unchanged() {
                 sh_println!("No files changed, compilation skipped")?;
@@ -381,6 +400,11 @@ impl ProjectCompiler {
                 // print the compiler output / warnings
                 sh_println!("{output}")?;
             }
+        }
+
+        // Report compiler warnings before the policy failure.
+        if let Some(message) = linking_error {
+            eyre::bail!("{message}");
         }
 
         // Quiet mode suppresses reports, but size limits still apply.
@@ -865,66 +889,6 @@ where
     compile_abi_project(&mut cached_project, compiler)
 }
 
-/// Build of the profiles named by `[rpc_endpoints]` that share compiler settings.
-#[derive(Clone, Debug)]
-pub struct ProfileBuild {
-    /// Profiles with these compiler settings.
-    pub profiles: Vec<String>,
-    /// Config with these compiler settings.
-    pub config: Config,
-    /// Artifacts directory of the build.
-    pub artifacts_dir: PathBuf,
-    /// The compiler output.
-    pub output: ProjectCompileOutput,
-}
-
-/// Compiles each distinct set of compiler settings among the profiles named by `[rpc_endpoints]`
-/// once, with `overrides` applied, and caches it by those settings.
-pub fn compile_endpoint_profiles(
-    config: &Config,
-    overrides: impl Provider + Clone,
-    compiler: impl Fn(&Config) -> ProjectCompiler,
-) -> Result<Vec<ProfileBuild>> {
-    let profiles = config
-        .rpc_endpoints
-        .values()
-        .filter_map(|endpoint| endpoint.profile.as_deref())
-        .collect::<BTreeSet<_>>();
-    let mut builds = Vec::<ProfileBuild>::new();
-    let mut outputs = BTreeMap::<_, (PathBuf, ProjectCompileOutput)>::new();
-    for profile in profiles {
-        let config = config.with_profile_compiler_settings(profile, overrides.clone())?;
-        let cache_path = config.profile_cache_path()?;
-        if let Some(build) = builds.iter_mut().find(|build| {
-            build.artifacts_dir == cache_path.join("artifacts")
-                && build.config.hardfork == config.hardfork
-                && build.config.create2_library_salt == config.create2_library_salt
-        }) {
-            build.profiles.push(profile.to_string());
-            continue;
-        }
-        let (artifacts_dir, output) = match outputs.entry(cache_path) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let mut project = config.project()?;
-                project.paths.cache = entry.key().join(SOLIDITY_FILES_CACHE_FILENAME);
-                project.paths.artifacts = entry.key().join("artifacts");
-                project.paths.build_infos = entry.key().join("build-info");
-                project.paths.slash_paths();
-                let output = compiler(&config).compile(&project)?;
-                entry.insert((project.paths.artifacts, output))
-            }
-        };
-        builds.push(ProfileBuild {
-            profiles: vec![profile.to_string()],
-            config,
-            artifacts_dir: artifacts_dir.clone(),
-            output: output.clone(),
-        });
-    }
-    Ok(builds)
-}
-
 /// Compiles the target contract requesting only ABI output and returns its ABI.
 pub fn compile_target_abi(
     project: &mut Project<MultiCompiler>,
@@ -1126,6 +1090,57 @@ impl std::fmt::Debug for PathOrContractInfo {
     }
 }
 
+/// Describes the Solidity library dependencies in creation or runtime bytecode, if any.
+///
+/// Includes cached artifacts and permits internal libraries and dynamic test linking helpers.
+fn linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
+    output: &ProjectCompileOutput<C>,
+    root: &Path,
+) -> Option<String> {
+    let violations = output
+        .artifact_ids()
+        .flat_map(|(id, artifact)| {
+            let contract = id.with_stripped_file_prefixes(root).identifier();
+            artifact.all_link_references().into_iter().flat_map(move |(file, libs)| {
+                let contract = contract.clone();
+                libs.into_keys().map(move |lib| format!("{contract} links {file}:{lib}"))
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    (!violations.is_empty()).then(|| {
+        format!(
+            "Linked libraries are not allowed (`allow_linked_libraries = false`):\n  {}\n\
+             help: make the library functions `internal` to inline them, or set \
+             `allow_linked_libraries = true`",
+            violations.into_iter().collect::<Vec<_>>().join("\n  ")
+        )
+    })
+}
+
+/// Appends a linked-library policy error to solc or multi-compiler diagnostics.
+fn push_linked_libraries_error<C: Compiler<CompilerContract = Contract>>(
+    output: &mut ProjectCompileOutput<C>,
+    message: String,
+) {
+    let error = SolcError {
+        source_location: None,
+        secondary_source_locations: Vec::new(),
+        r#type: "LinkedLibraryError".to_string(),
+        component: "foundry".to_string(),
+        severity: Severity::Error,
+        error_code: None,
+        message,
+        formatted_message: None,
+    };
+    // CompilationError has no constructor; downcast to the concrete diagnostics instead.
+    let errors = &mut output.output_mut().errors as &mut dyn Any;
+    if let Some(errors) = errors.downcast_mut::<Vec<SolcError>>() {
+        errors.push(error);
+    } else if let Some(errors) = errors.downcast_mut::<Vec<MultiCompilerError>>() {
+        errors.push(MultiCompilerError::Solc(error));
+    }
+}
+
 /// Recognizes only solc code-generation failures that DTL's source rewrites can introduce.
 /// Unrelated errors (including other languages) must not trigger a retry.
 fn dynamic_test_linking_failure<E: CompilationError>(errors: &[E]) -> Option<&'static str> {
@@ -1258,47 +1273,5 @@ mod tests {
             sanitize_relative_path(Path::new("lib/openzeppelin")),
             Path::new("lib/openzeppelin")
         );
-    }
-
-    #[test]
-    fn endpoint_profiles_share_compilation_but_preserve_runtime_settings() {
-        foundry_config::figment::Jail::expect_with(|jail| {
-            jail.create_dir("src")?;
-            jail.create_file("src/Profile.sol", "pragma solidity >=0.8.0; contract Profile {}")?;
-            jail.create_file(
-                "foundry.toml",
-                r#"
-[profile.default]
-evm_version = "cancun"
-[profile.first]
-hardfork = "cancun"
-create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
-[profile.second]
-hardfork = "prague"
-create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
-[rpc_endpoints]
-first = { endpoint = "http://127.0.0.1:1", profile = "first" }
-second = { endpoint = "http://127.0.0.1:2", profile = "second" }
-"#,
-            )
-            .unwrap();
-            let config = Config::load().unwrap();
-            let count = std::cell::Cell::new(0);
-            let builds =
-                compile_endpoint_profiles(&config, foundry_config::figment::Figment::new(), |_| {
-                    count.set(count.get() + 1);
-                    ProjectCompiler::new().quiet(true)
-                })
-                .unwrap();
-            assert_eq!(count.get(), 1);
-            assert_eq!(builds.len(), 2);
-            assert_eq!(builds[0].artifacts_dir, builds[1].artifacts_dir);
-            assert_ne!(builds[0].config.hardfork, builds[1].config.hardfork);
-            assert_ne!(
-                builds[0].config.create2_library_salt,
-                builds[1].config.create2_library_salt
-            );
-            Ok(())
-        });
     }
 }

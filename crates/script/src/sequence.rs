@@ -5,7 +5,7 @@ use crate::{
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use eyre::{ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
@@ -159,18 +159,28 @@ where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
     recovery: RecoveryStore<N>,
+    /// Endpoint that replaces the saved one for this run, never persisted.
+    rpc_override: Option<String>,
 }
 
 impl<N: Network> ScriptSequenceKind<N>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
-    pub fn new_single(sequence: ScriptSequence<N>, batch: bool) -> Result<Self> {
-        Self::create(SequenceData::Single(Box::new(sequence)), batch)
+    pub fn new_single(
+        sequence: ScriptSequence<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
+        Self::create(SequenceData::Single(Box::new(sequence)), batch, sponsor)
     }
 
-    pub fn new_multi(sequence: MultiChainSequence<N>, batch: bool) -> Result<Self> {
-        Self::create(SequenceData::Multi(sequence), batch)
+    pub fn new_multi(
+        sequence: MultiChainSequence<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
+        Self::create(SequenceData::Multi(sequence), batch, sponsor)
     }
 
     pub fn load_single(
@@ -229,15 +239,15 @@ where
             }
             RecoveryStore::import(data, batch, lock)?
         };
-        let sequence = Self { recovery };
+        let sequence = Self { recovery, rpc_override: None };
         sequence.recovery.data().publish(&paths)?;
         Ok(sequence)
     }
 
-    fn create(data: SequenceData<N>, batch: bool) -> Result<Self> {
+    fn create(data: SequenceData<N>, batch: bool, sponsor: Option<Address>) -> Result<Self> {
         let paths = data.paths();
-        let recovery = RecoveryStore::create(data, batch)?;
-        let sequence = Self { recovery };
+        let recovery = RecoveryStore::create(data, batch, sponsor)?;
+        let sequence = Self { recovery, rpc_override: None };
         sequence.recovery.data().publish(&paths)?;
         Ok(sequence)
     }
@@ -273,6 +283,16 @@ where
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence<N>] {
         self.recovery.data_mut().sequences_mut()
+    }
+
+    /// Uses `rpc` instead of the saved endpoint for the rest of this run.
+    pub(crate) fn set_rpc_override(&mut self, rpc: String) {
+        self.rpc_override = Some(rpc);
+    }
+
+    /// Returns the endpoint used to reach the sequence at `index`.
+    pub(crate) fn rpc_url(&self, index: usize) -> &str {
+        self.rpc_override.as_deref().unwrap_or_else(|| self.sequences()[index].rpc_url())
     }
 
     pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
@@ -470,6 +490,11 @@ where
         self.recovery.data().is_multi()
     }
 
+    /// Returns the Tempo sponsor recorded when the deployment was created.
+    pub(crate) const fn sponsor(&self) -> Option<Address> {
+        self.recovery.sponsor()
+    }
+
     /// Atomically promotes a dry-run sequence to the broadcast paths.
     pub fn promote_to_broadcasted(
         &mut self,
@@ -612,7 +637,6 @@ pub(crate) fn blocked_pending<N: Network>(
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
-    use alloy_primitives::Address;
     use alloy_rpc_types::TransactionRequest;
     use foundry_common::TransactionMaybeSigned;
 
@@ -685,7 +709,7 @@ mod tests {
         deployment.transactions.push_back(TransactionWithMetadata::from_tx_request(
             TransactionMaybeSigned::Unsigned(Default::default()),
         ));
-        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false, None).unwrap();
         sequence.persist_delegated_request(0, 0, Default::default()).unwrap();
         sequence.persist_delegated_status(0, 0, DelegatedStatus::OutcomeUnknown).unwrap();
         let attempt = sequence.recovery.delegated_attempts()[0].2;

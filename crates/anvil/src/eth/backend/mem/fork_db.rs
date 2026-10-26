@@ -73,6 +73,7 @@ fn remote_state_snapshot(remote: &RemoteState) -> StateSnapshot {
             })
             .collect(),
         block_hashes: remote.block_hashes.read().clone(),
+        account_states: None,
     }
 }
 
@@ -301,6 +302,19 @@ impl<N: Network> Db for ForkedDatabase<N> {
     fn current_state(&self) -> StateDb {
         StateDb::new(self.create_state_snapshot())
     }
+
+    fn historical_state(&self, state_snapshot: StateSnapshot) -> StateDb {
+        // Fall back to the fork for anything the snapshot did not capture. Snapshots without
+        // account states cannot tell cleared storage from uncached storage, so they keep the
+        // previous standalone restore.
+        let mut state = if state_snapshot.account_states.is_some() {
+            StateDb::new(CacheDB::new(self.database().db.clone()))
+        } else {
+            StateDb::new(super::in_memory_db::MemDb::default())
+        };
+        state.init_from_state_snapshot(state_snapshot);
+        state
+    }
 }
 
 impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
@@ -427,6 +441,9 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        if let Some(account_states) = local_state_snapshot.account_states {
+            state_snapshot.account_states.get_or_insert_default().extend(account_states);
+        }
         state_snapshot
     }
 
@@ -436,6 +453,9 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        if let Some(account_states) = local_state_snapshot.account_states {
+            state_snapshot.account_states.get_or_insert_default().extend(account_states);
+        }
         state_snapshot
     }
 

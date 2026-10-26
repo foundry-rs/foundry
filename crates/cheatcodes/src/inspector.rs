@@ -44,14 +44,13 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{Backend, LocalForkId, RevertDiagnostic},
+    backend::{LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
         FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
     },
-    opts::{ExecutionSpecContext, resolve_execution_spec},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -60,7 +59,7 @@ use itertools::Itertools;
 use rand::Rng;
 use std::{
     cmp::max,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::Debug,
     ops::Range,
     sync::{Arc, OnceLock},
@@ -672,9 +671,6 @@ impl ArbitraryStorage {
     }
 }
 
-/// Broadcaster, salt and CREATE2 libraries to deploy before the first broadcast to a fork.
-pub type ChainLibraries = (Address, B256, Vec<(Address, Bytes)>);
-
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
@@ -939,12 +935,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Output the in-flight `deployCode` call's constructor returned, which the EVM drops if
     /// depositing it fails, and whether the constructor ran in an isolated call.
     pub deploy_code_output: Option<(Bytes, bool)>,
-
-    /// Spec of the run, restored for persistent accounts on forks of profiled endpoints.
-    run_spec: Option<SpecFor<FEN>>,
-
-    /// RPC urls of the forks whose CREATE2 libraries were deployed.
-    chain_libraries_deployed: BTreeSet<String>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1023,8 +1013,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_depth: None,
             deploy_code_create_state_gas: 0,
             deploy_code_output: None,
-            run_spec: None,
-            chain_libraries_deployed: Default::default(),
         }
     }
 
@@ -1380,59 +1368,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.origin_override = (origin != tx_origin).then_some(origin);
     }
 
-    /// Whether this create belongs to the local script/test or is itself recorded for broadcast.
-    /// Never replace initcode inside an ordinary on-chain factory call.
-    pub fn should_use_profile_init_code(&self, depth: usize, caller: Address) -> bool {
-        let depth = self.deploy_code_caller_depth(depth);
-        if let Some(broadcast) = &self.broadcast {
-            depth == broadcast.depth && caller == broadcast.original_caller
-        } else {
-            depth == 1 && caller != self.core.config.evm_opts.create2_deployer
-        }
-    }
-
-    /// Returns the spec that frames of `target`, or creates for `None`, start with: the custom
-    /// execution evm version, or on forks of profiled endpoints the spec of the profile for
-    /// non-persistent targets and creates below the top level, and the run's spec otherwise.
-    ///
-    /// `None` leaves the spec to the running environment.
-    pub fn execution_spec(
-        &mut self,
-        backend: &Backend<FEN>,
-        running: &EvmEnvFor<FEN>,
-        target: Option<Address>,
-        depth: u16,
-    ) -> Option<SpecFor<FEN>> {
-        if let Some(spec) = self.execution_evm_version {
-            return Some(spec);
-        }
-        let chain_builds = &self.core.config.chain_builds;
-        if chain_builds.is_empty() {
-            return None;
-        }
-        let run_spec = *self.run_spec.get_or_insert(running.spec);
-        let profiled = match target {
-            Some(target) => !backend.is_persistent(&target),
-            None => depth > 0,
-        };
-        let spec = match backend.active_fork_url().and_then(|rpc| chain_builds.get(&rpc)) {
-            Some(build) if profiled => {
-                let mut evm_env = *running;
-                resolve_execution_spec(
-                    &EvmFactoryFor::<FEN>::default(),
-                    build.evm_version,
-                    build.hardfork,
-                    &mut evm_env,
-                    ExecutionSpecContext::fork(running.chain_id(), None),
-                    None,
-                );
-                evm_env.spec
-            }
-            _ => run_spec,
-        };
-        Some(spec)
-    }
-
     /// Handles a call, accounting for whether the executor will isolate it as a transaction.
     ///
     /// If `isolate_call` is true, the executor owns the transaction nonce increment when the call
@@ -1608,6 +1543,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
                 && call.caller == broadcast.original_caller
             {
+                // Delegatecalls and callcodes run in the caller's context and cannot be
+                // represented as a transaction from the broadcaster.
+                if matches!(call.kind, MessageKind::DelegateCall | MessageKind::CallCode) {
+                    let msg = "`delegatecall`s and `callcode`s cannot be broadcast; use a regular `call` instead";
+                    return Some(message_result(call, InstrStop::Revert, Error::encode(msg)));
+                }
+
                 // Reset deploy from code flag for upcoming calls.
                 broadcast.deploy_from_code = false;
 
@@ -2010,66 +1952,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[inline(always)]
     fn has_active_env_overrides(&self) -> bool {
         self.env_overrides.is_any_set()
-    }
-
-    /// Returns the broadcaster, salt and CREATE2 libraries to deploy before the first broadcast
-    /// to `rpc`: those of the endpoint's profile build, or the run's libraries, which the runner
-    /// already deploys on the `--rpc-url` endpoint.
-    pub fn take_chain_libraries(
-        &mut self,
-        rpc: &str,
-        depth: usize,
-        caller: Address,
-    ) -> Option<ChainLibraries> {
-        let config = &self.core.config;
-        let broadcast = self.broadcast.as_ref()?;
-        let depth = self.deploy_code_caller_depth(depth);
-        if depth < broadcast.depth
-            || caller != broadcast.original_caller
-            || (depth != broadcast.depth && !broadcast.deploy_from_code)
-            || self.chain_libraries_deployed.contains(rpc)
-        {
-            return None;
-        }
-        let (salt, libraries) = match config.chain_builds.get(rpc) {
-            Some(build) => (build.create2_library_salt, &build.create2_libraries),
-            None if config.evm_opts.fork_url.as_deref() != Some(rpc) => {
-                (config.create2_library_salt, &config.create2_libraries)
-            }
-            None => return None,
-        };
-        if libraries.is_empty() {
-            return None;
-        }
-        self.chain_libraries_deployed.insert(rpc.to_string());
-        Some((broadcast.new_origin, salt, libraries.clone()))
-    }
-
-    /// Records a CREATE2 library deployment by `from` on `rpc` as a broadcastable transaction.
-    pub fn record_library_deployment(
-        &mut self,
-        rpc: Option<String>,
-        chain_id: u64,
-        from: Address,
-        nonce: u64,
-        create2_deployer: Address,
-        input: Bytes,
-    ) {
-        let mut tx_req = TransactionRequestFor::<FEN>::default()
-            .with_from(from)
-            .with_to(create2_deployer)
-            .with_input(input)
-            .with_nonce(nonce)
-            .with_chain_id(chain_id);
-        if let Some(fee_token) = self.fee_token {
-            tx_req.set_fee_token(fee_token);
-        }
-        self.broadcastable_transactions.push_back(BroadcastableTransaction {
-            rpc,
-            transaction: TransactionMaybeSigned::new(tx_req),
-            contract_address: None,
-        });
-        debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable library deployment");
     }
 
     /// Called after a frame interpreter has been initialized.

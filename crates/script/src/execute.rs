@@ -1,7 +1,7 @@
 use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
 use crate::{
     ScriptArgs, ScriptConfig,
-    build::{CompiledState, LinkedBuildData, ScriptPredeployLibraries},
+    build::{CompiledState, LinkedBuildData},
     simulate::PreSimulationState,
 };
 use alloy_dyn_abi::FunctionExt;
@@ -197,16 +197,6 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             }
         }
 
-        // Forks deploy CREATE2 libraries before their first broadcast.
-        if let ScriptPredeployLibraries::Create2 { onchain, .. } =
-            &self.build_data.predeploy_libraries
-            && self.script_config.evm_opts.fork_url.is_none()
-            && let Some(txs) = &mut setup_result.transactions
-            && txs.iter().any(|tx| tx.rpc.is_some())
-        {
-            txs.drain(..onchain.len());
-        }
-
         Ok(setup_result)
     }
 
@@ -351,9 +341,9 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 
         if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
-            if self.build_data.predeploy_libraries.has_nonce_libraries() {
+            if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
-                    "Multi chain deployment does not support libraries deployed at nonce addresses."
+                    "Multi chain deployment does not support library linking at the moment."
                 );
             }
         }

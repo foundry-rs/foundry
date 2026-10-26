@@ -310,6 +310,35 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         transaction: &TransactionMaybeSigned<FEN::Network>,
         is_fixed_gas_limit: bool,
     ) -> Result<ScriptResult<FEN::Network>> {
+        let Some(blob_hashes) = transaction.blob_versioned_hashes() else {
+            return self.simulate_with_tx_env(transaction, is_fixed_gas_limit);
+        };
+
+        // Every simulated call starts from the executor's transaction defaults, so a blob
+        // transaction is run as one there, making `BLOBHASH` match the published transaction.
+        let original_tx = self.executor.tx().clone();
+        let blob_basefee = self.executor.evm_env().block.blob_basefee.saturating_to();
+        let tx = self.executor.tx_mut();
+        tx.set_blob_versioned_hashes(blob_hashes.to_vec());
+        tx.set_max_fee_per_blob_gas(blob_basefee);
+        // evm2 executes complete EIP-4844 requests, which carry 1559 fees and the sidecar.
+        tx.set_max_fee_per_gas(0);
+        tx.set_max_priority_fee_per_gas(0);
+        if let TransactionMaybeSigned::Unsigned(request) = transaction
+            && let Some(sidecar) = request.blob_sidecar()
+        {
+            tx.set_blob_sidecar(sidecar.clone());
+        }
+        let result = self.simulate_with_tx_env(transaction, is_fixed_gas_limit);
+        *self.executor.tx_mut() = original_tx;
+        result
+    }
+
+    fn simulate_with_tx_env(
+        &mut self,
+        transaction: &TransactionMaybeSigned<FEN::Network>,
+        is_fixed_gas_limit: bool,
+    ) -> Result<ScriptResult<FEN::Network>> {
         if is_fixed_gas_limit {
             let (env, tx) = self.prepare_fixed_gas_env(transaction);
             return if is_single_create(&tx) {

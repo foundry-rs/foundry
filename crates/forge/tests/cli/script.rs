@@ -9,7 +9,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync, eip2718::Encodable2718,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, bytes, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequest};
 use alloy_signer::SignerSync;
@@ -1609,6 +1609,110 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
+async fn resume_uses_rpc_url_instead_of_saved_endpoint(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "RebindResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract RebindResumeTarget {}
+
+contract RebindResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new RebindResumeTarget();
+        new RebindResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (submission_a, submissions_a) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_a, receipts_a) =
+        spawn_rpc_proxy_recording_method(submission_a, "eth_getTransactionReceipt").await;
+    let (submission_b, submissions_b) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc_b, receipts_b) =
+        spawn_rpc_proxy_recording_method(submission_b, "eth_getTransactionReceipt").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/RebindResume.s.sol/31337/run-latest.json");
+    let sensitive_path = prj.root().join("cache/RebindResume.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/RebindResume.s.sol/31337/run-latest.json.recovery.json");
+
+    // Operator A is interrupted while the first deployment is pending.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "RebindResume",
+        "--rpc-url",
+        &rpc_a,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--slow",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let first_hash = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 1)
+                && sequence["transactions"][0]["hash"].is_string()
+            {
+                break sequence["transactions"][0]["hash"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("first transaction was not checkpointed");
+    assert!(child.is_running(), "forge exited before it could be interrupted");
+    drop(child.kill_and_wait());
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    let submitted_a = submissions_a.lock().unwrap().len();
+    let polled_a = receipts_a.lock().unwrap().len();
+    assert_eq!(submitted_a, 1);
+
+    // Operator B resumes through its own endpoint.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RebindResume",
+        "--rpc-url",
+        &rpc_b,
+        "--private-key",
+        private_key,
+        "--resume",
+        "--slow",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions_a.lock().unwrap().len(), submitted_a);
+    assert_eq!(receipts_a.lock().unwrap().len(), polled_a);
+    assert_eq!(submissions_b.lock().unwrap().len(), 1);
+    assert!(receipts_b.lock().unwrap().iter().any(|params| params.get(0) == Some(&first_hash)));
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+
+    // The saved endpoint is not rewritten.
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let sensitive: Value = foundry_common::fs::read_json_file(&sensitive_path).unwrap();
+    let saved = recovery["deployments"][0]["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(sensitive["transactions"].as_array().unwrap())
+        .map(|entry| entry["rpc"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(saved, [rpc_a.as_str(); 4]);
 }
 
 #[forgetest_init]
@@ -6726,6 +6830,95 @@ contract RevertedBatch is Script {
     }
 }
 
+// A sponsored dry run cannot be broadcast as a batch without its sponsor.
+#[forgetest_init]
+async fn tempo_batch_resume_requires_original_sponsor(prj: _, cmd: _) {
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+    let sender = wallets[0].address();
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
+    let sponsor = wallets[1].address();
+    let sponsor_key =
+        format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
+    let rpc = handle.http_endpoint();
+    let args = ["--tc", "MultiDeploy", "--rpc-url", &rpc, "--private-key", &sender_key, "--batch"];
+
+    cmd.arg("script").arg(&script).args(args).args([
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        "PathUSD",
+        "--tempo.sponsor",
+        &sponsor.to_string(),
+        "--tempo.sponsor-signer",
+        &sponsor_key,
+    ]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).args(["--resume", "--network", "tempo"]);
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: this deployment is sponsored by {sponsor}; pass `--tempo.sponsor {sponsor}` with `--tempo.sponsor-signer` or `--tempo.sponsor-sig` to prepare its remaining transactions\n"
+    ));
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+}
+
+// Resumes a PathUSD batch dry run with `resume_args` and checks which fee token pays for it.
+async fn tempo_batch_resume_fee_token(
+    prj: TestProject,
+    mut cmd: TestCommand,
+    resume_args: &[&str],
+    expected: (&str, Address),
+) {
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let args = [
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--batch",
+        "--network",
+        "tempo",
+    ];
+
+    cmd.arg("script").arg(&script).args(args).args(["--tempo.fee-token", "PathUSD"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume").args(resume_args);
+    cmd.assert_success().stderr_eq(format!("Paying gas in {} ({})\n", expected.0, expected.1));
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 3);
+    for receipt in receipts {
+        assert_eq!(receipt["feeToken"].as_str().unwrap().parse::<Address>().unwrap(), expected.1);
+    }
+}
+
+// A batch rebuilt on resume keeps the fee token recorded by the dry run.
+#[forgetest_init]
+async fn tempo_batch_resume_keeps_recorded_fee_token(prj: _, cmd: _) {
+    let path_usd = address!("0x20C0000000000000000000000000000000000000");
+    tempo_batch_resume_fee_token(prj, cmd, &[], ("PathUSD", path_usd)).await;
+}
+
+// An explicit `--tempo.fee-token` still replaces the recorded fee token on batch resume.
+#[forgetest_init]
+async fn tempo_batch_resume_fee_token_flag_overrides_recorded(prj: _, cmd: _) {
+    let beta_usd = address!("0x20C0000000000000000000000000000000000002");
+    tempo_batch_resume_fee_token(
+        prj,
+        cmd,
+        &["--tempo.fee-token", "BetaUSD"],
+        ("BetaUSD", beta_usd),
+    )
+    .await;
+}
+
 #[forgetest_init]
 async fn tempo_batch_unlocked_crash_blocks_resubmission(prj: _, cmd: _) {
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
@@ -7932,6 +8125,114 @@ contract DeploySponsoredTempoAA is Script {
     assert!(!provider.get_code_at(address).await.unwrap().is_empty());
 }
 
+// Resume refuses to prepare the remaining transactions of a sponsored deployment without its
+// sponsor, which would silently make the sender pay for them.
+#[forgetest_init]
+async fn tempo_sponsored_resume_requires_original_sponsor(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "SponsoredTail.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SponsoredTailDeployment {}
+
+contract SponsoredTail is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SponsoredTailDeployment();
+        new SponsoredTailDeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        true,
+    )
+    .await;
+    let wallets = handle.dev_wallets().take(3).collect::<Vec<_>>();
+    let sender = wallets[0].address();
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
+    let signer = |index: usize| {
+        format!("private-key://{}", hex::encode_prefixed(wallets[index].credential().to_bytes()))
+    };
+    let sponsor = wallets[1].address();
+    let path = prj.root().join("broadcast/SponsoredTail.s.sol/31337/run-latest.json");
+    let sponsored = |index: usize| {
+        vec![
+            "--tempo.sponsor".to_string(),
+            wallets[index].address().to_string(),
+            "--tempo.sponsor-signer".to_string(),
+            signer(index),
+        ]
+    };
+
+    // The first deployment is submitted with the sponsor, then Forge is killed before preparing
+    // the second.
+    cmd.arg("script")
+        .arg(&script)
+        .args(["--rpc-url", &rpc, "--private-key", &sender_key, "--broadcast", "--slow"])
+        .args(["--tempo.fee-token", "PathUSD"])
+        .args(sponsored(1));
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), reached.notified())
+        .await
+        .expect("forge did not submit the sponsored transaction");
+    child.kill_and_wait();
+    release.notify_one();
+    let accepted = submissions.lock().unwrap()[0][0].clone();
+    let accepted_hash = keccak256(hex::decode(accepted.as_str().unwrap()).unwrap());
+    let provider = handle.http_provider();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while provider.get_transaction_receipt(accepted_hash).await.unwrap().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the sponsored transaction was not mined");
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .expect("no authoritative recovery snapshot");
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_eq!(recovery["sponsor"], serde_json::json!(sponsor));
+    assert_eq!(recovery["deployments"][0]["attempts"].as_array().unwrap().len(), 1);
+
+    // Without a sponsor, or with a different one, resume stops before preparing anything.
+    for sponsor_args in [vec![], sponsored(2)] {
+        cmd.forge_fuse()
+            .arg("script")
+            .arg(&script)
+            .args(["--rpc-url", &rpc, "--private-key", &sender_key, "--resume", "--slow"])
+            .args(["--network", "tempo"])
+            .args(sponsor_args);
+        cmd.assert_failure().stderr_eq(format!(
+            "Error: this deployment is sponsored by {sponsor}; pass `--tempo.sponsor {sponsor}` with `--tempo.sponsor-signer` or `--tempo.sponsor-sig` to prepare its remaining transactions\n"
+        ));
+        assert_eq!(submissions.lock().unwrap().len(), 1);
+        assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    }
+
+    // With the original sponsor, resume completes and the sponsor pays for every deployment.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--rpc-url", &rpc, "--private-key", &sender_key, "--resume", "--slow"])
+        .args(["--network", "tempo"])
+        .args(sponsored(1));
+    cmd.assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 2);
+    for receipt in receipts {
+        assert_eq!(receipt["status"], "0x1");
+        assert_eq!(receipt["feePayer"].as_str().unwrap().parse::<Address>().unwrap(), sponsor);
+    }
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+}
+
 // Helper: write a script that deploys `LargeRuntime` with runtime > default limit via
 // `vm.startBroadcast`.
 fn write_large_runtime_deploy_script(prj: &foundry_test_utils::TestProject, runtime_bytes: usize) {
@@ -8812,4 +9113,77 @@ fn latest_broadcast_path(root: &Path) -> PathBuf {
             path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
         })
         .expect("no latest broadcast artifact")
+}
+
+// `vm.attachBlob` transactions are simulated with their blob hashes and broadcast with a blob fee.
+#[forgetest]
+async fn can_broadcast_attached_blob(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    prj.add_script(
+        "AttachBlob.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function attachBlob(bytes calldata blob) external;
+}
+
+contract BlobProbe {
+    bytes32 public observed;
+
+    event Observed(bytes32 hash);
+
+    function record() external {
+        bytes32 hash;
+        assembly {
+            hash := blobhash(0)
+        }
+        observed = hash;
+        emit Observed(hash);
+    }
+}
+
+contract AttachBlobScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        BlobProbe probe = new BlobProbe();
+        vm.attachBlob(abi.encode("blob"));
+        probe.record();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "script",
+        "AttachBlobScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "-vvvv",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Simulated On-chain Traces:
+...
+    ├─ emit Observed(hash: 0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c)
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    let observed =
+        handle.http_provider().get_storage_at(sender.create(0), U256::ZERO).await.unwrap();
+    assert_eq!(
+        B256::from(observed),
+        b256!("0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c")
+    );
 }

@@ -216,8 +216,10 @@ A saved signed attempt that is visible but unmined and has no pending hash is no
 step 2. It needs no signer, but signers for other operations can be requested before it is
 replayed.
 
-The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
-endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.
+The saved RPC is part of the sensitive sequence. A single-chain resume uses the `--rpc-url`
+endpoint for Forge-managed reconciliation and submission, after checking that it reports the saved
+chain, without rewriting the saved endpoint. Browser-wallet submission stays wallet-controlled, and
+multichain resume keeps the saved endpoints and warns when `--rpc-url` is passed.
 
 ## Tempo and multichain behavior
 
@@ -244,30 +246,6 @@ Multichain mode stores per-chain sequences in one `MultiChainSequence`. Pending 
 reconciled per chain, while new sequences are broadcast in container order. There is no cross-chain
 atomicity. Recovery must preserve independent per-chain progress and must not infer that one chain's
 completion permits skipping an operation on another.
-
-Endpoints that name a profile get a separate build of that profile's compiler settings, cached in
-`cache/profiles/<settings hash>`. Profiles with identical compiler settings share that build while
-retaining their own hardfork and CREATE2 library salt. Endpoints are mapped to profiles by URL
-without contacting them.
-On forks of the endpoint's URL, in scripts and tests:
-
-- `vm.getCode`, `vm.getDeployedCode` and `vm.deployCode` take the build's artifact.
-- Direct script or test `new C()` and `new C{salt: s}()` deploy the build's creation code of a project
-  contract, with the same constructor arguments. A CREATE2 address therefore follows from
-  `vm.getCode`, not from `type(C).creationCode`. Calls into on-chain factories execute their supplied
-  initcode unchanged, so transaction simulation and broadcast reproduce script execution.
-- Frames of non-persistent accounts use the profile's spec. The script or test contract keeps the
-  run's spec, and `vm.setEvmVersion` overrides both.
-
-Scripts link profile builds with CREATE2 libraries and deploy them on each fork before its first
-broadcast, so multichain scripts support libraries unless they are deployed at nonce addresses.
-Tests link profile builds with the run's libraries, which persist across forks, unless the profile
-configures them.
-
-Constructor metadata and verification select artifacts from the endpoint's build and retain its
-compiler settings and linked library addresses. Run-profile deployments, including libraries
-prepared before broadcasting, retain the run build as a verification fallback. Coverage, mutation
-testing, and fuzz corpus replay pass endpoint builds to their test runners as well.
 
 ## Known failure windows
 
@@ -367,12 +345,16 @@ behavior, including:
   membership.
 
 An operation without an attempt is prepared on resume like a new one. Its saved request keeps the
-sender, nonce, destination, value, and input, but fees, gas estimates, Tempo options such as the fee
-token, nonce key, and validity window, and sponsorship can come from the resume invocation.
+sender, nonce, destination, value, input, and any recorded Tempo fee token. When `--batch` rebuilds
+the remaining operations as one transaction, it uses the fee token recorded on the first remaining
+operation. Fees, gas estimates, Tempo options such as the nonce key and validity window, and
+sponsorship can come from the resume invocation, and `--tempo.fee-token` replaces a recorded fee
+token. When the original run was sponsored, the recovery snapshot records the sponsor address, and
+resume refuses to prepare remaining operations unless `--tempo.sponsor` names the same sponsor.
 
 Reconciliation and rebroadcast of identical locally signed bytes do not request a signer. The
 initial recovery implementation fails closed instead of replacing an existing attempt with changed
-fees or validity fields. Replacement workflows are deferred to deployment plans and handoff.
+fees or validity fields. Replacement workflows are not supported.
 
 ### Handoff and compatibility
 
@@ -380,8 +362,8 @@ fees or validity fields. Replacement workflows are deferred to deployment plans 
 - Pre-signed envelopes, saved signed payloads, and saved batch attempts do not require a signer for
   recovery. Other incomplete unsigned requests remain eligible for signer acquisition. Unknown
   delegated outcomes block resume before signer acquisition.
-- The initial recovery implementation retains the saved endpoint. Validated endpoint rebinding is
-  deferred to deployment plans and handoff.
+- A single-chain resume reaches the chain through `--rpc-url` instead of the saved endpoint, so a
+  handoff does not need the original operator's RPC. Multichain resume keeps the saved endpoints.
 - Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
   associations. If it cannot prove a safe batch state, it fails closed rather than guessing.
 

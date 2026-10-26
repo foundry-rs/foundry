@@ -79,7 +79,7 @@ monad-evm2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-tempo-precompiles-evm2 = { workspace = true, features = ["test-utils"] }
+tempo-primitives-evm2.workspace = true
 
 [features]
 default = ["optimism"]

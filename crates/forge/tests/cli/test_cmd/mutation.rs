@@ -39,8 +39,18 @@ exclude_operators = ["assembly", "binary-op", "delete-expression", "elim-delegat
     )
     .unwrap();
     // A fixed seed keeps the execution cache key, and so the persisted spans, stable across runs.
-    let args =
-        ["test", "--mutate", "src/Body.sol", "--mutation-jobs", "1", "--fuzz-seed", "1", "--json"];
+    let args = [
+        "test",
+        "--mutate",
+        "src/Body.sol",
+        "--mutate-contract",
+        "^Body$",
+        "--mutation-jobs",
+        "1",
+        "--fuzz-seed",
+        "1",
+        "--json",
+    ];
     let expected = str![[r#"
 {"summary":{"total":3,"killed":1,"survived":2,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":33.33333333333333,"duration_secs":"{...}"},"survived_mutants":{"src/Body.sol":[{"line":5,"column":54,"original":"{ number = 7; return value; }","mutant":"{ return true; }"},{"line":5,"column":56,"original":"number = 7","mutant":"0"}]}}
 "#]];
