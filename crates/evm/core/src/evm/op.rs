@@ -98,7 +98,11 @@ impl FoundryEvmFactory for OpEvmFactory {
     type Types = OpEvmTypes;
 
     fn version(&self, spec: OpSpecId, chain_id: u64) -> Version {
-        op_version(spec, chain_id)
+        let mut version = op_version(spec, chain_id);
+        // Like REVM, existing EIP-7702 delegations resolve on every spec; only authorization
+        // processing is fork-gated, by the transaction registry.
+        version.features.insert(evm2::EvmFeatures::EIP7702);
+        version
     }
 
     fn tx_registry(&self, spec: OpSpecId) -> TxRegistry<OpEvmTypes, TxResult<OpEvmTypes>> {

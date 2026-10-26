@@ -50,6 +50,7 @@ use foundry_evm_core::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
         FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
+        restore_access_warmth,
     },
 };
 use foundry_evm_traces::{
@@ -3181,7 +3182,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.active_storage_hook = None;
         self.restore_storage_hook_inspector_state(inspector_state);
         // The callback is instrumentation: accesses it warmed stay cold for the hooked frame.
-        evm.state_mut().restore_access_warmth(&checkpoint);
+        restore_access_warmth(evm.state_mut(), &checkpoint);
 
         match result {
             Ok(result) if result.is_success() => {}
