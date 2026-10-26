@@ -169,9 +169,8 @@ IDs match and that `LICENSE-MIT` or `LICENSE-APACHE` holds a known license text.
 ## Provenance and license
 
 Migrated from `paradigmxyz/solar`'s `editors/zed` at source revision
-`bba703a34e0fabc8587ae7eb794e017e31c5e7ca`. Original authorship is retained in
-`extension.toml`; the MIT and Apache-2.0 license files link to the repository
-root. The grammar remains
+`bba703a34e0fabc8587ae7eb794e017e31c5e7ca`. The MIT and Apache-2.0 license
+files link to the repository root. The grammar remains
 pinned to `JoranHonig/tree-sitter-solidity` commit
 `048fe686cb1fde267243739b8bdbec8fc3a55272`. Its MIT copyright notice is retained
 in [GRAMMAR-LICENSE](GRAMMAR-LICENSE), including in local archives.
