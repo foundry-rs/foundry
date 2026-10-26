@@ -85,6 +85,10 @@ use tempo_primitives::{
 #[cfg(feature = "cli")]
 use crate::utils::http_provider;
 #[cfg(feature = "cli")]
+use anvil::eth::backend::tempo_consensus::TempoConsensus;
+#[cfg(feature = "cli")]
+use foundry_test_utils::assert_data_eq;
+#[cfg(feature = "cli")]
 use std::{
     net::TcpListener,
     path::PathBuf,
@@ -7336,4 +7340,78 @@ async fn tempo_consensus_imports_preserve_snapshots_and_unsigned_anchors() {
     assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
     assert_eq!(provider.get_block_number().await.unwrap(), 3);
     assert_tempo_missing(&provider, serde_json::json!("latest"), "certifications").await;
+}
+
+#[cfg(feature = "cli")]
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_cli_seed_and_epoch_length() {
+    let temp = tempfile::tempdir().unwrap();
+    let stdout = temp.path().join("stdout");
+    let stderr = temp.path().join("stderr");
+    let seed = B256::repeat_byte(0x42);
+    let mut child = ChildGuard(
+        Command::new(anvil_binary())
+            .args([
+                "--network",
+                "tempo",
+                "--tempo.epoch-length",
+                "3",
+                "--tempo.consensus-seed",
+                &seed.to_string(),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--no-mining",
+                "--color",
+                "never",
+            ])
+            .env("RUST_LOG", "off")
+            .stdin(Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap())
+            .spawn()
+            .unwrap(),
+    );
+    let endpoint = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let output = std::fs::read_to_string(&stdout).unwrap();
+            if let Some(address) =
+                output.lines().find_map(|line| line.strip_prefix("Listening on "))
+            {
+                break format!("http://{address}");
+            }
+            if let Some(status) = child.0.try_wait().unwrap() {
+                panic!("anvil exited with {status}: {}", std::fs::read_to_string(&stderr).unwrap());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("anvil should finish startup");
+    let provider = http_provider(&endpoint);
+    let identity = tempo_consensus_identity(&provider).await;
+    let expected = TempoConsensus::new(seed, NonZeroU64::new(3).unwrap()).identity();
+    assert_eq!(identity.identity, expected.identity);
+    assert_eq!(identity.proposer, expected.proposer);
+    assert_eq!(identity.epoch_length, 3);
+    for (height, round) in [(1, (0, 1)), (2, (0, 2)), (3, (1, 1))] {
+        provider.client().request::<_, serde_json::Value>("evm_mine", ()).await.unwrap();
+        let block = tempo_finalization(&provider, height).await;
+        assert_eq!((block.epoch, block.view), round);
+        assert_tempo_certificate(&identity, &block);
+    }
+    let expected = format!(
+        "\nTempo Consensus\n==================\nIdentity:       {}\nProposer:       {}\nEpoch length:   3\n",
+        identity.identity, identity.proposer,
+    );
+    // RPC starts before startup output, so wait for the complete banner before comparing it.
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        while std::fs::metadata(&stderr).unwrap().len() < expected.len() as u64 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    drop(child);
+    assert_data_eq!(std::fs::read_to_string(&stderr).unwrap(), expected);
 }
