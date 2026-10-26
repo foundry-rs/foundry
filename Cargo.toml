@@ -5,6 +5,7 @@ members = [
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
+    "crates/anvil/tests/fixtures/tempo-consensus-compat/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
