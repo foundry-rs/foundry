@@ -92,10 +92,11 @@ independent `BLOB_BASE_FEE_CHECK` policy. Each is planned as an upstream PR so t
 `mark_created_keeping_storage` keeps an account created for EIP-6780 when a suspended or isolated
 transaction continues on a fresh overlay, without reading its storage as discarded. Foundry
 enables `EIP7702` on every spec so that already-present delegation code resolves before Prague,
-matching REVM; authorization processing remains Prague-gated by the transaction registry. The lockfile must contain one evm2 graph, not
-separate engines for different networks. Tempo and reth pin `alloy-rs/evm2`, while the satellites
-pin `mablr/evm2`; the root manifest patches both to that branch through the `DaniPopes/evm2` URL,
-since Cargo rejects a patch from the same source.
+matching REVM; authorization processing remains Prague-gated by the transaction registry.
+
+The lockfile must contain one evm2 graph, not separate engines for different networks. Tempo and
+reth pin `alloy-rs/evm2`, while the satellites pin `mablr/evm2`; the root manifest patches both to
+that branch through the `DaniPopes/evm2` URL, since Cargo rejects a patch from the same source.
 
 [`foundry-core@mablr/fork-db-evm2-completion`](https://github.com/mablr/foundry-core/tree/mablr/fork-db-evm2-completion)
 stores native evm2 accounts and bytecode. Existing JSON/zstd caches remain readable, including

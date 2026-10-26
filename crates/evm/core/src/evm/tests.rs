@@ -313,12 +313,25 @@ fn spec_changes_keep_foundry_policy() {
         EvmEnv::new(SpecId::CANCUN, factory.version(SpecId::CANCUN, 31337), Default::default());
     env.set_feature(EvmFeatures::NONCE_CHECK, false);
     env.version.memory_limit = 1 << 20;
-    let mut evm = FoundryEvmFactory::create_evm(&factory, db_with(&[(caller, ETHER)], 0), env);
+    let delegated = Address::with_last_byte(0xD7);
+    let mut db = db_with(&[(caller, ETHER)], 0);
+    let mut info = AccountInfo::default().with_code(Bytecode::new_eip7702(STORE_ADDRESS));
+    db.insert_contract(&mut info);
+    db.insert_account_info(&delegated, info);
+    let mut evm = FoundryEvmFactory::create_evm(&factory, db, env);
+
+    // Like REVM, an existing delegation resolves before Prague and runs in the delegating account.
+    let request = store_request::<EthEvmNetwork>(caller, delegated, 0, 42, 31337);
+    assert!(
+        evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit().status
+    );
+    let stored = evm.state_mut().storage_slot_untracked(&delegated, &U256::ZERO).unwrap();
+    assert_eq!(stored, U256::from(42));
 
     factory.set_execution_spec(&mut evm, SpecId::PRAGUE);
 
     assert_eq!(evm.config_spec_id(), SpecId::PRAGUE);
-    assert!(evm.feature(EvmFeatures::EIP7702), "fork features follow the new spec");
+    assert!(evm.feature(EvmFeatures::EIP7623), "fork features follow the new spec");
     assert!(!evm.feature(EvmFeatures::NONCE_CHECK), "disabled checks stay disabled");
     assert!(evm.feature(EvmFeatures::BALANCE_CHECK), "untouched checks stay enabled");
     assert_eq!(evm.version().chain_id, 31337);

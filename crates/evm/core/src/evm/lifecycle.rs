@@ -45,8 +45,8 @@ use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, PendingState,
-        PrewarmSet, State, StateSnapshot,
+        AccountChanges, AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, JournalEntry,
+        PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
     },
 };
 use std::{mem, sync::Arc};
