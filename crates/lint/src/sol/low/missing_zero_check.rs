@@ -237,7 +237,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             // `require(cond, ..)` / `assert(cond)`: only the first arg is a guard predicate.
-            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
+            ExprKind::Call(callee, args) if is_require_or_assert(self.gcx, callee) => {
                 let mut iter = args.exprs();
                 if let Some(cond) = iter.next() {
                     self.guarded.extend(self.nonzero_facts(cond, false));
@@ -249,7 +249,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 return ControlFlow::Continue(());
             }
             // `<addr>.call/.delegatecall/.transfer/.send(..)`: receiver is the sink.
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args) => {
                 if let Some(receiver) = address_call_receiver(callee) {
                     self.sink_depth += 1;
                     let _ = self.visit_expr(receiver);

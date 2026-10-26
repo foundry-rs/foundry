@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
     data_structures::{Never, map::FxHashMap},
-    interface::{BytePos, Span},
+    interface::{RelativeBytePos, Span},
     sema::{Gcx, hir},
 };
 use std::{
@@ -240,35 +240,27 @@ impl<'gcx> SourceVisitor<'gcx> {
         self.items.last_mut().unwrap()
     }
 
-    fn source_location_for(&self, mut span: Span) -> SourceLocation {
+    fn source_location_for(&self, span: Span) -> SourceLocation {
+        let files = self.gcx.sess.source_map().files();
+        let source = files.span_to_source(span).unwrap();
+        let mut bytes = source.data;
         // Statements' ranges in the solc source map do not include the semicolon.
-        if let Ok(snippet) = self.gcx.sess.source_map().span_to_snippet(span)
+        if let Some(snippet) = source.file.src.get(bytes.clone())
             && let Some(stripped) = snippet.strip_suffix(';')
         {
-            let stripped = stripped.trim_end();
-            let skipped = snippet.len() - stripped.len();
-            span = span.with_hi(span.hi() - BytePos::from_usize(skipped));
+            bytes.end -= snippet.len() - stripped.trim_end().len();
         }
 
+        // Coverage needs line numbers, not the character columns of every spanned line.
+        assert!(!span.is_dummy());
+        let first = source.file.lookup_line(RelativeBytePos::from_usize(bytes.start)).unwrap();
+        let last = source.file.lookup_line(RelativeBytePos::from_usize(bytes.end)).unwrap();
         SourceLocation {
             source_id: self.source_id as usize,
             contract_name: self.contract_name.clone(),
-            bytes: self.byte_range(span),
-            lines: self.line_range(span),
+            bytes: bytes.start as u32..bytes.end as u32,
+            lines: first as u32 + 1..last as u32 + 2,
         }
-    }
-
-    fn byte_range(&self, span: Span) -> Range<u32> {
-        let bytes_usize = self.gcx.sess.source_map().span_to_source(span).unwrap().data;
-        bytes_usize.start as u32..bytes_usize.end as u32
-    }
-
-    fn line_range(&self, span: Span) -> Range<u32> {
-        let lines = self.gcx.sess.source_map().span_to_lines(span).unwrap().data;
-        assert!(!lines.is_empty());
-        let first = lines.first().unwrap();
-        let last = lines.last().unwrap();
-        first.line_index as u32 + 1..last.line_index as u32 + 2
     }
 
     const fn next_branch_id(&mut self) -> u32 {

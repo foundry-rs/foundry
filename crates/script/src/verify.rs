@@ -8,10 +8,8 @@ use alloy_primitives::{Address, TxHash, hex};
 use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{
-    RetryArgs, VerifierArgs, VerifyArgs,
-    provider::{ExternalVerificationContext, VerificationProviderType},
-    sourcify::SOURCIFY_URL,
-    verify::sourcify_api_url,
+    RetryArgs, VerifierArgs, VerifyArgs, provider::ExternalVerificationContext,
+    sourcify::SOURCIFY_URL, verify::sourcify_api_url,
 };
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
@@ -428,9 +426,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
     verify.set_chain(config, sequence.chain.into())?;
 
-    if verify.etherscan.has_key()
-        || verify.verifier.effective_type() != VerificationProviderType::Etherscan
-    {
+    if verify.etherscan.has_key() || !verify.verifier.effective_type().is_etherscan() {
         trace!(target: "script", "prepare future verifications");
 
         let mut verification_jobs = Vec::with_capacity(sequence.receipts.len());
@@ -642,19 +638,13 @@ fn same_endpoint(left: &str, right: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ContractsByArtifact, RetryArgs, SOURCIFY_URL, VerificationProviderType, VerifierArgs,
-        VerifyBundle, concise, ensure_verification_complete, same_endpoint, source_api_key,
-        sourcify_api_url, take_matching_index,
-    };
-    use alloy_chains::Chain;
-    use alloy_primitives::{Address, Bytes};
+    use super::*;
+    use alloy_primitives::Bytes;
+    use forge_verify::provider::VerificationProviderType;
     use foundry_compilers::{
         ArtifactId,
-        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, EvmVersion},
+        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
     };
-    use foundry_config::Config;
-    use semver::Version;
 
     fn bundle(config: &Config, verifier: VerifierArgs) -> VerifyBundle {
         let project = config.project().unwrap();

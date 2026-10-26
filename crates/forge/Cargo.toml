@@ -50,7 +50,7 @@ forge-lint.workspace = true
 forge-verify.workspace = true
 forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
-foundry-cli.workspace = true
+foundry-cli = { workspace = true, features = ["soldeer"] }
 foundry-debugger.workspace = true
 foundry-tui.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
@@ -74,15 +74,16 @@ dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
 globset = "0.4"
+heck.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
-revm = { workspace = true, features = ["parse"] }
+revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-similar = { version = "3", features = ["inline"] }
+similar = { version = "3", features = ["inline", "unicode"] }
 solar = { workspace = true, features = ["clap"] }
 solar-lsp.workspace = true
 thiserror.workspace = true
@@ -93,7 +94,6 @@ watchexec-events = "6.0"
 watchexec-signals = "5.0"
 which.workspace = true
 clearscreen = "4.0"
-evm-disassembler.workspace = true
 path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
@@ -112,8 +112,8 @@ tempfile.workspace = true
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
+alloy-rpc-types.workspace = true
 async-lsp.workspace = true
-tokio-util.workspace = true
 futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
 anvil.workspace = true
@@ -127,6 +127,7 @@ svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true
+base-common-consensus = { workspace = true, features = ["serde", "std"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 rexpect.workspace = true

@@ -21,7 +21,7 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for UnsafeTypecast {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
-        if let ExprKind::Call(call, args, _) = &expr.kind
+        if let ExprKind::Call(call, args) = &expr.kind
             && let Some(ty) = cast_type(call)
             && args.len() == 1
             && let Some(arg) = args.exprs().next()
@@ -62,7 +62,7 @@ fn is_bounded_by_mask(source: &hir::Expr<'_>, target: ElementaryType) -> bool {
 /// chains and unary operators and gathering both sides of binary operations.
 fn source_types<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>, out: &mut Vec<ElementaryType>) {
     match &expr.kind {
-        ExprKind::Call(callee, args, _) if cast_type(callee).is_some() => {
+        ExprKind::Call(callee, args) if cast_type(callee).is_some() => {
             if let Some(inner) = args.exprs().next() {
                 source_types(gcx, inner, out);
             }

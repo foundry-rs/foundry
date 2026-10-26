@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn classifies_tip20_transfer_as_payment() {
-        let input = ITIP20::transferCall { to: Address::ZERO, amount: U256::from(1) }.abi_encode();
+        let input = ITIP20::transferCall { to: Address::ZERO, amount: U256::ONE }.abi_encode();
         let raw = encode_eip1559(PAYMENT_TOKEN, input);
 
         assert_eq!(classify_payment_lane(&raw), PaymentLaneClassification::payment());

@@ -8,7 +8,8 @@ use foundry_test_utils::{forgetest_init, str};
 // Already partially covered in symbolic_conformance.rs as a passing case.
 // Here we add the version with the BUG (final phase reachable via specific
 // sequence of magic numbers) and assert the symbolic engine catches it.
-forgetest_init!(ityfuzz_simple_state_buggy, |prj, cmd| {
+#[forgetest_init]
+fn ityfuzz_simple_state_buggy(prj: _, cmd: _) {
     skip_unless_z3!("ityfuzz_simple_state_buggy");
 
     prj.add_test(
@@ -71,4 +72,4 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}

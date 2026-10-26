@@ -70,7 +70,7 @@ op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-flz = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
 
-aes-gcm = "0.10"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 hkdf = "0.12"
 k256.workspace = true
 sha2 = "0.10"
@@ -83,7 +83,7 @@ rand.workspace = true
 rand_08.workspace = true
 rayon.workspace = true
 reqwest.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 serde.workspace = true
 
 # bin
@@ -92,7 +92,6 @@ foundry-cli.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 comfy-table.workspace = true
-dunce.workspace = true
 itertools.workspace = true
 regex = { workspace = true, default-features = false }
 rpassword = "7"

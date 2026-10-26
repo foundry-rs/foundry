@@ -483,7 +483,7 @@ pub enum EthRequest {
 
     /// Trace get endpoint for parity's `trace_get`.
     #[serde(rename = "trace_get")]
-    TraceGet(B256, Vec<Index>),
+    TraceGet(B256, #[serde(deserialize_with = "trace_address::deserialize")] Vec<Index>),
 
     /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
     #[serde(rename = "trace_replayBlockTransactions")]
@@ -575,6 +575,14 @@ pub enum EthRequest {
     #[serde(rename = "anvil_getIntervalMining", with = "empty_params")]
     GetIntervalMining(()),
 
+    /// Pauses or resumes automatic block production, keeping the block time schedule
+    #[serde(rename = "anvil_setMiningPaused", with = "sequence")]
+    SetMiningPaused(bool),
+
+    /// Returns true if automatic block production is paused
+    #[serde(rename = "anvil_getMiningPaused", with = "empty_params")]
+    GetMiningPaused(()),
+
     /// Removes transactions from the pool
     #[serde(rename = "anvil_dropTransaction", alias = "hardhat_dropTransaction", with = "sequence")]
     DropTransaction(B256),
@@ -657,6 +665,10 @@ pub enum EthRequest {
     /// Sets the `prevrandao` value of the next block
     #[serde(rename = "anvil_setNextBlockPrevRandao", with = "sequence")]
     SetNextBlockPrevRandao(B256),
+
+    /// Sets the parent beacon block root of the next block
+    #[serde(rename = "anvil_setNextBlockParentBeaconBlockRoot", with = "sequence")]
+    SetNextBlockParentBeaconBlockRoot(B256),
 
     /// Sets the chain id
     #[serde(rename = "anvil_setChainId", deserialize_with = "deserialize_u64_seq")]
@@ -930,6 +942,32 @@ pub enum EthRequest {
         #[serde(deserialize_with = "deserialize_number")]
         U256,
     ),
+
+    /// Returns a Tempo finalization certificate and its native block.
+    #[serde(rename = "consensus_getFinalization", with = "sequence")]
+    ConsensusGetFinalization(TempoConsensusQuery),
+
+    /// Returns the latest local Tempo consensus state.
+    #[serde(rename = "consensus_getLatest", with = "empty_params")]
+    ConsensusGetLatest(()),
+
+    /// Returns the public development consensus identity (Tempo-only).
+    #[serde(rename = "anvil_tempoConsensusIdentity", with = "empty_params")]
+    TempoConsensusIdentity(()),
+
+    /// Schedules a new development consensus identity (Tempo-only).
+    #[serde(rename = "anvil_tempoRotateConsensusIdentity", with = "empty_params")]
+    TempoRotateConsensusIdentity(()),
+}
+
+/// Native Tempo consensus selector: `"latest"` or `{"height": N}` with a numeric height.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TempoConsensusQuery {
+    /// The latest locally certified block.
+    Latest,
+    /// A specific block height.
+    Height(u64),
 }
 
 /// Represents ethereum JSON-RPC API
@@ -1230,6 +1268,22 @@ mod tests {
         let s = r#"{"method": "evm_setIntervalMining", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_set_mining_paused() {
+        let s = r#"{"method": "anvil_setMiningPaused", "params": [true]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::SetMiningPaused(true)));
+    }
+
+    #[test]
+    fn test_get_mining_paused() {
+        let s = r#"{"method": "anvil_getMiningPaused", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::GetMiningPaused(())));
     }
 
     #[test]
@@ -1535,6 +1589,13 @@ mod tests {
     #[test]
     fn test_serde_custom_set_next_block_prevrandao() {
         let s = r#"{"method": "anvil_setNextBlockPrevRandao", "params": ["0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_custom_set_next_block_parent_beacon_block_root() {
+        let s = r#"{"method": "anvil_setNextBlockParentBeaconBlockRoot", "params": ["0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -2082,9 +2143,19 @@ true}]}"#;
 
     #[test]
     fn test_serde_trace_get() {
-        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", [0]]}"#;
-        let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", ["0x6", "0xa0"]]}"#;
+        let req = serde_json::from_str::<EthRequest>(s).unwrap();
+        let EthRequest::TraceGet(_, indices) = req else { panic!("unexpected request {req:?}") };
+        assert_eq!(indices.into_iter().map(usize::from).collect::<Vec<_>>(), [6, 160]);
+
+        for indices in
+            [r#"[6, 0]"#, r#"["6"]"#, r#"["0x00"]"#, r#"["0x06"]"#, r#"["0xA"]"#, r#"["0x"]"#]
+        {
+            let s = format!(
+                r#"{{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {indices}]}}"#
+            );
+            serde_json::from_str::<EthRequest>(&s).unwrap_err();
+        }
     }
 
     #[test]
@@ -2313,5 +2384,32 @@ true}]}"#;
         "#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn tempo_consensus_requests() {
+        for request in [
+            r#"{"method":"consensus_getFinalization","params":["latest"]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":0}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":18446744073709551615}]}"#,
+            r#"{"method":"consensus_getLatest","params":[]}"#,
+            r#"{"method":"anvil_tempoConsensusIdentity","params":[]}"#,
+            r#"{"method":"anvil_tempoRotateConsensusIdentity","params":[]}"#,
+        ] {
+            serde_json::from_str::<EthRequest>(request).unwrap();
+        }
+        for request in [
+            r#"{"method":"consensus_getFinalization","params":["Latest"]}"#,
+            r#"{"method":"consensus_getFinalization","params":["pending"]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":"0x1"}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":-1}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[{"height":18446744073709551616}]}"#,
+            r#"{"method":"consensus_getFinalization","params":[]}"#,
+            r#"{"method":"consensus_getFinalization","params":["latest",1]}"#,
+            r#"{"method":"consensus_getLatest","params":[1]}"#,
+            r#"{"method":"anvil_tempoRotateConsensusIdentity","params":[1]}"#,
+        ] {
+            assert!(serde_json::from_str::<EthRequest>(request).is_err(), "{request}");
+        }
     }
 }

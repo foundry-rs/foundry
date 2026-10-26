@@ -151,7 +151,7 @@ fn comparison_operand_of<'gcx>(
             let ty = elem_type_of(gcx, expr)?;
             Some((variable, Vec::new(), integer_bounds(ty)?))
         }
-        ExprKind::Call(callee, args, _) if args.len() == 1 => {
+        ExprKind::Call(callee, args) if args.len() == 1 => {
             let ty = cast_type(callee)?;
             let inner = args.exprs().next()?;
             let (variable, mut cast_path, range) = comparison_operand_of(gcx, inner)?;

@@ -8,8 +8,8 @@
 #[macro_use]
 extern crate tracing;
 
-use crate::cache::StorageCachingConfig;
-use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
+use crate::{cache::StorageCachingConfig, etherscan::EtherscanEnvProvider};
+use alloy_primitives::{Address, B256, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
@@ -18,10 +18,10 @@ use figment::{
 };
 use filter::GlobMatcher;
 use foundry_compilers::{
-    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectBuilder, ProjectPathsConfig,
     RestrictionsWithVersion, VyperLanguage,
     artifacts::{
-        BytecodeHash, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
+        BytecodeHash, Contract, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
         ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
         Severity,
         output_selection::{ContractOutputSelection, OutputSelection},
@@ -36,8 +36,9 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
     },
     error::SolcError,
-    multi::{MultiCompilerParser, MultiCompilerRestrictions},
+    multi::{MultiCompilerLanguage, MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcLanguage, SolcSettings},
+    utils::canonicalize,
 };
 use regex::Regex;
 use semver::Version;
@@ -46,7 +47,7 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -68,9 +69,7 @@ pub use endpoints::{
 };
 
 mod etherscan;
-use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
-
-pub use etherscan::EtherscanConfigError;
+pub use etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -149,6 +148,9 @@ use bind_json::BindJsonConfig;
 
 mod compilation;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
+
+mod external_compiler;
+pub use external_compiler::ExternalCompiler;
 
 pub mod extend;
 use extend::Extends;
@@ -245,6 +247,12 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// Whether to dynamically link tests.
     pub dynamic_test_linking: bool,
+    /// Whether compiled contracts may depend on externally linked Solidity libraries.
+    ///
+    /// Defaults to `true`. Internal libraries and dynamic test linking remain available when
+    /// disabled. Configured library addresses are withheld from solc so actual dependencies
+    /// remain visible in its link references.
+    pub allow_linked_libraries: bool,
     /// Where the gas snapshots are stored.
     pub snapshots: PathBuf,
     /// Whether to check for differences against previously stored gas snapshots.
@@ -424,6 +432,9 @@ pub struct Config {
     pub block_number: U256,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// Fetch fork state by block number for RPCs that cannot serve it by hash.
+    #[serde(default)]
+    pub fork_state_by_number: bool,
     /// The chain name or EIP-155 chain ID.
     #[serde(rename = "chain_id", alias = "chain")]
     pub chain: Option<Chain>,
@@ -510,6 +521,26 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Disables parent-block BAL cache prewarming for transaction-hash forks.
+    ///
+    /// Defaults to `false`. Independent of disk storage caching; preceding transactions are
+    /// still replayed when prewarming is enabled.
+    ///
+    /// Each fork retains the value set at creation, including for subsequent transaction-hash
+    /// rolls. Contract-level inline configuration applies to forks created in `setUp`.
+    /// Function-level inline configuration applies to forks created in that test, but does not
+    /// change forks already created by `setUp`.
+    #[serde(default)]
+    pub no_fork_bal: bool,
+    /// Prefetches a new fork block's remote cache from the keys of an older cached block.
+    ///
+    /// Defaults to `false`. When a fork starts on a block with an empty disk cache, the accounts
+    /// and storage slots in the cache of the newest older block on the same chain are fetched
+    /// again at the new block in the background. This helps forks of `latest`, which start
+    /// cold on each new head. Values come from the fork block and never replace cached values,
+    /// so results do not change; unused keys cost extra RPC requests. Requires storage caching.
+    #[serde(default)]
+    pub fork_prefetch: bool,
     /// Disables rate limiting entirely. This overrides any settings made in
     /// `compute_units_per_second`
     pub no_rpc_rate_limit: bool,
@@ -518,12 +549,15 @@ pub struct Config {
     pub rpc_endpoints: RpcEndpoints,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
-    /// Whether to include the metadata hash.
+    /// The hash method used for the metadata hash appended to the bytecode.
     ///
-    /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
+    /// Defaults to [BytecodeHash::Ipfs], matching solc. The hash depends on the source contents,
+    /// source paths, and compiler settings. Set to [BytecodeHash::None] to omit the hash without
+    /// disabling the CBOR metadata trailer.
+    /// See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
-    /// Whether to append the metadata hash to the bytecode.
+    /// Whether to append CBOR-encoded metadata to the bytecode. Defaults to `true`.
     ///
     /// If this is `false` and the `bytecode_hash` option above is not `None` solc will issue a
     /// warning.
@@ -573,6 +607,13 @@ pub struct Config {
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
     pub unchecked_cheatcode_artifacts: bool,
 
+    /// Whether to decode the storage layouts of contracts outside the local project in state
+    /// diffs, by compiling the verified source a block explorer has for them.
+    ///
+    /// Resolved layouts are cached under the explorer cache directory; `forge cache clean`
+    /// clears them.
+    pub decode_external_storage: bool,
+
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
@@ -581,6 +622,10 @@ pub struct Config {
 
     /// Configuration for Vyper compiler
     pub vyper: VyperConfig,
+
+    /// Explicitly configured external compiler adapters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_compilers: Vec<ExternalCompiler>,
 
     /// Soldeer dependencies
     pub dependencies: Option<SoldeerDependencyConfig>,
@@ -792,7 +837,7 @@ impl Config {
     pub const DEFAULT_SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Default salt for create2 library deployments
-    pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+    pub const DEFAULT_CREATE2_LIBRARY_SALT: B256 = B256::ZERO;
 
     /// Default create2 deployer
     pub const DEFAULT_CREATE2_DEPLOYER: Address =
@@ -870,6 +915,9 @@ impl Config {
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
+        // The project root anchors `fs_permissions` and the `foundry.toml` write guard, so inline
+        // config must not be able to move it.
+        config.root = self.root.clone();
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
@@ -1192,9 +1240,11 @@ impl Config {
     }
 
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
+    ///
+    /// Only a pinned solc version is used; a local compiler path is never executed.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc_version()
-            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
+        if let Some(SolcReq::Version(version)) = &self.solc
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(version)
         {
             return evm_version;
         }
@@ -1353,13 +1403,42 @@ impl Config {
     ///
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
+        let project =
+            self.create_project_with_compiler(|| self.compiler(), cached, no_artifacts)?;
+
+        if self.force {
+            // Warnings are intentionally dropped here because `sh_warn!` is a circular
+            // dependency. Callers that need warnings should call `cleanup()` directly.
+            let _ = self.cleanup(&project);
+        }
+
+        Ok(project)
+    }
+
+    /// Creates a project using the supplied compiler constructor after validating its settings.
+    ///
+    /// Unlike [`Self::create_project`], this does not clean cached artifacts when `force` is set.
+    /// Use this to inspect the source graph with compiler metadata supplied by the caller.
+    pub fn create_project_with_compiler<C>(
+        &self,
+        compiler: impl FnOnce() -> Result<C, SolcError>,
+        cached: bool,
+        no_artifacts: bool,
+    ) -> Result<Project<C>, SolcError>
+    where
+        C: Compiler<
+                Settings = MultiCompilerSettings,
+                Language = MultiCompilerLanguage,
+                CompilerContract = Contract,
+            >,
+    {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();
 
         // Strip "./" prefix for consistent path matching
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
 
-        let mut builder = Project::builder()
+        let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
             .restrictions(self.restrictions(&paths)?)
@@ -1376,7 +1455,7 @@ impl Config {
                 Severity::Error
             })
             .set_offline(self.offline)
-            .set_cached(cached)
+            .set_cached(cached && !self.deny.warnings())
             .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts);
 
@@ -1385,7 +1464,7 @@ impl Config {
             builder = builder.sparse_output(filter);
         }
 
-        let project = builder.build(self.compiler()?)?;
+        let project = builder.build(compiler()?)?;
 
         // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
         // directory boundary with the native separator so a later `Remapping::to_string` does not
@@ -1400,12 +1479,6 @@ impl Config {
                 context.pop();
                 context.push(std::path::MAIN_SEPARATOR);
             }
-        }
-
-        if self.force {
-            // Warnings are intentionally dropped here because `sh_warn!` is a circular
-            // dependency. Callers that need warnings should call `cleanup()` directly.
-            let _ = self.cleanup(&project);
         }
 
         Ok(project)
@@ -1442,6 +1515,31 @@ impl Config {
         project: &Project<C, T>,
     ) -> Result<Vec<String>, SolcError> {
         let mut warnings = Vec::new();
+
+        if let Some(coverage_cache) = self.coverage_cache_path()
+            && coverage_cache.exists()
+        {
+            let result = Self::lock_coverage_cache(&coverage_cache)
+                .and_then(|_lock| fs::remove_dir_all(&coverage_cache));
+            if let Err(err) = result
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                warnings.push(format!(
+                    "failed to remove coverage cache {}: {err}",
+                    coverage_cache.display()
+                ));
+            }
+        }
+
+        let external_cache = self.root.join(&self.cache_path).join("external-compilers");
+        if let Err(err) = fs::remove_dir_all(&external_cache)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            warnings.push(format!(
+                "failed to remove external compiler cache {}: {err}",
+                external_cache.display()
+            ));
+        }
 
         if let Err(err) = project.cleanup() {
             warnings.push(format!("failed to clean project artifacts: {err}"));
@@ -1481,6 +1579,60 @@ impl Config {
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(warnings)
+    }
+
+    /// Marks directories owned by the coverage compiler cache.
+    pub const COVERAGE_CACHE_MARKER: &str = ".foundry-coverage-cache";
+
+    /// Returns the coverage cache directory when it does not overlap project data.
+    pub fn coverage_cache_path(&self) -> Option<PathBuf> {
+        // Resolve existing ancestors so symlinks and parent components cannot make cleanup
+        // target a protected directory. Unresolvable paths disable this optional cache.
+        let resolve = |path: PathBuf| {
+            let existing = path.ancestors().find(|path| path.exists())?;
+            let suffix = path.strip_prefix(existing).ok()?;
+            if suffix.components().any(|part| !matches!(part, Component::Normal(_))) {
+                return None;
+            }
+            let path = canonicalize(existing).ok()?.join(suffix);
+            #[cfg(windows)]
+            let path = PathBuf::from(path.to_slash_lossy().as_ref());
+            Some(path)
+        };
+        let root = resolve(self.root.clone())?;
+        let cache = resolve(self.root.join(&self.cache_path).join("coverage"))?;
+        if root.starts_with(&cache) {
+            return None;
+        }
+        for path in [&self.src, &self.test, &self.script, &self.out]
+            .into_iter()
+            .chain(&self.libs)
+            .chain(&self.build_info_path)
+        {
+            let path = resolve(self.root.join(path))?;
+            if path.starts_with(&cache) || cache.starts_with(path) {
+                return None;
+            }
+        }
+        if cache.exists() && !cache.join(Self::COVERAGE_CACHE_MARKER).is_file() {
+            return None;
+        }
+        Some(cache)
+    }
+
+    /// Locks the coverage cache for loading, publishing, or cleanup without waiting.
+    ///
+    /// Keep the lock file outside the cache directory and never remove it: all operations must
+    /// lock the same file even when cleanup removes the directory.
+    pub fn lock_coverage_cache(path: &Path) -> io::Result<fs::File> {
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.with_extension("lock"))?;
+        lock.try_lock()?;
+        Ok(lock)
     }
 
     /// Ensures that the configured version is installed if explicitly set
@@ -1613,7 +1765,7 @@ impl Config {
         self.remappings.iter().map(|m| m.clone().into())
     }
 
-    /// Returns project remappings with absolute aliases for relative filesystem contexts.
+    /// Returns project remappings with absolute aliases for relative external filesystem contexts.
     fn project_remappings(&self) -> Vec<Remapping> {
         let remappings = self.get_all_remappings().collect::<Vec<_>>();
         let mut adjusted = Vec::with_capacity(remappings.len());
@@ -1640,6 +1792,9 @@ impl Config {
             // slash conversion for compiler source-unit names.
             #[cfg(windows)]
             let context_path = PathBuf::from_slash(context_path.to_string_lossy());
+            if context_path.starts_with(&self.root) {
+                continue;
+            }
             let mut context_path = context_path.display().to_string();
             if context.ends_with(['/', '\\']) && !context_path.ends_with(['/', '\\']) {
                 context_path.push(std::path::MAIN_SEPARATOR);
@@ -1838,40 +1993,16 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
-            && self.etherscan.contains_key(maybe_alias)
-        {
-            return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
-        }
+        self.etherscan.resolve_for(
+            self.etherscan_alias(),
+            self.etherscan_api_key.as_deref(),
+            chain.or(self.chain),
+        )
+    }
 
-        // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain
-            .or(self.chain)
-            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
-        {
-            match (res, self.etherscan_api_key.as_ref()) {
-                (Ok(mut config), Some(key)) => {
-                    // we update the key, because if an etherscan_api_key is set, it should take
-                    // precedence over the entry, since this is usually set via env var or CLI args.
-                    config.key.clone_from(key);
-                    return Ok(Some(config));
-                }
-                (Ok(config), None) => return Ok(Some(config)),
-                (Err(err), None) => return Err(err),
-                (Err(_), Some(_)) => {
-                    // use the etherscan key as fallback
-                }
-            }
-        }
-
-        // etherscan fallback via API key
-        if let Some(key) = self.etherscan_api_key.as_ref() {
-            return Ok(ResolvedEtherscanConfig::create(
-                key,
-                chain.or(self.chain).unwrap_or_default(),
-            ));
-        }
-        Ok(None)
+    /// The `[etherscan]` entry to prefer over matching on chain id, if it names one.
+    pub fn etherscan_alias(&self) -> Option<&str> {
+        self.etherscan_api_key.as_deref().or(self.eth_rpc_url.as_deref())
     }
 
     /// Helper function to just get the API key
@@ -1952,7 +2083,7 @@ impl Config {
         Libraries::parse(&self.libraries)
     }
 
-    /// Returns all libraries with applied remappings. Same as `self.solc_settings()?.libraries`.
+    /// Returns all configured libraries with applied remappings.
     pub fn libraries_with_remappings(&self) -> Result<Libraries, SolcError> {
         let paths: ProjectPathsConfig = self.project_paths();
         Ok(self.parsed_libraries()?.apply(|libs| paths.apply_lib_remappings(libs)))
@@ -1973,8 +2104,15 @@ impl Config {
             model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
         }
 
+        // Keep configured addresses out of solc's input when linking is forbidden. Otherwise
+        // solc consumes the link references, making actual dependencies invisible to the check.
+        let mut libraries = self.libraries_with_remappings()?;
+        if !self.allow_linked_libraries {
+            libraries.libs.clear();
+        }
+
         let mut settings = Settings {
-            libraries: self.libraries_with_remappings()?,
+            libraries,
             optimizer: self.optimizer(),
             evm_version: Some(self.evm_version),
             metadata: Some(SettingsMetadata {
@@ -2665,12 +2803,16 @@ impl Config {
         }
         // Apply key fixes before selecting profiles, while standalone sections and profile names
         // are still distinguishable.
-        let provider = ForcedSnakeCaseData(toml_provider).strict_select(profiles);
-        let provider = &BackwardsCompatTomlProvider(provider);
+        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(toml_provider));
+        let provider = &provider.strict_select(profiles);
+        // Config files must not move the project root. Only profile merges drop `root`, since
+        // standalone sections may use it as a key, e.g. an `[rpc_endpoints]` alias.
+        let profile_provider = &IgnoreRootProvider(provider);
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
-            figment = figment.merge(provider.rename(Self::DEFAULT_PROFILE, profile.clone()));
+            figment =
+                figment.merge(profile_provider.rename(Self::DEFAULT_PROFILE, profile.clone()));
         }
         // merge special keys into config
         for standalone_key in Self::STANDALONE_SECTIONS {
@@ -2687,7 +2829,7 @@ impl Config {
             }
         }
         // merge the profile
-        figment = figment.merge(provider);
+        figment = figment.merge(profile_provider);
         figment
     }
 
@@ -2701,12 +2843,10 @@ impl Config {
             return figment;
         }
 
-        // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
-            && let Some(version) = solc
-                .try_version()
-                .ok()
-                .and_then(|version| self.evm_version.normalize_version_solc(&version))
+        // Normalize `evm_version` based on the provided solc version. Local compiler paths are
+        // never executed while loading config.
+        if let Ok(SolcReq::Version(version)) = figment.extract_inner::<SolcReq>("solc")
+            && let Some(version) = self.evm_version.normalize_version_solc(&version)
         {
             let profile = figment.profile().clone();
             figment = figment.merge(Serialized::default("evm_version", version).profile(profile));
@@ -2929,6 +3069,7 @@ impl Default for Config {
             libs: vec!["lib".into()],
             cache: true,
             dynamic_test_linking: true,
+            allow_linked_libraries: true,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
@@ -2944,6 +3085,7 @@ impl Default for Config {
             gas_reports_include_tests: false,
             solc: None,
             vyper: Default::default(),
+            external_compilers: Default::default(),
             auto_detect_solc: true,
             offline: false,
             optimizer: None,
@@ -2980,15 +3122,16 @@ impl Default for Config {
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,
             initial_balance: U256::from((1u128 << 96) - 1),
-            block_number: U256::from(1),
+            block_number: U256::ONE,
             fork_block_number: None,
+            fork_state_by_number: false,
             chain: None,
             gas_limit: (1u64 << 30).into(), // ~1B
             code_size_limit: None,
             gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::ZERO,
-            block_timestamp: U256::from(1),
+            block_timestamp: U256::ONE,
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
@@ -3027,6 +3170,8 @@ impl Default for Config {
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),
             no_storage_caching: false,
+            no_fork_bal: false,
+            fork_prefetch: false,
             no_rpc_rate_limit: false,
             use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
@@ -3041,6 +3186,7 @@ impl Default for Config {
             bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
+            decode_external_storage: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             create2_deployer: Self::DEFAULT_CREATE2_DEPLOYER,
             skip: vec![],
@@ -3321,6 +3467,10 @@ mod tests {
     #[test]
     fn project_remappings_alias_relative_filesystem_contexts_in_place() {
         let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let internal_dependency = project.join("dependency");
+        fs::create_dir(&internal_dependency).unwrap();
         let dependency = root.path().join("dependency");
         let absolute_dependency = root.path().join("absolute-dependency");
         fs::create_dir(&dependency).unwrap();
@@ -3332,7 +3482,7 @@ mod tests {
             path: "lib/global-before/".into(),
         };
         let relative = Remapping {
-            context: Some(format!("dependency{}", std::path::MAIN_SEPARATOR)),
+            context: Some(format!("../dependency{}", std::path::MAIN_SEPARATOR)),
             name: "relative/".into(),
             path: "lib/relative/".into(),
         };
@@ -3355,9 +3505,15 @@ mod tests {
             name: "global-after/".into(),
             path: "lib/global-after/".into(),
         };
-        let mut config = Config::with_root(root.path());
+        let internal = Remapping {
+            context: Some(format!("dependency{}", std::path::MAIN_SEPARATOR)),
+            name: "internal/".into(),
+            path: "lib/internal/".into(),
+        };
+        let mut config = Config::with_root(&project);
         config.remappings = [
             global_before.clone(),
+            internal.clone(),
             relative.clone(),
             absolute.clone(),
             missing.clone(),
@@ -3367,7 +3523,7 @@ mod tests {
         .into();
 
         let mut absolute_alias = relative.clone();
-        let absolute_context = config.root.join("dependency");
+        let absolute_context = config.root.parent().unwrap().join("dependency");
         #[cfg(windows)]
         let absolute_context = PathBuf::from_slash(absolute_context.to_string_lossy());
         let mut absolute_context = absolute_context.display().to_string();
@@ -3375,7 +3531,15 @@ mod tests {
         absolute_alias.context = Some(absolute_context);
         assert_eq!(
             config.project_remappings(),
-            vec![global_before, relative, absolute_alias, absolute, missing, global_after]
+            vec![
+                global_before,
+                internal,
+                relative,
+                absolute_alias,
+                absolute,
+                missing,
+                global_after
+            ]
         );
     }
 
@@ -3396,6 +3560,115 @@ mod tests {
 
         config.no_storage_caching = false;
         assert!(!config.enable_caching(url, NamedChain::Dev));
+    }
+
+    #[test]
+    fn test_fork_state_by_number_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().fork_state_by_number);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                fork_state_by_number = true
+                no_storage_caching = true
+
+                [profile.ci]
+                fork_state_by_number = false
+                ",
+            )?;
+            let config = Config::load().unwrap();
+            assert!(config.fork_state_by_number);
+            assert!(config.no_storage_caching);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert!(!config.fork_state_by_number);
+            assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_state_by_number_environment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nfork_state_by_number = true\n")?;
+            jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "false");
+            assert!(!Config::load().unwrap().fork_state_by_number);
+            jail.create_file("foundry.toml", "[profile.default]\nfork_state_by_number = false\n")?;
+            jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
+            assert!(Config::load().unwrap().fork_state_by_number);
+            jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "invalid");
+            assert!(Config::load().is_err());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_bal_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().no_fork_bal);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                no_fork_bal = true
+                no_storage_caching = true
+
+                [profile.ci]
+                no_fork_bal = false
+                ",
+            )?;
+            let config = Config::load().unwrap();
+            assert!(config.no_fork_bal);
+            assert!(config.no_storage_caching);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert!(!config.no_fork_bal);
+            assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_prefetch_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                fork_prefetch = true
+
+                [profile.ci]
+                fork_prefetch = false
+                ",
+            )?;
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert!(!Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "true");
+            assert!(Config::load().unwrap().fork_prefetch);
+            jail.set_env("FOUNDRY_FORK_PREFETCH", "invalid");
+            assert!(Config::load().is_err());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_bal_environment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nno_fork_bal = true\n")?;
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "false");
+            assert!(!Config::load().unwrap().no_fork_bal);
+            jail.create_file("foundry.toml", "[profile.default]\nno_fork_bal = false\n")?;
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "true");
+            assert!(Config::load().unwrap().no_fork_bal);
+            jail.set_env("FOUNDRY_NO_FORK_BAL", "invalid");
+            assert!(Config::load().is_err());
+            Ok(())
+        });
     }
 
     #[test]
@@ -4552,6 +4825,7 @@ mod tests {
                 block_difficulty = 0
                 block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
+                fork_state_by_number = false
                 block_timestamp = 1
                 use_literal_content = false
                 bytecode_hash = 'ipfs'
@@ -4576,6 +4850,8 @@ mod tests {
                 memory_limit = 134217728
                 names = false
                 no_storage_caching = false
+                no_fork_bal = false
+                fork_prefetch = false
                 no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
@@ -4681,6 +4957,117 @@ mod tests {
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_solc_env_preserves_standalone_sections() {
+        for env in ["FOUNDRY_SOLC_VERSION", "DAPP_SOLC_VERSION"] {
+            figment::Jail::expect_with(|jail| {
+                jail.create_file(
+                    "foundry.toml",
+                    r#"
+                    [profile.default]
+                    solc_version = "0.8.12"
+
+                    [profile.ci]
+                    solc = "0.8.20"
+
+                    [etherscan]
+                    mainnet = { key = "test-key" }
+
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "test-label"
+
+                    [rpc_endpoints]
+                    mainnet = "https://example.com"
+                "#,
+                )?;
+
+                for (profile, version) in [("default", 12), ("ci", 20)] {
+                    jail.clear_env();
+                    jail.set_env("FOUNDRY_PROFILE", profile);
+                    let config = Config::load().unwrap();
+                    assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, version))));
+
+                    jail.set_env(env, "0.6.6");
+                    let overridden = Config::load().unwrap();
+                    assert_eq!(overridden.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
+                    assert_eq!(overridden.rpc_endpoints, config.rpc_endpoints);
+                    assert_eq!(overridden.etherscan, config.etherscan);
+                    assert_eq!(overridden.labels, config.labels);
+                    assert_eq!(overridden.tracing.labels, config.tracing.labels);
+                }
+
+                jail.set_env("DAPP_SOLC_VERSION", "0.7.6");
+                jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
+                assert_eq!(
+                    Config::load().unwrap().solc,
+                    Some(SolcReq::Version(Version::new(0, 6, 6))),
+                );
+                Ok(())
+            });
+        }
+    }
+
+    #[test]
+    fn test_legacy_keys_in_standalone_named_profiles() {
+        for profile in ["coverage", "fuzz", "lint", "symbolic"] {
+            figment::Jail::expect_with(|jail| {
+                jail.create_file(
+                    "foundry.toml",
+                    &format!(
+                        r#"
+                        [profile.default]
+                        solc = "0.8.12"
+
+                        [profile.{profile}]
+                        solc_version = "0.8.20"
+                        deny_warnings = true
+                        labels = {{ "0x0000000000000000000000000000000000000001" = "test-label" }}
+                    "#,
+                    ),
+                )?;
+                jail.set_env("FOUNDRY_PROFILE", profile);
+                let config = Config::load().unwrap();
+                assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 20))));
+                assert_eq!(config.deny, DenyLevel::Warnings);
+                assert_eq!(config.tracing.labels, config.labels);
+                assert_eq!(config.labels.len(), 1);
+
+                for env in ["FOUNDRY_SOLC_VERSION", "DAPP_SOLC_VERSION"] {
+                    jail.set_env(env, "0.6.6");
+                    let overridden = Config::load().unwrap();
+                    assert_eq!(overridden.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
+                    jail.clear_env();
+                    jail.set_env("FOUNDRY_PROFILE", profile);
+                }
+                Ok(())
+            });
+        }
+    }
+
+    #[test]
+    fn test_legacy_keys_preserve_rpc_aliases() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [rpc_endpoints]
+                solc_version = "https://compiler.example.com"
+                deny_warnings = "https://warnings.example.com"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.rpc_endpoints,
+                RpcEndpoints::new([
+                    ("solc_version", RpcEndpointUrl::Url("https://compiler.example.com".into())),
+                    ("deny_warnings", RpcEndpointUrl::Url("https://warnings.example.com".into())),
+                ]),
+            );
             Ok(())
         });
     }
@@ -5064,6 +5451,39 @@ mod tests {
                     "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
                         .to_string()
                 ]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn can_parse_libraries_with_whitespace() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "FOUNDRY_LIBRARIES",
+                "[src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222]",
+            );
+            let config = Config::load().unwrap();
+
+            similar_asserts::assert_eq!(
+                config.parsed_libraries().unwrap().libs,
+                BTreeMap::from([
+                    (
+                        PathBuf::from("src/A.sol"),
+                        BTreeMap::from([(
+                            "A".to_string(),
+                            "0x1111111111111111111111111111111111111111".to_string(),
+                        )]),
+                    ),
+                    (
+                        PathBuf::from("src/B.sol"),
+                        BTreeMap::from([(
+                            "B".to_string(),
+                            "0x2222222222222222222222222222222222222222".to_string(),
+                        )]),
+                    ),
+                ])
             );
 
             Ok(())
@@ -6388,10 +6808,8 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-            let labels = AddressHashMap::from_iter(vec![(
-                address!("0x0000000000000000000000000000000000000001"),
-                "Alice".to_string(),
-            )]);
+            let labels =
+                AddressHashMap::from_iter(vec![(Address::with_last_byte(1), "Alice".to_string())]);
             assert_eq!(config.labels, labels);
             assert_eq!(config.tracing.labels, labels);
             assert_eq!(
@@ -6421,17 +6839,11 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(
                 config.labels,
-                AddressHashMap::from_iter([(
-                    address!("0x0000000000000000000000000000000000000001"),
-                    "Alice".to_string(),
-                )])
+                AddressHashMap::from_iter([(Address::with_last_byte(1), "Alice".to_string(),)])
             );
             assert_eq!(
                 config.tracing.labels,
-                AddressHashMap::from_iter([(
-                    address!("0x0000000000000000000000000000000000000001"),
-                    "Bob".to_string(),
-                )])
+                AddressHashMap::from_iter([(Address::with_last_byte(1), "Bob".to_string(),)])
             );
 
             Ok(())
@@ -6464,7 +6876,7 @@ mod tests {
 
     #[test]
     fn test_tracing_serialization_keeps_global_verbosity() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
         let config = Config {
             tracing: TracingConfig { verbosity: 4, labels: labels.clone(), ..Default::default() },
@@ -6489,7 +6901,7 @@ mod tests {
 
     #[test]
     fn test_legacy_programmatic_labels_survive_serialization() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
         let config = Config { labels: labels.clone(), ..Default::default() };
 
@@ -6538,10 +6950,8 @@ mod tests {
             assert!(config.tracing.decode_internal);
             assert!(config.tracing.compact_labels);
             assert_eq!(config.tracing.external_identification_timeout, 9);
-            let labels = AddressHashMap::from_iter(vec![(
-                address!("0x0000000000000000000000000000000000000002"),
-                "Bob".to_string(),
-            )]);
+            let labels =
+                AddressHashMap::from_iter(vec![(Address::with_last_byte(2), "Bob".to_string())]);
             assert!(config.labels.is_empty());
             assert_eq!(config.tracing.labels, labels);
             assert!(config.warnings.is_empty());
@@ -6598,7 +7008,7 @@ mod tests {
 
     #[test]
     fn test_label_aliases_preserve_provider_precedence() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let labels = |label: &str| AddressHashMap::from_iter([(address, label.to_string())]);
         let provider = |global: &str, local: &str| {
             let figment = Config::merge_toml_provider(
@@ -7042,7 +7452,7 @@ mod tests {
     #[test]
     fn inherited_label_aliases_preserve_source_precedence() {
         figment::Jail::expect_with(|jail| {
-            let address = address!("0x0000000000000000000000000000000000000001");
+            let address = Address::with_last_byte(1);
 
             jail.create_file(
                 "base.toml",
@@ -7424,12 +7834,7 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.optimizer_runs, Some(999));
             assert_eq!(config.verbosity, 4);
-            assert_eq!(
-                config.sender,
-                "0x0000000000000000000000000000000000000001"
-                    .parse::<alloy_primitives::Address>()
-                    .unwrap()
-            );
+            assert_eq!(config.sender, Address::with_last_byte(1));
 
             Ok(())
         });
@@ -7661,28 +8066,13 @@ mod tests {
             let config = Config::load().unwrap();
 
             // Labels should be merged
+            assert_eq!(config.labels.get(&Address::with_last_byte(1)), Some(&"Alice".to_string()));
             assert_eq!(
-                config.labels.get(
-                    &"0x0000000000000000000000000000000000000001"
-                        .parse::<alloy_primitives::Address>()
-                        .unwrap()
-                ),
-                Some(&"Alice".to_string())
-            );
-            assert_eq!(
-                config.labels.get(
-                    &"0x0000000000000000000000000000000000000002"
-                        .parse::<alloy_primitives::Address>()
-                        .unwrap()
-                ),
+                config.labels.get(&Address::with_last_byte(2)),
                 Some(&"Bob Updated".to_string())
             );
             assert_eq!(
-                config.labels.get(
-                    &"0x0000000000000000000000000000000000000003"
-                        .parse::<alloy_primitives::Address>()
-                        .unwrap()
-                ),
+                config.labels.get(&Address::with_last_byte(3)),
                 Some(&"Charlie".to_string())
             );
 
@@ -7927,12 +8317,7 @@ mod tests {
             assert_eq!(config.optimizer, Some(true));
             assert_eq!(config.optimizer_runs, Some(333));
             assert_eq!(config.gas_limit, 555555.into());
-            assert_eq!(
-                config.sender,
-                "0x0000000000000000000000000000000000000001"
-                    .parse::<alloy_primitives::Address>()
-                    .unwrap()
-            );
+            assert_eq!(config.sender, Address::with_last_byte(1));
 
             // Test that prod profile correctly inherits even without a default profile
             jail.set_env("FOUNDRY_PROFILE", "prod");
@@ -7940,12 +8325,7 @@ mod tests {
             assert_eq!(config.optimizer, Some(true));
             assert_eq!(config.optimizer_runs, Some(20000));
             assert_eq!(config.gas_limit, 50000000.into());
-            assert_eq!(
-                config.sender,
-                "0x0000000000000000000000000000000000000002"
-                    .parse::<alloy_primitives::Address>()
-                    .unwrap()
-            );
+            assert_eq!(config.sender, Address::with_last_byte(2));
 
             Ok(())
         });
@@ -9247,6 +9627,166 @@ mod tests {
                 vec!["test/**".to_string(), "lib/**".to_string()]
             );
             assert!(config.coverage.exclude_tests);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn coverage_cache_protects_project_paths() {
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("coverage");
+        fs::create_dir(&root).unwrap();
+        let mut config = Config::with_root(&root);
+        config.cache_path = "..".into();
+        assert!(config.coverage_cache_path().is_none());
+        config.cache_path = "src".into();
+        assert!(config.coverage_cache_path().is_none());
+        config.cache_path = "cache".into();
+        let cache = config.coverage_cache_path().unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("user-data"), "preserve").unwrap();
+        assert!(config.coverage_cache_path().is_none());
+        fs::write(cache.join(Config::COVERAGE_CACHE_MARKER), "").unwrap();
+        assert_eq!(config.coverage_cache_path(), Some(cache));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn coverage_cache_uses_compiler_paths() {
+        let directory = tempdir().unwrap();
+        let mut config = Config::with_root(directory.path());
+        config.cache_path = "custom-cache".into();
+        config.out = "custom-out".into();
+        let cache = config.coverage_cache_path().unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        assert_eq!(cache.as_os_str(), canonicalize(&cache).unwrap().as_os_str());
+        fs::write(cache.join(Config::COVERAGE_CACHE_MARKER), "").unwrap();
+        assert_eq!(config.coverage_cache_path(), Some(cache));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn coverage_cache_rejects_symlink_overlap() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        fs::create_dir(root.join("src")).unwrap();
+        std::os::unix::fs::symlink(root.join("src"), root.join("cache")).unwrap();
+        let config = Config::with_root(root);
+        assert!(config.coverage_cache_path().is_none());
+    }
+
+    #[test]
+    fn toml_root_does_not_override_project_root() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                root = "/elsewhere"
+
+                [profile.ci]
+                root = "/elsewhere-ci"
+
+                [profile.fmt]
+
+                [profile.root]
+
+                [fmt]
+                root = "/elsewhere-fmt"
+
+                [rpc_endpoints]
+                root = "https://example.com"
+                "#,
+            )?;
+            let expected = Config::with_root(jail.directory()).root;
+
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(config.root, expected);
+            assert!(
+                config
+                    .warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "root"))
+            );
+            assert!(config.rpc_endpoints.contains_key("root"));
+            assert!(config.profiles.contains(&Profile::new("root")));
+
+            for profile in ["ci", "fmt"] {
+                jail.set_env("FOUNDRY_PROFILE", profile);
+                let config = Config::load_with_root(jail.directory()).unwrap();
+                assert_eq!(config.root, expected);
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn supplied_compiler_project_preserves_artifacts_and_compilation_settings() {
+        let directory = tempdir().unwrap();
+        let mut config = Config::with_root(directory.path()).sanitized();
+        config.solc = Some(SolcReq::Local(config.root.join("missing-solc")));
+        config.force = true;
+        config
+            .additional_compiler_profiles
+            .push(toml::from_str("name = 'via-ir'\nvia_ir = true").unwrap());
+        config
+            .compilation_restrictions
+            .push(toml::from_str("paths = 'src/**'\nversion = '=0.8.21'\nvia_ir = true").unwrap());
+        fs::create_dir_all(&config.src).unwrap();
+        fs::write(config.src.join("Foo.sol"), "pragma solidity ^0.8.0; contract Foo {}").unwrap();
+        fs::create_dir_all(&config.out).unwrap();
+        fs::create_dir_all(&config.cache_path).unwrap();
+        let artifact = config.out.join("Foo.json");
+        let cache = config.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME);
+        fs::write(&artifact, "existing artifact").unwrap();
+        fs::write(&cache, "existing cache").unwrap();
+
+        let compiler = MultiCompiler { solc: None, vyper: None };
+        let project = config.create_project_with_compiler(|| Ok(compiler), true, true).unwrap();
+
+        assert!(project.compiler.solc.is_none());
+        assert!(project.compiler.vyper.is_none());
+        assert!(project.cached);
+        assert!(project.no_artifacts);
+        assert_eq!(project.paths.artifacts, config.out);
+        assert_eq!(project.settings.solc.via_ir, Some(false));
+        assert_eq!(project.additional_settings["via-ir"].solc.via_ir, Some(true));
+        let restriction = &project.restrictions[&config.src.join("Foo.sol")];
+        assert_eq!(restriction.version, Some("=0.8.21".parse().unwrap()));
+        assert_eq!(restriction.restrictions.solc.via_ir, Some(true));
+        assert_eq!(fs::read_to_string(artifact).unwrap(), "existing artifact");
+        assert_eq!(fs::read_to_string(cache).unwrap(), "existing cache");
+    }
+
+    #[test]
+    fn linked_library_policy_settings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                libraries = ["src/Lib.sol:Lib:0x0000000000000000000000000000000000000001"]
+                [profile.ci]
+                allow_linked_libraries = false
+            "#,
+            )?;
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(config.allow_linked_libraries);
+            assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(!config.allow_linked_libraries);
+            assert!(config.dynamic_test_linking);
+            assert!(!config.libraries_with_remappings().unwrap().libs.is_empty());
+            assert!(config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+            let roundtrip = Config::from_provider(&config).unwrap();
+            assert!(!roundtrip.allow_linked_libraries);
+
+            jail.set_env("FOUNDRY_ALLOW_LINKED_LIBRARIES", "true");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(config.allow_linked_libraries);
+            assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
             Ok(())
         });
     }

@@ -471,7 +471,7 @@ impl ResolvedRpcEndpoint {
     pub fn is_unresolved(&self) -> bool {
         let endpoint_err = self.endpoint.is_err();
         let extra_err = self.extra_endpoints.iter().any(|e| e.is_err());
-        let auth_err = self.auth.as_ref().map(|auth| auth.is_err()).unwrap_or(false);
+        let auth_err = self.auth.as_ref().is_some_and(|auth| auth.is_err());
         endpoint_err || extra_err || auth_err
     }
 

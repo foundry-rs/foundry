@@ -18,7 +18,6 @@ foundry-compilers.workspace = true
 foundry-evm-traces.workspace = true
 foundry-evm-core.workspace = true
 foundry-tui.workspace = true
-revm-inspectors.workspace = true
 
 alloy-primitives.workspace = true
 alloy-dyn-abi.workspace = true

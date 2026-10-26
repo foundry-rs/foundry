@@ -1,5 +1,8 @@
-use alloy_json_abi::{ContractObject, JsonAbi, ToSolConfig};
-use alloy_primitives::Address;
+use alloy_json_abi::{ContractObject, InternalType, JsonAbi, Param, ToSolConfig};
+use alloy_primitives::{
+    Address,
+    map::{HashMap, HashSet},
+};
 use clap::Parser;
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
@@ -24,7 +27,8 @@ pub struct InterfaceArgs {
     /// The target contract, which can be one of:
     /// - A file path to an ABI JSON file.
     /// - A contract identifier in the form `<path>:<contractname>` or just `<contractname>`.
-    /// - An Ethereum address, for which the ABI will be fetched from Etherscan.
+    /// - An Ethereum address, for which the ABI will be fetched from Etherscan. If Etherscan
+    ///   reports the contract as a proxy, the ABI of its implementation is included as well.
     contract: String,
 
     /// The name to use for the generated interface.
@@ -68,7 +72,7 @@ impl InterfaceArgs {
         let abis = if is_json_file {
             vec![(load_abi_from_file(&contract)?, name.unwrap_or_else(|| "Interface".to_owned()))]
         } else if let Ok(address) = Address::from_str(&contract) {
-            fetch_abi_from_etherscan(address, &etherscan.load_config()?).await?
+            fetch_abi_from_etherscan(address, &etherscan.load_config()?, true).await?
         } else {
             vec![load_abi_from_artifact(&contract)?]
         };
@@ -76,8 +80,35 @@ impl InterfaceArgs {
         let config = flatten.then(|| ToSolConfig::new().one_contract(true));
         let mut json_abis = Vec::with_capacity(abis.len());
         let mut sources = Vec::with_capacity(abis.len());
-        for (abi, name) in &abis {
-            let source = abi.to_sol(name, config.clone());
+        let multiple = abis.len() > 1;
+        let mut declarations = HashSet::default();
+        for (mut abi, mut name) in abis {
+            json_abis.push(serde_json::to_value(&abi)?);
+            abi.dedup();
+            if multiple {
+                let mut names = HashMap::<_, _>::default();
+                let unique = unique_declaration_name(&name, &mut declarations, Some(&abi));
+                names.insert(name, unique.clone());
+                name = unique;
+                visit_abi_types(&mut abi, &mut |ty| {
+                    if let InternalType::Struct { contract: Some(contract), .. }
+                    | InternalType::Enum { contract: Some(contract), .. }
+                    | InternalType::Other { contract: Some(contract), .. } = ty
+                    {
+                        *contract = names
+                            .entry(contract.clone())
+                            .or_insert_with(|| {
+                                if flatten {
+                                    contract.clone()
+                                } else {
+                                    unique_declaration_name(contract, &mut declarations, None)
+                                }
+                            })
+                            .clone();
+                    }
+                });
+            }
+            let source = abi.to_sol(&name, config.clone());
             sources.push(
                 match forge_fmt::format(&source, FormatterConfig::default()).into_result() {
                     Ok(formatted) => formatted,
@@ -87,7 +118,6 @@ impl InterfaceArgs {
                     }
                 },
             );
-            json_abis.push(serde_json::to_value(abi)?);
         }
         let source = format!(
             "// SPDX-License-Identifier: UNLICENSED\n\
@@ -110,6 +140,59 @@ impl InterfaceArgs {
             sh_print!("{source}")?;
         }
         Ok(())
+    }
+}
+
+/// Reserves a declaration name across all generated interfaces and libraries.
+fn unique_declaration_name(
+    name: &str,
+    declarations: &mut HashSet<String>,
+    abi: Option<&JsonAbi>,
+) -> String {
+    let mut available = |candidate: &str| {
+        !abi.is_some_and(|abi| abi.functions.contains_key(candidate))
+            && declarations.insert(candidate.to_owned())
+    };
+    if available(name) {
+        return name.to_owned();
+    }
+    for suffix in 1.. {
+        let candidate = format!("{name}_{suffix}");
+        if available(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Visits internal types, including nested tuples, in every ABI parameter.
+fn visit_abi_types(abi: &mut JsonAbi, visit: &mut impl FnMut(&mut InternalType)) {
+    if let Some(constructor) = abi.constructor_mut() {
+        visit_param_types(&mut constructor.inputs, visit);
+    }
+    for function in abi.functions_mut() {
+        visit_param_types(&mut function.inputs, visit);
+        visit_param_types(&mut function.outputs, visit);
+    }
+    for error in abi.errors_mut() {
+        visit_param_types(&mut error.inputs, visit);
+    }
+    for event in abi.events_mut() {
+        for param in &mut event.inputs {
+            if let Some(ty) = &mut param.internal_type {
+                visit(ty);
+            }
+            visit_param_types(&mut param.components, visit);
+        }
+    }
+}
+
+fn visit_param_types(params: &mut [Param], visit: &mut impl FnMut(&mut InternalType)) {
+    for param in params {
+        if let Some(ty) = &mut param.internal_type {
+            visit(ty);
+        }
+        visit_param_types(&mut param.components, visit);
     }
 }
 

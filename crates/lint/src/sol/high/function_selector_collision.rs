@@ -164,7 +164,7 @@ impl PathState {
     }
 
     fn mark_input_modified(&mut self, input: CalldataInput) {
-        if !self.modified_inputs.contains(&input) {
+        if self.input_unmodified(input) {
             self.modified_inputs.push(input);
             self.modified_inputs.sort_unstable();
         }
@@ -559,7 +559,8 @@ impl<'gcx> Visit<'gcx> for DelegateTargetCollector<'gcx> {
                 self.paths = true_paths;
                 dedup(&mut self.paths);
             }
-            ExprKind::Call(callee, args, opts) => {
+            ExprKind::Call(callee, args) => {
+                let (callee, opts) = callee.split_call_options();
                 let _ = self.visit_expr(callee);
                 for arg in opts.iter().flat_map(|opts| opts.args) {
                     let _ = self.visit_expr(&arg.value);
@@ -727,8 +728,8 @@ fn delegated_contract<'gcx>(
     full_calldata_inputs: &[CalldataInput],
     expr: &'gcx Expr<'gcx>,
 ) -> Option<(ContractId, Option<CalldataInput>)> {
-    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return None };
-    let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return None };
+    let (callee, args, _) = expr.peel_parens().as_call()?;
+    let ExprKind::Member(receiver, member) = &callee.kind else { return None };
     let required_input = full_calldata_source(gcx, args.exprs().next()?, full_calldata_inputs)?;
     if member.name != kw::Delegatecall
         || gcx.resolved_builtin(callee) != Some(Builtin::AddressDelegatecall)
@@ -748,7 +749,7 @@ fn typed_contract_behind_address_cast<'gcx>(
         return Some(id);
     }
     match &expr.kind {
-        ExprKind::Call(callee, args, _) if is_address_cast(callee) => {
+        ExprKind::Call(callee, args) if is_address_cast(callee) => {
             args.exprs().next().and_then(|arg| typed_contract_behind_address_cast(gcx, arg))
         }
         ExprKind::Payable(inner) => typed_contract_behind_address_cast(gcx, inner),

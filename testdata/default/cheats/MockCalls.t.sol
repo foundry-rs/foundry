@@ -41,6 +41,25 @@ contract MockCallsTest is Test {
         assertEq(mockErc20.balance, 3 ether);
     }
 
+    function testMockCallsFailedValueTransferKeepsQueue() public {
+        address mockErc20 = vm.addr(vm.randomUint());
+        bytes memory data = abi.encodeWithSignature("balanceOf(address)", address(this));
+        bytes[] memory mocks = new bytes[](2);
+        mocks[0] = abi.encode(2 ether);
+        mocks[1] = abi.encode(1 ether);
+        vm.mockCalls(mockErc20, 1 ether, data, mocks);
+
+        vm.deal(address(this), 0);
+        (bool ok,) = mockErc20.call{value: 1 ether}(data);
+        assertTrue(!ok);
+
+        vm.deal(address(this), 2 ether);
+        (, bytes memory ret1) = mockErc20.call{value: 1 ether}(data);
+        assertEq(abi.decode(ret1, (uint256)), 2 ether);
+        (, bytes memory ret2) = mockErc20.call{value: 1 ether}(data);
+        assertEq(abi.decode(ret2, (uint256)), 1 ether);
+    }
+
     function testMockCalls() public {
         address mockUser = vm.addr(vm.randomUint());
         address mockErc20 = vm.addr(vm.randomUint());

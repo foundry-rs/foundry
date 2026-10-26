@@ -49,8 +49,7 @@ impl HexIdProvider {
     pub fn generate(&self) -> String {
         let id: String =
             (&mut rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
-        let out = hex::encode(id);
-        format!("0x{out}")
+        hex::encode_prefixed(id)
     }
 }
 

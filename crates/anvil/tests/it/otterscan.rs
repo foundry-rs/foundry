@@ -49,7 +49,7 @@ async fn ots_get_internal_operations_contract_deploy() {
             r#type: OperationType::OpCreate,
             from: sender,
             to: contract_receipt.contract_address.unwrap(),
-            value: U256::from(0)
+            value: U256::ZERO
         }],
     );
 }
@@ -108,7 +108,7 @@ async fn ots_get_internal_operations_contract_create2() {
             r#type: OperationType::OpCreate2,
             from: address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"),
             to: address!("0x347bcdad821abc09b8c275881b368de36476b62c"),
-            value: U256::from(0),
+            value: U256::ZERO,
         }],
     );
 }
@@ -480,9 +480,9 @@ async fn ots_get_transaction_by_sender_and_nonce() {
     let receipt2 = provider.send_transaction(tx2).await.unwrap().get_receipt().await.unwrap();
 
     let result1 =
-        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(0)).await.unwrap().unwrap();
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::ZERO).await.unwrap().unwrap();
     let result2 =
-        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(1)).await.unwrap().unwrap();
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::ONE).await.unwrap().unwrap();
 
     assert_eq!(result1, receipt1.transaction_hash);
     assert_eq!(result2, receipt2.transaction_hash);

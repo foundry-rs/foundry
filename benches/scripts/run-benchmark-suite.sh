@@ -6,8 +6,9 @@ join_repositories() {
   printf '%s' "$*"
 }
 
+# The pinned account test expects a bare selector, but `Simulator` reverts with 32 bytes, which exact matching rejects.
 CI_TEST_REPOSITORIES=$(join_repositories \
-  "ithacaxyz/account:v0.5.7" \
+  "ithacaxyz/account:v0.5.7 --nmt testSimulateExecuteNoRevertUnderfundedReverts" \
   "vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test|LibStringTest'" \
   "uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest'" \
   "sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting")

@@ -5,11 +5,12 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::cache::DiskStateCache,
+        mem::{cache::DiskStateCache, tempo::TempoChain},
     },
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip7928::BlockAccessList;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -26,9 +27,8 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use foundry_evm::{
-    backend::MemDb,
-    traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
+use foundry_evm::traces::{
+    CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -99,13 +99,14 @@ impl InMemoryBlockStates {
     /// This modifies the `limit` what to keep stored in memory.
     ///
     /// This will ensure the new limit adjusts based on the block time.
-    /// The lowest blocktime is 1s which should increase the limit slightly
+    /// The lowest blocktime is 1s which should increase the limit slightly.
+    /// Memory-only caches retain their configured limit.
     pub fn update_interval_mine_block_time(&mut self, block_time: Duration) {
         let block_time = block_time.as_secs();
         // for block times lower than 2s we increase the mem limit since we're mining _small_ blocks
         // very fast
         // this will gradually be decreased once the max limit was reached
-        if block_time <= 2 {
+        if block_time <= 2 && !self.is_memory_only() {
             self.in_memory_limit = DEFAULT_HISTORY_LIMIT * 3;
             self.enforce_limits();
         }
@@ -156,14 +157,14 @@ impl InMemoryBlockStates {
                         continue;
                     }
 
-                    let state_snapshot = state.0.clear_into_state_snapshot();
+                    let state_snapshot = state.serialize_state();
                     if self.disk_cache.write(hash, &state_snapshot) {
+                        state.clear();
                         // Write succeeded, move state to on-disk tracking
                         self.on_disk_states.insert(hash, state);
                         self.oldest_on_disk.push_back(hash);
                     } else {
-                        // Write failed, restore state to memory to avoid data loss
-                        state.init_from_state_snapshot(state_snapshot);
+                        // Write failed, keep state in memory to avoid data loss
                         self.states.insert(hash, state);
                         self.present.push_front(hash);
                         // Increase limit temporarily to prevent infinite retry loop
@@ -261,15 +262,6 @@ impl InMemoryBlockStates {
 
         SerializableHistoricalStates::new(states)
     }
-
-    /// Load states from serialized data
-    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        for (hash, state_snapshot) in states {
-            let mut state_db = StateDb::new(MemDb::default());
-            state_db.init_from_state_snapshot(state_snapshot);
-            self.insert(hash, state_db);
-        }
-    }
 }
 
 impl fmt::Debug for InMemoryBlockStates {
@@ -296,6 +288,8 @@ impl Default for InMemoryBlockStates {
 pub struct BlockchainStorage<N: Network> {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
+    /// EIP-7928 block access lists for locally mined blocks.
+    pub block_access_lists: B256HashMap<BlockAccessList>,
     /// mapping from block number -> block hash
     pub hashes: HashMap<u64, B256>,
     /// The current best hash
@@ -311,6 +305,8 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Tempo certificates and identity lifecycle, published with this canonical chain.
+    pub(crate) tempo: Option<TempoChain>,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
     pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
@@ -342,6 +338,7 @@ impl<N: Network> BlockchainStorage<N> {
         hashes.insert(best_number, genesis_hash);
         Self {
             blocks,
+            block_access_lists: Default::default(),
             hashes,
             best_hash,
             best_number,
@@ -349,6 +346,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: best_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -362,6 +360,7 @@ impl<N: Network> BlockchainStorage<N> {
 
         Self {
             blocks: B256HashMap::default(),
+            block_access_lists: Default::default(),
             hashes,
             best_hash: block_hash,
             best_number: block_number,
@@ -369,6 +368,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -392,6 +392,7 @@ impl<N: Network> BlockchainStorage<N> {
                 if let Some(block) = self.blocks.remove(&hash) {
                     removed.push(block);
                 }
+                self.block_access_lists.remove(&hash);
                 #[cfg(feature = "monad")]
                 self.remove_monad_block_metadata(&hash);
                 self.hashes.remove(&i);
@@ -405,6 +406,7 @@ impl<N: Network> BlockchainStorage<N> {
     pub fn empty() -> Self {
         Self {
             blocks: Default::default(),
+            block_access_lists: Default::default(),
             hashes: Default::default(),
             best_hash: Default::default(),
             best_number: Default::default(),
@@ -412,6 +414,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -428,6 +431,7 @@ impl<N: Network> BlockchainStorage<N> {
 
     /// Removes all stored transactions for the given block hash
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
+        self.block_access_lists.remove(&block_hash);
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in &block.body.transactions {
                 self.transactions.remove(&tx.hash());
@@ -575,11 +579,6 @@ impl<N: Network> Blockchain<N> {
     pub fn get_transaction_by_hash(&self, hash: &B256) -> Option<MinedTransaction<N>> {
         self.storage.read().transactions.get(hash).cloned()
     }
-
-    /// Returns the total number of blocks
-    pub fn blocks_count(&self) -> usize {
-        self.storage.read().blocks.len()
-    }
 }
 
 /// Represents the outcome of mining a new block
@@ -588,6 +587,8 @@ pub struct MinedBlockOutcome<T> {
     pub block_number: u64,
     /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions whose nonce was already consumed by the current state.
+    pub stale: Vec<Arc<PoolTransaction<T>>>,
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
@@ -601,6 +602,7 @@ impl<T> Clone for MinedBlockOutcome<T> {
         Self {
             block_number: self.block_number,
             included: self.included.clone(),
+            stale: self.stale.clone(),
             invalid: self.invalid.clone(),
             not_yet_valid: self.not_yet_valid.clone(),
         }
@@ -612,6 +614,7 @@ impl<T> fmt::Debug for MinedBlockOutcome<T> {
         f.debug_struct("MinedBlockOutcome")
             .field("block_number", &self.block_number)
             .field("included", &self.included.len())
+            .field("stale", &self.stale.len())
             .field("invalid", &self.invalid.len())
             .field("not_yet_valid", &self.not_yet_valid.len())
             .finish()
@@ -628,10 +631,13 @@ pub struct MinedTransaction<N: Network> {
 }
 
 impl<N: Network> MinedTransaction<N> {
-    /// Returns the traces of the transaction for `trace_transaction`
+    /// Returns the traces of the transaction for `trace_transaction`.
+    ///
+    /// Like simulated traces, these omit nested zero-value precompile calls identified during
+    /// execution, regardless of subsequent changes to the node configuration.
     pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
         ParityTraceBuilder::new(
-            self.info.traces.clone(),
+            exclude_precompile_calls(self.info.traces.clone()),
             None,
             TracingInspectorConfig::default_parity(),
         )
@@ -672,6 +678,33 @@ impl<N: Network> MinedTransaction<N> {
     }
 }
 
+/// Detaches precompile calls identified during execution from the call graph, as the tracing
+/// inspector does when configured to exclude precompile calls.
+///
+/// Mined transactions keep these calls for the Geth-style traces, which include them.
+fn exclude_precompile_calls(mut nodes: Vec<CallTraceNode>) -> Vec<CallTraceNode> {
+    for idx in 0..nodes.len() {
+        if nodes[idx].is_precompile()
+            && let Some(parent) = nodes[idx].parent
+            && let Some(position) = nodes[parent].children.iter().position(|&child| child == idx)
+        {
+            let parent = &mut nodes[parent];
+            parent.children.remove(position);
+            parent.ordering.retain_mut(|member| match member {
+                TraceMemberOrder::Call(child) if *child == position => false,
+                TraceMemberOrder::Call(child) => {
+                    if *child > position {
+                        *child -= 1;
+                    }
+                    true
+                }
+                _ => true,
+            });
+        }
+    }
+    nodes
+}
+
 /// Intermediary Anvil representation of a receipt
 #[derive(Clone, Debug)]
 pub struct MinedTransactionReceipt<N: Network> {
@@ -688,6 +721,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
+    use foundry_evm::backend::MemDb;
     use foundry_primitives::FoundryNetwork;
     use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;
@@ -697,6 +731,25 @@ mod tests {
         let mut storage = InMemoryBlockStates::default();
         storage.update_interval_mine_block_time(Duration::from_secs(1));
         assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT * 3);
+    }
+
+    #[test]
+    fn test_interval_update_preserves_memory_only_limit() {
+        for limit in [1, 8, DEFAULT_HISTORY_LIMIT * 4] {
+            let mut storage = InMemoryBlockStates::new(limit, 0);
+            for number in 0..limit + 2 {
+                storage.insert(B256::from(U256::from(number)), StateDb::new(MemDb::default()));
+            }
+
+            for seconds in [3, 1, 2] {
+                storage.update_interval_mine_block_time(Duration::from_secs(seconds));
+                assert_eq!(storage.in_memory_limit, limit);
+                assert_eq!(storage.states.len(), limit);
+                assert!(storage.on_disk_states.is_empty());
+                assert!(storage.get_state(&B256::ZERO).is_none());
+                assert!(storage.get_state(&B256::with_last_byte(2)).is_some());
+            }
+        }
     }
 
     #[test]
@@ -735,8 +788,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
-        let one = B256::from(U256::from(1));
-        let two = B256::from(U256::from(2));
+        let one = B256::with_last_byte(1);
+        let two = B256::with_last_byte(2);
 
         let mut state = MemDb::default();
         let addr = Address::random();
@@ -760,12 +813,12 @@ mod tests {
     #[test]
     fn persistent_states_do_not_use_disk_cache() {
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
-        let one = B256::from(U256::from(1));
-        let two = B256::from(U256::from(2));
+        let one = B256::with_last_byte(1);
+        let two = B256::with_last_byte(2);
         let address = Address::random();
         let mut db = StateRootDb::default();
 
-        db.insert_account(address, AccountInfo::from_balance(U256::from(1)));
+        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
         storage.insert(one, db.current_state());
         db.set_balance(address, U256::from(2)).unwrap();
         storage.insert(two, db.current_state());
@@ -774,7 +827,7 @@ mod tests {
         assert!(storage.on_disk_states.get(&one).unwrap().is_persistent());
         assert_eq!(
             storage.get_on_disk_state(&one).unwrap().basic_ref(address).unwrap().unwrap().balance,
-            U256::from(1)
+            U256::ONE
         );
         storage.remove_block_states(&[one]);
         assert!(storage.disk_cache.temp_dir.is_none());
@@ -857,8 +910,8 @@ mod tests {
         // Use limit=1 to force states to disk
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
 
-        let hash_a = B256::from(U256::from(1));
-        let hash_b = B256::from(U256::from(2));
+        let hash_a = B256::with_last_byte(1);
+        let hash_b = B256::with_last_byte(2);
 
         storage.insert(hash_a, StateDb::new(MemDb::default()));
         storage.insert(hash_b, StateDb::new(MemDb::default()));
@@ -951,10 +1004,10 @@ mod tests {
             block_hash: B256::ZERO,
             block_number,
         };
-        let first = B256::from(U256::from(1));
-        let second = B256::from(U256::from(2));
-        let third = B256::from(U256::from(3));
-        let fourth = B256::from(U256::from(4));
+        let first = B256::with_last_byte(1);
+        let second = B256::with_last_byte(2);
+        let third = B256::with_last_byte(3);
+        let fourth = B256::with_last_byte(4);
         let mut storage = BlockchainStorage::<FoundryNetwork>::empty();
         for transaction in [
             transaction(2, 0, fourth),

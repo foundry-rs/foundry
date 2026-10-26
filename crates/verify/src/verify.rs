@@ -111,10 +111,10 @@ fn classify_verifier_credential_response(
     }
 }
 
-fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
-    let url = Url::parse(url).wrap_err_with(|| format!("invalid {label} URL `{url}`"))?;
+pub(crate) fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
+    let url = Url::parse(url).wrap_err_with(|| format!("invalid {label} URL"))?;
     if !matches!(url.scheme(), "http" | "https") {
-        eyre::bail!("invalid {label} URL `{url}`: URL scheme must be http or https");
+        eyre::bail!("invalid {label} URL: URL scheme must be http or https");
     }
     Ok(url)
 }
@@ -934,7 +934,9 @@ impl VerifyArgs {
                 output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
             );
 
-            let Some((artifact_id, _)) = contracts.find_by_deployed_code_exact(&code) else {
+            let Some((artifact_id, _)) =
+                contracts.find_by_deployed_code_exact_unambiguous(&code)?
+            else {
                 eyre::bail!(format!(
                     "Bytecode at {} does not match any local contracts",
                     self.address
@@ -993,7 +995,9 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
+        self.etherscan.key =
+            self.verifier.resolve_api_key(self.etherscan.key.as_deref()).map(str::to_owned);
         sh_status!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default())?;
         self.verifier
             .effective_type()
@@ -1243,10 +1247,7 @@ mod tests {
         assert!(parse_http_verifier_url("http://example.com/api", "verifier").is_ok());
 
         let err = parse_http_verifier_url("gopher://example.com/api", "verifier").unwrap_err();
-        assert!(
-            err.to_string().contains("URL scheme must be http or https"),
-            "unexpected error: {err:?}"
-        );
+        assert_eq!(err.to_string(), "invalid verifier URL: URL scheme must be http or https");
     }
 
     #[test]

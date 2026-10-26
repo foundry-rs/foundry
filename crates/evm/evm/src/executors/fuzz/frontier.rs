@@ -504,7 +504,7 @@ mod tests {
         };
         let cmp = CmpOperands {
             op1: U256::ZERO,
-            op2: U256::from(1),
+            op2: U256::ONE,
             pc: 1,
             address: tx.call_details.target,
             opcode: opcode::LT,
@@ -527,12 +527,12 @@ mod tests {
     fn operand_delta_uses_signed_distance_for_signed_comparisons() {
         let unsigned = CmpOperands {
             op1: U256::MAX,
-            op2: U256::from(1),
+            op2: U256::ONE,
             pc: 0,
             address: Address::ZERO,
             opcode: opcode::LT,
         };
-        assert_eq!(operand_delta(&unsigned), U256::MAX - U256::from(1));
+        assert_eq!(operand_delta(&unsigned), U256::MAX - U256::ONE);
 
         let signed = CmpOperands { opcode: opcode::SLT, ..unsigned };
         assert_eq!(operand_delta(&signed), U256::from(2));
@@ -592,7 +592,7 @@ mod tests {
             },
         };
         let cmp = CmpOperands {
-            op1: U256::from(1),
+            op1: U256::ONE,
             op2: U256::from(2),
             pc: 1,
             address: tx.call_details.target,
@@ -622,7 +622,7 @@ mod tests {
         };
         let first = CmpOperands {
             op1: U256::ZERO,
-            op2: U256::from(1),
+            op2: U256::ONE,
             pc: 1,
             address: tx.call_details.target,
             opcode: opcode::LT,

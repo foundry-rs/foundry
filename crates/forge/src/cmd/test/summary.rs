@@ -45,7 +45,7 @@ impl TestSummaryReport<'_> {
                     "suite": suite_name,
                     "passed": suite.successes().count(),
                     "failed": suite.failures().count(),
-                    "skipped": suite.skips().count(),
+                    "skipped": suite.skipped(),
                 });
                 if self.is_detailed {
                     result["file_path"] = suite_path.into();
@@ -81,7 +81,7 @@ impl TestSummaryReport<'_> {
                 Cell::new(suite_name),
                 count_cell(suite.successes().count(), Color::Green),
                 count_cell(suite.failures().count(), Color::Red),
-                count_cell(suite.skips().count(), Color::Yellow),
+                count_cell(suite.skipped(), Color::Yellow),
             ]);
             if self.is_detailed {
                 row.add_cell(Cell::new(suite_path));

@@ -10,12 +10,22 @@
 //! actionable hints.
 
 use alloy_primitives::{Address, Bytes, LogData, U256};
-use alloy_rpc_types::trace::geth::{CallFrame, CallLogFrame};
+use alloy_rpc_types::trace::geth::{CallConfig, CallFrame, CallLogFrame};
 use alloy_transport::TransportError;
 use foundry_evm::traces::{
     CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
 };
 use revm::interpreter::InstructionResult;
+
+pub use foundry_common::provider::is_rpc_method_not_found as is_method_not_found_error;
+
+/// Returns the `callTracer` config for remote traces: every nested call, with its logs.
+///
+/// `onlyTopCall` is sent explicitly although `false` is its default, because ZKsync nodes reject a
+/// config that omits it.
+pub const fn call_tracer_config() -> CallConfig {
+    CallConfig { only_top_call: Some(false), with_log: Some(true) }
+}
 
 /// Builds a [`CallTraceArena`] from a geth `callTracer` [`CallFrame`] tree, overriding the root
 /// frame's address with `root_address` when the tracer omitted it.
@@ -33,29 +43,34 @@ pub fn call_frame_to_arena(root: &CallFrame, root_address: Option<Address>) -> C
     arena
 }
 
-/// Returns `true` if `err` is a JSON-RPC method-not-found rejection (code -32601), which is how
-/// nodes without the `debug` namespace reject `debug_trace*` requests.
-pub fn is_method_not_found_error(err: &TransportError) -> bool {
-    err.as_error_resp().is_some_and(|resp| resp.code == -32601)
-}
-
-/// Returns `true` if `err` looks like a missing-historical-state rejection: an archive-depth
-/// error, usually with a generic code (-32000) distinguishable only by message, hit whenever a
+/// Returns `true` if `err` looks like a missing-historical-state rejection, hit whenever a
 /// `debug_trace*` request targets a block whose state a full node has pruned.
 pub fn is_missing_state_error(err: &TransportError) -> bool {
-    let message = err
-        .as_error_resp()
-        .map(|resp| resp.message.to_ascii_lowercase())
-        .unwrap_or_else(|| err.to_string().to_ascii_lowercase());
+    match err.as_error_resp() {
+        Some(resp) => is_missing_state_message(&resp.message),
+        None => is_missing_state_message(&err.to_string()),
+    }
+}
+
+/// Returns `true` if `message` reads like a node rejecting a request for state it has pruned.
+///
+/// These rejections usually carry a generic code (-32000), so only the message tells them apart.
+pub fn is_missing_state_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
     [
         "missing trie node",
         "required historical state",
         "historical state",
         "header not found",
         "missing state",
+        // Cosmos SDK based nodes, e.g. "height 1 is not available, lowest height is 2".
+        "lowest height is",
+        // Providers that gate history behind a plan, e.g. "Archive, Debug and Trace requests
+        // are not available on your current plan".
+        "archive, debug and trace requests are not available on your current plan",
     ]
     .iter()
-    .any(|needle| message.contains(*needle))
+    .any(|needle| message.contains(needle))
 }
 
 /// Pushes `frame` and all of its children into `nodes`, returning the index of the pushed node.
@@ -108,11 +123,13 @@ fn push_frame(
         value: if is_selfdestruct { U256::ZERO } else { frame.value.unwrap_or_default() },
         data: frame.input.clone(),
         output,
+        bytecode: None,
         gas_used: frame.gas_used.saturating_to(),
         gas_limit: frame.gas.saturating_to(),
         gas_refund_counter: 0,
         status,
         steps: Vec::new(),
+        step_deltas: Vec::new(),
         decoded: None,
     };
 
@@ -180,9 +197,10 @@ fn status_from_frame(frame: &CallFrame) -> InstructionResult {
     }
 }
 
-/// Maps a geth `callTracer` call type string to a [`CallKind`].
+/// Maps a `callTracer` call type string to a [`CallKind`], ignoring case: geth reports
+/// `DELEGATECALL`, ZKsync `delegateCall`.
 fn call_kind(typ: &str) -> CallKind {
-    match typ {
+    match typ.to_ascii_uppercase().as_str() {
         "STATICCALL" => CallKind::StaticCall,
         "DELEGATECALL" => CallKind::DelegateCall,
         "CALLCODE" => CallKind::CallCode,
@@ -210,8 +228,9 @@ fn call_log(log: &CallLogFrame) -> CallLog {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::{B256, address, bytes};
+    use alloy_primitives::{B256, bytes};
 
     /// A geth `callTracer` `SELFDESTRUCT` frame encodes `from` as the destructed contract, `to` as
     /// the refund target and `value` as the transferred balance (the inverse of
@@ -220,8 +239,8 @@ mod tests {
     /// `is_selfdestruct()` holds and the status renders as `[SelfDestruct]`.
     #[test]
     fn converts_selfdestruct_frame() {
-        let destructed = address!("1111111111111111111111111111111111111111");
-        let beneficiary = address!("2222222222222222222222222222222222222222");
+        let destructed = Address::repeat_byte(0x11);
+        let beneficiary = Address::repeat_byte(0x22);
         let frame = CallFrame {
             from: destructed,
             to: Some(beneficiary),
@@ -244,7 +263,7 @@ mod tests {
 
     #[test]
     fn fills_missing_root_create_address() {
-        let created = address!("3333333333333333333333333333333333333333");
+        let created = Address::repeat_byte(0x33);
         let frame = CallFrame { typ: "CREATE".to_string(), ..Default::default() };
 
         let arena = call_frame_to_arena(&frame, Some(created));
@@ -259,8 +278,8 @@ mod tests {
     #[test]
     fn converts_nested_call_frame() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             gas: U256::from(100_000u64),
             gas_used: U256::from(21_000u64),
             input: bytes!("dead"),
@@ -268,15 +287,15 @@ mod tests {
             value: Some(U256::from(7u64)),
             typ: "CALL".to_string(),
             logs: vec![CallLogFrame {
-                address: Some(address!("2222222222222222222222222222222222222222")),
+                address: Some(Address::repeat_byte(0x22)),
                 topics: Some(vec![]),
                 data: Some(bytes!("00")),
                 position: Some(1),
                 index: Some(0),
             }],
             calls: vec![CallFrame {
-                from: address!("2222222222222222222222222222222222222222"),
-                to: Some(address!("3333333333333333333333333333333333333333")),
+                from: Address::repeat_byte(0x22),
+                to: Some(Address::repeat_byte(0x33)),
                 gas: U256::from(50_000u64),
                 gas_used: U256::from(5_000u64),
                 input: bytes!("cafe"),
@@ -346,8 +365,8 @@ mod tests {
     #[test]
     fn surfaces_error_string_in_output() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             typ: "CALL".to_string(),
             error: Some("invalid opcode: opcode 0xfe not defined".to_string()),
             ..Default::default()
@@ -368,8 +387,8 @@ mod tests {
     #[test]
     fn clamps_out_of_range_log_position() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             typ: "CALL".to_string(),
             logs: vec![
                 CallLogFrame { position: Some(0), index: Some(0), ..Default::default() },
@@ -396,8 +415,8 @@ mod tests {
     #[test]
     fn orders_log_between_two_children() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             typ: "CALL".to_string(),
             // position 1 -> one child emitted before the log, so it lands between the two children.
             logs: vec![CallLogFrame { position: Some(1), index: Some(0), ..Default::default() }],
@@ -419,6 +438,22 @@ mod tests {
         );
     }
 
+    /// Pruned-state rejections as geth, Cosmos SDK nodes and plan-gated providers word them.
+    #[test]
+    fn recognizes_missing_state_messages() {
+        for message in [
+            "missing trie node 5d1c4b4a2f7a1c1d8f0b6f3e0a5b8c9d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b (path ) <nil>",
+            "header not found",
+            "height 20170443 is not available, lowest height is 90850001",
+            "Archive, Debug and Trace requests are not available on your current plan.",
+        ] {
+            assert!(is_missing_state_message(message), "{message}");
+        }
+        for message in ["execution reverted", "failed to connect to archive RPC endpoint"] {
+            assert!(!is_missing_state_message(message), "{message}");
+        }
+    }
+
     #[test]
     fn maps_call_kind() {
         for (typ, kind) in [
@@ -429,6 +464,9 @@ mod tests {
             ("AUTHCALL", CallKind::AuthCall),
             ("CREATE", CallKind::Create),
             ("CREATE2", CallKind::Create2),
+            // ZKsync reports call types in camelCase.
+            ("call", CallKind::Call),
+            ("delegateCall", CallKind::DelegateCall),
             // `SELFDESTRUCT` and unknown types render as a plain call.
             ("SELFDESTRUCT", CallKind::Call),
             ("NOT_A_REAL_TYPE", CallKind::Call),

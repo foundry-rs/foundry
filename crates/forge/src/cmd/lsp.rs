@@ -59,7 +59,7 @@ fn foundry_workspace_config(root: &Path, config: Config) -> Result<FoundryWorksp
     let scripts = rebase_workspace_path(&resolved_root, root, paths.scripts);
 
     Ok(FoundryWorkspaceConfig::new(root)
-        .with_source_roots([sources.clone()])
+        .with_source_roots([sources.clone(), tests.clone(), scripts.clone()])
         .with_flycheck_source_roots([sources, tests, scripts])
         .with_include_paths(
             paths

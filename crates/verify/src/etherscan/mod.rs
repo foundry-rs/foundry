@@ -7,7 +7,7 @@ use crate::{
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
-use alloy_json_abi::Function;
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::hex;
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionTrait;
@@ -21,7 +21,7 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{LoadConfig, get_provider, read_constructor_args_file},
 };
-use foundry_common::{abi::encode_function_args, retry::RetryError};
+use foundry_common::{abi::encode_args, retry::RetryError};
 use foundry_compilers::{Artifact, artifacts::BytecodeObject};
 use foundry_config::Config;
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
@@ -432,23 +432,16 @@ impl EtherscanVerificationProvider {
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<Option<String>> {
-        if let Some(ref constructor_args_path) = args.constructor_args_path {
+        if let Some(constructor_args_path) = &args.constructor_args_path {
             let abi = context.get_target_abi()?;
             let constructor = abi
                 .constructor()
                 .ok_or_else(|| eyre!("Can't retrieve constructor info from artifact ABI."))?;
-            let func = Function {
-                name: "constructor".to_string(),
-                inputs: constructor.inputs.clone(),
-                outputs: vec![],
-                state_mutability: alloy_json_abi::StateMutability::NonPayable,
-            };
-            let encoded_args = encode_function_args(
-                &func,
+            let values = encode_args(
+                &constructor.inputs,
                 read_constructor_args_file(constructor_args_path.clone())?,
             )?;
-            let encoded_args = hex::encode(encoded_args);
-            return Ok(Some(encoded_args[8..].into()));
+            return Ok(Some(hex::encode(constructor.abi_encode_input(&values)?)));
         }
         if args.guess_constructor_args {
             return Ok(Some(self.guess_constructor_args(args, context).await?));
@@ -530,7 +523,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_common::fs;
-    use foundry_test_utils::{forgetest_async, str};
+    use foundry_test_utils::{forgetest, str, util::SOLC_VERSION};
     use tempfile::tempdir;
 
     #[test]
@@ -722,7 +715,8 @@ mod tests {
         );
     }
 
-    forgetest_async!(respects_path_for_duplicate, |prj, cmd| {
+    #[forgetest]
+    async fn respects_path_for_duplicate(prj: _, cmd: _) {
         prj.add_source("Counter1", "contract Counter {}");
         prj.add_source("Counter2", "contract Counter {}");
 
@@ -745,5 +739,52 @@ Compiler run successful!
 
         let mut etherscan = EtherscanVerificationProvider::default();
         etherscan.preflight_verify_check(args, context).await.unwrap();
-    });
+    }
+
+    #[forgetest]
+    async fn encodes_constructor_args_from_file(prj: _) {
+        let args_path = prj.root().join("constructor-args.json");
+        for (name, source, input, expected) in [
+            (
+                "Mixed",
+                "contract Mixed { constructor(uint256, string memory, uint256[] memory) {} }",
+                r#"["7", "hello", "[1,2]"]"#,
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000007",
+                    "0000000000000000000000000000000000000000000000000000000000000060",
+                    "00000000000000000000000000000000000000000000000000000000000000a0",
+                    "0000000000000000000000000000000000000000000000000000000000000005",
+                    "68656c6c6f000000000000000000000000000000000000000000000000000000",
+                    "0000000000000000000000000000000000000000000000000000000000000002",
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                    "0000000000000000000000000000000000000000000000000000000000000002",
+                ),
+            ),
+            ("Empty", "contract Empty { constructor() {} }", "[]", ""),
+        ] {
+            prj.add_source(name, source);
+            fs::write(&args_path, input).unwrap();
+            let args = VerifyArgs::parse_from([
+                "foundry-cli",
+                "0x0000000000000000000000000000000000000000",
+                &format!("src/{name}.sol:{name}"),
+                "--root",
+                &prj.root().to_string_lossy(),
+                "--constructor-args-path",
+                &args_path.to_string_lossy(),
+                "--compiler-version",
+                SOLC_VERSION,
+            ]);
+            let context = args.resolve_context().await.unwrap();
+            let mut etherscan = EtherscanVerificationProvider::default();
+            let encoded = etherscan.constructor_args(&args, &context).await.unwrap();
+            assert_eq!(encoded.as_deref(), Some(expected));
+
+            if name == "Mixed" {
+                fs::write(&args_path, r#"["7"]"#).unwrap();
+                let error = etherscan.constructor_args(&args, &context).await.unwrap_err();
+                assert_eq!(error.to_string(), "encode length mismatch: expected 3 types, got 1");
+            }
+        }
+    }
 }

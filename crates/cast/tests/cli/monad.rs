@@ -18,13 +18,14 @@ fn mon(value: u64) -> U256 {
 }
 
 #[cfg(feature = "monad")]
-casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
+#[casttest]
+async fn monad_call_trace_uses_monad_evm_network(cmd: _) {
     let config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (_api, handle) = anvil::spawn(config).await;
     let endpoint = handle.http_endpoint();
     let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
-    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let input = hex::encode_prefixed(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
     let output = cmd
         .args([
             "call",
@@ -42,10 +43,11 @@ casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
     assert!(output.contains("Traces:"), "{output}");
     assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
     assert!(output.contains("[Return] false"), "{output}");
-});
+}
 
 #[cfg(feature = "monad")]
-casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
+#[casttest]
+async fn monad_call_trace_resolves_effective_hardfork(cmd: _) {
     let config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
@@ -53,7 +55,7 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     let (_api, monad_eight_handle) = anvil::spawn(config).await;
     let monad_eight_endpoint = monad_eight_handle.http_endpoint();
     let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
-    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let input = hex::encode_prefixed(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
 
     let monad_eight = cmd
         .args([
@@ -187,10 +189,11 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     assert!(!explicit_monad_eight.contains("ReserveBalance"), "{explicit_monad_eight}");
     assert!(explicit_monad_eight.contains("[Stop]"), "{explicit_monad_eight}");
     assert!(!explicit_monad_eight.contains("[Return] false"), "{explicit_monad_eight}");
-});
+}
 
 #[cfg(feature = "monad")]
-casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
+#[casttest]
+async fn monad_call_trace_uses_parent_sender_context(cmd: _) {
     let config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
@@ -242,10 +245,11 @@ casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
 
     assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
     assert!(output.contains("[Return] true"), "{output}");
-});
+}
 
 #[cfg(feature = "monad")]
-casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
+#[casttest]
+async fn monad_run_replays_reserve_balance_precompile_tx(cmd: _) {
     let config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (_api, handle) = anvil::spawn(config).await;
@@ -270,10 +274,11 @@ casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
     assert!(output.contains("Transaction successfully executed."), "{output}");
     assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
     assert!(output.contains("[Return] false"), "{output}");
-});
+}
 
 #[cfg(feature = "monad")]
-casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
+#[casttest]
+async fn monad_run_preserves_endpoint_hardfork(cmd: _) {
     let origin_config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
@@ -361,10 +366,11 @@ casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
         post_activation_rpc_trace.contains("ReserveBalance::dippedIntoReserve()"),
         "{post_activation_rpc_trace}"
     );
-});
+}
 
 #[cfg(feature = "monad")]
-casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
+#[casttest]
+async fn monad_run_traces_protocol_system_call(cmd: _) {
     let config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
@@ -449,10 +455,11 @@ Replaying system transactions is currently not supported.
     cmd.cast_fuse()
         .args(["run", &unrelated_hash, "--rpc-url", &endpoint, "--quick", "--replay-system-txes"])
         .assert_success();
-});
+}
 
 #[cfg(feature = "monad")]
-casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
+#[casttest]
+async fn monad_run_replays_current_sender_context(cmd: _) {
     let config = NodeConfig::test_monad()
         .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
@@ -502,11 +509,12 @@ casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
 
     assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
     assert!(output.contains("[Return] true"), "{output}");
-});
+}
 
 // An explicit EVM version selects the concrete Monad spec even when configuration and
 // endpoint metadata request MonadEight. Execution and labels must both use the override.
-casttest!(monad_fork_trace_evm_version_override, async |prj, cmd| {
+#[casttest]
+async fn monad_fork_trace_evm_version_override(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = foundry_evm_networks::NetworkConfigs::with_monad();
         config.hardfork = Some("monad:MonadEight".parse().unwrap());
@@ -520,7 +528,7 @@ casttest!(monad_fork_trace_evm_version_override, async |prj, cmd| {
     let endpoint = handle.http_endpoint();
     let from = handle.dev_accounts().next().unwrap();
     let target = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
-    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let input = hex::encode_prefixed(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
     cmd.args([
         "call",
         &target,
@@ -585,4 +593,4 @@ Transaction successfully executed.
 
 "#]])
         .stderr_eq(str![""]);
-});
+}

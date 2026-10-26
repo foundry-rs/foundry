@@ -4,7 +4,6 @@ use std::str::FromStr;
 
 use alloy_sol_types::SolValue;
 use foundry_evm_core::evm::FoundryEvmNetwork;
-use revm::context::{Cfg, ContextTr};
 use spec::Vm::{assumeImplicitApprovalCall, isImplicitlyApprovedCall};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::address_registry;
@@ -41,6 +40,6 @@ impl Cheatcode for assumeImplicitApprovalCall {
 fn active_tempo_hardfork<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
 ) -> Option<TempoHardfork> {
-    let spec = ccx.ecx.cfg().spec();
+    let spec = ccx.spec();
     TempoHardfork::from_str(&spec.evm_version_name()).ok()
 }

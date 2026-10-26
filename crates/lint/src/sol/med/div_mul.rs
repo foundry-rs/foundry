@@ -185,7 +185,8 @@ fn check_expr<'gcx>(
                 ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
             }
         }
-        ExprKind::Call(callee, args, named_args) => {
+        ExprKind::Call(callee, args) => {
+            let (callee, named_args) = callee.split_call_options();
             check_expr(ctx, gcx, callee, tainted);
             for arg in args.exprs() {
                 check_expr(ctx, gcx, arg, tainted);
@@ -197,6 +198,12 @@ fn check_expr<'gcx>(
                 && args.exprs().any(|arg| is_division_or_tainted(gcx, arg, tainted))
             {
                 ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
+            }
+        }
+        ExprKind::CallOptions(callee, options) => {
+            check_expr(ctx, gcx, callee, tainted);
+            for option in options.args {
+                check_expr(ctx, gcx, &option.value, tainted);
             }
         }
         ExprKind::Ternary(cond, then_expr, else_expr) => {
@@ -288,6 +295,6 @@ fn is_division_or_tainted(gcx: Gcx<'_>, expr: &Expr<'_>, tainted: &Tainted) -> b
 
 /// A two-argument call to one of the given Yul builtins.
 fn is_yul_call(gcx: Gcx<'_>, expr: &Expr<'_>, candidates: &[Builtin]) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Call(callee, args, _)
+    matches!(&expr.peel_parens().kind, ExprKind::Call(callee, args)
         if args.len() == 2 && gcx.resolved_builtin(callee).is_some_and(|b| candidates.contains(&b)))
 }

@@ -1,5 +1,5 @@
 use crate::{
-    FoundryChain, FoundryContextExt, FoundryInspectorExt,
+    FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     backend::{DatabaseExt, JournaledState},
     constants::SYSTEM_PRECOMPILE_STUB,
     evm::{
@@ -69,7 +69,11 @@ pub fn base_code_sentinel_addresses(upgrade: BaseUpgrade) -> impl Iterator<Item 
         .filter(move |address| is_base_precompile_active_at(*address, upgrade))
 }
 
-impl FoundryChain<BaseTransaction<TxEnv>> for L1BlockInfo {}
+impl FoundryChain<BaseTransaction<TxEnv>> for L1BlockInfo {
+    fn clear_transaction_fee_cache(&mut self) {
+        self.clear_tx_l1_cost();
+    }
+}
 
 impl FoundryEvmFactory for BaseEvmFactory {
     type Chain = L1BlockInfo;
@@ -168,6 +172,11 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
+        if self.ctx().cfg().disable_fee_charge
+            && tx.enveloped_tx().is_some_and(|enveloped| enveloped.is_empty())
+        {
+            self.ctx_mut().chain_mut().clear_transaction_fee_cache();
+        }
         let ResultAndState { result, state } =
             Evm::transact_raw(self, tx).map_err(map_base_error)?;
         let result = result.map_haltreason(|halt| match halt {
@@ -353,7 +362,7 @@ mod tests {
                     &expected,
                     "{upgrade:?}: {address}"
                 );
-                assert_eq!(account.info.code_hash, expected.hash_slow());
+                assert_eq!(account.info.code_hash(), expected.hash_slow());
             }
         }
     }
@@ -364,10 +373,7 @@ mod tests {
         let code = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00, 0x00]));
         let code_hash = code.hash_slow();
         let mut db = Backend::<BaseEvmNetwork>::spawn(None).unwrap();
-        db.insert_account_info(
-            address,
-            AccountInfo { code_hash, code: Some(code.clone()), ..Default::default() },
-        );
+        db.insert_account_info(address, AccountInfo::default().with_code(code.clone()));
         let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
             &mut db,
             base_env(8453, BaseUpgrade::Beryl),
@@ -375,6 +381,6 @@ mod tests {
         );
         let account = evm.ctx_mut().journal_mut().load_account_with_code(address).unwrap();
         assert_eq!(account.info.code.as_ref().unwrap(), &code);
-        assert_eq!(account.info.code_hash, code_hash);
+        assert_eq!(account.info.code_hash(), code_hash);
     }
 }

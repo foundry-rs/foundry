@@ -1,13 +1,6 @@
 use super::*;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum ShiftKind {
-    Shl,
-    Shr,
-    Sar,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub(crate) enum CallKind {
     Call,
     CallCode,

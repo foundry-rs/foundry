@@ -22,6 +22,7 @@ pub mod tempo;
 pub mod base;
 pub mod call_spec;
 pub(crate) mod debug;
+mod evm_version;
 mod rlp_converter;
 pub mod rpc_trace;
 pub mod tx;

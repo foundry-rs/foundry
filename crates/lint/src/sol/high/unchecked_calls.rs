@@ -45,7 +45,7 @@ impl<'gcx> LateLintPass<'gcx> for UncheckedTransferERC20 {
 /// * `function transfer(address to, uint256 amount) external returns (bool);`
 /// * `function transferFrom(address from, address to, uint256 amount) external returns (bool);`
 fn is_erc20_transfer_call<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>) -> bool {
-    let hir::ExprKind::Call(callee, call_args, ..) = &expr.kind else { return false };
+    let Some((callee, call_args, _)) = expr.as_call() else { return false };
     let hir::ExprKind::Member(receiver, func_ident) = &callee.kind else { return false };
     let params: &[&str] = match (func_ident.as_str(), call_args.len()) {
         ("transfer", 2) => &["address", "uint256"],

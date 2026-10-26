@@ -1,8 +1,7 @@
 //! `cast batch-send` command implementation.
 //!
 //! Sends a batch of calls as a single Tempo transaction using native call batching.
-//! Unlike upstream Foundry's sequential transactions, this uses a single type 0x76
-//! transaction with multiple calls executed atomically.
+//! Uses a single type 0x76 transaction with multiple calls executed atomically.
 
 use crate::{
     call_spec::CallSpec,
@@ -31,10 +30,12 @@ pub struct BatchSendArgs {
     /// Call specifications in format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xdata>]`
     ///
     /// Examples:
-    ///   --call "0x123:0.1ether" (ETH transfer)
-    ///   --call "0x456::transfer(address,uint256):0x789,1000" (ERC20 transfer)
-    ///   --call "0xabc::0x123def" (raw calldata)
-    ///   --call "0x123:1ether:deposit()" (value + function call)
+    ///   --call "0x1234567890123456789012345678901234567890:0.1ether" (ETH transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::transfer(address,uint256):
+    /// 0x0987654321098765432109876543210987654321,1000" (ERC20 transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:1ether:deposit()" (value + function
+    /// call)
     #[arg(long = "call", value_name = "SPEC", required = true)]
     pub calls: Vec<String>,
 
@@ -85,8 +86,7 @@ impl BatchSendArgs {
         let builder = with_batch_calls(&calls, builder, &provider).await?;
         tempo::print_expires(expires_at)?;
 
-        let send_opts =
-            SendOptions::new(&send_tx, &config).resolving_fee_token(Some(chain), &config);
+        let send_opts = SendOptions::new(&send_tx, &config).resolving_fee_token(true, &config);
 
         if unlocked {
             let Some(tx) = confirm_and_build(builder, config.sender, force, lane, false).await?

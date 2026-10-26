@@ -345,12 +345,48 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         assertEq(section, vm.snapshotGasLastCall("isolated section call") + 543);
     }
 
+    function testSnapshotGasLastCallWithLowGas() public {
+        _setup();
+        uint256 lowGasSection = _snapshotCallWithGas(1_000, "");
+        // The isolated transaction still pays intrinsic gas above the forwarded gas. Snapshots
+        // keep that receipt gas, while the frame consumes its whole budget.
+        assertEq(vm.snapshotGasLastCall("isolated low gas call"), 21064);
+        Vm.Gas memory gas = vm.lastCallGas();
+        assertEq(gas.gasLimit, 1_000);
+        assertEq(gas.gasTotalUsed, 1_000);
+        assertEq(gas.gasRemaining, 0);
+
+        assertEq(_snapshotCallWithGas(1_000_000, ""), lowGasSection);
+        assertEq(vm.snapshotGasLastCall("isolated high gas call"), 21064);
+    }
+
+    function testSnapshotGasSectionRefundWithLowGas() public {
+        _setup();
+        bytes memory data = abi.encodeCall(target.resetValue, ());
+        target.setValue(1);
+        uint256 lowGasSection = _snapshotCallWithGas(15_000, data);
+        uint256 lowGasSnapshot = vm.snapshotGasLastCall("isolated low gas refund call");
+
+        target.setValue(1);
+        assertEq(_snapshotCallWithGas(1_000_000, data), lowGasSection);
+        assertEq(vm.snapshotGasLastCall("isolated high gas refund call"), lowGasSnapshot);
+    }
+
     function testSnapshotGasForFailedCharge() public {
         _setup();
         (bool success,) = address(target).call{gas: 100_000}(abi.encodeCall(target.failWithInvalid, ()));
         assertEq(success, false);
-        assertEq(vm.snapshotGasLastCall("isolated failed charge call"), 0);
-        assertEq(vm.snapshotGasLastFrame("isolated failed charge frame"), 0);
+        // An exceptional halt consumes the forwarded gas, and the transaction also pays its
+        // intrinsic gas.
+        assertEq(vm.snapshotGasLastCall("isolated failed charge call"), 121_064);
+        assertEq(vm.snapshotGasLastFrame("isolated failed charge frame"), 121_064);
+    }
+
+    function _snapshotCallWithGas(uint256 gasLimit, bytes memory data) internal returns (uint256 section) {
+        vm.startSnapshotGas("isolated call with gas");
+        (bool success,) = address(target).call{gas: gasLimit}(data);
+        section = vm.stopSnapshotGas();
+        assertTrue(success);
     }
 
     function testStateDiffRecordingDoesNotWarmStorageReads() public {
@@ -438,7 +474,8 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
     }
 }
 
-// Without isolation mode enabled the gas usage will be incorrect.
+// These expectations cover non-isolated gas accounting.
+/// forge-config: default.isolate = false
 contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastFrameGasFromCall() public {
         _setup();

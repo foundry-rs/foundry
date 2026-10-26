@@ -53,9 +53,6 @@ pub fn apply_gas_estimate_multiplier(estimate: u64, multiplier: Option<u64>) -> 
     adjusted.try_into().map_err(|_| eyre::eyre!("multiplied gas estimate exceeds u64"))
 }
 
-/// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
-pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#).unwrap());
 /// Regex used to parse `git submodule status` output.
 pub static SUBMODULE_STATUS_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$").unwrap());
@@ -198,15 +195,16 @@ pub fn now() -> Duration {
 }
 
 /// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
-pub fn common_setup() {
+pub fn common_setup() -> Vec<String> {
     install_crypto_provider();
     crate::handler::install();
-    load_dotenv();
+    let warnings = load_dotenv();
     enable_paint();
+    warnings
 }
 
-/// Loads dotenv files from the cwd and project root, ignoring parse failures.
-pub fn load_dotenv() {
+/// Loads dotenv files from the cwd and project root, deferring diagnostics until shell setup.
+pub fn load_dotenv() -> Vec<String> {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
@@ -225,9 +223,20 @@ pub fn load_dotenv() {
         }
     }
 
+    let mut warnings = Vec::new();
     for path in paths {
-        dotenvy::from_path(path).ok();
+        if let Err(err) = dotenvy::from_path(&path) {
+            // Parse errors contain the source line, which may include secrets.
+            let reason = match err {
+                dotenvy::Error::LineParse(..) => {
+                    "invalid syntax; remaining variables were not loaded".to_string()
+                }
+                _ => err.to_string(),
+            };
+            warnings.push(format!("Failed to load {}: {}", path.display(), reason));
+        }
     }
+    warnings
 }
 
 /// Sets the default [`yansi`] color output condition.
@@ -254,17 +263,45 @@ pub fn install_crypto_provider() {
 }
 
 /// Fetches the ABI of a contract from Etherscan.
+///
+/// If `follow_proxy` is set and Etherscan reports the contract as a proxy, the ABI of its
+/// implementation is appended after the proxy's own. Failing to fetch the implementation only
+/// produces a warning.
 pub async fn fetch_abi_from_etherscan(
     address: Address,
     config: &foundry_config::Config,
+    follow_proxy: bool,
 ) -> Result<Vec<(JsonAbi, String)>> {
     let chain = config.chain.unwrap_or_default();
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
         .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-    let source = client.contract_source_code(address).await?;
-    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
+    let fetch_abis = async |address| -> Result<_> {
+        let source = client.contract_source_code(address).await?;
+        let implementation = source
+            .items
+            .first()
+            .filter(|item| item.proxy != 0)
+            .and_then(|item| item.implementation);
+        let abis = source
+            .abis()?
+            .into_iter()
+            .zip(source.items.into_iter().map(|item| item.contract_name))
+            .collect::<Vec<_>>();
+        Ok((abis, implementation))
+    };
+    let (mut abis, implementation) = fetch_abis(address).await?;
+    if follow_proxy && let Some(implementation) = implementation {
+        sh_status!(
+            "Contract at {address} is a proxy, fetching implementation at {implementation}..."
+        )?;
+        match fetch_abis(implementation).await {
+            Ok((implementation, _)) => abis.extend(implementation),
+            Err(err) => sh_warn!("Could not fetch implementation ABI: {err}")?,
+        }
+    }
+    Ok(abis)
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -355,25 +392,6 @@ impl<'a> Git<'a> {
         Ok(PathBuf::from(output))
     }
 
-    pub fn clone_with_branch(
-        shallow: bool,
-        from: impl AsRef<OsStr>,
-        branch: impl AsRef<OsStr>,
-        to: Option<impl AsRef<OsStr>>,
-    ) -> Result<()> {
-        Self::cmd_no_root()
-            .stderr(Stdio::inherit())
-            .args(["clone", "--recurse-submodules"])
-            .args(shallow.then_some("--depth=1"))
-            .args(shallow.then_some("--shallow-submodules"))
-            .arg("-b")
-            .arg(branch)
-            .arg(from)
-            .args(to)
-            .exec()
-            .map(drop)
-    }
-
     pub fn clone(
         shallow: bool,
         from: impl AsRef<OsStr>,
@@ -421,10 +439,13 @@ impl<'a> Git<'a> {
     }
 
     pub fn checkout(self, recursive: bool, tag: impl AsRef<OsStr>) -> Result<()> {
+        let tag = tag.as_ref();
+        validate_checkout_ref(tag)?;
         self.cmd()
             .arg("checkout")
             .args(recursive.then_some("--recurse-submodules"))
             .arg(tag)
+            .arg("--")
             .exec()
             .map(drop)
     }
@@ -435,7 +456,9 @@ impl<'a> Git<'a> {
     }
 
     pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
-        self.cmd_at(at).arg("checkout").arg(tag).exec().map(drop)
+        let tag = tag.as_ref();
+        validate_checkout_ref(tag)?;
+        self.cmd_at(at).arg("checkout").arg(tag).arg("--").exec().map(drop)
     }
 
     pub fn init(self) -> Result<()> {
@@ -621,14 +644,24 @@ ignore them in the `.gitignore` file."
         at: &Path,
         lib: &OsStr,
     ) -> Result<HashMap<PathBuf, String>> {
-        // Read the .gitmodules file
-        let gitmodules = foundry_common::fs::read_to_string(at.join(".gitmodules"))?;
+        // Let Git decode config quoting, escapes, whitespace, and comments.
+        let gitmodules = self
+            .cmd_at(at)
+            .args(["config", "--null", "--list", "--file", ".gitmodules"])
+            .get_stdout_lossy()?;
+        let entries = gitmodules
+            .split_terminator('\0')
+            .filter_map(|entry| entry.split_once('\n'))
+            .collect::<Vec<_>>();
+        // Resolve paths using Git's last-value semantics, but retain branch record order so
+        // the last branch wins when different submodule paths normalize to the same path.
+        let values = entries.iter().copied().collect::<HashMap<_, _>>();
 
-        let paths = SUBMODULE_BRANCH_REGEX
-            .captures_iter(&gitmodules)
-            .map(|cap| {
-                let path_str = cap.get(1).unwrap().as_str();
-                let path = PathBuf::from_str(path_str).unwrap();
+        let paths = entries
+            .iter()
+            .filter_map(|(key, branch)| {
+                let name = key.strip_prefix("submodule.")?.strip_suffix(".branch")?;
+                let path = PathBuf::from(*values.get(format!("submodule.{name}.path").as_str())?);
                 trace!(path = %path.display(), "unstripped path");
 
                 // Keep only the components that come after the lib directory.
@@ -643,8 +676,7 @@ ignore them in the `.gitignore` file."
                     .skip(lib_pos.map(|(i, _)| i).unwrap_or(0))
                     .collect::<PathBuf>();
 
-                let branch = cap.get(2).unwrap().as_str().to_string();
-                (path, branch)
+                Some((path, (*branch).to_string()))
             })
             .collect::<HashMap<_, _>>();
 
@@ -670,9 +702,14 @@ ignore them in the `.gitignore` file."
 
     /// Returns true if all submodules matching `paths` have initialized worktrees.
     fn submodules_initialized(self, paths: &[OsString]) -> Result<bool> {
-        let Some(root) = self.root.ancestors().find(|root| root.join(".git").exists()) else {
+        // Let Git resolve relative roots.
+        if !self.root.is_absolute() {
             return Ok(false);
+        }
+        let Some(root) = find_git_root(self.root)? else {
+            return Ok(true);
         };
+        let root = root.as_path();
         if paths.iter().any(|path| {
             Path::new(path)
                 .components()
@@ -683,6 +720,8 @@ ignore them in the `.gitignore` file."
         let relative_root = self.root.strip_prefix(root).unwrap_or_else(|_| Path::new(""));
         let gitmodules = root.join(".gitmodules");
         if !gitmodules.is_file() {
+            // Removing .gitmodules does not remove gitlinks from the index. Let Git handle
+            // any remaining submodules, including those without a .gitmodules mapping.
             return Ok(false);
         }
 
@@ -757,6 +796,7 @@ ignore them in the `.gitignore` file."
         S: AsRef<OsStr>,
     {
         self.cmd()
+            .arg("--literal-pathspecs")
             .stderr(self.stderr())
             .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
@@ -764,6 +804,7 @@ ignore them in the `.gitignore` file."
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
             .args(recursive.then_some("--recursive"))
+            .arg("--")
             .args(paths)
             .exec()
             .map(drop)
@@ -1041,17 +1082,21 @@ ignore them in the `.gitignore` file."
 
     /// Sets the branch for a submodule.
     pub fn set_submodule_branch(self, rel_path: &Path, branch: &str) -> Result<()> {
-        self.cmd().args(["submodule", "set-branch", "-b", branch]).arg(rel_path).exec().map(drop)
+        self.cmd()
+            .args(["submodule", "set-branch", "-b", branch])
+            .arg(rel_path.to_slash_lossy().as_ref())
+            .exec()
+            .map(drop)
     }
 
     /// Returns remote branch names as a newline-separated string.
     pub fn remote_branches(self) -> Result<String> {
-        self.cmd().args(["branch", "-r"]).get_stdout_lossy()
+        self.cmd().args(["branch", "-r", "--no-color", "--no-column"]).get_stdout_lossy()
     }
 
     /// Fetches a branch from origin and checks out a local tracking branch at the given path.
     pub fn fetch_and_checkout_branch(self, at: &Path, branch: &str) -> Result<()> {
-        self.cmd_at(at).args(["fetch", "origin", branch]).exec().map_err(|e| {
+        self.cmd_at(at).args(["fetch", "--", "origin", branch]).exec().map_err(|e| {
             eyre::eyre!(
                 "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
                 at.display()
@@ -1067,6 +1112,20 @@ ignore them in the `.gitignore` file."
                 )
             })?;
         Ok(())
+    }
+
+    /// Checks out a branch without fetching or resetting an existing local branch.
+    pub fn checkout_branch(self, recursive: bool, branch: &str) -> Result<()> {
+        validate_checkout_ref(branch.as_ref())?;
+        if self.has_branch(branch, self.root)? {
+            return self.checkout(recursive, branch);
+        }
+        self.cmd()
+            .arg("checkout")
+            .args(recursive.then_some("--recurse-submodules"))
+            .args(["-b", branch, &format!("refs/remotes/origin/{branch}"), "--"])
+            .exec()
+            .map(drop)
     }
 
     fn cmd(self) -> Command {
@@ -1091,6 +1150,13 @@ ignore them in the `.gitignore` file."
     fn stderr(self) -> Stdio {
         if self.quiet { Stdio::piped() } else { Stdio::inherit() }
     }
+}
+
+fn validate_checkout_ref(reference: &OsStr) -> Result<()> {
+    if reference.is_empty() || reference.as_encoded_bytes().starts_with(b"-") {
+        eyre::bail!("Git checkout reference must not be empty or start with `-`");
+    }
+    Ok(())
 }
 
 /// Deserialized `git submodule status lib/dep` output.
@@ -1206,6 +1272,9 @@ mod tests {
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn applies_gas_estimate_multiplier() {
         assert_eq!(apply_gas_estimate_multiplier(21_000, None).unwrap(), 21_000);
@@ -1215,6 +1284,50 @@ mod tests {
             210_000_000_000_000_000
         );
         assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101)).is_err());
+    }
+
+    #[test]
+    fn checkout_does_not_parse_revision_as_option() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("file"), "clean\n").unwrap();
+        git.add(["file"]).unwrap();
+        git.commit("initial").unwrap();
+        fs::write(tmp.path().join("file"), "dirty\n").unwrap();
+
+        assert!(git.checkout_at("-f", tmp.path()).is_err());
+        assert!(git.checkout_branch(false, "-f").is_err());
+        assert_eq!(fs::read_to_string(tmp.path().join("file")).unwrap(), "dirty\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_does_not_parse_branch_as_option() {
+        let remote = tempdir().unwrap();
+        let remote_git = Git::new(remote.path());
+        remote_git.init().unwrap();
+        fs::write(remote.path().join("file"), "content\n").unwrap();
+        remote_git.add(["file"]).unwrap();
+        remote_git.commit("initial").unwrap();
+
+        let tmp = tempdir().unwrap();
+        Git::clone(false, remote.path(), Some(tmp.path())).unwrap();
+
+        let marker = tmp.path().join("upload-pack-ran");
+        let upload_pack = tmp.path().join("upload-pack");
+        fs::write(
+            &upload_pack,
+            format!("#!/bin/sh\ntouch '{}'\nexec git-upload-pack \"$@\"\n", marker.display()),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&upload_pack).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&upload_pack, permissions).unwrap();
+
+        let branch = format!("--upload-pack={}", upload_pack.display());
+        assert!(Git::new(tmp.path()).fetch_and_checkout_branch(tmp.path(), &branch).is_err());
+        assert!(!marker.exists());
     }
 
     #[test]
@@ -1250,10 +1363,9 @@ mod tests {
 
     #[test]
     fn deserialize_submodule() {
-        let submodule: Submodule = serde_json::from_str(
-            r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#,
-        )
-        .unwrap();
+        let submodule: Submodule =
+            parse_json(r#"{"rev":"8829465a08cac423dcf59852f21e448449c1a1a8","path":"lib/dep"}"#)
+                .unwrap();
         assert_eq!(submodule.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
         assert_eq!(submodule.path(), Path::new("lib/dep"));
         assert_eq!(
@@ -1355,7 +1467,12 @@ mod tests {
     }
 
     #[test]
-    fn test_read_gitmodules_regex() {
+    fn test_read_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let read = |contents: &str| {
+            fs::write(tmp.path().join(".gitmodules"), contents).unwrap();
+            Git::new(tmp.path()).read_submodules_with_branch(tmp.path(), OsStr::new("lib")).unwrap()
+        };
         let gitmodules = r#"
         [submodule "lib/solady"]
         path = lib/solady
@@ -1370,15 +1487,7 @@ mod tests {
         url = ""
 "#;
 
-        let paths = SUBMODULE_BRANCH_REGEX
-            .captures_iter(gitmodules)
-            .map(|cap| {
-                (
-                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
-                    String::from(cap.get(2).unwrap().as_str()),
-                )
-            })
-            .collect::<HashMap<_, _>>();
+        let paths = read(gitmodules);
 
         assert_eq!(paths.get(Path::new("lib/solady")).unwrap(), "v0.1.0");
         assert_eq!(
@@ -1397,15 +1506,7 @@ mod tests {
         path = lib/forge-std
         url = ""
 "#;
-        let paths = SUBMODULE_BRANCH_REGEX
-            .captures_iter(no_branch_gitmodules)
-            .map(|cap| {
-                (
-                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
-                    String::from(cap.get(2).unwrap().as_str()),
-                )
-            })
-            .collect::<HashMap<_, _>>();
+        let paths = read(no_branch_gitmodules);
 
         assert!(paths.is_empty());
 
@@ -1422,20 +1523,167 @@ mod tests {
         url = ""
         "#;
 
-        let paths = SUBMODULE_BRANCH_REGEX
-            .captures_iter(branch_in_between)
-            .map(|cap| {
-                (
-                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
-                    String::from(cap.get(2).unwrap().as_str()),
-                )
-            })
-            .collect::<HashMap<_, _>>();
+        let paths = read(branch_in_between);
 
         assert_eq!(paths.len(), 1);
         assert_eq!(
             paths.get(Path::new("lib/openzeppelin-contracts")).unwrap(),
             "v4.8.0-791-g8829465a"
+        );
+
+        let quoted = r#"
+        [submodule "named-dependency"]
+        path = "packages/contracts/lib/dependency"
+        branch="v1" # Git config quotes are not part of the branch name.
+        [submodule "escaped"]
+        path = lib/escaped
+        branch = "feature/\"quoted\""
+        [submodule "untracked"]
+        path = lib/untracked
+        "#;
+        assert_eq!(
+            read(quoted),
+            HashMap::from_iter([
+                (PathBuf::from("lib/dependency"), "v1".to_string()),
+                (PathBuf::from("lib/escaped"), "feature/\"quoted\"".to_string()),
+            ])
+        );
+
+        let collision = r#"
+        [submodule "nested"]
+        path = packages/other/lib/dep
+        branch = develop
+        [submodule "root"]
+        path = lib/dep
+        branch = stable
+        "#;
+        assert_eq!(
+            read(collision),
+            HashMap::from_iter([(PathBuf::from("lib/dep"), "stable".to_string())])
+        );
+
+        let duplicate_keys = r#"
+        [submodule "dep"]
+        path = lib/old
+        branch = develop
+        [submodule "dep"]
+        branch = "stable"
+        path = "packages/other/lib/dep"
+        "#;
+        assert_eq!(
+            read(duplicate_keys),
+            HashMap::from_iter([(PathBuf::from("lib/dep"), "stable".to_string())])
+        );
+    }
+
+    #[test]
+    fn skips_submodule_status_outside_repository() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("nested/project");
+        fs::create_dir_all(&root).unwrap();
+        let git = Git::new(&root);
+        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+    }
+
+    #[test]
+    fn keeps_submodule_status_without_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("tracked"), "tracked file").unwrap();
+        git.add(["tracked"]).unwrap();
+
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+
+        let nested = tmp.path().join("packages/contracts");
+        fs::create_dir_all(&nested).unwrap();
+        let git = git.root(&nested);
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn detects_missing_dependencies_with_deleted_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        let gitmodules = tmp.path().join(".gitmodules");
+        fs::write(&gitmodules, "[submodule \"lib/dep\"]\n\tpath = lib/dep\n\turl = ../dep\n")
+            .unwrap();
+        git.add([".gitmodules"]).unwrap();
+        git.cmd()
+            .args([
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000,1111111111111111111111111111111111111111,lib/dep",
+            ])
+            .exec()
+            .unwrap();
+        assert!(git.has_missing_dependencies(["lib"]).unwrap());
+
+        fs::remove_file(gitmodules).unwrap();
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).unwrap());
+
+        let nested = tmp.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        assert!(!git.root(&nested).submodules_initialized(&[]).unwrap());
+        assert!(git.root(&nested).submodules_uninitialized().unwrap());
+
+        git.cmd().args(["rm", "--cached", ".gitmodules"]).exec().unwrap();
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn keeps_submodule_status_in_worktree_without_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("main");
+        fs::create_dir(&root).unwrap();
+        let git = Git::new(&root);
+        git.init().unwrap();
+        git.cmd()
+            .args([
+                "-c",
+                "user.name=Foundry",
+                "-c",
+                "user.email=foundry@example.com",
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-m",
+                "test: initialize worktree fixture",
+            ])
+            .exec()
+            .unwrap();
+        let worktree = tmp.path().join("worktree");
+        git.cmd().args(["worktree", "add", "--detach"]).arg(&worktree).exec().unwrap();
+
+        assert!(worktree.join(".git").is_file());
+        let git = git.root(&worktree);
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn sets_submodule_branch_with_native_path() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(
+            tmp.path().join(".gitmodules"),
+            "[submodule \"lib/dep\"]\npath = lib/dep\nurl = https://example.invalid/dep\n",
+        )
+        .unwrap();
+
+        git.set_submodule_branch(&Path::new("lib").join("dep"), "feature/v1").unwrap();
+
+        assert_eq!(
+            git.read_submodules_with_branch(tmp.path(), OsStr::new("lib")).unwrap(),
+            HashMap::from_iter([(PathBuf::from("lib/dep"), "feature/v1".to_string())])
         );
     }
 }

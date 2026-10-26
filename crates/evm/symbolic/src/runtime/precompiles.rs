@@ -1,13 +1,5 @@
 use super::*;
 
-pub(crate) fn is_known_cheatcode(address: Address) -> bool {
-    address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS
-}
-
-pub(crate) fn is_console(address: Address) -> bool {
-    address == HARDHAT_CONSOLE_ADDRESS
-}
-
 pub(crate) fn precompile_number(address: Address) -> Option<u8> {
     let bytes = address.as_slice();
     if bytes[..PRECOMPILE_ADDRESS_LEADING_ZEROS].iter().any(|byte| *byte != 0) {
@@ -28,44 +20,33 @@ pub(crate) fn precompile_number_for_spec(address: Address, spec_id: SpecId) -> O
     }
 }
 
-pub(crate) fn precompile_address(number: u8) -> Address {
-    let mut bytes = [0u8; 20];
-    bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS] = number;
-    Address::from(bytes)
+/// Returns the canonical precompiles active under `spec_id`.
+pub(crate) fn active_precompiles(spec_id: SpecId) -> &'static Precompiles {
+    Precompiles::new(PrecompileSpecId::from_spec_id(spec_id))
 }
 
-pub(crate) fn is_supported_precompile(address: Address, spec_id: SpecId) -> bool {
-    precompile_number_for_spec(address, spec_id).is_some()
+/// Returns whether `address` is a canonical precompile active under `spec_id`.
+pub(crate) fn is_precompile_for_spec(address: Address, spec_id: SpecId) -> bool {
+    active_precompiles(spec_id).contains(&address)
 }
 
+/// Executes a canonical precompile on concrete input with effectively unlimited gas.
+///
+/// Returns `None` when the precompile fails.
 pub(crate) fn execute_precompile(
     cx: &mut SymCx,
     address: Address,
     input: &[u8],
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    let output = match precompile_number_for_spec(address, spec_id) {
-        Some(1) => secp256k1::ec_recover_run(input, u64::MAX),
-        Some(2) => hash::sha256_run(input, u64::MAX),
-        Some(3) => hash::ripemd160_run(input, u64::MAX),
-        Some(4) => identity::identity_run(input, u64::MAX),
-        Some(5) => modexp::berlin_run(input, u64::MAX),
-        Some(6) => bn254::run_add(input, bn254::add::ISTANBUL_ADD_GAS_COST, u64::MAX),
-        Some(7) => bn254::run_mul(input, bn254::mul::ISTANBUL_MUL_GAS_COST, u64::MAX),
-        Some(8) => bn254::run_pair(
-            input,
-            bn254::pair::ISTANBUL_PAIR_PER_POINT,
-            bn254::pair::ISTANBUL_PAIR_BASE,
-            u64::MAX,
-        ),
-        Some(9) => blake2::run(input, u64::MAX),
-        Some(10) => kzg_point_evaluation::run(input, u64::MAX),
-        _ => return Err(SymbolicError::Unsupported("unsupported precompile")),
+    let Some(precompile) = active_precompiles(spec_id).get(&address) else {
+        return Err(SymbolicError::Unsupported("unsupported precompile"));
     };
-
-    match output {
-        Ok(output) => Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes.to_vec()))),
-        Err(_) => Ok(None),
+    match precompile.execute(input, u64::MAX, 0) {
+        Ok(output) if output.is_success() => {
+            Ok(Some(SymReturnData::from_concrete_bytes(cx, output.bytes.to_vec())))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -87,11 +68,33 @@ pub(crate) fn execute_symbolic_precompile(
 
     match precompile_number_for_spec(address, spec_id) {
         Some(1) => {
+            // ECRECOVER ignores trailing bytes and pads short input with zeros.
+            let input = SymBytes::sized(cx, input, input_len, 128);
+            if let Ok(input) = input.concrete_bytes(cx, "symbolic ecrecover input") {
+                return execute_precompile(cx, address, &input, spec_id);
+            }
+            let v = input.word_at(cx, 32);
+            let v27 = SymBoolExpr::eq_word_const(cx, &v, U256::from(27));
+            let v28 = SymBoolExpr::eq_word_const(cx, &v, U256::from(28));
+            let valid_v = SymBoolExpr::or(cx, vec![v27, v28]);
+            if valid_v.as_const() == Some(false) {
+                return Ok(Some(SymReturnData::empty(cx)));
+            }
+
             let input = input.materialize(cx);
+            let input_len = SymExpr::constant(cx, U256::from(128));
             let word = symbolic_hash_word_with_len(cx, "ecrecover", input, input_len);
+            // Recovery may fail even with a valid v. Use an otherwise discarded byte of the
+            // opaque word so this choice is independent of the low 160-bit recovered address.
+            let recovered = byte_word(cx, U256::ZERO, word.clone()).nonzero_bool(cx);
+            let recovered = SymBoolExpr::and(cx, vec![valid_v, recovered]);
+            let full_len = SymExpr::constant(cx, U256::from(32));
+            let empty_len = SymExpr::zero(cx);
+            let len = SymExpr::ite(cx, recovered, full_len, empty_len);
             let mut bytes = vec![SymExpr::zero(cx); 12];
             bytes.extend((12..32).map(|idx| byte_word(cx, U256::from(idx), word.clone())));
-            Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
+            let bytes = SymBytes::exprs(cx, bytes);
+            Ok(Some(SymReturnData { len_word: len, bytes }))
         }
         Some(2) => {
             let input = input.materialize(cx);
@@ -106,14 +109,14 @@ pub(crate) fn execute_symbolic_precompile(
             bytes.extend((12..32).map(|idx| byte_word(cx, U256::from(idx), word.clone())));
             Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
         }
-        Some(4) => Ok(Some(SymReturnData::from_bytes_with_len(input, input_len))),
+        Some(4) => Ok(Some(SymReturnData { len_word: input_len, bytes: input })),
         Some(5) => symbolic_modexp_precompile(cx, &input, input_len),
         Some(6) => {
             let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
-            if input_has_symbolic_bytes(cx, &input, input_len) {
+            if (0..input_len).any(|idx| input.byte(cx, idx).as_const().is_none()) {
                 return Err(SymbolicError::Unsupported(
                     "symbolic bn254 precompile validity not modeled",
                 ));
@@ -125,7 +128,7 @@ pub(crate) fn execute_symbolic_precompile(
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
-            if input_has_symbolic_bytes(cx, &input, input_len) {
+            if (0..input_len).any(|idx| input.byte(cx, idx).as_const().is_none()) {
                 return Err(SymbolicError::Unsupported(
                     "symbolic bn254 precompile validity not modeled",
                 ));
@@ -140,7 +143,7 @@ pub(crate) fn execute_symbolic_precompile(
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
-            if input_has_symbolic_bytes(cx, &input, input_len) {
+            if (0..input_len).any(|idx| input.byte(cx, idx).as_const().is_none()) {
                 return Err(SymbolicError::Unsupported(
                     "symbolic bn254 precompile validity not modeled",
                 ));
@@ -163,7 +166,7 @@ pub(crate) fn execute_symbolic_precompile(
             }
             let flag = input.byte(cx, 212);
             match flag.as_const() {
-                Some(flag) if flag.is_zero() || flag == U256::from(1) => {}
+                Some(flag) if flag.is_zero() || flag == U256::ONE => {}
                 Some(_) => return Ok(None),
                 None => {
                     return Err(SymbolicError::Unsupported(
@@ -185,10 +188,6 @@ pub(crate) fn execute_symbolic_precompile(
             execute_precompile(cx, address, &input, spec_id)
         }
     }
-}
-
-fn input_has_symbolic_bytes(cx: &mut SymCx, input: &SymBytes, input_len: usize) -> bool {
-    (0..input_len).any(|idx| input.byte(cx, idx).as_const().is_none())
 }
 
 pub(crate) fn symbolic_modexp_precompile(
@@ -219,10 +218,7 @@ pub(crate) fn concrete_precompile_word_at(
     let mut bytes = [0u8; 32];
     for (idx, byte) in bytes.iter_mut().enumerate() {
         let word = input.byte(cx, offset + idx);
-        *byte = word
-            .as_const()
-            .ok_or(SymbolicError::Unsupported("symbolic precompile length header"))?
-            .to::<u8>();
+        *byte = word.as_const_or("symbolic precompile length header")?.to::<u8>();
     }
     Ok(U256::from_be_bytes(bytes))
 }

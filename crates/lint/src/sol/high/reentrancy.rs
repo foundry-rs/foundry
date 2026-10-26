@@ -664,8 +664,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     }
                 }
             }
-            ExprKind::Call(callee, args, opts) => {
-                let mut operands = vec![*callee];
+            ExprKind::Call(callee, args) => {
+                let (callee, opts) = callee.split_call_options();
+                let mut operands = vec![callee];
                 operands.extend(opts.iter().flat_map(|opts| opts.args).map(|opt| &opt.value));
                 operands.extend(args.exprs());
 
@@ -698,12 +699,12 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     self.merge_call_balance_values(expr.span, returns);
                 }
                 if !state.state_reads.is_empty()
-                    && let Some(kind) = self.reentrant_call_kind(callee, *opts)
+                    && let Some(kind) = self.reentrant_call_kind(callee, opts)
                 {
                     state.push_call(expr.span, kind);
                 }
                 if self.reentrancy_balance_enabled
-                    && call_options_allow_reentrancy(self.gcx, *opts)
+                    && call_options_allow_reentrancy(self.gcx, opts)
                     && callee_can_reenter(self.gcx, callee)
                     && !self.balance_guard_blocks_call(state, callee)
                 {
@@ -1209,7 +1210,11 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         let expr = expr.peel_parens();
         match &expr.kind {
             ExprKind::Payable(inner) => self.self_address_path(inner, state),
-            ExprKind::Call(callee, args, None) if is_address_cast(callee) && args.len() == 1 => {
+            ExprKind::Call(callee, args)
+                if callee.split_call_options().1.is_none()
+                    && is_address_cast(callee)
+                    && args.len() == 1 =>
+            {
                 self.self_address_path(args.exprs().next().expect("one argument"), state)
             }
             ExprKind::Call(..) => self
@@ -1385,7 +1390,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     })
                     .collect()
             }
-            ExprKind::Call(callee, args, _) if cast_type(callee).is_some() && args.len() == 1 => {
+            ExprKind::Call(callee, args) if cast_type(callee).is_some() && args.len() == 1 => {
                 let inner = args.exprs().next().expect("one argument");
                 let preserving = match (
                     self.gcx.type_of_expr(inner.peel_parens().id),
@@ -1711,14 +1716,9 @@ fn forget_path_predicates(state: &mut FlowState, var_id: VariableId) {
 
 /// Arguments of a plain type conversion such as `uint256(x)` or `address(x)`.
 fn cast_args<'a>(expr: &'a Expr<'a>) -> Option<&'a CallArgs<'a>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Call(callee, args, None)
-            if matches!(callee.peel_parens().kind, ExprKind::Type(_) | ExprKind::TypeCall(_)) =>
-        {
-            Some(args)
-        }
-        _ => None,
-    }
+    let (callee, args, opts) = expr.peel_parens().as_call()?;
+    (opts.is_none() && matches!(callee.kind, ExprKind::Type(_) | ExprKind::TypeCall(_)))
+        .then_some(args)
 }
 
 fn call_option<'a>(opts: Option<&'a CallOptions<'a>>, name: Symbol) -> Option<&'a Expr<'a>> {
@@ -1734,8 +1734,10 @@ fn is_uncapped_value_call(gcx: Gcx<'_>, callee: &Expr<'_>, opts: Option<&CallOpt
     matches!(&callee.peel_parens().kind, ExprKind::Member(_, member) if member.name == kw::Call)
         && call_sends_eth(gcx, opts)
         && call_option(opts, kw::Gas).is_none_or(|gas| {
-            matches!(&gas.peel_parens().kind, ExprKind::Call(callee, args, None)
-                if args.is_empty() && is_builtin(gcx, callee, sym::gasleft))
+            matches!(&gas.peel_parens().kind, ExprKind::Call(callee, args)
+                if callee.split_call_options().1.is_none()
+                    && args.is_empty()
+                    && is_builtin(gcx, callee, sym::gasleft))
         })
 }
 
@@ -1829,8 +1831,8 @@ fn guard_restoration(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Option<(VariableId, Opera
 /// `f();` naming exactly one function.
 fn simple_internal_call(gcx: Gcx<'_>, stmt: &Stmt<'_>) -> Option<FunctionId> {
     let StmtKind::Expr(expr) = stmt.kind else { return None };
-    let ExprKind::Call(callee, args, None) = &expr.peel_parens().kind else { return None };
-    (args.is_empty() && matches!(callee.peel_parens().kind, ExprKind::Ident(_)))
+    let (callee, args, opts) = expr.peel_parens().as_call()?;
+    (opts.is_none() && args.is_empty() && matches!(callee.kind, ExprKind::Ident(_)))
         .then(|| gcx.resolved_function(callee))
         .flatten()
 }
@@ -1858,7 +1860,7 @@ fn stmt_rejects_lock_value(
     };
     match stmt.kind {
         StmtKind::Expr(expr) => {
-            let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+            let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return false };
             is_require_or_assert(gcx, callee)
                 && args.exprs().next().is_some_and(|cond| eval(cond) == Some(false))
         }

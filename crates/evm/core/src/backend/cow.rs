@@ -5,7 +5,7 @@ use crate::{
     FoundryInspectorExt,
     backend::{
         Backend, ContextUpdateFor, DatabaseExt, ForkAccountField, JournaledState, LocalForkId,
-        RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
+        RevertStateSnapshotAction, diagnostic::RevertDiagnostic, existing_account,
     },
     evm::{
         ChainFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
@@ -31,6 +31,14 @@ use std::{borrow::Cow, collections::BTreeMap, fmt::Debug};
 
 #[cfg(feature = "monad")]
 use crate::evm::MonadEvmNetwork;
+#[cfg(feature = "monad")]
+use alloy_evm::EvmEnv;
+#[cfg(feature = "monad")]
+use alloy_monad_evm::MonadEvmFactory;
+#[cfg(feature = "monad")]
+use monad_revm::{MonadChainContext, MonadHardfork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -147,9 +155,9 @@ impl CowBackend<'_, MonadEvmNetwork> {
         I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, MonadEvmNetwork>>,
     >(
         &mut self,
-        evm_env: &mut EvmEnvFor<MonadEvmNetwork>,
-        tx_env: &mut TxEnvFor<MonadEvmNetwork>,
-        chain_context: ChainFor<MonadEvmNetwork>,
+        evm_env: &mut EvmEnv<MonadHardfork>,
+        tx_env: &mut TxEnv,
+        chain_context: MonadChainContext,
         inspector: &mut I,
     ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
         if crate::evm::protocol_system_call(tx_env)?.is_none() {
@@ -158,7 +166,7 @@ impl CowBackend<'_, MonadEvmNetwork> {
 
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
-        let factory = <MonadEvmNetwork as FoundryEvmNetwork>::EvmFactory::default();
+        let factory = MonadEvmFactory::default();
         let mut evm = factory.create_nested_evm_with_inspector(self, evm_env.clone(), inspector);
         *evm.chain_mut() = chain_context;
         let result = evm.transact_raw(tx_env.clone())?;
@@ -306,6 +314,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.active_fork_url()
     }
 
+    fn active_fork_options(&self) -> Option<CreateFork> {
+        self.backend.active_fork_options()
+    }
+
     fn active_fork_source_chain_id(&self) -> Option<u64> {
         self.backend.active_fork_source_chain_id()
     }
@@ -414,7 +426,8 @@ impl<FEN: FoundryEvmNetwork> Database for CowBackend<'_, FEN> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        DatabaseRef::basic_ref(self, address)
+        let spec = self.pending_init.map_or(self.backend.inner.spec_id, |(spec, ..)| spec);
+        Ok(existing_account(spec, DatabaseRef::basic_ref(self, address)?))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {

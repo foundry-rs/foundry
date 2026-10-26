@@ -1,7 +1,8 @@
 use foundry_test_utils::util::OutputExt;
 use std::path::Path;
 
-casttest!(flaky_error_decode_with_openchain, |prj, cmd| {
+#[casttest]
+fn flaky_error_decode_with_openchain(prj: _, cmd: _) {
     prj.clear_cache();
     cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
 ValueTooHigh(uint256,uint256)
@@ -9,68 +10,76 @@ ValueTooHigh(uint256,uint256)
 100
 
 "#]]);
-});
+}
 
-casttest!(flaky_fourbyte, |_prj, cmd| {
+#[casttest]
+fn flaky_fourbyte(cmd: _) {
     cmd.args(["4byte", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
 transfer(address,uint256)
 
 "#]]);
-});
+}
 
-casttest!(fourbyte_invalid, |_prj, cmd| {
+#[casttest]
+fn fourbyte_invalid(cmd: _) {
     cmd.args(["4byte", "0xa9059c"]).assert_failure().stderr_eq(str![[r#"
 error: invalid value '0xa9059c' for '[SELECTOR]': invalid string length
 
 For more information, try '--help'.
 
 "#]]);
-});
+}
 
-casttest!(flaky_fourbyte_calldata, |_prj, cmd| {
+#[casttest]
+fn flaky_fourbyte_calldata(cmd: _) {
     cmd.args(["4byte-calldata", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
 1) "transfer(address,uint256)"
 0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
 31802608249 [3.18e10]
 
 "#]]);
-});
+}
 
-casttest!(flaky_fourbyte_calldata_only_selector, |_prj, cmd| {
+#[casttest]
+fn flaky_fourbyte_calldata_only_selector(cmd: _) {
     cmd.args(["4byte-calldata", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
 transfer(address,uint256)
 
 "#]]);
-});
+}
 
-casttest!(flaky_fourbyte_calldata_alias, |_prj, cmd| {
+#[casttest]
+fn flaky_fourbyte_calldata_alias(cmd: _) {
     cmd.args(["4byte-decode", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
 1) "transfer(address,uint256)"
 0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
 31802608249 [3.18e10]
 
 "#]]);
-});
+}
 
-casttest!(flaky_fourbyte_event, |_prj, cmd| {
+#[casttest]
+fn flaky_fourbyte_event(cmd: _) {
     cmd.args(["4byte-event", "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"])
         .assert_success()
         .stdout_eq(str![[r#"
 updateAuthority(address,uint8)
 
 "#]]);
-});
+}
 
-casttest!(flaky_fourbyte_event_2, |_prj, cmd| {
+#[casttest]
+fn flaky_fourbyte_event_2(cmd: _) {
     cmd.args(["4byte-event", "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"])
         .assert_success()
         .stdout_eq(str![[r#"
 canCall(address,address,bytes4)
 
 "#]]);
-});
+}
 
-casttest!(flaky_upload_signatures, |_prj, cmd| {
+#[casttest]
+fn flaky_upload_signatures(cmd: _) {
     // test no prefix is accepted as function
     let output = cmd
         .args(["upload-signature", "transfer(address,uint256)"])
@@ -128,9 +137,10 @@ casttest!(flaky_upload_signatures, |_prj, cmd| {
         "{}",
         output
     );
-});
+}
 
-casttest!(selectors_json_envelope, |_prj, cmd| {
+#[casttest]
+fn selectors_json_envelope(cmd: _) {
     // bytecode with one function: 0x2125b65b / uint32,address,uint224 / pure
     let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
 
@@ -143,9 +153,10 @@ casttest!(selectors_json_envelope, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":[{"selector":"0x2125b65b","arguments":"uint32,address,uint224","state_mutability":"pure"}],"errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
-casttest!(selectors_exclude_fallback_dispatch, |_prj, cmd| {
+#[casttest]
+fn selectors_exclude_fallback_dispatch(cmd: _) {
     // Bytecode with ABI-dispatched selector 0x11111111 and fallback-dispatched selector 0x22222222.
     let bytecode = "5f3560e01c806322222222146025576004361060215780631111111114602357005b005b005b00";
 
@@ -153,9 +164,10 @@ casttest!(selectors_exclude_fallback_dispatch, |_prj, cmd| {
 0x11111111		payable
 
 "#]]);
-});
+}
 
-casttest!(abi_encode_event_json_envelope, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_json_envelope(cmd: _) {
     cmd.args([
         "abi-encode-event",
         "Transfer(address indexed,address indexed,uint256)",
@@ -180,10 +192,11 @@ casttest!(abi_encode_event_json_envelope, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":{"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8"},"errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
 // tests cast can decode event with provided signature
-casttest!(event_decode_with_sig, |_prj, cmd| {
+#[casttest]
+fn event_decode_with_sig(cmd: _) {
     cmd.args(["decode-event", "--sig", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
 78
 0x0000000000000000000000000000000000D0004F
@@ -194,9 +207,10 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":["78","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
-casttest!(function_pointer_in_event_tuple, |_prj, cmd| {
+#[casttest]
+fn function_pointer_in_event_tuple(cmd: _) {
     let signature = "ActionLogged((uint256,function))";
     let function = "0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90";
     let action = format!("(1337,{function})");
@@ -216,10 +230,11 @@ casttest!(function_pointer_in_event_tuple, |_prj, cmd| {
 
 "#]],
     );
-});
+}
 
 // tests cast can decode event with Openchain API
-casttest!(flaky_event_decode_with_openchain, |prj, cmd| {
+#[casttest]
+fn flaky_event_decode_with_openchain(prj: _, cmd: _) {
     prj.clear_cache();
     cmd.args(["decode-event", "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"]).assert_success().stdout_eq(str![[r#"
 BaseCurrencySet(address,uint256)
@@ -227,10 +242,11 @@ BaseCurrencySet(address,uint256)
 15187004358734 [1.518e13]
 
 "#]]);
-});
+}
 
 // tests cast can decode error with provided signature
-casttest!(error_decode_with_sig, |_prj, cmd| {
+#[casttest]
+fn error_decode_with_sig(cmd: _) {
     cmd.args(["decode-error", "--sig", "AnotherValueTooHigh(uint256,address)", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"]).assert_success().stdout_eq(str![[r#"
 101
 0x0000000000000000000000000000000000D0004F
@@ -241,10 +257,11 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":["101","0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
 // tests cast can decode error and event when using local sig identifiers cache
-forgetest_init!(flaky_error_event_decode_with_cache, |prj, cmd| {
+#[forgetest_init]
+fn flaky_error_event_decode_with_cache(prj: _, cmd: _) {
     prj.add_source(
         "LocalProjectContract",
         r#"
@@ -278,9 +295,10 @@ MyUniqueEventWithinLocalProject(uint256,address)
 0x00000000000000000000000000000DD00000004e
 
 "#]]);
-});
+}
 
-forgetest!(flaky_cache_selectors_from_extra_abis, |prj, cmd| {
+#[forgetest]
+fn flaky_cache_selectors_from_extra_abis(prj: _, cmd: _) {
     // Create folder with ABI JSON files containing a unique error
     let abis_dir = prj.root().join("external_abis");
     std::fs::create_dir(&abis_dir).unwrap();
@@ -313,12 +331,13 @@ MyUniqueExtraAbiError(uint256,bool)
 true
 
 "#]]);
-});
+}
 
-casttest!(signature_selector, |_prj, cmd| {
+#[casttest]
+fn signature_selector(cmd: _) {
     cmd.cast_fuse().args(["sig", "foo()"]).assert_success().stdout_eq("0xc2985578\n");
     cmd.cast_fuse()
         .args(["sig", "foo(address,uint256)"])
         .assert_success()
         .stdout_eq("0xbd0d639f\n");
-});
+}

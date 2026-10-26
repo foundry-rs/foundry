@@ -1,6 +1,7 @@
 use super::*;
 
-forgetest_init!(storage, |prj, cmd| {
+#[forgetest_init]
+fn storage(prj: _, cmd: _) {
     prj.add_test(
         "name",
         r#"
@@ -124,4 +125,4 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}

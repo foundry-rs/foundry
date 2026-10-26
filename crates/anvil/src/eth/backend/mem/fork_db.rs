@@ -8,13 +8,14 @@ use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{
-        BlockchainDb, DatabaseResult, RevertStateSnapshotAction, SharedBackend, StateSnapshot,
+        BlockchainDb, DatabaseResult, MemDb, RevertStateSnapshotAction, SharedBackend,
+        StateSnapshot,
     },
     fork::database::ForkDbStateSnapshot,
 };
 use revm::{
     context::BlockEnv,
-    database::{Database, DbAccount},
+    database::{CacheDB, Database, DbAccount},
     state::AccountInfo,
 };
 
@@ -72,7 +73,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    db.code_by_hash(v.info.code_hash)?
+                    db.code_by_hash(v.info.code_hash())?
                 };
                 Ok((
                     k,
@@ -107,14 +108,35 @@ impl<N: Network> Db for ForkedDatabase<N> {
         self.revert_state_snapshot(id, action)
     }
 
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        self.state_snapshots().lock().remove_at(id).is_some()
+    }
+
     fn current_state(&self) -> StateDb {
         StateDb::new(self.create_state_snapshot())
+    }
+
+    fn historical_state(&self, state_snapshot: StateSnapshot) -> StateDb {
+        // Fall back to the fork for anything the snapshot did not capture. Snapshots without
+        // account states cannot tell cleared storage from uncached storage, so they keep the
+        // previous standalone restore.
+        let mut state = if state_snapshot.account_states.is_some() {
+            StateDb::new(CacheDB::new(self.database().db.clone()))
+        } else {
+            StateDb::new(MemDb::default())
+        };
+        state.init_from_state_snapshot(state_snapshot);
+        state
     }
 }
 
 impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.database().cache.accounts)
+    }
+
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        Some(&mut self.database_mut().cache.accounts)
     }
 
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
@@ -126,7 +148,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         let accounts = std::mem::take(&mut *db.accounts.write());
         let storage = std::mem::take(&mut *db.storage.write());
         let block_hashes = std::mem::take(&mut *db.block_hashes.write());
-        StateSnapshot { accounts, storage, block_hashes }
+        StateSnapshot { accounts, storage, block_hashes, ..Default::default() }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
@@ -134,7 +156,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         let accounts = db.accounts.read().clone();
         let storage = db.storage.read().clone();
         let block_hashes = db.block_hashes.read().clone();
-        StateSnapshot { accounts, storage, block_hashes }
+        StateSnapshot { accounts, storage, block_hashes, ..Default::default() }
     }
 
     fn clear(&mut self) {
@@ -144,7 +166,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         let db = self.inner().db();
-        let StateSnapshot { accounts, storage, block_hashes } = state_snapshot;
+        let StateSnapshot { accounts, storage, block_hashes, .. } = state_snapshot;
         *db.accounts.write() = accounts;
         *db.storage.write() = storage;
         *db.block_hashes.write() = block_hashes;
@@ -166,6 +188,9 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        if let Some(account_states) = local_state_snapshot.account_states {
+            state_snapshot.account_states.get_or_insert_default().extend(account_states);
+        }
         state_snapshot
     }
 
@@ -175,6 +200,9 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
         state_snapshot.accounts.extend(local_state_snapshot.accounts);
         state_snapshot.storage.extend(local_state_snapshot.storage);
         state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        if let Some(account_states) = local_state_snapshot.account_states {
+            state_snapshot.account_states.get_or_insert_default().extend(account_states);
+        }
         state_snapshot
     }
 

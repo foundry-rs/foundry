@@ -75,6 +75,19 @@ class CompareBenchmarkThresholdsTests(unittest.TestCase):
         self.assertEqual(missing_baseline.returncode, 2)
         self.assertIn("⚠️ Incomplete benchmark", missing_baseline.stdout)
 
+    def test_calibrated_key_missing_from_both_results_is_an_execution_error(self):
+        for alert in (True, False):
+            with self.subTest(alert=alert):
+                result = self.run_compare(
+                    {"complete": 1}, {"complete": 1}, {"missing": self.rule(5, 10, alert)}
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(result.stdout.splitlines()[4:6], [
+                    "| `complete` | 1.00s | 1.00s | +0.00% ⚪ Uncalibrated |",
+                    "| `missing` | N/A | N/A | ⚠️ Incomplete benchmark |",
+                ])
+
     def test_malformed_config_and_input_exit_two(self):
         config = self.run_compare({"key": 1}, {"key": 2}, {"key": self.rule(10, 5)})
         self.assertEqual(config.returncode, 2)

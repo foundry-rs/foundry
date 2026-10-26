@@ -21,7 +21,7 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for EncodedPackedCollision {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return };
+        let ExprKind::Call(callee, args) = &expr.kind else { return };
         if gcx.resolved_builtin(callee) != Some(Builtin::AbiEncodePacked) {
             return;
         }

@@ -1,6 +1,7 @@
 version: 2
 multi-ecosystem-groups:
   code-weekly:
+    open-pull-requests-limit: 5
     schedule:
       interval: weekly
       day: monday
@@ -15,34 +16,37 @@ updates:
       default-days: 7
   - package-ecosystem: cargo
     directory: /editors/zed
+    allow:
+      - dependency-type: all
     patterns: ["*"]
     multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
+  # This also refreshes SHA-only rust-toolchain pins. Keep them without a v1
+  # comment because upstream moves that tag instead of publishing fixed releases.
   - package-ecosystem: github-actions
     directory: /
-    labels:
-      - dependencies
-      - github_actions
-      - L-ignore
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
       timezone: UTC
     cooldown:
-      default-days: 7
+      # Dependabot truncates git tag timestamps to dates. Allow an extra day
+      # beyond workflow-validation's seven-day commit-age minimum.
+      default-days: 8
     groups:
       ci-weekly:
         patterns:
           - '*'
   - package-ecosystem: cargo
     directory: /
+    allow:
+      - dependency-type: all
     patterns: ["*"]
     multi-ecosystem-group: code-weekly
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
     ignore:
       - dependency-name: syn
         update-types:
