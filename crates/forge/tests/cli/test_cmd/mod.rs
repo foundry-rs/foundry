@@ -6,6 +6,7 @@ use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_common::LIBRARY_DEPLOYER;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand, assert_data_eq,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
@@ -1891,6 +1892,55 @@ contract NonAnvilForkTest {
 Ran 1 test for test/NonAnvilFork.t.sol:NonAnvilForkTest
 [PASS] testFork() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// `vm.transact` executes a Celo CIP-64 transaction as its EIP-1559 body with native fees.
+#[forgetest]
+async fn fork_transact_celo_cip64(prj: _, cmd: _) {
+    let config = NodeConfig::test().with_chain_id(Some(42_220u64));
+    let (api, handle) = spawn(config.with_networks(NetworkConfigs::with_celo())).await;
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let request = serde_json::json!({
+        "from": sender,
+        "to": "0x0000000000000000000000000000000000001234",
+        "value": "0x1",
+        "feeCurrency": "0x2222222222222222222222222222222222222222",
+    });
+    let hash = api.send_transaction(serde_json::from_value(request).unwrap()).await.unwrap();
+    let tx = handle.http_provider().get_transaction_by_hash(hash).await.unwrap().unwrap();
+    assert_eq!(serde_json::to_value(tx).unwrap()["type"], "0x7b");
+
+    prj.add_test(
+        "Cip64Transact.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function getNonce(address account) external view returns (uint64);
+    function transact(bytes32 txHash) external;
+}
+
+contract Cip64TransactTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testTransact() external {
+        vm.createSelectFork("<rpc>", <hash>);
+        require(address(0x1234).balance == 0, "recipient before");
+        vm.transact(<hash>);
+        require(address(0x1234).balance == 1, "recipient after");
+        require(vm.getNonce(<sender>) == 1, "sender nonce");
+    }
+}
+"#
+        .replace("<rpc>", &handle.http_endpoint())
+        .replace("<hash>", &hash.to_string())
+        .replace("<sender>", &sender.to_checksum(None)),
+    );
+
+    cmd.args(["test", "--match-test", "testTransact"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testTransact() ([GAS])
 ...
 "#]]);
 }
