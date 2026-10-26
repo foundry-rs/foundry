@@ -224,7 +224,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 Loaded trace with 1125 steps.
 Sources loaded for: CounterTest (0x7fa9385be102ac3eac297483dd6233d62b3e1496), Counter (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f)
-test/Counter.t.sol:10  (step 0/1124, pc 0, PUSH1, gas 1073664214)
+test/Counter.t.sol:10  (step 0/1124, pc 0, PUSH1, gas 1073664226)
    10 | contract CounterTest {
 Breakpoint #2 set at src/Counter.sol:13
 Breakpoint #1 hit at step 710, PC 529 if step == 710

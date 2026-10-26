@@ -3,7 +3,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::EvmArgs, utils::LoadConfig};
 use foundry_common::shell;
-use foundry_config::fix::fix_tomls;
+use foundry_config::fix::fix_tomls_with_root;
 
 foundry_config::impl_figment_convert!(ConfigArgs, build, evm);
 
@@ -29,7 +29,8 @@ pub struct ConfigArgs {
 impl ConfigArgs {
     pub fn run(self) -> Result<()> {
         if self.fix {
-            for warning in fix_tomls() {
+            let root = self.build.build.project_paths.try_project_root()?;
+            for warning in fix_tomls_with_root(root) {
                 sh_warn!("{warning}")?;
             }
             return Ok(());

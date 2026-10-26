@@ -747,6 +747,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             ScriptSequenceKind::new_single(
                 sequences.pop().expect("empty sequences"),
                 self.args.batch,
+                self.script_config.tempo.sponsor,
             )?
         } else {
             ScriptSequenceKind::new_multi(
@@ -758,6 +759,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     !self.args.broadcast,
                 )?,
                 self.args.batch,
+                self.script_config.tempo.sponsor,
             )?
         };
 
@@ -825,6 +827,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             chain,
             commit,
             recovery_generation: None,
+            reverted: vec![],
         };
         Ok(sequence)
     }

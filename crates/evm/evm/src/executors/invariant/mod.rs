@@ -922,6 +922,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 &sequence,
                 invariant_contract.address,
                 invariant_contract.anchor_calldata(),
+                self.config.fail_on_revert,
+                &campaign_seed.targeted_contracts.keys().copied().collect::<Vec<_>>(),
             );
             if !matches!(replayed, Ok(Some(value)) if value == best_value) {
                 // Keep the sequence in the mutation corpus, but do not report its stale value.
@@ -1124,6 +1126,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         let mut runs = 0;
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
+        // Report invariants that already fail in the initial state. Later runs only report
+        // failures that they add.
+        record_new_invariant_failures(
+            campaign_state,
+            &invariant_contract,
+            &invariant_test.test_data.failures,
+        );
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();

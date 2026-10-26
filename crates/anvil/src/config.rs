@@ -8,6 +8,7 @@ use crate::{
             },
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
+            tempo_consensus::TempoConsensus,
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
@@ -33,6 +34,7 @@ use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
 };
 use alloy_transport::TransportError;
+use anvil_core::types::NodeBlobParams;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
@@ -49,7 +51,7 @@ use foundry_evm::{
     traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
-        get_blob_params, get_blob_params_by_hardfork,
+        get_blob_params_by_hardfork,
     },
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
@@ -64,6 +66,7 @@ use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
     net::{IpAddr, Ipv4Addr},
+    num::NonZeroU64,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -91,6 +94,8 @@ pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
+/// Default number of block heights in a Tempo consensus epoch.
+pub const DEFAULT_TEMPO_EPOCH_LENGTH: NonZeroU64 = NonZeroU64::new(21_600).unwrap();
 
 /// Resolves source-chain upgrades without changing another execution family's historical lookup.
 pub(crate) fn source_hardfork(
@@ -161,19 +166,25 @@ impl AnvilNodeInfoProbe {
         Self { identified, skip, inconclusive: false }
     }
 
-    async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
+    async fn request(
+        &mut self,
+        provider: &RetryProvider,
+    ) -> Result<Option<(NodeInfo, Option<BlobParams>)>> {
         if self.skip {
             return Ok(None);
         }
         let Ok(response) = tokio::time::timeout(
             FORK_IDENTITY_PROBE_TIMEOUT,
-            provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()),
+            provider.raw_request::<_, Value>("anvil_nodeInfo".into(), ()),
         )
         .await
         else {
             self.inconclusive = true;
             return Ok(None);
         };
+        let response = response.and_then(|value| {
+            decode_node_info(value).map_err(|err| TransportError::deser_err(err, "anvil_nodeInfo"))
+        });
         match response {
             Ok(node_info) => {
                 self.identified = true;
@@ -188,6 +199,20 @@ impl AnvilNodeInfoProbe {
             }
         }
     }
+}
+
+/// Decodes an `anvil_nodeInfo` response and the blob params that newer Anvil versions add to it.
+///
+/// `WithOtherFields<NodeInfo>` cannot decode it: serde's flatten buffer rejects the `u128` retry
+/// backoff that fork endpoints report.
+fn decode_node_info(mut value: Value) -> serde_json::Result<(NodeInfo, Option<BlobParams>)> {
+    let blob_params = value
+        .as_object_mut()
+        .and_then(|fields| fields.remove("blobParams"))
+        .map(serde_json::from_value::<NodeBlobParams>)
+        .transpose()?
+        .map(BlobParams::from);
+    Ok((serde_json::from_value(value)?, blob_params))
 }
 
 /// One-shot source data for a transaction-hash fork replay.
@@ -231,7 +256,8 @@ pub struct NodeConfig {
     pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
-    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825). From Amsterdam,
+    /// the cap always applies to regular gas only (EIP-8037).
     pub enable_tx_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
@@ -358,6 +384,10 @@ pub struct NodeConfig {
     ///
     /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
     pub tempo_fee_payer: Option<Address>,
+    /// Number of block heights in a Tempo consensus epoch.
+    pub tempo_epoch_length: NonZeroU64,
+    /// Optional development consensus seed; otherwise derived from the account mnemonic.
+    pub tempo_consensus_seed: Option<B256>,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where persisted states are cached (used with `max_persisted_states`).
@@ -714,6 +744,8 @@ impl Default for NodeConfig {
             #[cfg(feature = "base")]
             base_activation_admin: None,
             tempo_fee_payer: None,
+            tempo_epoch_length: DEFAULT_TEMPO_EPOCH_LENGTH,
+            tempo_consensus_seed: None,
             silent: false,
             cache_path: None,
             funded_accounts: HashMap::default(),
@@ -737,6 +769,20 @@ impl NodeConfig {
             // explicitly supplied a non-zero coinbase.
             evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
         }
+    }
+
+    /// Sets the execution spec, its mainnet gas parameters, and the transaction gas limit cap.
+    ///
+    /// The Amsterdam gas features follow the spec in both directions, so switching to an earlier
+    /// spec disables them. The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except
+    /// under EIP-8037, where the cap divides a transaction's gas into regular gas and the state
+    /// gas reservoir instead of limiting it.
+    pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
+        cfg.set_spec_and_mainnet_gas_params(spec);
+        let is_amsterdam = spec >= SpecId::AMSTERDAM;
+        cfg.enable_amsterdam_eip8037 = is_amsterdam;
+        cfg.enable_amsterdam_eip2780 = is_amsterdam;
+        cfg.tx_gas_limit_cap = (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX);
     }
 
     /// Returns the memory limit of the node
@@ -1378,6 +1424,31 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the number of block heights in a Tempo consensus epoch.
+    #[must_use]
+    pub const fn with_tempo_epoch_length(mut self, epoch_length: NonZeroU64) -> Self {
+        self.tempo_epoch_length = epoch_length;
+        self
+    }
+
+    /// Overrides the development consensus seed on Tempo networks.
+    #[must_use]
+    pub const fn with_tempo_consensus_seed(mut self, seed: Option<B256>) -> Self {
+        self.tempo_consensus_seed = seed;
+        self
+    }
+
+    /// Returns the explicit seed or derives it from the effective dev-account mnemonic.
+    pub fn tempo_consensus_seed(&self) -> B256 {
+        self.tempo_consensus_seed.unwrap_or_else(|| {
+            let mnemonic = self
+                .account_generator
+                .as_ref()
+                .map_or(DEFAULT_MNEMONIC, |generator| generator.get_phrase());
+            TempoConsensus::default_seed(mnemonic)
+        })
+    }
+
     /// Returns the effective account used to sponsor Tempo fee-payer requests.
     ///
     /// Defaults to the last dev account so it rarely collides with the sender accounts commonly
@@ -1473,7 +1544,7 @@ impl NodeConfig {
         // configure the revm environment
 
         let mut cfg = CfgEnv::new();
-        cfg.set_spec_and_mainnet_gas_params(self.get_hardfork().into());
+        self.set_cfg_spec(&mut cfg, self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1482,10 +1553,6 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-
-        if !self.enable_tx_gas_limit {
-            cfg.tx_gas_limit_cap = Some(u64::MAX);
-        }
 
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
@@ -1684,7 +1751,7 @@ impl NodeConfig {
         source_chain_id_override: Option<u64>,
         node_info_probe: &mut AnvilNodeInfoProbe,
     ) -> Result<ForkEndpointIdentity> {
-        let Some(node_info) = node_info_probe.request(provider).await? else {
+        let Some((node_info, blob_params)) = node_info_probe.request(provider).await? else {
             let source_chain_id = source_chain_id_override.unwrap_or(fallback_execution_chain_id);
             let explicit_fallback = self.has_explicit_network_selection().then_some(self.networks);
             let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
@@ -1699,6 +1766,7 @@ impl NodeConfig {
                 network: network_profile.map(|profile| profile.execution_network()),
                 network_profile,
                 hardfork: None,
+                blob_params: None,
                 instance_id: None,
                 source_fork_block_number: None,
                 source_fork_block_hash: None,
@@ -1765,6 +1833,7 @@ impl NodeConfig {
             network: Some(network),
             network_profile: Some(network_profile),
             hardfork: Some(hardfork),
+            blob_params,
             instance_id,
             source_fork_block_number,
             source_fork_block_hash,
@@ -2145,7 +2214,7 @@ latest block number: {latest_block}"
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
-        evm_env.cfg_env.set_spec_and_mainnet_gas_params(effective_spec);
+        self.set_cfg_spec(&mut evm_env.cfg_env, effective_spec);
         fees.set_execution_rules(
             effective_spec,
             self.networks.base_fee_params(block.header.timestamp()),
@@ -2172,8 +2241,19 @@ latest block number: {latest_block}"
 
         // Blob rules and fee state belong to the selected fork context even when the target block
         // predates Cancun. Always replace both so a reset cannot retain the previous fork's
-        // schedule or excess gas.
-        let blob_params = get_blob_params(source_chain_id, block.header.timestamp());
+        // schedule or excess gas. The source headers' excess blob gas was produced under the source
+        // chain's rules, so prefer its public schedule. For chains without one, use the blob params
+        // an Anvil endpoint reports: it can be a fork that executes a different hardfork than the
+        // blob schedule it inherited, so its hardfork is only a fallback for older versions.
+        let blob_params =
+            source_hardfork(effective_network, source_chain_id, block.header.timestamp())
+                .map(get_blob_params_by_hardfork)
+                .or(fork_identity.blob_params)
+                .unwrap_or_else(|| {
+                    get_blob_params_by_hardfork(
+                        fork_identity.hardfork.unwrap_or(effective_hardfork),
+                    )
+                });
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
@@ -2823,6 +2903,7 @@ mod tests {
             network: Some(NetworkVariant::Ethereum),
             network_profile: Some(NetworkConfigs::default()),
             hardfork: None,
+            blob_params: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -2867,6 +2948,7 @@ mod tests {
             network: Some(NetworkVariant::Ethereum),
             network_profile: Some(NetworkConfigs::default()),
             hardfork: Some(EthereumHardfork::Prague.into()),
+            blob_params: None,
             instance_id: Some(B256::with_last_byte(1)),
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -3027,5 +3109,21 @@ mod tests {
 
         let mode = std::fs::metadata(path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn tempo_consensus_configuration_defaults_and_overrides() {
+        let config = NodeConfig::default();
+        assert_eq!(config.tempo_epoch_length.get(), 21_600);
+        assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(DEFAULT_MNEMONIC));
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let config =
+            config.with_account_generator(AccountGenerator::new(1).phrase(mnemonic)).unwrap();
+        assert_eq!(config.tempo_consensus_seed(), TempoConsensus::default_seed(mnemonic));
+        let seed = B256::repeat_byte(7);
+        let config =
+            config.with_tempo_epoch_length(NonZeroU64::MIN).with_tempo_consensus_seed(Some(seed));
+        assert_eq!(config.tempo_epoch_length, NonZeroU64::MIN);
+        assert_eq!(config.tempo_consensus_seed(), seed);
     }
 }

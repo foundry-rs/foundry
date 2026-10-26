@@ -1,10 +1,9 @@
 use super::*;
-use foundry_evm::revm::precompile::u64_to_address;
 
 impl SymbolicExecutor {
     pub(super) fn call(
         &mut self,
-        executor: &Executor<impl FoundryEvmNetwork>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -675,9 +674,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn call_concrete_target<FEN: FoundryEvmNetwork>(
+    pub(super) fn call_concrete_target(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -888,8 +887,8 @@ impl SymbolicExecutor {
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
-        let spec_id: SpecId = executor.spec_id().into();
-        if precompile_number_for_spec(code_address, spec_id).is_some() {
+        let spec_id = executor.spec_id;
+        if is_precompile_for_spec(code_address, spec_id) {
             let input_len = in_size.size_word(&mut self.cx);
             let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {
@@ -1062,9 +1061,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    fn execute_kzg_precompile_call<FEN: FoundryEvmNetwork>(
+    fn execute_kzg_precompile_call(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         kind: CallKind,
@@ -1179,9 +1178,9 @@ impl SymbolicExecutor {
 
     #[expect(clippy::too_many_arguments)]
     /// Applies a precompile call result to the current symbolic state.
-    fn apply_precompile_outcome<FEN: FoundryEvmNetwork>(
+    fn apply_precompile_outcome(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         kind: CallKind,
         to: Address,
@@ -1207,9 +1206,9 @@ impl SymbolicExecutor {
         Ok(())
     }
 
-    fn apply_call_value_transfer<FEN: FoundryEvmNetwork>(
+    fn apply_call_value_transfer(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         kind: CallKind,
         to: Address,
@@ -1225,9 +1224,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn prepare_value_transfer<FEN: FoundryEvmNetwork>(
+    pub(super) fn prepare_value_transfer(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         from: Address,
@@ -1296,9 +1295,9 @@ impl SymbolicExecutor {
         }
     }
 
-    pub(super) fn prepare_create_value_transfer<FEN: FoundryEvmNetwork>(
+    pub(super) fn prepare_create_value_transfer(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         value: SymExpr,
@@ -1353,9 +1352,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn call_symbolic_target<FEN: FoundryEvmNetwork>(
+    pub(super) fn call_symbolic_target(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -1369,7 +1368,7 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend((1..=10).map(u64_to_address));
+        candidates.extend(active_precompiles(executor.spec_id).addresses().copied());
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {

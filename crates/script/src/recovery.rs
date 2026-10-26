@@ -30,6 +30,10 @@ struct RecoveryPlan<N: Network> {
     generation: B256,
     multi: bool,
     batch: bool,
+    /// Tempo sponsor of the run that created the snapshot. Resume must not prepare new
+    /// transactions without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sponsor: Option<Address>,
     deployments: Vec<RecoveryDeployment<N>>,
     data: SequenceData<N>,
 }
@@ -118,7 +122,15 @@ where
         self.plan.batch
     }
 
-    pub(crate) fn create(mut data: SequenceData<N>, batch: bool) -> Result<Self> {
+    pub(crate) const fn sponsor(&self) -> Option<Address> {
+        self.plan.sponsor
+    }
+
+    pub(crate) fn create(
+        mut data: SequenceData<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
         let paths = data.paths();
         let lock = RecoveryLock::acquire(&paths)?;
         let pending = pending_path(&lock.path);
@@ -130,7 +142,7 @@ where
         }
         let generation = B256::random();
         data.set_recovery_generation(generation);
-        let plan = RecoveryPlan::new(data, batch, generation)?;
+        let plan = RecoveryPlan { sponsor, ..RecoveryPlan::new(data, batch, generation)? };
         write_snapshot(&lock.path, &plan)?;
         Self::finish_open(lock, plan)
     }
@@ -673,6 +685,7 @@ where
             generation,
             multi: data.is_multi(),
             batch,
+            sponsor: None,
             deployments,
             data,
         })
@@ -1159,7 +1172,7 @@ mod tests {
         let mut sequence = forge_script_sequence::ScriptSequence::default();
         sequence.transactions.push_back(transaction);
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
-        SequenceData::Single(sequence)
+        SequenceData::Single(Box::new(sequence))
     }
 
     fn signed_sequence(dir: &Path) -> SequenceData<Ethereum> {
@@ -1176,7 +1189,7 @@ mod tests {
             ..Default::default()
         };
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
-        SequenceData::Single(sequence)
+        SequenceData::Single(Box::new(sequence))
     }
 
     fn delegated_transaction(payload: &[u8]) -> (TransactionRequest, RpcTransaction) {
@@ -1251,7 +1264,7 @@ mod tests {
         });
         let payload = sign_tempo_payload(expiring_request(signer.address(), 4217, 0), &signer);
 
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         let hash = store.persist_signed_payload(0, 0, payload.clone(), true).unwrap();
         assert_eq!(
             store.persist_signed_payload(2, 0, payload, true).unwrap_err().to_string(),
@@ -1281,7 +1294,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let store = RecoveryStore::create(data, false).unwrap();
+        let store = RecoveryStore::create(data, false, None).unwrap();
         let value: serde_json::Value = foundry_common::fs::read_json_file(&store.path).unwrap();
         assert_eq!(value["version"], RECOVERY_VERSION);
         assert_eq!(value["deployments"][0]["operations"][0]["id"]["sequence"], 0);
@@ -1300,7 +1313,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x11);
         {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             let deployment = &mut store.data_mut().sequences_mut()[0];
             deployment.transactions[0].hash = Some(hash);
             deployment.pending.push(hash);
@@ -1326,7 +1339,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x22);
         {
-            let mut store = RecoveryStore::create(data.clone(), false).unwrap();
+            let mut store = RecoveryStore::create(data.clone(), false, None).unwrap();
             store.data_mut().sequences_mut()[0].transactions[0].hash = Some(hash);
             store.save().unwrap();
         }
@@ -1343,7 +1356,7 @@ mod tests {
         let paths = data.paths();
         data.publish(&paths).unwrap();
         let snapshot = {
-            let store = RecoveryStore::create(data, false).unwrap();
+            let store = RecoveryStore::create(data, false, None).unwrap();
             store.path
         };
         std::fs::write(snapshot, b"{").unwrap();
@@ -1358,7 +1371,7 @@ mod tests {
         let paths = data.paths();
         let hash = B256::repeat_byte(0x33);
         let snapshot = {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             store.data_mut().sequences_mut()[0].pending.push(hash);
             write_plan(&pending_path(&store.path), &store.plan).unwrap();
             store.path.clone()
@@ -1373,7 +1386,7 @@ mod tests {
     #[test]
     fn changed_operations_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = RecoveryStore::create(sequence(dir.path()), false).unwrap();
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
         store.data_mut().sequences_mut()[0].transactions.clear();
         assert!(store.save().unwrap_err().to_string().contains("does not match"));
     }
@@ -1383,7 +1396,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let source_paths = data.paths();
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         let destination = dir.path().join("broadcast-cache.json");
         let destination_snapshot = recovery_path_from_sensitive(&destination).unwrap();
         let paths = (dir.path().join("broadcasted.json"), destination);
@@ -1401,7 +1414,7 @@ mod tests {
         let data = signed_sequence(dir.path());
         let paths = data.paths();
         let expected_hash = {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into(), true).unwrap();
             assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into(), true).is_err());
             hash
@@ -1416,7 +1429,7 @@ mod tests {
     #[test]
     fn signed_payload_is_bound_to_its_planned_operation() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
+        let mut store = RecoveryStore::create(signed_sequence(dir.path()), false, None).unwrap();
 
         assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into(), true).is_err());
         assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into(), true).is_err());
@@ -1430,7 +1443,7 @@ mod tests {
         let request = TransactionRequest::default();
         let hash = B256::repeat_byte(0x42);
         {
-            let mut store = RecoveryStore::create(data, false).unwrap();
+            let mut store = RecoveryStore::create(data, false, None).unwrap();
             store.persist_delegated_request(0, 0, request).unwrap();
             store.persist_delegated_status(0, 0, DelegatedStatus::Pending { hash }).unwrap();
             assert!(store.persist_delegated_request(0, 0, Default::default()).is_err());
@@ -1718,7 +1731,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let data = sequence(dir.path());
         let paths = data.paths();
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         store.persist_delegated_request(0, 0, Default::default()).unwrap();
         store.clear_delegated_request(0, 0).unwrap();
         assert!(store.delegated_status(0, 0).is_none());
@@ -1734,7 +1747,7 @@ mod tests {
         let paths = data.paths();
         let request = TransactionRequest::default();
         {
-            let mut store = RecoveryStore::create(data, true).unwrap();
+            let mut store = RecoveryStore::create(data, true, None).unwrap();
             store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
             assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into(), true).is_err());
         }
@@ -1755,7 +1768,7 @@ mod tests {
             let data = signed_sequence(dir.path());
             let paths = data.paths();
             {
-                let mut store = RecoveryStore::create(data, true).unwrap();
+                let mut store = RecoveryStore::create(data, true, None).unwrap();
                 store
                     .persist_batch_signed_payload(
                         0,
@@ -1780,7 +1793,7 @@ mod tests {
         let data = signed_sequence(dir.path());
         let paths = data.paths();
         {
-            let mut store = RecoveryStore::create(data, true).unwrap();
+            let mut store = RecoveryStore::create(data, true, None).unwrap();
             store.data_mut().sequences_mut()[0].pending.push(B256::repeat_byte(0x77));
             write_snapshot(&store.path, &store.plan).unwrap();
         }
@@ -1907,7 +1920,7 @@ mod tests {
             expiring_replay_hash(&first, true).unwrap(),
             expiring_replay_hash(&duplicate, true).unwrap()
         );
-        let mut store = RecoveryStore::create(data, false).unwrap();
+        let mut store = RecoveryStore::create(data, false, None).unwrap();
         let first_hash = store.persist_signed_payload(0, 0, first, true).unwrap();
         assert_eq!(store.signed_payload(0, 0).unwrap().hash, first_hash);
         let snapshot = std::fs::read(&store.path).unwrap();
@@ -1970,5 +1983,24 @@ mod tests {
             ))
             .encoded_2718(),
         )
+    }
+
+    #[test]
+    fn sponsor_survives_reload_and_defaults_to_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = sequence(dir.path());
+        let paths = data.paths();
+        let sponsor = Address::repeat_byte(0x55);
+        let snapshot = RecoveryStore::create(data, false, Some(sponsor)).unwrap().path;
+        let store = load(&paths, false).unwrap();
+        assert_eq!(store.sponsor(), Some(sponsor));
+        drop(store);
+
+        // Snapshots written before the sponsor was recorded load without one.
+        let mut value: serde_json::Value = foundry_common::fs::read_json_file(&snapshot).unwrap();
+        assert_eq!(value["sponsor"], serde_json::json!(sponsor));
+        value.as_object_mut().unwrap().remove("sponsor");
+        std::fs::write(&snapshot, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(load(&paths, false).unwrap().sponsor(), None);
     }
 }

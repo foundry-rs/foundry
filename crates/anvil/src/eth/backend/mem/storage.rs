@@ -5,7 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::cache::DiskStateCache,
+        mem::{cache::DiskStateCache, tempo::TempoChain},
     },
     pool::transactions::PoolTransaction,
 };
@@ -27,11 +27,8 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use foundry_evm::{
-    backend::MemDb,
-    traces::{
-        CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
-    },
+use foundry_evm::traces::{
+    CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -265,15 +262,6 @@ impl InMemoryBlockStates {
 
         SerializableHistoricalStates::new(states)
     }
-
-    /// Load states from serialized data
-    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        for (hash, state_snapshot) in states {
-            let mut state_db = StateDb::new(MemDb::default());
-            state_db.init_from_state_snapshot(state_snapshot);
-            self.insert(hash, state_db);
-        }
-    }
 }
 
 impl fmt::Debug for InMemoryBlockStates {
@@ -317,6 +305,8 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Tempo certificates and identity lifecycle, published with this canonical chain.
+    pub(crate) tempo: Option<TempoChain>,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
     pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
@@ -356,6 +346,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: best_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -377,6 +368,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -422,6 +414,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -728,6 +721,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
+    use foundry_evm::backend::MemDb;
     use foundry_primitives::FoundryNetwork;
     use revm::{database::DatabaseRef, interpreter::InstructionResult, state::AccountInfo};
     use tempo_primitives::TempoHeader;

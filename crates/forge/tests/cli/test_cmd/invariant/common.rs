@@ -2652,6 +2652,235 @@ contract InvariantOptimizeTest is Test {
 "#]]);
 }
 
+#[forgetest]
+fn invariant_optimization_reports_raised_shrink_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Handler {
+    bool penalty;
+    bool reward;
+    function penalize() external { penalty = true; }
+    function earn() external { reward = true; }
+    function score() external view returns (int256) { return reward ? (penalty ? int256(12) : int256(22)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 7 calls penalize then earn: the campaign reaches 12, but earn alone reaches 22.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 1, calls: 2)
+...
+"#]]);
+    // The rerun replays the persisted shrunk witness and its raised value.
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 1, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 0, calls: 0)
+...
+"#
+    ]]);
+}
+
+#[forgetest]
+fn invariant_optimization_shrink_keeps_raising_calls(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 12;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Queue {
+    uint256 length;
+    int256 score;
+    function push() external { length++; }
+    function pop() external { if (length > 0) length--; }
+    function sum() external { score = int256(length); }
+    function value() external view returns (int256) { return score; }
+}
+contract OptimizationTest {
+    Queue queue;
+    function setUp() public { queue = new Queue(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(queue); }
+    function invariant_optimize() public view returns (int256) { return queue.value(); }
+}
+"#);
+    // Seed 3 reaches 3 with a pop among four pushes. Dropping the pop reaches 4; dropping it in a
+    // block with a push would keep 3.
+    cmd.args(["test", "--fuzz-seed", "3", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 12, shrunk: 5)
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=push() args=[]
+[..]calldata=sum() args=[]
+ invariant_optimize() (best: 4, runs: 1, calls: 12)
+...
+"#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_shrunk_witness_reproduces_value(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.max_block_delay = Some(1000);
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Handler {
+    bool started;
+    function start() external { started = true; }
+    function noop() external {}
+    function score() external view returns (int256) { return started ? int256(block.number) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 1 ends with a noop after start: dropping that noop also drops its roll from the
+    // witness, so the shrunk witness must keep it to reproduce the value.
+    cmd.args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 10, shrunk: 2)
+[..]roll=4324 calldata=start() args=[]
+[..]roll=1518 calldata=noop() args=[]
+ invariant_optimize() (best: 5843, runs: 1, calls: 10)
+...
+"#]]);
+    // The rerun replays the persisted witness, which must still reach the reported value.
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "1", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 2)
+[..]roll=4324 calldata=start() args=[]
+[..]roll=1518 calldata=noop() args=[]
+ invariant_optimize() (best: 5843, runs: 0, calls: 0)
+...
+"#
+    ]]);
+}
+
+#[forgetest]
+fn invariant_optimization_shrink_rejects_handler_assertions(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+interface Vm { function warp(uint256) external; }
+contract Handler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool penalty;
+    bool reward;
+    bool done;
+    function penalize() external { penalty = true; }
+    function earn() external { vm.warp(1000); assert(penalty); reward = true; }
+    function finish() external { done = true; }
+    function score() external view returns (int256) { return done ? (reward ? int256(12) : int256(block.timestamp)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // Seed 7 calls penalize, earn, finish. Dropping penalize makes earn assert but keeps its warp,
+    // which scores 1000; the campaign would fail on that assertion, so the witness must keep it.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 3, shrunk: 3)
+[..]calldata=penalize() args=[]
+[..]calldata=earn() args=[]
+[..]calldata=finish() args=[]
+ invariant_optimize() (best: 12, runs: 1, calls: 3)
+...
+"#]]);
+}
+
+#[forgetest]
+fn invariant_optimization_legacy_gate_checks_only_targets(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.legacy_assertions = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.fail_on_revert = true;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test("Optimization.t.sol", r#"
+pragma solidity ^0.8.20;
+contract Dependency {
+    uint256 touches;
+    function touch() external { touches++; }
+    function failed() external pure returns (bool) { return true; }
+}
+contract Handler {
+    Dependency dependency = new Dependency();
+    bool penalty;
+    bool reward;
+    function penalize() external { penalty = true; }
+    function earn() external { dependency.touch(); reward = true; }
+    function score() external view returns (int256) { return reward ? (penalty ? int256(12) : int256(22)) : int256(0); }
+}
+contract OptimizationTest {
+    Handler handler;
+    function setUp() public { handler = new Handler(); }
+    function targetContracts() public view returns (address[] memory targets) { targets = new address[](1); targets[0] = address(handler); }
+    function invariant_optimize() public view returns (int256) { return handler.score(); }
+}
+"#);
+    // The campaign checks `failed()` only on targets, so the dependency's flag must not block
+    // shrinking from 12 to 22 or the rerun of the persisted witness.
+    cmd.args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 2, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 1, calls: 2)
+...
+"#]]);
+    prj.update_config(|config| config.invariant.runs = 0);
+    cmd.forge_fuse().args(["test", "--fuzz-seed", "7", "-vv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS]
+	[Best sequence] (original: 1, shrunk: 1)
+[..]calldata=earn() args=[]
+ invariant_optimize() (best: 22, runs: 0, calls: 0)
+...
+"#
+    ]]);
+}
+
 // Test that optimization mode works with negative values (finding max of negative range).
 #[forgetest]
 fn invariant_optimization_negative_values(prj: _, cmd: _) {

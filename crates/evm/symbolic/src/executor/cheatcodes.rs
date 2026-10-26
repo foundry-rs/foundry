@@ -216,9 +216,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn deploy_code_cheatcode_if_needed<FEN: FoundryEvmNetwork>(
+    pub(super) fn deploy_code_cheatcode_if_needed(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -271,9 +271,9 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn deploy_code_cheatcode_call<FEN: FoundryEvmNetwork>(
+    pub(super) fn deploy_code_cheatcode_call(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
@@ -583,9 +583,9 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    pub(super) fn handle_foundry_cheatcode<FEN: FoundryEvmNetwork>(
+    pub(super) fn handle_foundry_cheatcode(
         &mut self,
-        executor: &Executor<FEN>,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         selector: [u8; 4],
         in_offset: &SymExpr,
@@ -1273,6 +1273,26 @@ impl SymbolicExecutor {
                     "symbolic vm.etch",
                 )?;
                 let code = SymCode::from_byte_exprs(&mut self.cx, code);
+                let delegation_prefix = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01]);
+                let delegation = code
+                    .read_bytes(&mut self.cx, 0, delegation_prefix.len())
+                    .prefix_condition(&mut self.cx, &delegation_prefix);
+                if let Some(delegation) = delegation {
+                    let valid = if code.len() == EIP7702_BYTECODE_LEN {
+                        let delegation = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01, 0x00]);
+                        code.read_bytes(&mut self.cx, 0, delegation.len())
+                            .prefix_condition(&mut self.cx, &delegation)
+                            .unwrap_or_else(|| SymBoolExpr::constant(&mut self.cx, false))
+                    } else {
+                        SymBoolExpr::constant(&mut self.cx, false)
+                    };
+                    let invalid = valid.not(&mut self.cx);
+                    let malformed = SymBoolExpr::and(&mut self.cx, vec![delegation, invalid]);
+                    let (_, malformed_sat) = self.constraints_with_condition(state, malformed)?;
+                    if malformed_sat {
+                        return Err(SymbolicError::Unsupported("symbolic vm.etch EIP-7702 code"));
+                    }
+                }
                 state.world.install_code(target, code);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
@@ -1326,11 +1346,31 @@ impl SymbolicExecutor {
             resetNonceCall::SELECTOR => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let nonce = if state.world.extcode(&mut self.cx, executor, target)?.is_empty() {
-                    0
+                let code = state.world.extcode(&mut self.cx, executor, target)?;
+                // Like the concrete cheatcode, EIP-7702 delegated EOAs reset to 0.
+                let delegated = if !code.is_legacy() && code.len() == EIP7702_BYTECODE_LEN {
+                    let prefix = SymBytes::concrete(&mut self.cx, vec![0xef, 0x01, 0x00]);
+                    code.read_bytes(&mut self.cx, 0, prefix.len())
+                        .prefix_condition(&mut self.cx, &prefix)
                 } else {
-                    1
+                    None
                 };
+                let is_eoa = if let Some(delegated) = delegated {
+                    let (_, delegated_sat) =
+                        self.constraints_with_condition(state, delegated.clone())?;
+                    let not_delegated = delegated.not(&mut self.cx);
+                    let (_, not_delegated_sat) =
+                        self.constraints_with_condition(state, not_delegated)?;
+                    if delegated_sat && not_delegated_sat {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic vm.resetNonce code prefix",
+                        ));
+                    }
+                    delegated_sat
+                } else {
+                    code.is_empty()
+                };
+                let nonce = if is_eoa { 0 } else { 1 };
                 state.world.set_nonce(target, nonce);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
@@ -1381,7 +1421,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![exists]))
             }
             activeForkCall::SELECTOR => {
-                let id = executor.backend().active_fork_id().ok_or(SymbolicError::Unsupported(
+                let id = executor.active_fork_id.ok_or(SymbolicError::Unsupported(
                     "symbolic vm.activeFork requires an active forked executor",
                 ))?;
                 let id = SymExpr::constant(&mut self.cx, id);
@@ -1395,7 +1435,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.selectFork id",
                 )?;
-                if executor.backend().is_active_fork(id) {
+                if executor.active_fork_id == Some(id) {
                     return Ok(CheatcodeOutcome::Continue(Vec::new()));
                 }
                 Err(SymbolicError::Unsupported(
@@ -1405,13 +1445,14 @@ impl SymbolicExecutor {
             rollFork_0Call::SELECTOR | rollFork_2Call::SELECTOR => {
                 let with_id = selector == rollFork_2Call::SELECTOR;
                 let active_fork = !with_id
-                    || executor.backend().is_active_fork(read_abi_constrained_word_arg(
-                        &mut self.cx,
-                        state,
-                        args_offset,
-                        0,
-                        "symbolic vm.rollFork id",
-                    )?);
+                    || executor.active_fork_id
+                        == Some(read_abi_constrained_word_arg(
+                            &mut self.cx,
+                            state,
+                            args_offset,
+                            0,
+                            "symbolic vm.rollFork id",
+                        )?);
                 let block_number = read_abi_constrained_word_arg(
                     &mut self.cx,
                     state,
@@ -1662,12 +1703,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             isIsolateModeCall::SELECTOR => {
-                let isolate = executor
-                    .inspector()
-                    .cheatcodes
-                    .as_ref()
-                    .is_some_and(|cheats| cheats.core.config.isolate);
-                let isolate = SymExpr::constant(&mut self.cx, U256::from(isolate));
+                let isolate = SymExpr::constant(&mut self.cx, U256::from(executor.isolate));
                 Ok(CheatcodeOutcome::Continue(vec![isolate]))
             }
             isContextCall::SELECTOR => {

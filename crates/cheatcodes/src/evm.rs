@@ -839,12 +839,13 @@ impl Cheatcode for etchCall {
 impl Cheatcode for resetNonceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account } = self;
+        ccx.ecx.journal_mut().load_account_with_code(*account)?;
         let account = journaled_account(ccx.ecx, *account)?;
-        // Per EIP-161, EOA nonces start at 0, but contract nonces
-        // start at 1. Comparing by code_hash instead of code
-        // to avoid hitting the case where account's code is None.
-        let empty = account.info.is_empty_code_hash();
-        let nonce = if empty { 0 } else { 1 };
+        // Per EIP-161, contract nonces start at 1. EOAs, including EIP-7702 delegated ones, start
+        // at 0.
+        let code = account.info.code.as_ref().expect("account code is loaded");
+        let is_eoa = account.info.is_empty_code_hash() || code.is_eip7702();
+        let nonce = if is_eoa { 0 } else { 1 };
         account.info.nonce = nonce;
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())

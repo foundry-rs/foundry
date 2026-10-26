@@ -722,18 +722,148 @@ fn derive_wallets<W: Wordlist>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{FixedBytes, hex::FromHex};
+    use alloy_primitives::{FixedBytes, LogData, hex::FromHex};
     use alloy_sol_types::SolCall;
     use k256::elliptic_curve::Curve;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    use revm::{
+        context::journaled_state::JournalCheckpoint,
+        state::{AccountInfo, Bytecode},
+    };
     use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
     use tempo_hardfork::TempoHardfork;
     use tempo_precompiles::{
         Precompile,
         account_keychain::{AccountKeychain, KeyRestrictions, SignatureType},
+        error::Result as PrecompileResult,
         signature_verifier::SignatureVerifier,
-        storage::{StorageCtx, hashmap::HashMapStorageProvider},
+        storage::{PrecompileStorageProvider, StorageCtx, hashmap::HashMapStorageProvider},
     };
+    use tempo_primitives::TempoBlockEnv;
+
+    /// A [`HashMapStorageProvider`] with a settable block timestamp.
+    struct TimestampedStorage {
+        inner: HashMapStorageProvider,
+        block_env: TempoBlockEnv,
+    }
+
+    impl TimestampedStorage {
+        fn new(chain_id: u64, spec: TempoHardfork, timestamp: u64) -> Self {
+            let mut block_env = TempoBlockEnv::default();
+            block_env.inner.timestamp = U256::from(timestamp);
+            Self { inner: HashMapStorageProvider::new_with_spec(chain_id, spec), block_env }
+        }
+
+        fn set_timestamp(&mut self, timestamp: u64) {
+            self.block_env.inner.timestamp = U256::from(timestamp);
+        }
+    }
+
+    impl PrecompileStorageProvider for TimestampedStorage {
+        fn chain_id(&self) -> u64 {
+            self.inner.chain_id()
+        }
+
+        fn block_env(&self) -> &TempoBlockEnv {
+            &self.block_env
+        }
+
+        fn set_code(&mut self, address: Address, code: Bytecode) -> PrecompileResult<()> {
+            self.inner.set_code(address, code)
+        }
+
+        fn with_account_info(
+            &mut self,
+            address: Address,
+            f: &mut dyn FnMut(&AccountInfo),
+        ) -> PrecompileResult<()> {
+            self.inner.with_account_info(address, f)
+        }
+
+        fn account_code(&mut self, address: Address) -> PrecompileResult<(B256, Bytecode)> {
+            self.inner.account_code(address)
+        }
+
+        fn sload(&mut self, address: Address, key: U256) -> PrecompileResult<U256> {
+            self.inner.sload(address, key)
+        }
+
+        fn tload(&mut self, address: Address, key: U256) -> PrecompileResult<U256> {
+            self.inner.tload(address, key)
+        }
+
+        fn sstore(&mut self, address: Address, key: U256, value: U256) -> PrecompileResult<()> {
+            self.inner.sstore(address, key, value)
+        }
+
+        fn tstore(&mut self, address: Address, key: U256, value: U256) -> PrecompileResult<()> {
+            self.inner.tstore(address, key, value)
+        }
+
+        fn emit_event(&mut self, address: Address, event: LogData) -> PrecompileResult<()> {
+            self.inner.emit_event(address, event)
+        }
+
+        fn deduct_gas(&mut self, gas: u64) -> PrecompileResult<()> {
+            self.inner.deduct_gas(gas)
+        }
+
+        fn refund_gas(&mut self, gas: i64) {
+            self.inner.refund_gas(gas)
+        }
+
+        fn gas_limit(&self) -> u64 {
+            self.inner.gas_limit()
+        }
+
+        fn gas_used(&self) -> u64 {
+            self.inner.gas_used()
+        }
+
+        fn state_gas_used(&self) -> u64 {
+            self.inner.state_gas_used()
+        }
+
+        fn state_gas_spilled(&self) -> u64 {
+            self.inner.state_gas_spilled()
+        }
+
+        fn gas_refunded(&self) -> i64 {
+            self.inner.gas_refunded()
+        }
+
+        fn reservoir(&self) -> u64 {
+            self.inner.reservoir()
+        }
+
+        fn spec(&self) -> TempoHardfork {
+            self.inner.spec()
+        }
+
+        fn amsterdam_eip8037_enabled(&self) -> bool {
+            self.inner.amsterdam_eip8037_enabled()
+        }
+
+        fn is_static(&self) -> bool {
+            self.inner.is_static()
+        }
+
+        fn checkpoint(&mut self) -> JournalCheckpoint {
+            self.inner.checkpoint()
+        }
+
+        fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) {
+            self.inner.checkpoint_commit(checkpoint)
+        }
+
+        fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
+            self.inner.checkpoint_revert(checkpoint)
+        }
+
+        fn set_tip1060_storage_credits(&mut self, enabled: bool) {
+            self.inner.set_tip1060_storage_credits(enabled)
+        }
+    }
 
     #[test]
     fn test_sign_p256() {
@@ -902,8 +1032,7 @@ mod tests {
         let hash = B256::repeat_byte(0x44);
         let admin_hash = B256::repeat_byte(0x66);
 
-        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T6);
-        storage.set_timestamp(U256::from(1_000u64));
+        let mut storage = TimestampedStorage::new(1, TempoHardfork::T6, 1_000);
         StorageCtx::enter(&mut storage, || {
             let mut keychain = AccountKeychain::new();
             keychain.initialize()?;
@@ -949,7 +1078,7 @@ mod tests {
         })
         .unwrap();
 
-        storage.set_timestamp(U256::from(1_006u64));
+        storage.set_timestamp(1_006);
         StorageCtx::enter(&mut storage, || {
             assert!(!verify_keychain(root, hash, keychain_signature(&expired_pk, root, hash)));
             Ok::<_, eyre::Report>(())

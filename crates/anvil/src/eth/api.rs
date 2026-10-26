@@ -4,13 +4,15 @@ use super::{
         sanitize_simulation_blocks,
     },
     preserve_simulation_request_fields,
+    tempo_consensus::{TempoCertifiedBlock, TempoConsensusState},
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
         backend::{
             self, db::SerializableState, mem::MIN_TRANSACTION_GAS,
-            notifications::ChainNotifications, validate::TransactionValidator,
+            notifications::ChainNotifications, tempo_consensus::TempoConsensusIdentity,
+            validate::TransactionValidator,
         },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
@@ -81,11 +83,11 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
-        EthRequest,
+        EthRequest, TempoConsensusQuery,
         block::{Block, BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
-    types::{ReorgOptions, TransactionData},
+    types::{NodeBlobParams, ReorgOptions, TransactionData},
 };
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -246,11 +248,16 @@ impl<N: Network> EthApi<N> {
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
+        self.gas_price_for_base_fee(self.backend.base_fee())
+    }
+
+    /// Returns the gas price for a block with the given base fee.
+    fn gas_price_for_base_fee(&self, base_fee: u64) -> u128 {
         if self.backend.is_eip1559() {
             if self.backend.is_min_priority_fee_enforced() {
-                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+                (base_fee as u128).saturating_add(self.lowest_suggestion_tip())
             } else {
-                self.backend.base_fee() as u128
+                base_fee as u128
             }
         } else {
             self.backend.fees().raw_gas_price()
@@ -533,7 +540,7 @@ impl<N: Network> EthApi<N> {
     /// Retrieves the Anvil node configuration params.
     ///
     /// Handler for RPC call: `anvil_nodeInfo`
-    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
+    pub async fn anvil_node_info(&self) -> Result<WithOtherFields<NodeInfo>> {
         node_info!("anvil_nodeInfo");
         let _lifecycle = self.lifecycle_lock.read().await;
 
@@ -542,7 +549,7 @@ impl<N: Network> EthApi<N> {
         let tx_order = self.transaction_order.read();
         let hard_fork = self.backend.hardfork().name();
 
-        Ok(NodeInfo {
+        let mut node_info = WithOtherFields::new(NodeInfo {
             current_block_number: self.backend.best_number(),
             current_block_timestamp: evm_env.block_env.timestamp.saturating_to(),
             current_block_hash: self.backend.best_hash(),
@@ -571,7 +578,17 @@ impl<N: Network> EthApi<N> {
             // Always emit the execution profile. Older Anvil versions omitted plain Ethereum, so
             // consumers must still treat `None` as legacy unspecified metadata.
             network: Some(self.backend.execution_profile_name().to_string()),
-        })
+        });
+        // Forks of this node price blobs with these params, which can differ from those of the
+        // reported hardfork when this node is itself a fork.
+        node_info
+            .other
+            .insert_value(
+                "blobParams".to_string(),
+                NodeBlobParams::from(self.backend.blob_params()),
+            )
+            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        Ok(node_info)
     }
 
     /// Retrieves metadata about the Anvil instance.
@@ -1366,6 +1383,13 @@ impl<N: Network> EthApi<N> {
         // highest and lowest block num in the requested range
         let highest = number;
         let lowest = highest.saturating_sub(block_count.saturating_sub(1));
+        // A local chain starts at its genesis number, so clamp the range to `[genesis, highest]`.
+        // A newest block below genesis keeps failing as not found.
+        let lowest = if fork.is_none() {
+            lowest.max(self.backend.genesis_number().min(highest))
+        } else {
+            lowest
+        };
 
         // only support ranges that are in cache range
         if lowest < self.backend.best_number().saturating_sub(self.fee_history_limit) {
@@ -1871,11 +1895,12 @@ impl EthApi<FoundryNetwork> {
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
+        let genesis = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        let common_height = current_height.checked_sub(depth).filter(|h| *h >= genesis).ok_or(
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}, genesis {genesis}"
+            ))),
+        )?;
 
         // Get the common ancestor block
         let common_block =
@@ -2632,6 +2657,13 @@ impl EthApi<FoundryNetwork> {
                 .anvil_set_fee_amm_liquidity(user_token, validator_token, amount)
                 .await
                 .to_rpc_result(),
+            EthRequest::ConsensusGetFinalization(query) => {
+                self.consensus_get_finalization(query).await.to_rpc_result()
+            }
+            EthRequest::ConsensusGetLatest(()) => self.consensus_get_latest().await.to_rpc_result(),
+            EthRequest::TempoConsensusIdentity(()) => {
+                self.anvil_tempo_consensus_identity().await.to_rpc_result()
+            }
         }
     }
 
@@ -3703,7 +3735,7 @@ impl EthApi<FoundryNetwork> {
 
         self.backend
             .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
-                let mut cache_db = CacheDB::new(state);
+                let mut cache_db = CacheDB::new(&*state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
                 }
@@ -3899,12 +3931,13 @@ impl EthApi<FoundryNetwork> {
 
         // no mined blocks yet
         let latest_block = self.backend.best_number();
-        if latest_block == 0 {
+        let first_block = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        if latest_block <= first_block {
             return Ok(None);
         }
 
         // binary search for the block containing the transaction
-        let mut low = 1u64;
+        let mut low = first_block + 1;
         let mut high = latest_block;
 
         while low <= high {
@@ -3963,7 +3996,7 @@ impl EthApi<FoundryNetwork> {
         node_info!("eth_getLogs");
         let best = self.backend.best_number();
         let to_block =
-            self.backend.convert_block_number(filter.block_option.get_to_block().copied());
+            self.backend.convert_block_number_at(filter.block_option.get_to_block().copied(), best);
         if to_block > best {
             return Err(BlockchainError::BlockOutOfRange(best, to_block));
         }
@@ -4507,11 +4540,12 @@ impl EthApi<FoundryNetwork> {
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
+        let genesis = if self.get_fork().is_some() { 0 } else { self.backend.genesis_number() };
+        let common_height = current_height.checked_sub(depth).filter(|h| *h >= genesis).ok_or(
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}, genesis {genesis}"
+            ))),
+        )?;
 
         // Get the common ancestor block
         let common_block =
@@ -4531,6 +4565,19 @@ impl EthApi<FoundryNetwork> {
         };
         #[cfg(not(feature = "monad"))]
         let fee_defaults = None;
+        // Price fee-less transactions for the blocks mined on top of the common block, not for the
+        // head that is about to be discarded.
+        let fee_defaults = fee_defaults.or_else(|| {
+            let (base_fee, blob_fees) = self.backend.next_block_fees_after(&common_block.header);
+            Some(TransactionFeeDefaults {
+                gas_price: self.gas_price_for_base_fee(base_fee),
+                blob_gas_price: self
+                    .backend
+                    .fees()
+                    .blob_params()
+                    .calc_blob_fee(blob_fees.excess_blob_gas),
+            })
+        });
 
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
@@ -4922,7 +4969,7 @@ impl EthApi<FoundryNetwork> {
                 .with_database_at_and_context(
                     Some(block_request),
                     |state, mut block, monad_context| {
-                        let mut cache_db = CacheDB::new(state);
+                        let mut cache_db = CacheDB::new(&*state);
                         if let Some(state_overrides) = overrides.state {
                             apply_state_overrides(
                                 state_overrides.into_iter().collect(),
@@ -5553,6 +5600,51 @@ impl EthApi<FoundryNetwork> {
             return Ok(nonce);
         }
         self.request_nonce(request.as_ref(), from).await
+    }
+
+    /// Returns a locally mined Tempo finalization and its native block.
+    ///
+    /// Handler for `consensus_getFinalization`; unavailable on non-Tempo networks.
+    /// Genesis and remote fork anchors are unsigned; remote certificates are not forwarded.
+    /// `latest` uses the retained complete body; height queries require a matching stored body.
+    /// Returns JSON-RPC error code 503 if the requested certificate or a complete block matching
+    /// its commitments is unavailable.
+    pub async fn consensus_get_finalization(
+        &self,
+        query: TempoConsensusQuery,
+    ) -> Result<TempoCertifiedBlock> {
+        node_info!("consensus_getFinalization");
+        let height = match query {
+            TempoConsensusQuery::Latest => None,
+            TempoConsensusQuery::Height(height) => Some(height),
+        };
+        self.backend.tempo_finalization(height).await?.try_into()
+    }
+
+    /// Returns the latest local finalization, with `notarized: null` as on Tempo.
+    ///
+    /// Handler for `consensus_getLatest`; unavailable on non-Tempo networks.
+    /// Returns `finalized: null` when the current local signing history has no certificate.
+    /// Returns JSON-RPC error code 503 if a certificate exists but its complete block is
+    /// unavailable or no longer matches its commitments, including after rollback to a pruned
+    /// body.
+    pub async fn consensus_get_latest(&self) -> Result<TempoConsensusState> {
+        node_info!("consensus_getLatest");
+        let finalized = self
+            .backend
+            .tempo_latest_finalization()
+            .await?
+            .map(TempoCertifiedBlock::try_from)
+            .transpose()?;
+        Ok(TempoConsensusState { finalized, notarized: None })
+    }
+
+    /// Returns the public local development committee on Tempo networks.
+    ///
+    /// Handler for `anvil_tempoConsensusIdentity`.
+    pub async fn anvil_tempo_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
+        node_info!("anvil_tempoConsensusIdentity");
+        self.backend.tempo_consensus_identity().await
     }
 }
 

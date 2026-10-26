@@ -373,13 +373,30 @@ contract EnumUser {
     assert!(binding.contains("pub enum Status"), "{binding}");
     assert!(!binding.contains("pub struct Status"), "{binding}");
 
-    // Filesystem selection must not enrich orphaned artifacts with current enum definitions.
-    assert!(prj.paths().artifacts.join("A.sol/EnumUser.json").is_file());
+    // Without cache selection, retain the first artifact and report the skipped current contract.
+    let stale = prj.paths().artifacts.join("A.sol/EnumUser.json");
+    assert!(stale.is_file());
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--no-cache", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Binding name collision for `EnumUser`: keeping contract `EnumUser` ([..]/A.sol/EnumUser.json) and skipping contract `EnumUser` ([..]/Z.sol/EnumUser.json)
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+    assert_binding_bytecode(&fs::read_to_string(&binding_path).unwrap(), &stale);
+
+    // A uniquely named orphan must still not acquire current enum definitions.
+    fs::rename(&stale, stale.with_file_name("Orphan.json")).unwrap();
+    let binding_path = prj.root().join("out/bindings/src/orphan.rs");
     let cache = fs::read(prj.cache()).unwrap();
     fs::remove_file(prj.cache()).unwrap();
-    let args = ["bind", "--skip-build", "--no-cache", "--overwrite", "--select", "^EnumUser$"];
+    let args = ["bind", "--skip-build", "--no-cache", "--overwrite", "--select", "^Orphan$"];
     cmd.forge_fuse().args(args).assert_success();
     let expected = fs::read_to_string(&binding_path).unwrap();
+    assert!(expected.contains("pub struct Status"), "{expected}");
+    assert!(!expected.contains("pub enum Status"), "{expected}");
 
     fs::write(prj.cache(), cache).unwrap();
     cmd.forge_fuse().args(args).assert_success();
@@ -493,6 +510,9 @@ contract Duplicate {
     enum Status { A }
     function status(Status value) external pure returns (Status) { return value; }
 }
+contract Consumer {
+    function status(Duplicate.Status value) external pure returns (Duplicate.Status) { return value; }
+}
 "#,
     );
     prj.add_source(
@@ -505,9 +525,9 @@ contract Duplicate {
 "#,
     );
 
-    cmd.args(["bind", "--select", "^Duplicate$"]).assert_success();
+    cmd.args(["bind", "--select", "^Consumer$"]).assert_success();
 
-    let binding = fs::read_to_string(prj.root().join("out/bindings/src/duplicate.rs")).unwrap();
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/consumer.rs")).unwrap();
     assert!(binding.contains("pub struct Status"), "{binding}");
     assert!(!binding.contains("pub enum Status"), "{binding}");
 }
@@ -815,11 +835,15 @@ Error: [..]/module-bindings/mod.rs is not a file
 }
 
 #[forgetest]
-fn bind_preserves_artifact_order(prj: _, cmd: _) {
+fn bind_keeps_first_duplicate_contract_name(prj: _, cmd: _) {
     prj.add_source(
         "Ownable.sol",
         "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
     );
+    cmd.args(["bind", "--select", "^Ownable$"]).assert_success();
+    let binding_path = prj.artifacts().join("bindings/src/ownable.rs");
+    let expected = fs::read_to_string(&binding_path).unwrap();
+
     prj.add_lib(
         "dep/src/Ownable.sol",
         "contract Ownable { function theirs() external pure returns (uint256) { return 2; } }",
@@ -831,47 +855,76 @@ import {Ownable as DepOwnable} from "../lib/dep/src/Ownable.sol";
 contract User is DepOwnable {}
 "#,
     );
+    prj.add_source("Z.sol", "contract Ownable { function third() external pure {} }");
 
-    // Preserve the bindings selected by the original sorted filesystem discovery.
-    cmd.forge_fuse().args(["bind", "--no-cache", "--select", "^Ownable$"]).assert_success();
-    let binding = prj.root().join("out/bindings/src/ownable.rs");
-    let expected = fs::read_to_string(&binding).unwrap();
+    cmd.forge_fuse().arg("build").assert_success();
 
-    // Cache entries visit the dependency first, but artifact paths visit the project first.
-    for mode in [&[][..], &["--skip-build"]] {
+    // Compiler, cached, and artifact-only discovery retain the first contract and report the
+    // skipped sources.
+    for args in [&["--skip-build"][..], &["--skip-build", "--no-cache"], &[]] {
         cmd.forge_fuse()
-            .args(["bind", "--select", "^Ownable$", "--overwrite"])
-            .args(mode)
-            .assert_success();
-        assert_data_eq!(fs::read_to_string(&binding).unwrap(), expected.as_str());
+            .args(["bind", "--overwrite", "--select", "^Ownable$"])
+            .args(args)
+            .assert_success()
+            .stderr_eq(str![[r#"
+Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/Z.sol/Ownable.json)
+Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/src/Ownable.sol/Ownable.json)
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+        let binding = fs::read_to_string(&binding_path).unwrap();
+        if args.is_empty() {
+            assert_data_eq!(binding, expected.as_str().raw());
+        } else {
+            assert_binding_bytecode(&binding, &prj.artifacts().join("Ownable.sol/Ownable.json"));
+        }
     }
 
-    let external = prj.paths().artifacts.join(".external/fixture/app/Ownable.json");
-    fs::create_dir_all(external.parent().unwrap()).unwrap();
-    fs::write(
-        external,
-        r#"{"abi":[{"type":"function","name":"theirs","inputs":[],"outputs":[],"stateMutability":"nonpayable"}]}"#,
-    )
-    .unwrap();
-
-    // External artifacts precede Solidity artifacts in the sorted filesystem discovery.
     cmd.forge_fuse()
-        .args(["bind", "--skip-build", "--no-cache", "--select", "^Ownable$", "--overwrite"])
-        .assert_success();
-    let external_binding = fs::read_to_string(&binding).unwrap();
-    assert_ne!(external_binding, expected);
-
-    // Keep the synthetic external artifact without invoking an external compiler adapter.
-    let args = ["bind", "--skip-build", "--select", "^Ownable$"];
-    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+        .args(["bind", "--skip-build", "--select", "^Ownable$"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/Z.sol/Ownable.json)
+Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json) and skipping contract `Ownable` ([..]/out/src/Ownable.sol/Ownable.json)
 Bindings found. Checking for consistency.
 Checking bindings for 1 contracts
 OK.
 
 "#]]);
+}
 
-    cmd.forge_fuse().args(args).arg("--overwrite").assert_success();
-    assert_data_eq!(fs::read_to_string(&binding).unwrap(), external_binding.as_str());
+#[forgetest]
+fn bind_keeps_first_external_contract_name_collision(prj: _, cmd: _) {
+    prj.add_source(
+        "Ownable.sol",
+        "contract Ownable { function mine() external pure returns (uint256) { return 1; } }",
+    );
+    cmd.arg("build").assert_success();
+
+    let external = prj.paths().artifacts.join(".external/fixture/app/Ownable.json");
+    fs::create_dir_all(external.parent().unwrap()).unwrap();
+    fs::write(
+        &external,
+        r#"{"abi":[{"type":"function","name":"theirs","inputs":[],"outputs":[],"stateMutability":"nonpayable"}],"bytecode":{"object":"0x6000"}}"#,
+    )
+    .unwrap();
+
+    // Keep the synthetic external artifact without invoking an external compiler adapter.
+    for cache in [&[][..], &["--no-cache"]] {
+        cmd.forge_fuse()
+            .args(["bind", "--skip-build", "--select", "^Ownable$", "--overwrite"])
+            .args(cache)
+            .assert_success()
+            .stderr_eq(str![[r#"
+Warning: Binding name collision for `Ownable`: keeping contract `Ownable` ([..]/out/.external/fixture/app/Ownable.json) and skipping contract `Ownable` ([..]/out/Ownable.sol/Ownable.json)
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+        let binding = fs::read_to_string(prj.artifacts().join("bindings/src/ownable.rs")).unwrap();
+        assert_binding_bytecode(&binding, &external);
+    }
 }
 
 #[forgetest]
@@ -1105,9 +1158,14 @@ fn bind_skip_build_resolves_multiple_compiler_versions(prj: _, cmd: _) {
     let cache = CompilerCache::<MultiCompilerSettings>::read(prj.cache()).unwrap();
     assert_eq!(cache.files[Path::new("lib/dep/Common.sol")].artifacts["Common"].len(), 2);
     cmd.forge_fuse()
-        .args(["bind", "--skip-build", "--select", "^(A|B)$"])
+        .args(["bind", "--skip-build", "--select", "^(A|B|Common)$"])
         .assert_success()
-        .stdout_eq("");
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Generating bindings for 3 contracts
+Bindings have been generated to [..]
+
+"#]]);
     for contract in ["A", "B"] {
         let binding = fs::read_to_string(
             prj.root().join(format!("out/bindings/src/{}.rs", contract.to_lowercase())),
@@ -1118,6 +1176,17 @@ fn bind_skip_build_resolves_multiple_compiler_versions(prj: _, cmd: _) {
             &prj.artifacts().join(format!("{contract}.sol/{contract}.json")),
         );
     }
+    // The versioned 0.8.20 artifact sorts first and must remain the selected variant.
+    let binding = fs::read_to_string(prj.artifacts().join("bindings/src/common.rs")).unwrap();
+    assert_binding_bytecode(&binding, &prj.artifacts().join("Common.sol/Common.0.8.20.json"));
+    cmd.forge_fuse()
+        .args(["bind", "--overwrite", "--select", "^(A|B|Common)$"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Generating bindings for 3 contracts
+Bindings have been generated to [..]
+
+"#]]);
 }
 
 #[forgetest]
@@ -1323,4 +1392,233 @@ fn bind_skip_build_select_preserves_shared_compiler_version(prj: _, cmd: _) {
         .stdout_eq("");
     let binding = fs::read_to_string(prj.root().join("out/bindings/src/b.rs")).unwrap();
     assert_binding_bytecode(&binding, &prj.artifacts().join(&artifact.path));
+}
+
+#[forgetest]
+fn bind_keeps_first_normalized_contract_name(prj: _, cmd: _) {
+    let source = r#"
+contract Foo$Bar {
+    function dollar() external pure returns (uint256) { return 1; }
+}
+"#;
+    prj.add_source("Names.sol", source);
+
+    let bindings = prj.artifacts().join("bindings");
+    cmd.args(["bind", "--select-all"]).assert_success();
+    let expected = fs::read_to_string(bindings.join("src/foo_bar.rs")).unwrap();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select-all", "--single-file", "--overwrite"])
+        .assert_success();
+    let expected_single_file = fs::read_to_string(bindings.join("src/lib.rs")).unwrap();
+
+    prj.add_source(
+        "Names.sol",
+        &format!(
+            r#"{source}
+contract Foo_Bar {{
+    function underscore() external pure returns (uint256) {{ return 2; }}
+}}
+"#,
+        ),
+    );
+
+    for (mode, expected, output) in [
+        (&[][..], expected, "src/foo_bar.rs"),
+        (&["--single-file"][..], expected_single_file, "src/lib.rs"),
+    ] {
+        let args = ["bind", "--select-all"];
+        // Skipped duplicate names must never reach the foo_bar.rs module collision check.
+        cmd.forge_fuse().args(args).args(mode).arg("--overwrite").assert_success().stderr_eq(str![[r#"
+Warning: Binding name collision for `Foo_Bar`: keeping contract `Foo$Bar` ([..]/Names.sol/Foo$Bar.json) and skipping contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+        assert_data_eq!(
+            fs::read_to_string(bindings.join(output)).unwrap(),
+            expected.as_str().raw()
+        );
+
+        cmd.forge_fuse().args(args).args(mode).arg("--skip-build").assert_success().stderr_eq(str![[r#"
+Warning: Binding name collision for `Foo_Bar`: keeping contract `Foo$Bar` ([..]/Names.sol/Foo$Bar.json) and skipping contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#]]);
+    }
+}
+
+#[forgetest]
+fn bind_rejects_module_name_collision(prj: _, cmd: _) {
+    prj.add_source(
+        "Names.sol",
+        r#"
+contract FooBar {
+    function camel() external pure returns (uint256) { return 1; }
+}
+contract Foo_Bar {
+    function underscore() external pure returns (uint256) { return 2; }
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select-all"]).assert_failure().stderr_eq(str![[r#"
+Error: Binding module name collision for `foo_bar`: contract `FooBar` ([..]/Names.sol/FooBar.json) and contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
+
+"#]]);
+    assert!(!prj.paths().artifacts.join("bindings").exists());
+
+    let bindings = prj.root().join("crate");
+    let args = ["bind", "--skip-build", "--select-all"];
+    // These contract names remain distinct when there are no snake_case file names.
+    cmd.forge_fuse()
+        .args(args)
+        .arg("--single-file")
+        .arg("--bindings-path")
+        .arg(&bindings)
+        .assert_success();
+    assert_bindings_compile(&bindings);
+    let output = bindings.join("src/lib.rs");
+    let before = fs::read(&output).unwrap();
+    cmd.forge_fuse()
+        .args(args)
+        .arg("--bindings-path")
+        .arg(&bindings)
+        .arg("--overwrite")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Binding module name collision for `foo_bar`: contract `FooBar` ([..]/Names.sol/FooBar.json) and contract `Foo_Bar` ([..]/Names.sol/Foo_Bar.json)
+
+"#]]);
+    assert_eq!(fs::read(output).unwrap(), before);
+
+    // Filtering out the other contract removes the ambiguity.
+    cmd.forge_fuse().args(["bind", "--select", "^FooBar$"]).assert_success();
+}
+
+#[forgetest]
+fn bind_deduplicates_artifact_only_versions_and_profiles(prj: _, cmd: _) {
+    let artifacts = prj.artifacts().join("Foo.sol");
+    fs::create_dir_all(&artifacts).unwrap();
+    for (name, bytecode) in [
+        ("Foo.json", "0x6000"),
+        ("Foo.0.8.34.json", "0x6001"),
+        ("Foo.0.8.35.optimized.json", "0x6002"),
+    ] {
+        // Minimal artifacts need neither metadata nor a source file reference.
+        fs::write(
+            artifacts.join(name),
+            json!({ "abi": [], "bytecode": { "object": bytecode } }).to_string(),
+        )
+        .unwrap();
+    }
+    // This artifact-only fixture intentionally has no compiler cache.
+    cmd.env("RUST_LOG", "off");
+    cmd.args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+
+    // Same-contract variants retain the existing artifact-path precedence.
+    let binding = fs::read_to_string(prj.artifacts().join("bindings/src/foo.rs")).unwrap();
+    assert_binding_bytecode(&binding, &artifacts.join("Foo.0.8.34.json"));
+
+    // Identical ABIs in a different full directory still warn about the skipped contract.
+    let other = prj.artifacts().join("other/Foo.sol");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("Foo.json"), r#"{"abi":[]}"#).unwrap();
+    cmd.forge_fuse().env("RUST_LOG", "off");
+    cmd.args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$", "--overwrite"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Binding name collision for `Foo`: keeping contract `Foo` ([..]/Foo.sol/Foo.0.8.34.json) and skipping contract `Foo` ([..]/other/Foo.sol/Foo.json)
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+    assert_data_eq!(
+        fs::read_to_string(prj.artifacts().join("bindings/src/foo.rs")).unwrap(),
+        binding.as_str().raw()
+    );
+}
+
+#[forgetest]
+fn bind_rejects_generated_entrypoint_collisions(prj: _, cmd: _) {
+    prj.add_source("Names.sol", "contract Lib {} contract Mod {}");
+    cmd.arg("build").assert_success();
+
+    for (name, module, file, reserved) in [
+        ("Lib", false, "src/lib.rs", true),
+        ("Lib", true, "lib.rs", false),
+        ("Mod", false, "src/mod.rs", false),
+        ("Mod", true, "mod.rs", true),
+    ] {
+        let bindings = prj.root().join(format!("bindings-{name}-{module}"));
+        let selection = format!("^{name}$");
+        let mut args = vec!["bind", "--skip-build", "--select", &selection];
+        if module {
+            args.push("--module");
+        }
+        args.extend(["--bindings-path", bindings.to_str().unwrap()]);
+
+        // Reserved names work in a single file; the other output mode permits separate files.
+        cmd.forge_fuse().args(&args);
+        if reserved {
+            cmd.arg("--single-file");
+        }
+        cmd.assert_success();
+        let output = bindings.join(file);
+        let before = fs::read_to_string(&output).unwrap();
+        assert_binding_bytecode(&before, &prj.artifacts().join(format!("Names.sol/{name}.json")));
+        if !module {
+            assert_bindings_compile(&bindings);
+        }
+
+        if reserved {
+            cmd.forge_fuse().args(&args).arg("--overwrite").assert_failure().stderr_eq(if module {
+                str![[r#"
+Error: Binding module name collision for `mod`: contract `Mod` ([..]/Names.sol/Mod.json) conflicts with generated entry point `mod.rs`
+
+"#]]
+            } else {
+                str![[r#"
+Error: Binding module name collision for `lib`: contract `Lib` ([..]/Names.sol/Lib.json) conflicts with generated entry point `lib.rs`
+
+"#]]
+            });
+            assert_eq!(fs::read_to_string(output).unwrap(), before);
+        }
+    }
+}
+
+#[forgetest]
+fn bind_deduplicates_no_cache_compiler_variants(prj: _, cmd: _) {
+    prj.add_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    for version in ["0.8.20", "0.8.21"] {
+        cmd.forge_fuse()
+            .args(["build", "--use", version, "--evm-version", "paris"])
+            .assert_success();
+    }
+
+    // Consecutive builds place variants in different directories to avoid overwriting artifacts.
+    let artifact = prj.artifacts().join("Foo.sol/Foo.json");
+    assert!(prj.artifacts().join("src/Foo.sol/Foo.json").exists());
+    let cache = fs::read(prj.cache()).unwrap();
+
+    // The cache can supply identity without controlling artifact selection or being rewritten.
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--no-cache", "--select", "^Foo$", "--overwrite"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+    let binding = fs::read_to_string(prj.artifacts().join("bindings/src/foo.rs")).unwrap();
+    assert_binding_bytecode(&binding, &artifact);
 }
