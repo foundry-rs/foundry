@@ -10,7 +10,7 @@ use alloy_network::{AnyHeader, AnyRpcHeader, AnyTxEnvelope};
 use alloy_primitives::{Bytes, Signature};
 use alloy_rpc_types::{Block, Transaction as RpcTransaction};
 use alloy_serde::WithOtherFields;
-use evm2::NoopInspector;
+use evm2::{NoopInspector, evm::InMemoryDB};
 
 const CHAIN_ID: u64 = 31337;
 
@@ -514,4 +514,35 @@ async fn fork_execution_scopes_release_their_registry() {
     assert!(
         next.basic(handle.dev_accounts().next().unwrap()).unwrap().unwrap().balance > U256::ZERO
     );
+}
+
+/// A persistent account a transaction on an inactive fork changes takes that fork's code with its
+/// code hash, though the running transaction's database holds other code for it.
+#[test]
+fn persistent_account_takes_inactive_fork_code() {
+    let factory = EvmFactoryFor::<EthEvmNetwork>::default();
+    let spec = evm2::SpecId::CANCUN;
+    let env = EvmEnv::new(spec, factory.version(spec, CHAIN_ID), Default::default());
+    let caller = Address::with_last_byte(0xCA);
+    let mut local = InMemoryDB::default();
+    local.insert_account_info(&caller, AccountInfo::default().with_balance(U256::from(ETHER)));
+    let mut info = AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[0])));
+    local.insert_contract(&mut info);
+    local.insert_account_info(&STORE_ADDRESS, info);
+    let mut backend = Backend::<EthEvmNetwork>::with_db(local, env);
+    let fork = memory_fork(&mut backend, db_with(&[(caller, ETHER)], 1), env);
+    let mut evm = backend.create_evm();
+    backend.add_persistent_account(STORE_ADDRESS);
+
+    let request = store_request::<EthEvmNetwork>(caller, STORE_ADDRESS, 0, 5, CHAIN_ID);
+    let tx = EthEvmNetwork::tx_from_request(request).unwrap();
+    let prepared = backend.lifecycle.prepare_on_inactive(&mut evm, Some(fork), tx, None, None);
+    let executed = prepared.unwrap().execute(&mut evm, None, false).unwrap();
+    assert!(backend.lifecycle.store_executed(executed).status);
+
+    assert_eq!(slot(&mut evm), U256::from(5));
+    let mut account = evm.state_mut().account(&STORE_ADDRESS).unwrap();
+    let code = account.load_code().unwrap();
+    assert_eq!(code.original_bytes(), Bytes::from_static(STORE));
+    assert_eq!(account.code_hash(), code.hash_slow());
 }
