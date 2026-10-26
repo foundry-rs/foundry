@@ -1,11 +1,15 @@
 use std::{collections::HashMap, fs, path::Path};
 use zed_extension_api::{
-    self as zed, Architecture, DownloadedFileType, GithubReleaseOptions, LanguageServerId,
-    LanguageServerInstallationStatus, Os, Result, serde_json, settings::LspSettings,
+    self as zed, Architecture, DownloadedFileType, LanguageServerId,
+    LanguageServerInstallationStatus, Os, Result,
+    http_client::{HttpMethod, HttpRequest, RedirectPolicy},
+    serde_json,
+    settings::LspSettings,
 };
 
 const FOUNDRY_REPO: &str = "foundry-rs/foundry";
 const DOWNLOAD_DIR_PREFIX: &str = "forge-";
+const COMPLETE_MARKER: &str = ".complete";
 const INSTALL_GUIDANCE: &str = "Install or upgrade Foundry from https://getfoundry.sh with an LSP-enabled Forge. Verify `forge lsp --stdio --help` succeeds from the worktree directory; for this checkout, run `cargo build --locked -p forge --bin forge`. Set lsp.solar.settings.forgePath to its absolute path.";
 const LEGACY_BINARY_GUIDANCE: &str = "Remove lsp.solar.binary.path and binary.arguments, which override the language server command in Zed. Set lsp.solar.settings.forgePath to an absolute Forge path instead. A former Solar path is not a Forge path.";
 
@@ -155,21 +159,23 @@ fn initialization_options(settings: &LspSettings, forge_path: &str) -> Result<se
 }
 
 /// Downloads the latest stable Forge release into the extension's work directory, falling back to
-/// an earlier download when GitHub cannot be reached. Returns a path relative to the work
-/// directory.
+/// an earlier download when that fails. Returns a path relative to the work directory.
 fn download_forge(language_server_id: &LanguageServerId) -> Result<String> {
     zed::set_language_server_installation_status(
         language_server_id,
         &LanguageServerInstallationStatus::CheckingForUpdate,
     );
     let (os, arch) = zed::current_platform();
-    let release = match zed::latest_github_release(
-        FOUNDRY_REPO,
-        GithubReleaseOptions { require_assets: true, pre_release: false },
-    ) {
-        Ok(release) => release,
-        Err(err) => return cached_forge(os).ok_or(err),
-    };
+    download_latest_forge(language_server_id, os, arch).or_else(|err| cached_forge(os).ok_or(err))
+}
+
+fn download_latest_forge(
+    language_server_id: &LanguageServerId,
+    os: Os,
+    arch: Architecture,
+) -> Result<String> {
+    // `latest_github_release` only scans the first page, which daily nightlies can fill.
+    let release = zed::github_release_by_tag_name(FOUNDRY_REPO, &latest_release_tag()?)?;
     let (asset_name, file_type) = release_asset(&release.version, os, arch)?;
     let asset = release
         .assets
@@ -178,7 +184,7 @@ fn download_forge(language_server_id: &LanguageServerId) -> Result<String> {
         .ok_or_else(|| format!("Foundry {} has no {asset_name} asset", release.version))?;
     let dir = format!("{DOWNLOAD_DIR_PREFIX}{}", release.version);
     let binary = format!("{dir}/{}", forge_binary_name(os));
-    if !is_file(&binary) {
+    if !is_complete(&dir) {
         zed::set_language_server_installation_status(
             language_server_id,
             &LanguageServerInstallationStatus::Downloading,
@@ -189,6 +195,13 @@ fn download_forge(language_server_id: &LanguageServerId) -> Result<String> {
         if os != Os::Windows {
             zed::make_file_executable(&binary)?;
         }
+        // The archive also holds anvil, cast and chisel; keep only Forge.
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            if entry.file_name() != forge_binary_name(os) {
+                fs::remove_file(entry.path()).ok();
+            }
+        }
+        fs::write(format!("{dir}/{COMPLETE_MARKER}"), "").map_err(|err| err.to_string())?;
         for stale in download_dirs().filter(|name| *name != dir) {
             fs::remove_dir_all(stale).ok();
         }
@@ -196,8 +209,27 @@ fn download_forge(language_server_id: &LanguageServerId) -> Result<String> {
     Ok(binary)
 }
 
+fn latest_release_tag() -> Result<String> {
+    let response = HttpRequest::builder()
+        .method(HttpMethod::Get)
+        .url(format!("https://api.github.com/repos/{FOUNDRY_REPO}/releases/latest"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "zed-forge-lsp")
+        .redirect_policy(RedirectPolicy::FollowAll)
+        .build()?
+        .fetch()?;
+    let release: serde_json::Value =
+        serde_json::from_slice(&response.body).map_err(|err| err.to_string())?;
+    release["tag_name"]
+        .as_str()
+        .map(Into::into)
+        .ok_or_else(|| "the latest Foundry release has no tag".into())
+}
+
 fn cached_forge(os: Os) -> Option<String> {
-    download_dirs().map(|dir| format!("{dir}/{}", forge_binary_name(os))).find(|path| is_file(path))
+    download_dirs()
+        .find(|dir| is_complete(dir))
+        .map(|dir| format!("{dir}/{}", forge_binary_name(os)))
 }
 
 fn download_dirs() -> impl Iterator<Item = String> {
@@ -207,6 +239,10 @@ fn download_dirs() -> impl Iterator<Item = String> {
         .flatten()
         .filter_map(|entry| entry.file_name().into_string().ok())
         .filter(|name| name.starts_with(DOWNLOAD_DIR_PREFIX))
+}
+
+fn is_complete(dir: &str) -> bool {
+    is_file(&format!("{dir}/{COMPLETE_MARKER}"))
 }
 
 fn release_asset(
