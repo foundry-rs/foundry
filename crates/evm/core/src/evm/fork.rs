@@ -6,7 +6,7 @@ use crate::fork::{Fork, ForkId};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     Address, B256, U256,
-    map::{AddressMap, AddressSet, HashSet},
+    map::{AddressMap, AddressSet, HashMap, HashSet},
 };
 use evm2::{EvmTypesHost, evm::Cache};
 use std::{collections::BTreeMap, fmt, sync::Arc};
@@ -119,6 +119,10 @@ pub struct Parked<T: EvmTypesHost> {
     /// warm slots. Cleared between transactions, as REVM treats journal entries of earlier
     /// transactions as cold.
     pub(super) warm: AddressMap<HashSet<U256>>,
+    /// Transaction-start values of the slots the running transaction changed in this context
+    /// before it last suspended it, which its accepted state no longer holds. Cleared between
+    /// transactions, like `warm`.
+    pub(super) originals: AddressMap<HashMap<U256, U256>>,
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
@@ -133,6 +137,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             loaded: AddressMap::default(),
             created: AddressSet::default(),
             warm: AddressMap::default(),
+            originals: AddressMap::default(),
         }
     }
 
@@ -173,6 +178,9 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
         }
         if let Some(cache) = &local.cache {
             self.inherit(&local.loaded, &local.created, cache);
+            for (address, slots) in &local.originals {
+                self.originals.entry(*address).or_default().extend(slots);
+            }
             for (address, slots) in &local.loaded {
                 if slots.is_empty() {
                     continue;
@@ -204,6 +212,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
             loaded: self.loaded.clone(),
             created: self.created.clone(),
             warm: self.warm.clone(),
+            originals: self.originals.clone(),
         }
     }
 }
