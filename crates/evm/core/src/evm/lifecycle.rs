@@ -1189,49 +1189,16 @@ fn merge_changes<'c>(
         }
         {
             let mut account = state.account(&address)?;
-            let (balance, nonce) =
-                change.current.map_or((U256::ZERO, 0), |info| (info.balance, info.nonce));
-            if untracked {
-                account.touch();
-                account.set_balance_untracked(balance);
-                account.set_nonce_untracked(nonce);
-            } else {
-                account.set_balance(balance);
-                account.set_nonce(nonce);
-            }
-            let code = match (change.current, change.code) {
-                (Some(_), Some((code_hash, code))) => Some((code_hash, code.clone())),
-                // Changes only carry non-empty code, so a different hash means cleared code.
-                (Some(info), None) if info.code_hash == account.code_hash() => None,
-                _ => Some((KECCAK256_EMPTY, Bytecode::default())),
-            };
-            if let Some((code_hash, code)) = code {
-                if untracked {
-                    account.override_code(code_hash, code);
-                } else {
-                    account.set_code(code_hash, code);
-                }
-            }
+            account.touch();
             if change.created {
                 account.mark_created();
             }
         }
-        if change.current.is_none() || change.storage.wiped {
-            let mut storage = state.storage(&address)?;
-            if untracked {
-                storage.override_wipe();
-            } else {
-                storage.wipe();
-            }
-        }
-        for (key, slot) in change.storage.changed_slots() {
-            let mut storage = state.storage_slot(&address, *key)?;
-            if untracked {
-                storage.set_untracked(slot.current);
-            } else {
-                storage.set(slot.current);
-            }
-        }
+        // Changes only carry non-empty code, so a different hash means cleared code.
+        let code = || Ok(change.code.map(|(_, code)| code.clone()).unwrap_or_default());
+        let wiped = change.current.is_none() || change.storage.wiped;
+        let slots = change.storage.changed_slots().map(|(key, slot)| (*key, slot.current));
+        apply_account(state, address, change.current, code, wiped, slots, untracked)?;
     }
     Ok(())
 }
@@ -1251,34 +1218,81 @@ fn rebase_loaded_accounts(
         .filter(|(address, _)| !persistent.contains(*address))
         .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
         .collect::<Vec<_>>();
-    for (address, slots) in loaded {
+    for (address, keys) in loaded {
         let info = source.account_info_untracked(&address)?;
-        let (balance, nonce, code_hash) =
-            info.as_ref().map_or((U256::ZERO, 0, KECCAK256_EMPTY), |info| {
-                (info.balance, info.nonce, info.code_hash)
-            });
-        let code = match &info {
-            Some(info) if info.code_hash != KECCAK256_EMPTY => match &info.code {
-                Some(code) => code.clone(),
-                None => source.overlay_db_mut().get_code_by_hash(&info.code_hash)?,
-            },
-            _ => Bytecode::default(),
+        let slots = keys
+            .into_iter()
+            .map(|key| Ok((key, source.storage_slot_untracked(&address, &key)?)))
+            .collect::<DbResult<Vec<_>>>()?;
+        let code = || match info.as_ref().map(|info| (info.code_hash, &info.code)) {
+            Some((code_hash, None)) if code_hash != KECCAK256_EMPTY => {
+                source.overlay_db_mut().get_code_by_hash(&code_hash)
+            }
+            Some((_, code)) => Ok(code.clone().unwrap_or_default()),
+            None => Ok(Bytecode::default()),
         };
-        {
-            let mut account = state.account(&address)?;
-            if account.balance() != balance {
+        apply_account(state, address, info.as_ref(), code, false, slots, false)?;
+    }
+    Ok(())
+}
+
+/// Sets the account at `address` in `state` to `info`, or to no account, and writes `slots` to
+/// its storage after wiping it if `wiped`, as journaled writes, or so that they survive reverts
+/// of the enclosing calls if `untracked`. Fields that already hold their value are left alone;
+/// `code` is only built when the code hash changes.
+///
+/// A journaled wipe is not undone by a revert of the enclosing call: evm2 does not journal the
+/// wipe marker, and slots the running transaction never loaded cannot be cleared one by one.
+fn apply_account(
+    state: &mut State<'_>,
+    address: Address,
+    info: Option<&AccountInfo>,
+    code: impl FnOnce() -> DbResult<Bytecode>,
+    wiped: bool,
+    slots: impl IntoIterator<Item = (U256, U256)>,
+    untracked: bool,
+) -> DbResult<()> {
+    {
+        let mut account = state.account(&address)?;
+        let (balance, nonce, code_hash) = info.map_or((U256::ZERO, 0, KECCAK256_EMPTY), |info| {
+            (info.balance, info.nonce, info.code_hash)
+        });
+        if account.balance() != balance {
+            if untracked {
+                account.set_balance_untracked(balance);
+            } else {
                 account.set_balance(balance);
             }
-            if account.nonce() != nonce {
+        }
+        if account.nonce() != nonce {
+            if untracked {
+                account.set_nonce_untracked(nonce);
+            } else {
                 account.set_nonce(nonce);
             }
-            if account.code_hash() != code_hash {
-                account.set_code(code_hash, code);
+        }
+        if account.code_hash() != code_hash {
+            if untracked {
+                account.override_code(code_hash, code()?);
+            } else {
+                account.set_code(code_hash, code()?);
             }
         }
-        for key in slots {
-            let value = source.storage_slot_untracked(&address, &key)?;
-            state.storage_slot(&address, key)?.set(value);
+    }
+    if wiped {
+        let mut storage = state.storage(&address)?;
+        if untracked {
+            storage.override_wipe();
+        } else {
+            storage.wipe();
+        }
+    }
+    for (key, value) in slots {
+        let mut slot = state.storage_slot(&address, key)?;
+        if untracked {
+            slot.set_untracked(value);
+        } else {
+            slot.set(value);
         }
     }
     Ok(())
