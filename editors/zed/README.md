@@ -108,8 +108,8 @@ tar -czf target/editor-dev/zed-solar-local.tar.gz -C editors/zed \
   GRAMMAR-LICENSE README.md -C ../.. LICENSE-MIT LICENSE-APACHE
 ```
 
-This archive is for local inspection/distribution; store release and registration
-are separate maintainer tasks. The archive reads the license texts directly from
+This archive is for local inspection/distribution; see [Publishing](#publishing)
+for registry releases. The archive reads the license texts directly from
 the repository root, including in checkouts with `core.symlinks=false`.
 
 1. Launch Zed with a new `--user-data-dir`; its settings live in `config/` under
@@ -143,6 +143,28 @@ the repository root, including in checkouts with `core.symlinks=false`.
 The bundled tree-sitter queries and pinned grammar reference are required
 resources; keep them alongside `extension.toml`. No source repository checkout
 or separately installed `solar` is needed.
+
+## Publishing
+
+Zed builds and hosts extensions listed in the
+[`zed-industries/extensions`](https://github.com/zed-industries/extensions)
+registry. To release, bump `version` in `extension.toml` and `Cargo.toml` and
+merge that to `master`. Then open a registry PR that points the
+`extensions/solar` submodule at the merged commit and sets the same version in
+`extensions.toml`:
+
+```toml
+[solar]
+submodule = "extensions/solar"
+path = "editors/zed"
+version = "0.1.0"
+```
+
+The submodule URL must be `https://github.com/foundry-rs/foundry.git`. The first
+release adds the submodule with `git submodule add`; later releases only move
+it. Run `pnpm sort-extensions` before opening the PR. Registry CI builds the
+extension from source with the `zed-extension` CLI and checks that the extension
+IDs match and that `LICENSE-MIT` or `LICENSE-APACHE` holds a known license text.
 
 ## Provenance and license
 
