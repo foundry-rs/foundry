@@ -168,24 +168,28 @@ contract CheatcodeWarmthTest is Test {
     }
 
     function testExecuteTransactionWarmth() public {
-        vm.fee(1);
         vm.chainId(1);
         vm.deal(TX_FROM, 1 ether);
         vm.cool(TX_FROM);
+        // Reads slot 0 and `BALANCE(0xbeef)`, then stops.
+        vm.etch(TX_TO, hex"5f545061beef315000");
         // The transaction's warmth survives reverts, like its changes.
         WarmthReverter reverter = new WarmthReverter();
         try reverter.executeThenRevert(TRANSFER_TX) {} catch {}
-        vm.assertTrue(isWarm(TX_TO), "newly loaded account");
+        vm.assertTrue(isWarm(address(0xbeef)), "loaded account");
         vm.assertFalse(isWarm(TX_FROM), "cooled account");
+        vm.etch(TX_TO, type(WarmthTarget).runtimeCode);
+        vm.assertTrue(WarmthTarget(TX_TO).hasWarmSlot(0), "loaded slot");
 
         // Accesses the transaction reverted stay cold.
         vm.resetNonce(TX_FROM);
-        // Reads `BALANCE(0xbeef)`, then reverts.
-        vm.etch(TX_TO, hex"61beef31505f5ffd");
+        // Reads `BALANCE(0xcafe)`, then reverts.
+        vm.etch(TX_TO, hex"61cafe31505f5ffd");
         try vm.executeTransaction(TRANSFER_TX) {
+            // Fails the test if the transaction did not revert.
             revert();
         } catch {}
-        vm.assertFalse(isWarm(address(0xbeef)), "reverted access");
+        vm.assertFalse(isWarm(address(0xcafe)), "reverted access");
     }
 }
 
