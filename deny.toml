@@ -19,6 +19,12 @@ ignore = [
     # alloy-signer and has no patched release. Update 0.7.5 to the patched
     # 0.7.6 once CI can download it; keep this ignore until alloy drops 0.5.
     "RUSTSEC-2026-0387",
+    # zstd 0.13 and zstd-safe 7 come from commonware-storage and
+    # reth-zstd-compressors and have no patched release. zstd 0.14 is updated to
+    # the patched 0.14.3.
+    "RUSTSEC-2026-0391",
+    "RUSTSEC-2026-0398",
+    "RUSTSEC-2026-0403",
 ]
 
 # This section is considered when running `cargo deny check bans`.
