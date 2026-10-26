@@ -116,7 +116,7 @@ where
         nonce: Some(4),
         code: Some(Bytes::from_static(STORE)),
         storage: Some([(B256::ZERO, B256::with_last_byte(5))].into_iter().collect()),
-        private_key: None,
+        ..Default::default()
     };
     backend.load_allocs(&[(alloc, account)].into_iter().collect(), &mut evm).unwrap();
     assert_eq!((balance(&mut evm, alloc), nonce(&mut evm, alloc)), (U256::from(9), 4));

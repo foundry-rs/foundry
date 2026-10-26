@@ -24,11 +24,11 @@ use tempo_evm::{
     tempo_execution_config, tempo_tx_registry,
 };
 use tempo_hardfork::TempoHardfork;
-use tempo_precompiles_evm2::{
+use tempo_precompiles::{
     TempoPrecompiles,
     storage::{StorageActions, StorageCtx},
 };
-use tempo_primitives_evm2::TempoTxEnvelope;
+use tempo_primitives::TempoTxEnvelope;
 
 /// Tempo EVM network.
 #[derive(Clone, Copy, Debug, Default)]

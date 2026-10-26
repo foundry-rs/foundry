@@ -2067,7 +2067,7 @@ fn genesis_account(
         balance,
         code: Some(code.original_bytes()),
         storage: Some(storage),
-        private_key: None,
+        ..Default::default()
     })
 }
 

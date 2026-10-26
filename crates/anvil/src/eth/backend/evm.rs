@@ -411,9 +411,19 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
     }
 
     fn apply_authority_overrides(tx: &mut tempo_evm::TempoTxEnv, overrides: &[(usize, Address)]) {
-        for &(index, authority) in overrides {
-            tx.override_authority(index, authority);
-        }
+        let Some(eip7702) = tx.as_eip7702() else { return };
+        let mut eip7702 = eip7702.clone();
+        override_authorities(&mut eip7702, overrides);
+        // `from_recovered_eth` keeps recovered authorizations. It re-derives the sender-scoped
+        // identifier from placeholder signatures, so restore the signed transaction's identifier.
+        let unique_tx_identifier = tx.unique_tx_identifier();
+        let eth = Recovered::new_unchecked(
+            evm2::ethereum::TxEnvelope::Eip7702(eip7702),
+            tx.evm_tx().signer(),
+        );
+        *tx = tempo_evm::TempoTxEnv::from_recovered_eth(eth)
+            .expect("EIP-7702 converts to Tempo")
+            .with_simulation_overrides(unique_tx_identifier, None, None);
     }
 
     fn prepared_evm_tx(

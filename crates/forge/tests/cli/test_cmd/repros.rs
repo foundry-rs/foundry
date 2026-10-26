@@ -1603,7 +1603,7 @@ contract ReplayForkTest is Test {
             } catch (bytes memory reason) {
                 assertEq(reason, abi.encodeWithSignature(
                     "CheatcodeError(string)",
-                    "vm.transact: transaction validation error: insufficient funds"
+                    "vm.transact: transaction validation error: lack of funds (0) for max fee (20000017)"
                 ));
             }
             assertEq(block.chainid, chain);

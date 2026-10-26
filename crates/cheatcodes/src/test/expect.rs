@@ -14,7 +14,7 @@ use evm2::interpreter::MessageKind;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use itertools::Itertools;
 use tempo_contracts::precompiles::ISignatureVerifier;
-use tempo_precompiles_evm2::SIGNATURE_VERIFIER_ADDRESS;
+use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.

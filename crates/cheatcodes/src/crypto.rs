@@ -729,14 +729,14 @@ mod tests {
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use tempo_contracts::precompiles::ISignatureVerifier;
     use tempo_hardfork::TempoHardfork;
-    use tempo_precompiles_evm2::{
+    use tempo_precompiles::{
         Precompile,
         account_keychain::{AccountKeychain, IAccountKeychain, KeyRestrictions, SignatureType},
         error::Result as PrecompileResult,
         signature_verifier::SignatureVerifier,
         storage::{PrecompileStorageProvider, StorageCtx, hashmap::HashMapStorageProvider},
     };
-    use tempo_primitives_evm2::TempoBlockEnv;
+    use tempo_primitives::TempoBlockEnv;
 
     /// A [`HashMapStorageProvider`] with a settable block timestamp.
     struct TimestampedStorage {

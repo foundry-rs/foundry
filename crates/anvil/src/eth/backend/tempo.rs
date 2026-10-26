@@ -20,7 +20,7 @@ use foundry_evm_core::tempo::{
 };
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
-use tempo_precompiles_evm2::{
+use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
         AccountKeychain,

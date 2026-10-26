@@ -160,7 +160,7 @@ use std::{
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_hardfork::TempoHardfork;
-use tempo_precompiles_evm2::{
+use tempo_precompiles::{
     NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     nonce::NonceManager,
     storage::Handler,
@@ -7031,7 +7031,7 @@ where
             let code_hash = account.info.code_hash;
             let balance = account.info.balance;
             let nonce = account.info.nonce;
-            Ok(TrieAccount { balance, nonce, code_hash, storage_root })
+            Ok(TrieAccount::new(nonce, balance, storage_root, code_hash))
         })
         .await?
     }

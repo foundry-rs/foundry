@@ -107,26 +107,26 @@ explicitly or is documented as different; none falls back to REVM.
 
 ## Dependencies
 
-All migration dependencies use the `mablr` forks. Foundry and its satellites share
+Foundry and its satellites share
 [`mablr/evm2@mablr/foundry-completion`](https://github.com/mablr/evm2/tree/mablr/foundry-completion).
-It adds suspended-state lifecycle APIs (`finalize_transaction`, warmth restoration,
-`cool_loaded_state`, `set_prewarm_set`) and independent `BLOB_BASE_FEE_CHECK` policy on upstream
-`1dc7f6a`, including account warmth control from evm2#705, plus resolution of already-present
-delegation code before Prague, matching REVM.
+It merges the alloy-rs/evm2 revision pinned by tempoxyz/tempo#7871 and adds suspended-state
+lifecycle APIs (`finalize_transaction`, warmth restoration, `cool_loaded_state`,
+`set_prewarm_set`), independent `BLOB_BASE_FEE_CHECK` policy, account warmth control from
+evm2#705, and resolution of already-present delegation code before Prague, matching REVM.
 Authorization processing remains Prague-gated. The lockfile must contain one evm2 graph, not
-separate engines for different networks.
+separate engines for different networks. Tempo and reth pin `alloy-rs/evm2`, while the satellites
+pin `mablr/evm2`; the root manifest patches both to that branch through the `DaniPopes/evm2` URL,
+since Cargo rejects a patch from the same source.
 
 [`foundry-core@mablr/fork-db-evm2-completion`](https://github.com/mablr/foundry-core/tree/mablr/fork-db-evm2-completion)
 stores native evm2 accounts and bytecode. Existing JSON/zstd caches remain readable, including
 legacy analyzed bytecode and EIP-7702 delegation. RPC cache reads remain separate from execution
-commits. [`evm2-networks`](https://github.com/mablr/evm2-networks/tree/main) provides the network
-adapters. Tempo's integration uses
-[`mablr/reth@mablr/evm2-migration`](https://github.com/mablr/reth/tree/mablr/evm2-migration).
+commits. [`evm2-networks`](https://github.com/mablr/evm2-networks) provides the network adapters.
 
-`tempo-evm` and `tempo-hardfork` use
-[`mablr/tempo@mablr/evm2-migration`](https://github.com/mablr/tempo/tree/mablr/evm2-migration).
-`tempo-primitives-evm2` and `tempo-precompiles-evm2` alias that revision while RPC types retain
-the REVM-era Tempo pin on the same fork.
+Every Tempo crate uses tempoxyz/tempo#7871 directly, which brings upstream reth and reth-core.
+Root patches do not propagate, so the root manifest repeats #7871's reth-core `[patch.crates-io]`
+entries and its evm2 patch. Anvil overrides EIP-7702 authorities for Tempo by rebuilding the
+transaction environment from the overridden Ethereum transaction, so no Tempo fork is needed.
 
 ## Completion follow-ups
 

@@ -41,7 +41,7 @@ use evm2::{
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use std::{fmt, sync::Arc};
-use tempo_precompiles_evm2::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
+use tempo_precompiles::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) mod optimism;

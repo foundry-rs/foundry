@@ -68,7 +68,7 @@ use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };
-use tempo_precompiles_evm2::TIP_FEE_MANAGER_ADDRESS;
+use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
