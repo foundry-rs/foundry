@@ -599,8 +599,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let db = self.forks.active_db();
         let mut state = state.into_state(db.clone_backing());
         *state.logs_mut() = logs;
-        let running = mem::replace(evm.state_mut(), state).snapshot();
-        let replaced = replaced.unwrap_or(running);
+        let running = mem::replace(evm.state_mut(), state);
+        let replaced = replaced.unwrap_or_else(|| running.snapshot());
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
@@ -1153,26 +1153,46 @@ pub fn warm_set(state: &mut State<'_>) -> PrewarmSet {
     prewarm
 }
 
-/// Sets the warmth of every account and slot the running transaction in `state` loaded to
-/// `warm`, as returned by [`warm_accounts`] earlier, without journaling. Accounts and slots loaded
-/// since are cold; pre-warmed ones stay effectively warm.
-pub fn restore_warmth(state: &mut State<'_>, warm: &AddressMap<HashSet<U256>>) {
+/// Cools every account and slot the running transaction in `state` loaded, without journaling.
+/// Pre-warmed ones stay effectively warm.
+pub fn cool_loaded(state: &mut State<'_>) {
     let loaded = state
         .loaded_accounts()
         .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
         .collect::<Vec<_>>();
     for (address, slots) in loaded {
-        let warm_slots = warm.get(&address);
-        state.set_account_warm(&address, warm_slots.is_some());
+        state.set_account_warm(&address, false);
         for key in slots {
-            state.set_storage_warm(&address, key, warm_slots.is_some_and(|s| s.contains(&key)));
+            state.set_storage_warm(&address, key, false);
         }
+    }
+}
+
+/// Undoes, without journaling, the warmth that the running transaction in `state` gained since
+/// `checkpoint`, keeping all other warmth, including unjournaled changes made since.
+pub fn restore_access_warmth(state: &mut State<'_>, checkpoint: &StateCheckpoint) {
+    let mut accounts = AddressMap::<bool>::default();
+    let mut slots = Vec::new();
+    for entry in &state.journal()[checkpoint.journal_len()..] {
+        match entry {
+            JournalEntry::AccountChange { address, previous_is_warm, .. } => {
+                accounts.entry(*address).or_insert(*previous_is_warm);
+            }
+            JournalEntry::StorageWarmed { address, key } => slots.push((*address, *key)),
+            _ => {}
+        }
+    }
+    for (address, warm) in accounts {
+        state.set_account_warm(&address, warm);
+    }
+    for (address, key) in slots {
+        state.set_storage_warm(&address, key, false);
     }
 }
 
 /// Returns the accounts the running transaction in `state` loaded and that are warm, with their
 /// warm slots.
-pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
+fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
     let loaded = state
         .loaded_accounts()
         .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
