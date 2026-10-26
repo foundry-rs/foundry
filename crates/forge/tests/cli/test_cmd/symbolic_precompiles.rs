@@ -868,3 +868,57 @@ contract SymbolicKzgResidual {
         "{stdout}"
     );
 }
+
+#[forgetest_init]
+fn symbolic_precompiles_follow_active_spec(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_precompiles_follow_active_spec because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOsakaPrecompiles.t.sol",
+        r#"
+contract SymbolicOsakaPrecompiles {
+    function checkBlsAndP256Precompiles(uint256) public {
+        // BLS12-381 G1ADD rejects empty input instead of acting as an empty account.
+        (bool blsOk, bytes memory blsOut) = address(0x0b).staticcall("");
+        assert(!blsOk);
+        assert(blsOut.length == 0);
+
+        // P256VERIFY returns no output for an invalid signature.
+        (bool p256Ok, bytes memory p256Out) = address(0x100).staticcall(new bytes(160));
+        assert(p256Ok);
+        assert(p256Out.length == 0);
+    }
+
+    /// forge-config: default.symbolic.symbolic_call_targets = true
+    function checkSymbolicTargetIncludesBlsPrecompiles(address target) public {
+        // Every address in this range is a precompile or an empty account.
+        if (uint160(target) <= 0x0a || uint160(target) > 0x100) return;
+        (bool ok,) = target.call("");
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "osaka",
+        "--match-contract",
+        "SymbolicOsakaPrecompiles",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicOsakaPrecompiles.t.sol:SymbolicOsakaPrecompiles
+[PASS] checkBlsAndP256Precompiles(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicTargetIncludesBlsPrecompiles(address) ([METRICS])
+...
+"#]]);
+}
