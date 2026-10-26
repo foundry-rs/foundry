@@ -605,12 +605,12 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbaf
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
 
 ## soldb
-# v0.4.3 from git until CI's registry proxy allows the release; same commit as crates.io 0.4.3.
-soldb-core = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
-soldb-debugger = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
-soldb-ethdebug = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
-soldb-repl = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
-soldb-tui = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
+# Frame code hashes (walnuthq/soldb#215) on top of v0.4.3, until a release has them.
+soldb-core = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
+soldb-debugger = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
+soldb-ethdebug = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
+soldb-repl = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
+soldb-tui = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }

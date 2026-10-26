@@ -255,8 +255,13 @@ Exiting debugger.
         serde_json::from_slice::<serde_json::Value>(&std::fs::read(dump_dir.join(path)).unwrap())
             .unwrap()
     };
+    // Every program names the hash of its code, which depends on the compiled bytecode.
+    let mut mapping = read_json("contracts.json");
+    for entry in mapping["contracts"].as_array_mut().unwrap() {
+        assert!(entry.as_object_mut().unwrap().remove("code_hash").unwrap().is_string());
+    }
     assert_eq!(
-        read_json("contracts.json"),
+        mapping,
         serde_json::json!({ "contracts": [
             {
                 "address": "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
@@ -417,4 +422,116 @@ uint256 number = 1 [slot 0x0]
 Exiting debugger.
 
 "#]]);
+}
+
+// Code replaced with `vm.etch` maps through its own program, not the one that ran at the address
+// first.
+#[forgetest]
+fn debugger_soldb_etched_code(prj: _, cmd: _) {
+    prj.add_test(
+        "Etch.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+}
+
+contract Trusted {
+    function trustedOnly() external pure returns (uint256) {
+        return trustedInternal();
+    }
+
+    function trustedInternal() internal pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Payload {
+    function attackerEntry() external pure returns (uint256) {
+        return payloadInternal();
+    }
+
+    function payloadInternal() internal pure returns (uint256) {
+        return 42;
+    }
+}
+
+contract EtchTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_etch() public {
+        Trusted trusted = new Trusted();
+        require(trusted.trustedOnly() == 1);
+        vm.etch(address(trusted), type(Payload).runtimeCode);
+        require(Payload(address(trusted)).attackerEntry() == 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--debug", "--mt", "test_etch"])
+        .stdin("break test/Etch.t.sol:14\nbreak test/Etch.t.sol:24\ncontinue\nbacktrace\ncontinue\nbacktrace\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Etch.t.sol:EtchTest
+[PASS] test_etch() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Loaded trace with 817 steps.
+Sources loaded for: EtchTest (0x7fa9385be102ac3eac297483dd6233d62b3e1496), Trusted (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f), Payload (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f)
+test/Etch.t.sol:28  (step 0/816, pc 0, PUSH1, gas 1073667580)
+   28 | contract EtchTest {
+Breakpoint #1 set at test/Etch.t.sol:14
+Breakpoint #2 set at test/Etch.t.sol:24
+Breakpoint #1 hit at step 159, test/Etch.t.sol:14
+test/Etch.t.sol:14 in trustedInternal  (step 159/816, pc 82, PUSH1, gas 1056819391)
+   14 |         return 1;
+#0  trustedInternal at test/Etch.t.sol:14  step 159, PC 82
+#1  trustedOnly at test/Etch.t.sol:10  step 156, PC 74
+#2  Trusted at test/Etch.t.sol:8  step 147, PC 37
+#3  test_etch at test/Etch.t.sol:33  step 123, PC 155
+#4  EtchTest at test/Etch.t.sol:28  step 40, PC 39
+Breakpoint #2 hit at step 643, test/Etch.t.sol:24
+test/Etch.t.sol:24 in payloadInternal  (step 643/816, pc 82, PUSH1, gas 1056815059)
+   24 |         return 42;
+#0  payloadInternal at test/Etch.t.sol:24  step 643, PC 82
+#1  attackerEntry at test/Etch.t.sol:20  step 640, PC 74
+#2  Payload at test/Etch.t.sol:18  step 631, PC 37
+#3  test_etch at test/Etch.t.sol:35  step 607, PC 448
+#4  EtchTest at test/Etch.t.sol:28  step 40, PC 39
+Exiting debugger.
+
+"#]]);
+
+    // The bundle keeps both programs run at the address, each with its own directory.
+    let dump_dir = prj.root().join("soldb");
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "test_etch", "--dump"])
+        .arg(&dump_dir)
+        .assert_success();
+    let mapping = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join("contracts.json")).unwrap(),
+    )
+    .unwrap();
+    let entries = mapping["contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            assert!(entry["code_hash"].is_string());
+            (entry["name"].as_str().unwrap(), entry["debug_dir"].as_str().unwrap())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        [
+            ("Payload", "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f-Payload"),
+            ("Trusted", "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f-Trusted"),
+            ("EtchTest", "0x7fa9385be102ac3eac297483dd6233d62b3e1496"),
+        ]
+    );
 }

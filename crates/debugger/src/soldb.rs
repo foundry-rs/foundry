@@ -4,7 +4,7 @@
 //! maps into soldb debug info, then runs a soldb session over them or writes them as a bundle that
 //! soldb's own tools read.
 
-use alloy_primitives::{Address, Bytes, U256, hex, map::HashSet};
+use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256, map::HashSet};
 use eyre::{OptionExt, Result};
 use foundry_common::{
     ContractsByArtifact, Shell,
@@ -348,6 +348,9 @@ impl TraceBuilder {
         let depth = trace.depth as u64 + 1;
         let entry_step = Some(entry_step);
         let error = status_error(trace.status);
+        // The code the frame runs, as `executed_programs` hashes it, so each frame maps through
+        // its own program when several run at one address.
+        let code_hash = trace.bytecode.as_ref().map(|code| keccak256(code).to_string());
         let creation = trace.kind.is_any_create().then_some(self.creations.len());
         let mut call = None;
         if creation.is_some() {
@@ -367,6 +370,7 @@ impl TraceBuilder {
                 output: Some(hex::encode_prefixed(&trace.output)),
                 success: Some(trace.success),
                 error,
+                code_hash,
             });
         } else {
             // A delegated call runs `address`'s code against the storage of `caller`.
@@ -389,6 +393,7 @@ impl TraceBuilder {
                 output: Some(hex::encode_prefixed(&trace.output)),
                 success: Some(trace.success),
                 error,
+                code_hash,
             });
         }
         (creation, call)
@@ -552,6 +557,8 @@ struct ExecutedProgram<'a> {
     address: Address,
     name: &'a str,
     code: &'a Bytes,
+    /// The hash of `code`, which tells apart programs run at one address.
+    code_hash: B256,
     /// Whether the program is creation code.
     init: bool,
     artifact: &'a ArtifactData,
@@ -572,7 +579,7 @@ fn executed_programs<'a>(
     sources: &'a ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Vec<ExecutedProgram<'a>> {
-    let mut seen = HashSet::<(Address, bool)>::default();
+    let mut seen = HashSet::<(Address, bool, B256)>::default();
     let mut programs = Vec::new();
     for (node, name) in
         arenas.iter().zip(contract_names).flat_map(|(arena, names)| arena.nodes().iter().zip(names))
@@ -581,7 +588,8 @@ fn executed_programs<'a>(
         let init = trace.kind.is_any_create();
         if let Some(name) = name
             && let Some(code) = &trace.bytecode
-            && seen.insert((trace.address, init))
+            && let code_hash = keccak256(code)
+            && seen.insert((trace.address, init, code_hash))
             && let Some(sources_for_name) = sources.get_sources(name)
             && let Some((artifact, source)) = sources_for_name.into_iter().find(|(artifact, _)| {
                 if init {
@@ -608,6 +616,7 @@ fn executed_programs<'a>(
                 address: trace.address,
                 name,
                 code,
+                code_hash,
                 init,
                 artifact,
                 solc: matches!(source.language, MultiCompilerLanguage::Solc(_)),
@@ -687,6 +696,7 @@ fn contract_debug_info(
             source_cache,
         )
         .with_code_generator(code_generator)
+        .with_code_hash(Some(&program.code_hash.to_string()))
         .with_storage_layout(storage_layout),
     )
 }
@@ -705,14 +715,15 @@ pub(crate) fn write_bundle(
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
-    let mut contracts = BTreeMap::<Address, CombinedJson>::new();
+    // One entry per program, so code replaced at an address keeps its own source maps.
+    let mut contracts = BTreeMap::<(Address, &str), CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();
     for program in executed_programs(&arenas, contract_names, sources, known_contracts) {
         // soldb reads legacy source maps by instruction counter, which Vyper's are not.
         if !program.solc {
             continue;
         }
-        let contract = contracts.entry(program.address).or_insert_with(|| {
+        let contract = contracts.entry((program.address, program.name)).or_insert_with(|| {
             let path = |id: &u32| {
                 program.build_sources.get(id).map(|source| source.path.to_string_lossy())
             };
@@ -729,6 +740,7 @@ pub(crate) fn write_bundle(
                     .map(|id| path(&id).map_or_else(|| format!("<missing-{id}>"), Into::into))
                     .collect(),
                 fields: Map::new(),
+                code_hash: None,
             }
         });
         let (source_map_key, bytecode_key) =
@@ -750,6 +762,9 @@ pub(crate) fn write_bundle(
             .join(";");
         contract.fields.insert(source_map_key.to_string(), source_map.into());
         contract.fields.insert(bytecode_key.to_string(), hex::encode(program.code).into());
+        if !program.init {
+            contract.code_hash = Some(program.code_hash);
+        }
         if let Some(layout) = &program.storage_layout {
             contract.fields.insert("storage-layout".to_string(), layout.clone());
         }
@@ -771,18 +786,34 @@ pub(crate) fn write_bundle(
         }
     }
 
+    let mut programs_at = HashMap::<Address, usize>::new();
+    for (address, _) in contracts.keys() {
+        *programs_at.entry(*address).or_default() += 1;
+    }
     let mut mapping = Vec::new();
-    for (address, contract) in contracts {
-        let address = hex::encode_prefixed(address);
-        fs::create_dir_all(dir.join(&address))?;
+    for ((address, _), contract) in contracts {
+        let debug_dir = if programs_at[&address] > 1 {
+            format!("{}-{}", hex::encode_prefixed(address), contract.name)
+        } else {
+            hex::encode_prefixed(address)
+        };
+        fs::create_dir_all(dir.join(&debug_dir))?;
         write_json_file(
-            &dir.join(&address).join("combined.json"),
+            &dir.join(&debug_dir).join("combined.json"),
             &json!({
                 "sourceList": contract.source_list,
                 "contracts": { contract.key: contract.fields },
             }),
         )?;
-        mapping.push(json!({ "address": address, "name": contract.name, "debug_dir": address }));
+        let mut entry = json!({
+            "address": hex::encode_prefixed(address),
+            "name": contract.name,
+            "debug_dir": debug_dir,
+        });
+        if let Some(code_hash) = contract.code_hash {
+            entry["code_hash"] = code_hash.to_string().into();
+        }
+        mapping.push(entry);
     }
     write_json_file(&dir.join("contracts.json"), &json!({ "contracts": mapping }))?;
     let (trace, _) = transaction_trace(&mut arenas, recordings, &Breakpoints::default())?;
@@ -798,6 +829,8 @@ struct CombinedJson {
     source_list: Vec<String>,
     /// The source maps, bytecode, and storage layout, under solc's field names.
     fields: Map<String, Value>,
+    /// The hash of the deployed code, which the mapping names for soldb.
+    code_hash: Option<B256>,
 }
 
 /// The ETHDebug context of one source map element: its source range, if the build has the
@@ -1129,9 +1162,15 @@ mod tests {
 
         let address = hex::encode_prefixed(Address::repeat_byte(0xc));
         let mapping = soldb_ethdebug::read_json_file(&dir.path().join("contracts.json")).unwrap();
+        let code_hash = keccak256([0x60, 0x80, 0x5b, 0x00]).to_string();
         assert_eq!(
             mapping,
-            json!({ "contracts": [{ "address": address, "name": "C", "debug_dir": address }] })
+            json!({ "contracts": [{
+                "address": address,
+                "name": "C",
+                "debug_dir": address,
+                "code_hash": code_hash,
+            }] })
         );
         let program = soldb_ethdebug::load_debug_program_with_sources(
             &dir.path().join(&address),
