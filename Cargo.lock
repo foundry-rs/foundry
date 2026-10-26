@@ -5481,7 +5481,7 @@ dependencies = [
 [[package]]
 name = "evm2"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c#4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c"
+source = "git+https://github.com/DaniPopes/evm2?rev=a1436476ed5d495b6e6360d54ccc727678cffa68#a1436476ed5d495b6e6360d54ccc727678cffa68"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -5517,7 +5517,7 @@ dependencies = [
 [[package]]
 name = "evm2-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c#4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c"
+source = "git+https://github.com/DaniPopes/evm2?rev=a1436476ed5d495b6e6360d54ccc727678cffa68#a1436476ed5d495b6e6360d54ccc727678cffa68"
 dependencies = [
  "alloy-consensus",
  "alloy-eip2930",
@@ -5540,7 +5540,7 @@ dependencies = [
 [[package]]
 name = "evm2-macros"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c#4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c"
+source = "git+https://github.com/DaniPopes/evm2?rev=a1436476ed5d495b6e6360d54ccc727678cffa68#a1436476ed5d495b6e6360d54ccc727678cffa68"
 dependencies = [
  "proc-macro2",
  "quote",
