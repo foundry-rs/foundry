@@ -2747,6 +2747,68 @@ fault: function(log) {}
     assert_eq!(actual, expected);
 }
 
+// The JS tracer must report steps like geth's struct logger: a call step before its child's steps,
+// with the forwarded gas in its cost, and depth starting at 1.
+#[cfg(feature = "js-tracer")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_js_tracer_matches_struct_logs() {
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_steps_tracing(true);
+    let (api, handle) = spawn(node_config).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let receipt = multicall_contract
+        .aggregate(vec![Multicall::Call {
+            target: *simple_storage_contract.address(),
+            callData: set_value.calldata().to_owned(),
+        }])
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let js_tracer_code = r#"
+{
+    steps: [],
+    step: function(log) {
+        this.steps.push([log.getPC(), log.op.toString(), log.getDepth(), log.getGas(), log.getCost()]);
+    },
+    fault: function(log) {},
+    result: function() { return this.steps; }
+}
+"#;
+    let js_trace = api
+        .debug_trace_transaction(hash, GethDebugTracingOptions::js_tracer(js_tracer_code))
+        .await
+        .unwrap()
+        .try_into_json_value()
+        .unwrap();
+    let js_steps = serde_json::from_value::<Vec<(u64, String, u64, u64, u64)>>(js_trace).unwrap();
+
+    let trace = api.debug_trace_transaction(hash, Default::default()).await.unwrap();
+    let GethTrace::Default(frame) = trace else { unreachable!("expected default trace") };
+    let struct_logs = frame
+        .struct_logs
+        .into_iter()
+        .map(|log| (log.pc, log.op.into_owned(), log.depth, log.gas, log.gas_cost))
+        .collect::<Vec<_>>();
+
+    let (call_idx, call) = js_steps.iter().enumerate().find(|(_, step)| step.1 == "CALL").unwrap();
+    assert_eq!(call.2, 1);
+    assert_eq!(js_steps[call_idx + 1].2, 2, "the child's steps must follow the CALL step");
+    assert_eq!(js_steps, struct_logs);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_tracer_debug_trace_call_pre_state_tracer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
