@@ -1,0 +1,14 @@
+# Only the pinned dependency updater on master may create dependency PRs.
+subject:
+  - repo:foundry-rs/foundry:ref:refs/heads/master
+  - repo:foundry-rs@99892494/foundry@404320053:ref:refs/heads/master
+
+claim_pattern:
+  repository_id: '404320053'
+  event_name: '(schedule|workflow_dispatch)'
+  workflow_ref: 'foundry-rs/foundry/\.github/workflows/dependencies\.yml@refs/heads/master'
+  job_workflow_ref: 'tempoxyz/gh-actions/\.github/workflows/cargo-update-pr\.yml@65b6b5834d9ad2b0d4b34d06baff37c143aa59eb'
+
+permissions:
+  contents: write
+  pull_requests: write
