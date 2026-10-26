@@ -2659,6 +2659,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TempoConsensusIdentity(()) => {
                 self.anvil_tempo_consensus_identity().await.to_rpc_result()
             }
+            EthRequest::TempoRotateConsensusIdentity(()) => {
+                self.anvil_tempo_rotate_consensus_identity().await.to_rpc_result()
+            }
         }
     }
 
@@ -5627,6 +5630,14 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_tempo_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
         node_info!("anvil_tempoConsensusIdentity");
         self.backend.tempo_consensus_identity().await
+    }
+
+    /// Schedules a new identity for the epoch following the next block's epoch.
+    ///
+    /// Handler for `anvil_tempoRotateConsensusIdentity`; unavailable on non-Tempo networks.
+    pub async fn anvil_tempo_rotate_consensus_identity(&self) -> Result<TempoConsensusIdentity> {
+        node_info!("anvil_tempoRotateConsensusIdentity");
+        self.backend.tempo_rotate_consensus_identity().await
     }
 }
 
