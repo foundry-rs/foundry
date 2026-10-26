@@ -39,9 +39,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{
-        ProfileBuild, ProjectCompiler, compile_abi_project_cached, compile_endpoint_profiles,
-    },
+    compile::{ProjectCompiler, compile_abi_project_cached},
     external_compiler::is_external_artifact,
     fs,
     fs::canonicalize_path,
@@ -88,10 +86,10 @@ use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::channel},
+    sync::{Arc, LazyLock, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
@@ -308,7 +306,6 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
     pub(crate) selected_sources: BTreeSet<PathBuf>,
-    pub(crate) profile_builds: Arc<Vec<ProfileBuild>>,
 }
 
 impl TestExecutionOptions {
@@ -321,7 +318,6 @@ impl TestExecutionOptions {
             replay_symbolic_artifact: None,
             inline_config,
             selected_sources: BTreeSet::new(),
-            profile_builds: Default::default(),
         }
     }
 
@@ -369,7 +365,6 @@ struct CompiledTestProject {
     inline_config: Arc<InlineConfig>,
     replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     selected_sources: BTreeSet<PathBuf>,
-    profile_builds: Vec<ProfileBuild>,
     /// Keeps the brutalized copy of the project alive while its tests run.
     _brutalized_workspace: Option<TempDir>,
 }
@@ -1612,7 +1607,6 @@ impl TestArgs {
             TestExecutionOptions {
                 replay_symbolic_artifact: compiled.replay_symbolic_artifact,
                 selected_sources: compiled.selected_sources,
-                profile_builds: Arc::new(compiled.profile_builds),
                 ..TestExecutionOptions::default_run(compiled.inline_config)
             },
         )
@@ -1686,10 +1680,11 @@ impl TestArgs {
         trace!(target: "forge::test", ?filter, "using filter");
 
         let compiler = ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries || self.list)
             .external_compilers(&config)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
-        let (output, selected_sources, inline_config, profile_builds) = if self.list {
+        let (output, selected_sources, inline_config) = if self.list {
             let compiler = compiler.external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
@@ -1709,8 +1704,7 @@ impl TestArgs {
             // Listing must not replace full artifacts with ABI-only ones, which later cached
             // builds would treat as fresh.
             let mut project = config.create_project(config.cache, true)?;
-            let output = compile_abi_project_cached(&mut project, compiler)?;
-            (output, BTreeSet::new(), None, Vec::new())
+            (compile_abi_project_cached(&mut project, compiler)?, BTreeSet::new(), None)
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
@@ -1731,16 +1725,7 @@ impl TestArgs {
             } else {
                 output?
             };
-            let overrides =
-                figment::Figment::new().merge(&self.build).merge(&self.evm).merge(&*self);
-            let profile_builds = compile_endpoint_profiles(&config, overrides, |config| {
-                ProjectCompiler::new()
-                    .external_compilers(config)
-                    .dynamic_test_linking(config.dynamic_test_linking)
-                    .quiet(shell::is_json() || self.junit)
-                    .files(files.clone())
-            })?;
-            (output, files, inline_config, profile_builds)
+            (output, files, inline_config)
         };
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
@@ -1756,7 +1741,6 @@ impl TestArgs {
             inline_config,
             replay_symbolic_artifact,
             selected_sources,
-            profile_builds,
             _brutalized_workspace: brutalized_workspace,
         })
     }
@@ -1765,15 +1749,8 @@ impl TestArgs {
         &mut self,
         corpus_dir: &Path,
     ) -> Result<FuzzMinimizeReplaySession> {
-        let CompiledTestProject {
-            mut config,
-            mut evm_opts,
-            output,
-            filter,
-            inline_config,
-            profile_builds,
-            ..
-        } = self.compile_project().await?;
+        let CompiledTestProject { mut config, mut evm_opts, output, filter, inline_config, .. } =
+            self.compile_project().await?;
 
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -1789,13 +1766,11 @@ impl TestArgs {
 
         let override_networks = inline_config.referenced_override_networks(&config.profile);
         let (default_pass, override_passes) = network_passes(config, evm_opts, &override_networks);
-        let profile_builds = Arc::new(profile_builds);
         let mut passes = Vec::new();
         for NetworkPass { config, evm_opts, multi_network } in
             std::iter::once(default_pass).chain(override_passes)
         {
             let execution = TestExecutionOptions {
-                profile_builds: profile_builds.clone(),
                 multi_network,
                 ..TestExecutionOptions::default_run(inline_config.clone())
             };
@@ -1864,18 +1839,6 @@ impl TestArgs {
             filter,
             &execution.multi_network,
         )?;
-
-        if execution.profile_builds.is_empty() {
-            let overrides =
-                figment::Figment::new().merge(&self.build).merge(&self.evm).merge(&*self);
-            execution.profile_builds =
-                Arc::new(compile_endpoint_profiles(&config, overrides, |config| {
-                    ProjectCompiler::new()
-                        .external_compilers(config)
-                        .dynamic_test_linking(config.dynamic_test_linking)
-                        .quiet(shell::is_json() || self.junit)
-                })?);
-        }
 
         let mut filter = filter.clone();
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
@@ -2092,7 +2055,6 @@ impl TestArgs {
                         })
                         .collect::<Vec<_>>();
                     let mutation_config = MutationRunConfig {
-                        profile_overrides: figment::Figment::new().merge(&self.build).merge(&self.evm).merge(&*self),
                         mutate_paths: mutate.clone(),
                         mutate_path_pattern: self.mutate_path.clone(),
                         mutate_contract_pattern: self.mutate_contract.clone(),
@@ -2244,7 +2206,6 @@ impl TestArgs {
             .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
-            .with_profile_builds(execution.profile_builds)
             .build::<FEN, MultiCompiler>(
                 output,
                 evm_env,
@@ -3236,7 +3197,10 @@ impl Provider for TestArgs {
 }
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
-    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
+    static OPCODES: LazyLock<HashMap<&str, OpCode>> = LazyLock::new(|| {
+        (0..=u8::MAX).filter_map(OpCode::new).map(|op| (op.as_str(), op)).collect()
+    });
+    OPCODES.get(s).copied().ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {
@@ -3709,6 +3673,14 @@ impl JunitOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_opcode_names_exactly() {
+        assert_eq!(parse_opcode("SSTORE"), Ok(OpCode::SSTORE));
+        assert_eq!(parse_opcode("PUSH32"), Ok(OpCode::PUSH32));
+        assert_eq!(parse_opcode("sstore"), Err("invalid opcode: sstore".to_string()));
+        assert_eq!(parse_opcode("NOPE"), Err("invalid opcode: NOPE".to_string()));
+    }
 
     /// Parses `args` with the given environment variables set, restoring the previous values.
     fn parse_with_env(vars: &[(&str, &str)], args: &[&str]) -> TestArgs {

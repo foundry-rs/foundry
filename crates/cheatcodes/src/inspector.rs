@@ -46,7 +46,6 @@ use foundry_evm_core::{
         FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
         with_inherited_evm,
     },
-    opts::{ExecutionSpecContext, resolve_execution_spec},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -68,7 +67,7 @@ use revm::{
 };
 use std::{
     cmp::max,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::Debug,
     ops::Range,
     sync::{Arc, OnceLock},
@@ -549,9 +548,6 @@ impl ArbitraryStorage {
     }
 }
 
-/// Broadcaster, salt and CREATE2 libraries to deploy before the first broadcast to a fork.
-pub type ChainLibraries = (Address, B256, Vec<(Address, Bytes)>);
-
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
@@ -790,12 +786,6 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
     pub deploy_code_depth: Option<usize>,
-
-    /// Spec of the run, restored for persistent accounts on forks of profiled endpoints.
-    run_spec: Option<SpecFor<FEN>>,
-
-    /// RPC urls of the forks whose CREATE2 libraries were deployed.
-    chain_libraries_deployed: BTreeSet<String>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -868,8 +858,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             isolated_snapshot_restores: Vec::new(),
             capture_isolated_snapshot_restore: false,
             deploy_code_depth: None,
-            run_spec: None,
-            chain_libraries_deployed: Default::default(),
         }
     }
 
@@ -1243,54 +1231,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth }
     }
 
-    /// Whether this create belongs to the local script/test or is itself recorded for broadcast.
-    /// Never replace initcode inside an ordinary on-chain factory call.
-    pub fn should_use_profile_init_code(&self, depth: usize, caller: Address) -> bool {
-        let depth = self.deploy_code_caller_depth(depth);
-        if let Some(broadcast) = &self.broadcast {
-            depth == broadcast.depth && caller == broadcast.original_caller
-        } else {
-            depth == 1 && caller != self.core.config.evm_opts.create2_deployer
-        }
-    }
-
-    /// Applies the custom execution evm version, or on forks of profiled endpoints the spec of
-    /// the profile to frames of non-persistent `target`s, except top-level creates.
-    fn apply_execution_spec(
-        &mut self,
-        ecx: &mut FoundryContextFor<'_, FEN>,
-        target: Option<Address>,
-    ) {
-        if let Some(spec_id) = self.execution_evm_version {
-            EvmFactoryFor::<FEN>::set_execution_spec(ecx, spec_id);
-            return;
-        }
-        let chain_builds = &self.core.config.chain_builds;
-        if chain_builds.is_empty() {
-            return;
-        }
-        let run_spec = *self.run_spec.get_or_insert_with(|| ecx.cfg().spec());
-        let profiled = match target {
-            Some(target) => !ecx.db().is_persistent(&target),
-            None => ecx.journal().depth() > 0,
-        };
-        let spec = match ecx.db().active_fork_url().and_then(|rpc| chain_builds.get(&rpc)) {
-            Some(build) if profiled => {
-                let mut evm_env = ecx.evm_clone();
-                resolve_execution_spec(
-                    build.evm_version,
-                    build.hardfork,
-                    &mut evm_env,
-                    ExecutionSpecContext::fork(ecx.cfg().chain_id(), None),
-                    None,
-                );
-                evm_env.cfg_env.spec
-            }
-            _ => run_spec,
-        };
-        EvmFactoryFor::<FEN>::set_execution_spec(ecx, spec);
-    }
-
     /// Handles a call, accounting for whether the executor will isolate it as a transaction.
     ///
     /// If `isolate_call` is true, the executor owns the transaction nonce increment when the call
@@ -1302,7 +1242,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         executor: &mut dyn CheatcodesExecutor<FEN>,
         isolate_call: bool,
     ) -> Option<CallOutcome> {
-        self.apply_execution_spec(ecx, Some(call.bytecode_address));
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            EvmFactoryFor::<FEN>::set_execution_spec(ecx, spec_id);
+        }
 
         let mut gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journal().depth();
@@ -1530,6 +1473,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
                 && call.transfer_from() == broadcast.original_caller
             {
+                // Delegatecalls and callcodes run in the caller's context and cannot be
+                // represented as a transaction from the broadcaster.
+                if matches!(call.scheme, CallScheme::DelegateCall | CallScheme::CallCode) {
+                    let msg = "`delegatecall`s and `callcode`s cannot be broadcast; use a regular `call` instead";
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(msg),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
+                    });
+                }
+
                 // Reset deploy from code flag for upcoming calls.
                 broadcast.deploy_from_code = false;
 
@@ -1966,68 +1926,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     #[inline(always)]
     fn has_active_env_overrides(&self) -> bool {
         self.env_overrides.is_any_set()
-    }
-
-    /// Returns the broadcaster, salt and CREATE2 libraries to deploy before the first broadcast
-    /// to `rpc`: those of the endpoint's profile build, or the run's libraries, which the runner
-    /// already deploys on the `--rpc-url` endpoint.
-    pub fn take_chain_libraries(
-        &mut self,
-        rpc: &str,
-        depth: usize,
-        caller: Address,
-    ) -> Option<ChainLibraries> {
-        let config = &self.core.config;
-        let broadcast = self.broadcast.as_ref()?;
-        let depth = self.deploy_code_caller_depth(depth);
-        if depth < broadcast.depth
-            || caller != broadcast.original_caller
-            || (depth != broadcast.depth && !broadcast.deploy_from_code)
-            || self.chain_libraries_deployed.contains(rpc)
-        {
-            return None;
-        }
-        let (salt, libraries) = match config.chain_builds.get(rpc) {
-            Some(build) => (build.create2_library_salt, &build.create2_libraries),
-            None if config.evm_opts.fork_url.as_deref() != Some(rpc) => {
-                (config.create2_library_salt, &config.create2_libraries)
-            }
-            None => return None,
-        };
-        if libraries.is_empty() {
-            return None;
-        }
-        self.chain_libraries_deployed.insert(rpc.to_string());
-        Some((broadcast.new_origin, salt, libraries.clone()))
-    }
-
-    /// Records a CREATE2 library deployment by `from` as a broadcastable transaction.
-    pub fn record_library_deployment(
-        &mut self,
-        ecx: &mut FoundryContextFor<'_, FEN>,
-        from: Address,
-        create2_deployer: Address,
-        input: Bytes,
-    ) {
-        let chain_id = ecx.cfg().chain_id();
-        let rpc = ecx.db().active_fork_url();
-        let fee_token = ecx.tx().fee_token();
-        let nonce = ecx.journal().evm_state()[&from].info.nonce;
-        let mut tx_req = TransactionRequestFor::<FEN>::default()
-            .with_from(from)
-            .with_to(create2_deployer)
-            .with_input(input)
-            .with_nonce(nonce)
-            .with_chain_id(chain_id);
-        if let Some(fee_token) = fee_token {
-            tx_req.set_fee_token(fee_token);
-        }
-        self.broadcastable_transactions.push_back(BroadcastableTransaction {
-            rpc,
-            transaction: TransactionMaybeSigned::new(tx_req),
-            contract_address: None,
-        });
-        debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable library deployment");
     }
 }
 
@@ -2621,7 +2519,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         ecx: &mut FoundryContextFor<'_, FEN>,
         mut input: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        self.apply_execution_spec(ecx, None);
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            EvmFactoryFor::<FEN>::set_execution_spec(ecx, spec_id);
+        }
 
         let gas = Gas::new(input.gas_limit());
         let curr_depth = ecx.journal().depth();

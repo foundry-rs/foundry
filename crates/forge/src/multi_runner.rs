@@ -16,8 +16,7 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
-    TestFunctionKind, compile::ProfileBuild, external_compiler::external_artifact_is_test_eligible,
-    get_contract_name,
+    TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -33,7 +32,7 @@ use foundry_evm::{
         BaseCounterExample, BasicTxDetails,
         strategies::{EnumBounds, LiteralsDictionary},
     },
-    inspectors::{CheatsConfig, EdgeIndexMap, cheatcodes::ChainBuild},
+    inspectors::{CheatsConfig, EdgeIndexMap},
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
@@ -484,8 +483,6 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
 
     /// When set, run only the matching test and replay this artifact's concrete payload.
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
-    /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
-    pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -552,7 +549,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             false,
         );
         cheats_config.isolate = self.isolation;
-        cheats_config.chain_builds.clone_from(&self.chain_builds);
         let cheats_config = Arc::new(cheats_config);
         self.executor_builder
             .clone()
@@ -618,8 +614,6 @@ pub struct MultiContractRunnerBuilder {
     pub fuzz_input: Option<FuzzFailureReplayConfig>,
     /// Symbolic artifact replay mode (CLI-only, off by default).
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
-    /// Builds of the profiles named by `[rpc_endpoints]`.
-    pub profile_builds: Arc<Vec<ProfileBuild>>,
     /// Whether the configured CREATE2 deployer is available in the execution environment.
     pub create2_deployer_available: Option<bool>,
 }
@@ -656,17 +650,11 @@ impl MultiContractRunnerBuilder {
             fuzz_input: None,
             symbolic_artifact_replay: None,
             create2_deployer_available: None,
-            profile_builds: Default::default(),
         }
     }
 
     pub const fn with_create2_deployer_available(mut self, available: bool) -> Self {
         self.create2_deployer_available = Some(available);
-        self
-    }
-
-    pub fn with_profile_builds(mut self, profile_builds: Arc<Vec<ProfileBuild>>) -> Self {
-        self.profile_builds = profile_builds;
         self
     }
 
@@ -827,30 +815,6 @@ impl MultiContractRunnerBuilder {
 
         let linked_contracts = linker
             .get_linked_artifacts_cow_with_artifact_libraries(&libraries, &artifact_libraries)?;
-
-        // Profile builds use the run's libraries, which are persistent on forks, except those
-        // configured by the profile.
-        let profile_builds = self
-            .profile_builds
-            .iter()
-            .map(|build| {
-                let contracts =
-                    build.output.artifact_ids().map(|(id, v)| (artifact_id(id), v)).collect();
-                let mut build_libraries = libraries.clone();
-                for (file, libs) in build.config.libraries_with_remappings()?.libs {
-                    build_libraries.libs.entry(file).or_default().extend(libs);
-                }
-                let artifacts = ContractsByArtifactBuilder::new(
-                    Linker::new(root, contracts)
-                        .get_linked_artifacts(&build_libraries)?
-                        .iter()
-                        .map(|(id, artifact)| (id.clone(), artifact.into())),
-                )
-                .build();
-                Ok(ChainBuild::new(build, artifacts, Vec::new()))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let chain_builds = ChainBuild::by_endpoint(&self.config, profile_builds)?;
         let inline_config = self.inline_config;
 
         // Collect every deployable test contract: a test contract with a default constructor.
@@ -984,7 +948,6 @@ impl MultiContractRunnerBuilder {
                 fuzz_failure_replay: self.fuzz_failure_replay,
                 fuzz_input: self.fuzz_input,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,
-                chain_builds,
                 config: self.config,
             },
 

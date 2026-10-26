@@ -95,7 +95,7 @@ alloy-provider = { workspace = true, features = [
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
-alloy-trie.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
 op-alloy-consensus = { workspace = true, features = ["serde"], optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 
@@ -153,7 +153,6 @@ alloy-pubsub.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 foundry-test-utils.workspace = true
-tokio = { workspace = true, features = ["full", "test-util"] }
 
 tempo-alloy.workspace = true
 

@@ -14,9 +14,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
-    constants::{
-        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    },
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
@@ -44,7 +42,7 @@ use revm::{
         return_ok,
     },
     primitives::KECCAK_EMPTY,
-    state::{Account, Bytecode},
+    state::Account,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -491,11 +489,9 @@ pub struct InspectorStackInner {
     /// LIFO stack used to unwind snapshot restoration across reverted frames of the tracked
     /// transaction: an isolated call, or the top-level transaction when isolation is disabled.
     isolated_frame_checkpoints: Vec<IsolatedFrameCheckpoint>,
-    /// Pending CREATE2 deployer, CREATE2 library deployment or profile build error of a create,
-    /// returned from `create` so it goes through the normal inspector lifecycle (tracing, etc.).
+    /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
+    /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
-    /// Pending CREATE2 library deployment error of a broadcast call.
-    pub pending_chain_call_error: Option<CallOutcome>,
     /// Counter for CREATE2 salt in `--batch` CREATE rewrites.
     pub batch_create_counter: u64,
     /// Whether the one-shot `--batch` rewrite warning has already been emitted.
@@ -1528,66 +1524,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheats.pending_isolated_snapshot_journal = Some(ecx.journal_inner().journal.clone());
         }
     }
-
-    /// Deploys the CREATE2 libraries of the active fork before its first broadcast.
-    fn deploy_chain_libraries(
-        &mut self,
-        ecx: &mut FoundryContextFor<'_, FEN>,
-        caller: Address,
-    ) -> Option<String> {
-        let cheats = self.cheatcodes.as_deref_mut()?;
-        let config = &cheats.core.config;
-        if cheats.broadcast.is_none()
-            || (config.chain_builds.is_empty() && config.create2_libraries.is_empty())
-        {
-            return None;
-        }
-        let depth = ecx.journal().depth();
-        let rpc = ecx.db().active_fork_url()?;
-        let (sender, salt, libraries) = cheats.take_chain_libraries(&rpc, depth, caller)?;
-        let create2_deployer = self.create2_deployer();
-        let code_hash = |ecx: &mut FoundryContextFor<'_, FEN>, address| {
-            ecx.journal_mut().load_account(address).map(|account| account.info.code_hash).map_err(
-                |err| format!("failed to load {address} for CREATE2 library deployment: {err}"),
-            )
-        };
-        // Persistent account handover can leave the deployer without code on a fork. Its
-        // presence on chain is checked before broadcasting.
-        match code_hash(ecx, create2_deployer) {
-            Ok(KECCAK_EMPTY) => ecx.journal_mut().set_code(
-                create2_deployer,
-                Bytecode::new_raw(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE.into()),
-            ),
-            Ok(_) => {}
-            Err(err) => return Some(err),
-        }
-        for (address, code) in libraries {
-            match code_hash(ecx, address) {
-                Ok(KECCAK_EMPTY) => {}
-                Ok(_) => continue,
-                Err(err) => return Some(err),
-            }
-            let input = Bytes::from([salt.as_slice(), code.as_ref()].concat());
-            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-                cheats.record_library_deployment(ecx, sender, create2_deployer, input.clone());
-            }
-            let gas_limit = ecx.block().gas_limit();
-            let (result, _, _) = self.transact_inner(
-                ecx,
-                TxKind::Call(create2_deployer),
-                sender,
-                input,
-                IsolatedGas { regular_limit: gas_limit, reservoir: 0, precharged_state: None },
-                U256::ZERO,
-            );
-            if !result.result.is_ok()
-                || !matches!(code_hash(ecx, address), Ok(hash) if hash != KECCAK_EMPTY)
-            {
-                return Some(format!("CREATE2 deployment of library {address} failed on {rpc}"));
-            }
-        }
-        None
-    }
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
@@ -1716,35 +1652,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 is_create: matches!(frame_input, FrameInput::Create(_)),
                 failed: false,
             });
-        }
-
-        // On forks of profiled endpoints, project contracts created by the script or test take
-        // the profile build's creation code.
-        if let FrameInput::Create(inputs) = frame_input
-            && ecx.journal().depth() > 0
-            && let Some(cheats) = self.cheatcodes.as_deref()
-            && !cheats.core.config.chain_builds.is_empty()
-            && cheats.should_use_profile_init_code(ecx.journal().depth(), inputs.caller())
-            && let Some(run_artifacts) = &cheats.core.config.artifact_lookup
-            && let Some(rpc) = ecx.db().active_fork_url()
-            && let Some(build) = cheats.core.config.chain_builds.get(&rpc)
-            && let Some(init_code) = build.init_code(run_artifacts, inputs.init_code())
-        {
-            match init_code {
-                Ok(init_code) => inputs.set_init_code(init_code),
-                Err(err) => {
-                    self.inner.pending_create2_error = Some(CreateOutcome {
-                        result: InterpreterResult {
-                            result: InstructionResult::Revert,
-                            output: Bytes::from(err.into_bytes()),
-                            gas: Gas::new(inputs.gas_limit()),
-                        },
-                        address: None,
-                        charged_create_state_gas: inputs.charged_create_state_gas(),
-                    });
-                    return None;
-                }
-            }
         }
 
         if let FrameInput::Create(inputs) = frame_input
@@ -1941,21 +1848,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             && !self.in_inner_context
             && (ecx.journal().depth() == 1
                 || self.inner.synthetic_create_depth == Some(ecx.journal().depth()));
-        if call.target_address != CHEATCODE_ADDRESS
-            && let Some(err) = self.deploy_chain_libraries(ecx, call.transfer_from())
-        {
-            self.inner.pending_chain_call_error = Some(CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: Bytes::from(err.into_bytes()),
-                    gas: Gas::new(call.gas_limit),
-                },
-                memory_offset: call.return_memory_offset.clone(),
-                was_precompile_called: false,
-                precompile_call_logs: vec![],
-                charged_new_account_state_gas: call.charged_new_account_state_gas,
-            });
-        }
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             apply_mocked_function(cheatcodes, ecx, call);
@@ -1983,10 +1875,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
             debug_assert_eq!(node.trace.depth, ecx.journal().depth());
             node.trace.caller = caller;
-        }
-
-        if let Some(error) = self.inner.pending_chain_call_error.take() {
-            return Some(error);
         }
 
         if let Some(output) = cheatcode_outcome {
@@ -2140,17 +2028,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         );
 
         let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        if let Some(err) = self.deploy_chain_libraries(ecx, create.caller()) {
-            self.inner.pending_create2_error = Some(CreateOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: Bytes::from(err.into_bytes()),
-                    gas: Gas::new(create.gas_limit()),
-                },
-                address: None,
-                charged_create_state_gas: create.charged_create_state_gas(),
-            });
-        }
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             cheatcode_outcome = cheatcodes.create(ecx, create);

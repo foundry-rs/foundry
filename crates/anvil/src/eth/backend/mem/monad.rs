@@ -24,7 +24,7 @@ use alloy_consensus::{
 };
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::{
-    Database, Evm, EvmEnv, EvmFactory, RecoveredTx,
+    Evm, EvmEnv, EvmFactory, RecoveredTx,
     block::{
         BalIndexedDatabase, BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB,
     },
@@ -896,18 +896,16 @@ impl<N: Network> Backend<N> {
     }
 
     /// Monad path of [`Backend::transact_call_with_inspector_ref`].
-    pub(super) fn transact_monad_with_inspector_ref<'db, I, DB>(
+    pub(super) fn transact_monad_with_inspector_ref<'db, I>(
         &self,
-        db: &'db DB,
+        db: &'db dyn DatabaseRef,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TxEnv,
         execution: PreparedExecution,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+        I: Inspector<MonadContext<WrapDatabaseRef<&'db dyn DatabaseRef>>>,
     {
         let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
