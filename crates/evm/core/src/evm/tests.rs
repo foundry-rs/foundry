@@ -9,7 +9,11 @@ use alloy_primitives::{B256, Bytes, TxKind, U256};
 use alloy_rpc_types::Transaction as RpcTransaction;
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use evm2::{EvmFeatures, SpecId, bytecode::Bytecode, evm::InMemoryDB};
+use evm2::{
+    EvmFeatures, SpecId,
+    bytecode::Bytecode,
+    evm::{InMemoryDB, State},
+};
 
 const GWEI: u128 = 1_000_000_000;
 pub(crate) const ETHER: u128 = 1_000_000_000_000_000_000;
@@ -313,12 +317,25 @@ fn spec_changes_keep_foundry_policy() {
         EvmEnv::new(SpecId::CANCUN, factory.version(SpecId::CANCUN, 31337), Default::default());
     env.set_feature(EvmFeatures::NONCE_CHECK, false);
     env.version.memory_limit = 1 << 20;
-    let mut evm = FoundryEvmFactory::create_evm(&factory, db_with(&[(caller, ETHER)], 0), env);
+    let delegated = Address::with_last_byte(0xD7);
+    let mut db = db_with(&[(caller, ETHER)], 0);
+    let mut info = AccountInfo::default().with_code(Bytecode::new_eip7702(STORE_ADDRESS));
+    db.insert_contract(&mut info);
+    db.insert_account_info(&delegated, info);
+    let mut evm = FoundryEvmFactory::create_evm(&factory, db, env);
+
+    // Like REVM, an existing delegation resolves before Prague and runs in the delegating account.
+    let request = store_request::<EthEvmNetwork>(caller, delegated, 0, 42, 31337);
+    assert!(
+        evm.transact(&EthEvmNetwork::tx_from_request(request).unwrap()).unwrap().commit().status
+    );
+    let stored = evm.state_mut().storage_slot_untracked(&delegated, &U256::ZERO).unwrap();
+    assert_eq!(stored, U256::from(42));
 
     factory.set_execution_spec(&mut evm, SpecId::PRAGUE);
 
     assert_eq!(evm.config_spec_id(), SpecId::PRAGUE);
-    assert!(evm.feature(EvmFeatures::EIP7702), "fork features follow the new spec");
+    assert!(evm.feature(EvmFeatures::EIP7623), "fork features follow the new spec");
     assert!(!evm.feature(EvmFeatures::NONCE_CHECK), "disabled checks stay disabled");
     assert!(evm.feature(EvmFeatures::BALANCE_CHECK), "untouched checks stay enabled");
     assert_eq!(evm.version().chain_id, 31337);
@@ -944,4 +961,28 @@ fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
 
     let err = crate::evm::TempoEvmNetwork::tx_from_any_rpc(&any_tx).unwrap_err();
     assert_eq!(err.to_string(), "cannot decode Tempo AA transaction: missing field `signature`");
+}
+
+/// Storage-hook warmth restoration undoes only warmth gained since the checkpoint, keeps cooling
+/// the callback did itself, and tolerates a callback that replaced the state with a shorter
+/// journal.
+#[test]
+fn restore_access_warmth_undoes_only_gained_warmth() {
+    let (warm, cold) = (Address::with_last_byte(0xA1), Address::with_last_byte(0xA2));
+    let mut state = State::new(db_with(&[(warm, ETHER), (cold, ETHER)], 0));
+    let start = state.checkpoint();
+    state.account(&warm).unwrap().warm();
+    let checkpoint = state.checkpoint();
+
+    // The callback mutates a warm account and then cools it, and warms a cold one.
+    state.account(&warm).unwrap().add_balance(U256::from(1));
+    state.set_account_warm(&warm, false);
+    state.account(&cold).unwrap().warm();
+    restore_access_warmth(&mut state, &checkpoint);
+    assert!(!state.account(&warm).unwrap().is_warm(), "cooling inside the callback is kept");
+    assert!(!state.account(&cold).unwrap().is_warm(), "callback warmth is undone");
+
+    // A state revert inside the callback leaves a journal shorter than the checkpoint.
+    state.rollback(start, EvmFeatures::default());
+    restore_access_warmth(&mut state, &checkpoint);
 }
