@@ -5478,7 +5478,7 @@ dependencies = [
 [[package]]
 name = "evm2"
 version = "0.1.0"
-source = "git+https://github.com/stevencartavia/evm2?rev=a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a#a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a"
+source = "git+https://github.com/DaniPopes/evm2?rev=f0272a3209ca8a4aa0d07aa1919c48f584df3d8b#f0272a3209ca8a4aa0d07aa1919c48f584df3d8b"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -5514,7 +5514,7 @@ dependencies = [
 [[package]]
 name = "evm2-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/stevencartavia/evm2?rev=a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a#a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a"
+source = "git+https://github.com/DaniPopes/evm2?rev=f0272a3209ca8a4aa0d07aa1919c48f584df3d8b#f0272a3209ca8a4aa0d07aa1919c48f584df3d8b"
 dependencies = [
  "alloy-consensus",
  "alloy-eip2930",
@@ -5536,7 +5536,7 @@ dependencies = [
 [[package]]
 name = "evm2-macros"
 version = "0.1.0"
-source = "git+https://github.com/stevencartavia/evm2?rev=a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a#a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a"
+source = "git+https://github.com/DaniPopes/evm2?rev=f0272a3209ca8a4aa0d07aa1919c48f584df3d8b#f0272a3209ca8a4aa0d07aa1919c48f584df3d8b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10880,19 +10880,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-ethereum-primitives"
-version = "2.7.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=1a4dbbe#1a4dbbe11264fd52e6e9fbe768aa83f9a6b73607"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-rpc-types-eth",
- "reth-codecs 0.8.2",
- "reth-primitives-traits 0.8.2",
- "serde",
-]
-
-[[package]]
 name = "reth-evm"
 version = "2.7.0"
 source = "git+https://github.com/mablr/reth?rev=168b157db3ca7a6023217a47fce5dc7babdd5001#168b157db3ca7a6023217a47fce5dc7babdd5001"
@@ -10935,7 +10922,7 @@ dependencies = [
  "evm2",
  "reth-chainspec",
  "reth-ethereum-forks",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=168b157db3ca7a6023217a47fce5dc7babdd5001)",
+ "reth-ethereum-primitives",
  "reth-evm",
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
@@ -10968,7 +10955,7 @@ dependencies = [
  "alloy-rlp",
  "derive_more",
  "evm2",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=168b157db3ca7a6023217a47fce5dc7babdd5001)",
+ "reth-ethereum-primitives",
  "reth-primitives-traits 0.8.2",
  "reth-trie-common",
  "revm",
@@ -11150,7 +11137,7 @@ dependencies = [
  "auto_impl",
  "reth-chainspec",
  "reth-db-models",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=168b157db3ca7a6023217a47fce5dc7babdd5001)",
+ "reth-ethereum-primitives",
  "reth-execution-types",
  "reth-primitives-traits 0.8.2",
  "reth-prune-types",
@@ -13531,7 +13518,7 @@ dependencies = [
  "once_cell",
  "p256 0.13.2",
  "reth-codecs 0.8.2",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/mablr/reth?rev=168b157db3ca7a6023217a47fce5dc7babdd5001)",
+ "reth-ethereum-primitives",
  "reth-primitives-traits 0.8.2",
  "serde",
  "serde_json",
@@ -13555,7 +13542,7 @@ dependencies = [
  "once_cell",
  "p256 0.13.2",
  "reth-codecs 0.8.2",
- "reth-ethereum-primitives 2.7.0 (git+https://github.com/paradigmxyz/reth?rev=1a4dbbe)",
+ "reth-ethereum-primitives",
  "reth-primitives-traits 0.8.2",
  "revm",
  "serde",
