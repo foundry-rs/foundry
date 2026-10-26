@@ -659,9 +659,15 @@ tempo-contracts = { git = "https://github.com/mablr/tempo", rev = "2c25f7cd8267b
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 
-# Trace step parity fix (OSS-1158) until it lands on `mablr/foundry-completion`. The patch also
-# applies to the Tempo and evm2-networks crates that pin the same evm2 source.
+# The single evm2 revision for the whole graph: `mablr/evm2` `mablr/foundry-completion`. Tempo,
+# reth, evm2-networks and foundry-core all pin `mablr/evm2`, and Cargo rejects a patch from the
+# same source, so this goes through `DaniPopes/evm2`, a URL in the same fork network.
 [patch."https://github.com/mablr/evm2"]
-evm2 = { git = "https://github.com/stevencartavia/evm2", rev = "a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a" }
-evm2-inspectors = { git = "https://github.com/stevencartavia/evm2", rev = "a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a" }
-evm2-macros = { git = "https://github.com/stevencartavia/evm2", rev = "a460ebc4b09ea54a30f63fcd392d7cb8dfd64f7a" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "f0272a3209ca8a4aa0d07aa1919c48f584df3d8b" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "f0272a3209ca8a4aa0d07aa1919c48f584df3d8b" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "f0272a3209ca8a4aa0d07aa1919c48f584df3d8b" }
+
+# Tempo's `2c25f7cd` crates pull `reth-ethereum-primitives` from upstream reth; use the same reth
+# as Tempo's `158118b` crates.
+[patch."https://github.com/paradigmxyz/reth"]
+reth-ethereum-primitives = { git = "https://github.com/mablr/reth", rev = "168b157db3ca7a6023217a47fce5dc7babdd5001" }
