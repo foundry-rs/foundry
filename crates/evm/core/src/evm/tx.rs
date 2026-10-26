@@ -10,10 +10,12 @@
 //! fields.
 
 use super::{ChainFor, FoundryEvmExt, FoundryEvmNetwork, TxFor};
+use alloy_chains::NamedChain;
 use alloy_consensus::{
-    BlockHeader, EthereumTxEnvelope, TxEip4844Variant, Typed2718, transaction::Recovered,
+    BlockHeader, EthereumTxEnvelope, Signed, Transaction, TxEip1559, TxEip4844Variant, Typed2718,
+    transaction::Recovered,
 };
-use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction};
+use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope};
 use alloy_primitives::Signature;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
@@ -67,21 +69,30 @@ pub fn eth_tx(envelope: EthereumTxEnvelope<TxEip4844Variant>) -> TxEnvelope {
 
 /// Returns the Ethereum envelope of a transaction fetched over RPC.
 ///
-/// Celo's CIP-64 fee-currency transactions have no evm2 representation and fail explicitly.
+/// Celo CIP-64 transactions on Celo chains execute as EIP-1559 transactions with the same fields
+/// and native fees: fee currencies are not supported by evm2.
 pub fn eth_envelope_from_any_rpc(
     tx: &AnyRpcTransaction,
     target: &str,
 ) -> eyre::Result<alloy_consensus::TxEnvelope> {
-    if let Some(envelope) = tx.as_envelope() {
-        return Ok(envelope.clone());
+    match &*tx.inner.inner {
+        AnyTxEnvelope::Ethereum(envelope) => Ok(envelope.clone()),
+        AnyTxEnvelope::Unknown(unknown)
+            if unknown.ty() == CELO_DYNAMIC_FEE_TX_TYPE
+                && matches!(
+                    unknown.chain_id().and_then(NamedChain::from_chain_id),
+                    Some(NamedChain::Celo | NamedChain::CeloSepolia)
+                ) =>
+        {
+            let mut fields = unknown.inner.fields.clone();
+            fields.insert("hash".into(), serde_json::to_value(unknown.hash)?);
+            let signed = fields
+                .deserialize_into::<Signed<TxEip1559>>()
+                .wrap_err("invalid Celo CIP-64 transaction")?;
+            Ok(signed.into())
+        }
+        _ => Err(super::unknown_transaction_type(tx, target)),
     }
-    if tx.inner.inner.ty() == CELO_DYNAMIC_FEE_TX_TYPE {
-        eyre::bail!(
-            "cannot replay Celo CIP-64 transaction {}: evm2 has no fee-currency transaction type",
-            alloy_network::TransactionResponse::tx_hash(tx)
-        );
-    }
-    Err(super::unknown_transaction_type(tx, target))
 }
 
 /// Transactions of a block and its two ancestors, for network state that depends on the block
