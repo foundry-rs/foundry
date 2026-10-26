@@ -288,6 +288,21 @@ fn fork_loaded_storage_lifetime() {
     assert!(backend.lifecycle().loaded_state(evm.state())[&STORE_ADDRESS].is_empty());
     assert!(backend.lifecycle().loaded_storage(evm.state(), &STORE_ADDRESS).is_empty());
     assert_eq!(slot(&mut evm), U256::from(123));
+
+    // A slot refreshed from the remote after a round trip keeps the refreshed value through a
+    // revert to another fork's snapshot.
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    let snapshot = backend.snapshot_state(&mut evm);
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    evm.state_mut().storage_slot(&STORE_ADDRESS, U256::ZERO).unwrap().set(U256::from(5));
+    let _ = backend.select_fork(first, &mut evm, phase).unwrap();
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    backend.refresh_fork_storage(STORE_ADDRESS, U256::ZERO, &mut evm).unwrap();
+    let _ = backend
+        .revert_state(snapshot, &mut evm, RevertStateSnapshotAction::RevertRemove, phase)
+        .unwrap();
+    let _ = backend.select_fork(second, &mut evm, phase).unwrap();
+    assert_eq!(slot(&mut evm), U256::from(123));
 }
 
 #[test]

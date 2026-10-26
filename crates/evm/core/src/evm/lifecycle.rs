@@ -40,7 +40,7 @@ use alloy_consensus::{Typed2718, transaction::Recovered};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{
     Address, KECCAK256_EMPTY, Log, U256,
-    map::{AddressMap, AddressSet, Entry, HashSet},
+    map::{AddressMap, AddressSet, Entry, HashMap, HashSet},
 };
 use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult, TxResultWithState,
@@ -278,6 +278,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     pub fn active_mut(&mut self) -> &mut Parked<F::Types> {
         let active = self.forks.active();
         self.forks.context_mut(active).expect("active context exists")
+    }
+
+    /// Records `value` as the accepted value of a slot the running transaction restored the
+    /// original of when it resumed the active context, such as after refreshing the slot from the
+    /// remote, so that a revert leaving the context keeps it.
+    pub fn refresh_switched_slot(&mut self, address: &Address, slot: U256, value: U256) {
+        if let Some(switched) = self.active_mut().switched.get_mut(address)
+            && let Some(accepted) = switched.get_mut(&slot)
+        {
+            *accepted = value;
+        }
     }
 
     /// Returns the active context's accepted state for modification between executions,
@@ -562,8 +573,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.tx_prewarm = None;
         self.tx_original.clear();
         self.forks.local.warm.clear();
+        self.forks.local.originals.clear();
+        self.forks.local.switched.clear();
         for entry in self.forks.forks.values_mut() {
             entry.context.warm.clear();
+            entry.context.originals.clear();
+            entry.context.switched.clear();
         }
         if let Some(mut env) = self.pending_env.take() {
             env.block = *evm.block();
@@ -630,7 +645,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             let state = evm.state_mut();
             let logs = mem::take(state.logs_mut());
             state.clear_transaction_state();
-            let cache = mem::take(&mut state.overlay_db_mut().cache);
+            let mut cache = mem::take(&mut state.overlay_db_mut().cache);
+            // Values accepted at the switch into the context stay accepted, as before their
+            // originals were restored.
+            for (address, slots) in mem::take(&mut self.active_mut().switched) {
+                cache.storage.entry(address).or_default().slots.extend(slots);
+            }
             self.active_mut().cache = Some(Arc::new(cache));
             (Some(replaced), logs)
         };
@@ -905,6 +925,15 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             if state.account(&address).is_ok_and(|account| account.is_created()) {
                 context.created.insert(address);
             }
+            // Committing the running transaction below makes the slots' current values their
+            // originals, so record the transaction-start ones SSTORE gas and refunds depend on.
+            for key in &slots {
+                if let Ok(slot) = state.storage_slot(&address, *key)
+                    && slot.original() != slot.current()
+                {
+                    context.originals.entry(address).or_default().insert(*key, slot.original());
+                }
+            }
             context.loaded.entry(address).or_default().extend(slots);
         }
         // The context keeps the warmth it resumed with, which the running state holds in its
@@ -922,11 +951,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let ext = evm.ext().clone();
         let context = self.active_mut();
         context.cache = Some(Arc::new(cache.clone()));
+        context.switched.clear();
         context.ext = StoredExt::new(&ext);
         Suspended {
             cache,
             loaded: context.loaded.clone(),
             created: context.created.clone(),
+            originals: context.originals.clone(),
             logs,
             prewarm,
             warm,
@@ -947,6 +978,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             cache: source,
             loaded: source_loaded,
             created: source_created,
+            originals: source_originals,
             logs,
             mut prewarm,
             warm: source_warm,
@@ -996,6 +1028,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             prewarm.warm_storage(address, slots.iter().copied());
         }
         self.active_mut().warm = warm;
+        // Persistent and carried accounts keep the originals they suspended with, other accounts
+        // the ones of their previous visit to this context. Records this context kept for
+        // persistent accounts can predate the running transaction's baseline, such as that of an
+        // isolated call, so the suspended context's records replace them.
+        let mut originals = mem::take(&mut self.active_mut().originals);
+        originals.retain(|address, _| !persistent.contains(address));
+        for (address, slots) in source_originals {
+            if persistent.contains(&address) || (carry && created.contains(&address)) {
+                originals.entry(address).or_default().extend(slots);
+            }
+        }
 
         let mut state = State::new(db.clone_backing());
         state.overlay_db_mut().cache = cache;
@@ -1014,6 +1057,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if fresh {
             factory.initialize_evm(evm, db.is_forked_mode());
         }
+        // After the network initialization, which can commit the overlay.
+        self.active_mut().switched = restore_originals(evm.state_mut(), &originals);
         // The new transaction overlay does not know which accounts the transaction created, which
         // EIP-6780 `SELFDESTRUCT` depends on. Its database already holds their storage.
         for address in &created {
@@ -1132,6 +1177,8 @@ struct Suspended {
     loaded: AddressMap<HashSet<U256>>,
     /// Accounts created in the suspended context.
     created: AddressSet,
+    /// Transaction-start values of the slots changed in the suspended context.
+    originals: AddressMap<HashMap<U256, U256>>,
     /// Logs of the running transaction.
     logs: Vec<Log>,
     /// Base warmth of the running transaction, such as its access list, without warmth carried
@@ -1214,7 +1261,7 @@ pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
             state.set_storage_warm(&address, key, true);
         }
     }
-    merge_changes(state, pending.account_changes(), |_| true, true)
+    merge_changes(state, pending.account_changes(), |_| true, true, None)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
@@ -1292,6 +1339,34 @@ pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
         warm.insert(address, slots);
     }
     warm
+}
+
+/// Turns the accepted values of the slots of `originals` in the fresh `state` back into pending
+/// writes of the running transaction over their transaction-start values.
+///
+/// The accepted state takes the transaction-start values as well, since committing the
+/// transaction only writes slots whose values differ from their originals. Returns the replaced
+/// accepted values.
+fn restore_originals(
+    state: &mut State<'_>,
+    originals: &AddressMap<HashMap<U256, U256>>,
+) -> AddressMap<HashMap<U256, U256>> {
+    let mut pending = PendingState::default();
+    let mut switched = AddressMap::<HashMap<_, _>>::default();
+    for (address, slots) in originals {
+        let Ok(info) = state.account_info_untracked(address) else { continue };
+        pending.insert_account(*address, info.clone(), info);
+        for (key, original) in slots {
+            if let Ok(current) = state.storage_slot_untracked(address, key) {
+                pending.insert_storage(*address, *key, *original, current);
+                switched.entry(*address).or_default().insert(*key, current);
+                let cache = &mut state.overlay_db_mut().cache;
+                cache.storage.entry(*address).or_default().slots.insert(*key, *original);
+            }
+        }
+    }
+    state.set_pending_state(pending);
+    switched
 }
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
