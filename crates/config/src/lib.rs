@@ -7676,6 +7676,31 @@ mod tests {
     }
 
     #[test]
+    fn test_inheritance_from_profile_name_hints_at_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 200
+
+                    [profile.ci]
+                    extends = "default"
+                    "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            let err_msg = Config::load().unwrap_err().to_string();
+            assert!(
+                err_msg.contains("every profile already inherits from `[profile.default]`"),
+                "Error message: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_complex_inheritance_merging() {
         figment::Jail::expect_with(|jail| {
             // Create a comprehensive base config
