@@ -245,6 +245,7 @@ fn make_acc_non_empty<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> Result {
     let mut account = ccx.evm.state_mut().account(callee)?;
+    account.warm();
     if account.load_code()?.is_empty() {
         account.set_code_slow(Bytecode::new_raw(Bytes::from_static(&[0u8])));
     }

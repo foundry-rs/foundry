@@ -123,7 +123,11 @@ fn sign_delegation<FEN: FoundryEvmNetwork>(
     let nonce = if let Some(nonce) = nonce {
         nonce
     } else {
-        let account_nonce = ccx.evm.state_mut().account(&signer.address())?.nonce();
+        let account_nonce = {
+            let mut account = ccx.evm.state_mut().account(&signer.address())?;
+            account.warm();
+            account.nonce()
+        };
         // Calculate next nonce considering existing active delegations
         next_delegation_nonce(
             &ccx.state.active_delegations,
@@ -191,7 +195,11 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
          see EIP-7702: https://eips.ethereum.org/EIPS/eip-7702"
     );
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
-    let account_nonce = ccx.evm.state_mut().account(&authority)?.nonce();
+    let account_nonce = {
+        let mut account = ccx.evm.state_mut().account(&authority)?;
+        account.warm();
+        account.nonce()
+    };
 
     let expected_nonce = next_delegation_nonce(
         &ccx.state.active_delegations,

@@ -43,10 +43,10 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet, Entry, HashMap, HashSet},
 };
 use evm2::{
-    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
+    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult, TxResultWithState,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, JournalEntry,
+        AccountChanges, AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB, JournalEntry,
         PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
     },
 };
@@ -156,17 +156,21 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         }
         let executed = executor.transact(&tx).map_err(transaction_error)?;
         let Some((id, persistent)) = inactive else {
-            merge_changes(evm.state_mut(), executed.account_changes(), |_| true, untracked)?;
+            merge_changes(evm.state_mut(), executed.account_changes(), |_| true, untracked, None)?;
             let result = executed.result().clone();
             return Ok(ExecutedNested { result, context: None, cursor });
         };
+        // The inactive context's code is not in the running transaction's database.
+        let TxResultWithState { result, pending_state, .. } = executed.detach();
+        let source = executor.state_mut().overlay_db_mut();
         merge_changes(
             evm.state_mut(),
-            executed.account_changes(),
+            pending_state.account_changes(),
             |address| persistent.contains(address),
             false,
+            Some(source),
         )?;
-        let result = executed.commit();
+        source.commit_pending(&pending_state);
         rebase_loaded_accounts(evm.state_mut(), executor.state_mut(), &persistent)?;
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
@@ -1204,22 +1208,55 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true, false)
+    merge_changes(state, executed.account_changes(), |_| true, false, None)
 }
 
 /// Applies a nested transaction's changes to the running transaction's `state` so that they survive
-/// reverts of the enclosing calls, such as for `executeTransaction`.
+/// reverts of the enclosing calls, such as for `broadcastRawTransaction`.
 pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true, true)
+    merge_changes(state, executed.account_changes(), |_| true, true, None)
+}
+
+/// Applies the changes of a nested transaction that `child` ran and detached into `pending` to the
+/// running transaction's `state` like [`merge_untracked_nested_changes`], and also warms the
+/// accounts and slots the nested transaction left warm, such as for `executeTransaction`.
+///
+/// Accounts the running transaction had already loaded keep their warmth, and accesses the nested
+/// transaction reverted stay cold. Like the merged changes, the warmth survives reverts of the
+/// enclosing calls.
+pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
+    state: &mut State<'_>,
+    child: &mut Evm<'_, T>,
+    pending: PendingState,
+) -> DbResult<()> {
+    // The detached accounts keep their warmth, which reattaching them to `child` exposes.
+    let child = child.state_mut();
+    child.set_pending_state(pending.clone());
+    let warm = warm_accounts(child);
+    child.clear_transaction_state();
+    // Warm before merging, so that the merge journals the warmth as the accounts' previous one and
+    // reverts of the enclosing calls restore it.
+    let loaded = state.loaded_accounts().map(|(address, _)| *address).collect::<AddressSet>();
+    for (address, slots) in warm {
+        state.account(&address)?;
+        if !loaded.contains(&address) {
+            state.set_account_warm(&address, true);
+        }
+        for key in slots {
+            state.storage_slot(&address, key)?;
+            state.set_storage_warm(&address, key, true);
+        }
+    }
+    merge_changes(state, pending.account_changes(), |_| true, true, None)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
 /// transaction's `state` as journaled writes, like [`merge_nested_changes`].
 pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
-    merge_changes(state, pending.account_changes(), |_| true, false)
+    merge_changes(state, pending.account_changes(), |_| true, false, None)
 }
 
 /// Returns the warmth of the running transaction in `state`: its base warm set and the accounts and
@@ -1274,7 +1311,7 @@ pub fn restore_access_warmth(state: &mut State<'_>, checkpoint: &StateCheckpoint
 
 /// Returns the accounts the running transaction in `state` loaded and that are warm, with their
 /// warm slots.
-fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
+pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
     let loaded = state
         .loaded_accounts()
         .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
@@ -1323,11 +1360,16 @@ fn restore_originals(
 
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
 /// journaled writes, or so that they survive reverts of the enclosing calls if `untracked`.
+///
+/// Changes only carry changed code, so the code of an account whose code hash differs from
+/// `state`'s is read from `source`, the nested transaction's database. Without one, the nested
+/// transaction ran over a copy of `state`, where an unchanged code hash is already `state`'s.
 fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
     filter: impl Fn(&Address) -> bool,
     untracked: bool,
+    mut source: Option<&mut CacheDB<Box<dyn DynDatabase + '_>>>,
 ) -> DbResult<()> {
     for change in changes.filter(|change| change.is_changed()) {
         let address = change.address;
@@ -1342,8 +1384,13 @@ fn merge_changes<'c>(
                 account.mark_created();
             }
         }
-        // Changes only carry non-empty code, so a different hash means cleared code.
-        let code = || Ok(change.code.map(|(_, code)| code.clone()).unwrap_or_default());
+        let code = || match (change.code, change.current, source.as_deref_mut()) {
+            (Some((_, code)), ..) => Ok(code.clone()),
+            (None, Some(info), Some(source)) if !info.is_empty_code_hash() => {
+                source.get_code_by_hash(&info.code_hash)
+            }
+            _ => Ok(Bytecode::default()),
+        };
         let wiped = change.current.is_none() || change.storage.wiped;
         let slots = change.storage.changed_slots().map(|(key, slot)| (*key, slot.current));
         apply_account(state, address, change.current, code, wiped, slots, untracked)?;

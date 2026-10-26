@@ -1,6 +1,8 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{
+    Cheatcode, CheatcodesCore, CheatcodesExecutor, CheatsCtxt, Result, Vm::*, evm::touch_account,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
 use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
@@ -257,10 +259,17 @@ impl Cheatcode for copyStorageCall {
 
         let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), from);
         let state = ccx.evm.state_mut();
-        state.account(to)?.touch();
+        state.account(from)?.warm();
+        touch_account(state, *to)?;
         for slot in slots {
             let value = state.storage_slot_untracked(from, &slot)?;
-            state.storage_slot(to, slot)?.set(value);
+            // The copied slot keeps the source slot's warmth.
+            let is_warm = state.storage(from)?.is_warm(&slot);
+            let mut copied = state.storage_slot(to, slot)?;
+            if is_warm {
+                copied.warm();
+            }
+            copied.set(value);
         }
         if let Some(arbitrary_storage) = &mut ccx.state.core.arbitrary_storage {
             arbitrary_storage.mark_copy(from, to);
