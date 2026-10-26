@@ -1134,8 +1134,6 @@ pub struct Backend<N: Network> {
     fees: FeeManager,
     /// Initialised genesis.
     genesis: GenesisConfig,
-    /// Next-block fees seeded for the local genesis block's child, restored on rollback to it.
-    genesis_fees: Arc<RwLock<FeeSnapshot>>,
     /// Listeners for new blocks that get notified when a new block was imported or when logs were
     /// removed from the canonical chain due to a reorg.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
@@ -1186,7 +1184,6 @@ impl<N: Network> Clone for Backend<N> {
             cheats: self.cheats.clone(),
             fees: self.fees.clone(),
             genesis: self.genesis.clone(),
-            genesis_fees: self.genesis_fees.clone(),
             new_block_listeners: self.new_block_listeners.clone(),
             active_state_snapshots: self.active_state_snapshots.clone(),
             enable_steps_tracing: self.enable_steps_tracing,
@@ -2026,19 +2023,29 @@ impl<N: Network> Backend<N> {
     /// Returns the base fee and blob excess gas that the child of `parent` inherits.
     ///
     /// Derives the zero-base-fee sentinel from `parent` rather than the live fee state. A local
-    /// genesis block returns the fees seeded at startup or reset, which its header may not record.
+    /// genesis header may not record the fees seeded for its child, so those come from the mined
+    /// child, or from the live fee state when no child has been mined yet.
     pub(crate) fn next_block_fees_after(
         &self,
         parent: &impl BlockHeader,
     ) -> (u64, BlobExcessGasAndPrice) {
+        let blob_params = self.fees.blob_params();
+        let update_fraction = blob_params.update_fraction as u64;
         if !self.is_fork() && parent.number() == self.genesis_number() {
-            let fees = *self.genesis_fees.read();
-            return (fees.base_fee, fees.blob_excess_gas_and_price);
+            let Some(child) = self.get_block(parent.number() + 1) else {
+                let fees = self.fees.snapshot();
+                return (fees.base_fee, fees.blob_excess_gas_and_price);
+            };
+            return (
+                child.header.base_fee_per_gas().unwrap_or_default(),
+                BlobExcessGasAndPrice::new(
+                    child.header.excess_blob_gas().unwrap_or_default(),
+                    update_fraction,
+                ),
+            );
         }
         let base_fee = parent.base_fee_per_gas().unwrap_or_default();
         let excess_blob_gas = parent.excess_blob_gas().unwrap_or_default();
-        let blob_params = self.fees.blob_params();
-        let update_fraction = blob_params.update_fraction as u64;
         let next_base_fee = if base_fee == 0 {
             0
         } else {
@@ -4708,7 +4715,6 @@ impl<N: Network> Backend<N> {
             time: TimeManager::new(start_timestamp),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
-            genesis_fees: Arc::new(RwLock::new(fees.snapshot())),
             fees,
             genesis,
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
@@ -5544,7 +5550,6 @@ impl<N: Network> Backend<N> {
         *live_config = node_config;
         *live_db = db;
         self.fees.replace_from(&fees);
-        *self.genesis_fees.write() = fees.snapshot();
         *self.evm_env.write() = evm_env;
         *self.hardfork.write() = hardfork;
         *self.fork.write() = None;
@@ -7725,6 +7730,8 @@ where
 
         // Acquire the only awaited mutation lock before publishing any part of the rewind.
         let mut db = self.db.write().await;
+        // Read the next-block fees while the retained block's child is still canonical.
+        let (next_base_fee, next_blob_fees) = self.next_block_fees_after(&common_block.header);
         {
             // Collect the logs of the blocks that are about to be removed from the canonical
             // chain, while their transactions and receipts are still in storage
@@ -7761,7 +7768,6 @@ where
                     self.fees.blob_params().update_fraction as u64,
                 )
             });
-            let (next_base_fee, next_blob_fees) = self.next_block_fees_after(&common_block.header);
             self.fees.set_next_block_fees(next_base_fee, next_blob_fees);
 
             self.time.reset(env.block_env.timestamp.saturating_to());

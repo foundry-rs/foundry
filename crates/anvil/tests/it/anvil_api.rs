@@ -1801,15 +1801,24 @@ async fn test_rollback_to_genesis_restores_initial_fees() {
             .with_base_fee(Some(0)),
     )
     .await;
+    zero_api.mine_one().await.unwrap();
     // The reset genesis header keeps the live 123 wei, but block 1 starts at the default fee.
     let (reset_api, reset_handle) = spawn(NodeConfig::test()).await;
     reset_api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.unwrap();
     reset_api.anvil_reset(None).await.unwrap();
+    reset_api.mine_one().await.unwrap();
+    // The loaded chain was seeded with a zero base fee, unlike the default destination node.
+    let (source_api, _source_handle) = spawn(NodeConfig::test().with_base_fee(Some(0))).await;
+    source_api.mine_one().await.unwrap();
+    let dump = source_api.anvil_dump_state(Some(true)).await.unwrap();
+    let (load_api, load_handle) = spawn(NodeConfig::test()).await;
+    load_api.anvil_load_state(dump).await.unwrap();
 
-    for (api, handle, expected) in
-        [(zero_api, zero_handle, 0), (reset_api, reset_handle, INITIAL_BASE_FEE)]
-    {
-        api.mine_one().await.unwrap();
+    for (api, handle, expected) in [
+        (zero_api, zero_handle, 0),
+        (reset_api, reset_handle, INITIAL_BASE_FEE),
+        (load_api, load_handle, 0),
+    ] {
         api.anvil_rollback(Some(1)).await.unwrap();
         api.mine_one().await.unwrap();
         let block1 = handle.http_provider().get_block(1.into()).await.unwrap().unwrap();
