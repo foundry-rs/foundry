@@ -39,7 +39,7 @@ use crate::{
     },
 };
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, Typed2718, transaction::Recovered};
+use alloy_consensus::{BlockHeader, Transaction as _, Typed2718, transaction::Recovered};
 use alloy_eips::BlockNumHash;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, TransactionResponse};
@@ -51,7 +51,7 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, StateSnapshot,
+        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, State, StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
 };
@@ -379,6 +379,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// transaction executed on an EVM that was not freshly created.
     pub fn begin_transaction(&mut self, evm: &mut FoundryEvmFor<'_, FEN>) {
         self.lifecycle.begin_transaction(evm);
+    }
+
+    /// Removes `address` from the running transaction's base warmth, see
+    /// [`ExecutionLifecycle::remove_prewarm`].
+    pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
+        self.lifecycle.remove_prewarm(state, address);
     }
 
     /// Executes `tx` over the active context with `inspector` and discards its state.
@@ -950,6 +956,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             prepared.set_cursor(id, position, cursor);
         }
 
+        prepared.set_access_list(target.transaction.access_list().cloned());
         let mut backend = CowBackend::new_borrowed(self);
         if !active {
             // The prepared transaction already runs over the target fork's state.
