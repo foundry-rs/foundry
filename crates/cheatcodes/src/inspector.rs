@@ -783,6 +783,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// transaction instead.
     pub root_call_target: Option<Address>,
 
+    /// The EIP-3651 coinbase and access-list addresses the running transaction warmed when it
+    /// started, which `vm.cool` keeps warm.
+    ///
+    /// While an isolated call or create runs as a nested transaction, these are that
+    /// transaction's instead.
+    pub tx_warm_addresses: Vec<Address>,
+
     /// Prank information, mapped to the call depth where pranks were added.
     pub pranks: BTreeMap<usize, Prank>,
 
@@ -965,6 +972,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             state_epoch: Default::default(),
             snapshot_restores: Default::default(),
             root_call_target: Default::default(),
+            tx_warm_addresses: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
             assume_no_revert: Default::default(),
