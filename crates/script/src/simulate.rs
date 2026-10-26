@@ -1,6 +1,7 @@
 use super::{
     multi_sequence::MultiChainSequence,
     providers::{ProviderInfo, ProvidersManager},
+    recovery::RecoveryStore,
     runner::ScriptRunner,
     sequence::ScriptSequenceKind,
     transaction::ScriptTransactionBuilder,
@@ -744,20 +745,34 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         }
 
         let sequence = if sequences.len() == 1 {
+            let sequence = sequences.pop().expect("empty sequences");
+            if self.args.start_fresh {
+                RecoveryStore::<FEN::Network>::archive_unfinished(
+                    sequence.paths.as_ref().expect("sequence paths not set"),
+                    false,
+                )?;
+            }
             ScriptSequenceKind::new_single(
-                sequences.pop().expect("empty sequences"),
+                sequence,
                 self.args.batch,
                 self.script_config.tempo.sponsor,
             )?
         } else {
+            let sequence = MultiChainSequence::new(
+                sequences,
+                &self.args.sig,
+                &self.build_data.build_data.target,
+                &self.script_config.config,
+                !self.args.broadcast,
+            )?;
+            if self.args.start_fresh {
+                RecoveryStore::<FEN::Network>::archive_unfinished(
+                    &(sequence.path.clone(), sequence.sensitive_path.clone()),
+                    true,
+                )?;
+            }
             ScriptSequenceKind::new_multi(
-                MultiChainSequence::new(
-                    sequences,
-                    &self.args.sig,
-                    &self.build_data.build_data.target,
-                    &self.script_config.config,
-                    !self.args.broadcast,
-                )?,
+                sequence,
                 self.args.batch,
                 self.script_config.tempo.sponsor,
             )?

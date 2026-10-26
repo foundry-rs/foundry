@@ -140,6 +140,24 @@ async fn resume_multi_chain_does_not_replay_completed_chain(prj: _, cmd: _) {
     let completed_receipts = deployments[0]["receipts"].clone();
 
     reject_chain2.store(false, Ordering::SeqCst);
+
+    // A new broadcast refuses to replace the unfinished one, so the completed chain is not
+    // redeployed.
+    tester.clear();
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
+        .args(&[&rpc1, &rpc2])
+        .arg("--broadcast");
+    tester.cmd.assert_failure().stderr_eq(str![[r#"
+Warning: Multi chain deployment is still under development. Use with caution.
+Error: the previous broadcast `[..]/broadcast/multi/[..]-latest/deploy.json` has unfinished operations; finish it with `--multi --resume`, or pass `--start-fresh` to archive it and broadcast anew
+
+"#]]);
+    assert_eq!(chain1_submissions.lock().unwrap().len(), 2);
+    assert!(chain2_submissions.lock().unwrap().is_empty());
+
     tester.clear();
     tester
         .load_private_keys(&[0, 1])
