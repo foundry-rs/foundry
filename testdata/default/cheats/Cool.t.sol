@@ -101,6 +101,31 @@ contract CoolPersistenceTest is Test {
         assertEq(cooledSize, size);
         assertGe(gasUsed, 2600);
     }
+
+    function balanceGas(address target) internal view returns (uint256 gasUsed) {
+        assembly {
+            let start := gas()
+            let targetBalance := balance(target)
+            gasUsed := sub(start, gas())
+            // Keeps the `BALANCE` from being optimized out.
+            if eq(targetBalance, 0xdeadbeef) { revert(0, 0) }
+        }
+    }
+
+    // The test contract is the transaction recipient, which is warm from the transaction start.
+    function testCool_recipient() public {
+        vm.cool(address(this));
+        assertGe(balanceGas(address(this)), 2600);
+        assertLt(balanceGas(address(this)), 2600);
+    }
+
+    // Precompiles and the coinbase stay warm for the whole transaction (EIP-2929, EIP-3651).
+    function testCool_keepsPrecompileAndCoinbaseWarm() public {
+        vm.cool(address(1));
+        vm.cool(block.coinbase);
+        assertLt(balanceGas(address(1)), 2600);
+        assertLt(balanceGas(block.coinbase), 2600);
+    }
 }
 
 /// forge-config: default.isolate = true

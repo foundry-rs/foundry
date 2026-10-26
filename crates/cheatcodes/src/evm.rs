@@ -910,7 +910,22 @@ impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
         let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), target);
+        // Like REVM's `WarmAddresses`, precompiles, the coinbase and access-list entries stay
+        // warm. The rest of the transaction-base warmth, such as the recipient, is cooled.
+        let keep = ccx.is_precompile(target)
+            || (ccx.evm.feature(EvmFeatures::EIP3651) && ccx.evm.block().beneficiary == *target)
+            || ccx
+                .state
+                .core
+                .access_list
+                .as_ref()
+                .is_some_and(|list| list.iter().any(|item| item.address == *target));
         let state = ccx.evm.state_mut();
+        if !keep && state.prewarm_set().is_warm(target) {
+            let mut prewarm = state.prewarm_set().clone();
+            prewarm.remove(target);
+            state.set_prewarm_set(prewarm);
+        }
         state.set_account_warm(target, false);
         for slot in slots {
             state.set_storage_warm(target, slot, false);
