@@ -7231,6 +7231,60 @@ async fn tempo_consensus_fork_rollback_reorg_and_reset() {
     assert_tempo_certificate(&identity, &remined);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_rollback_rejects_invalid_root() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.mine_one().await.unwrap();
+    let root = source.http_provider().get_block(1.into()).await.unwrap().unwrap();
+    let mut invalid_root = serde_json::to_value(root).unwrap();
+    invalid_root["timestampMillisPart"] = serde_json::json!("0x1");
+    let (url, calls) =
+        spawn_rpc_proxy_canned_method(source.http_endpoint(), "eth_getBlockByHash", invalid_root)
+            .await;
+    let (api, handle) =
+        spawn(config.with_eth_rpc_url(Some(url)).with_fork_block_number(Some(1u64))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let pending = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::repeat_byte(0x42))
+                .gas_limit(1_000_000),
+        ))
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    assert!(pending.get_receipt().await.unwrap().status());
+    let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let consensus: serde_json::Value =
+        provider.client().request("consensus_getLatest", ()).await.unwrap();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+
+    let error = provider
+        .client()
+        .request::<_, serde_json::Value>("anvil_rollback", (1,))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+        serde_json::json!({
+            "code": -32603,
+            "message": "Fork root header does not match its pinned hash",
+            "data": null,
+        }),
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(provider.get_block(BlockId::latest()).await.unwrap().unwrap(), head);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert_eq!(
+        provider.client().request::<_, serde_json::Value>("consensus_getLatest", ()).await.unwrap(),
+        consensus,
+    );
+}
+
 async fn assert_tempo_missing(provider: &RetryProvider, query: serde_json::Value, data: &str) {
     let error = provider
         .client()
