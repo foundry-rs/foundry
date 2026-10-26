@@ -502,11 +502,11 @@ serde_json = { version = "1.0", features = ["arbitrary_precision", "unbounded_de
 shlex = "2"
 similar-asserts = "2.0"
 smolgen = { version = "0.1.1", features = ["build", "gitcl"] }
-soldb-core = "0.4.3"
-soldb-debugger = "0.4.3"
-soldb-ethdebug = "0.4.3"
-soldb-repl = "0.4.3"
-soldb-tui = "0.4.3"
+soldb-core = "0.4.4"
+soldb-debugger = "0.4.4"
+soldb-ethdebug = "0.4.4"
+soldb-repl = "0.4.4"
+soldb-tui = "0.4.4"
 soldeer-commands = "=0.12.1"
 soldeer-core = { version = "=0.12.1", features = ["serde"] }
 strum = "0.28"
@@ -605,12 +605,12 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbaf
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
 
 ## soldb
-# Frame code hashes (walnuthq/soldb#215) on top of v0.4.3, until a release has them.
-soldb-core = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
-soldb-debugger = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
-soldb-ethdebug = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
-soldb-repl = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
-soldb-tui = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
+# v0.4.4 plus walnuthq/soldb#217 (profiler code hashes), until a release has it.
+soldb-core = { git = "https://github.com/figtracer/soldb", rev = "d983b879c19a23fe65a37a60bfc583488b8a222d" }
+soldb-debugger = { git = "https://github.com/figtracer/soldb", rev = "d983b879c19a23fe65a37a60bfc583488b8a222d" }
+soldb-ethdebug = { git = "https://github.com/figtracer/soldb", rev = "d983b879c19a23fe65a37a60bfc583488b8a222d" }
+soldb-repl = { git = "https://github.com/figtracer/soldb", rev = "d983b879c19a23fe65a37a60bfc583488b8a222d" }
+soldb-tui = { git = "https://github.com/figtracer/soldb", rev = "d983b879c19a23fe65a37a60bfc583488b8a222d" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
