@@ -2168,7 +2168,7 @@ mod tests {
         let snapshot = system_tx(0, 0, keccak256("syscallSnapshot()")[..4].to_vec());
         let gas_paying = system_tx(1, 100_000, keccak256("syscallSnapshot()")[..4].to_vec());
         let epoch_change = system_tx(
-            1,
+            2,
             0,
             [&keccak256("syscallOnEpochChange(uint64)")[..4], &B256::with_last_byte(1)[..]]
                 .concat(),
@@ -2182,20 +2182,21 @@ mod tests {
         let env = *executor.evm_env();
         let context = || Some(BlockContext::new(Vec::new(), Vec::new(), Vec::new()));
 
-        // The canonical prefix syscall replays, and the canonical target replays at the prefix's
-        // nonce.
+        // The canonical prefix syscall replays as a protocol call, the gas-paying system envelope
+        // the caller selected runs as an ordinary transaction, and the canonical target replays
+        // at the prefix's nonce.
         let result = executor
             .transact_with_block_replay(
                 env,
                 &epoch_change,
                 TxKind::Call(STAKING),
-                &[(B256::repeat_byte(1), snapshot)],
+                &[(B256::repeat_byte(1), snapshot), (B256::repeat_byte(2), gas_paying.clone())],
                 context(),
             )
             .unwrap();
         assert!(!result.reverted);
         assert_eq!(result.gas_used, 0);
-        assert_eq!(executor.get_nonce(system).unwrap(), 2);
+        assert_eq!(executor.get_nonce(system).unwrap(), 3);
         assert_eq!(executor.get_balance(system).unwrap(), U256::ZERO);
         assert_eq!(executor.get_balance(STAKING).unwrap(), U256::ONE);
         let epoch = U256::from(1) << 192;
@@ -2204,7 +2205,7 @@ mod tests {
 
         // Reusing the accepted backend must not retain permission to replay protocol envelopes.
         let mut evm = executor.backend().create_evm();
-        let next_snapshot = system_tx(2, 0, keccak256("syscallSnapshot()")[..4].to_vec());
+        let next_snapshot = system_tx(3, 0, keccak256("syscallSnapshot()")[..4].to_vec());
         assert!(matches!(
             evm.transact(&next_snapshot),
             Err(evm2::registry::HandlerError::IntrinsicGasTooLow { .. })
@@ -2218,7 +2219,7 @@ mod tests {
             error.root_cause().to_string(),
             "invalid Monad protocol system transaction: gas limit must be zero, got 100000"
         );
-        assert_eq!(executor.get_nonce(system).unwrap(), 2);
+        assert_eq!(executor.get_nonce(system).unwrap(), 3);
     }
 
     #[test]
