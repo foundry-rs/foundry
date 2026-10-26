@@ -160,7 +160,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             );
         }
 
-        if !backend.is_forked_mode() && evm_env.version.feature(evm2::EvmFeatures::EIP7702) {
+        // Foundry enables `EIP7702` on every spec, so the EIP-2935 predeploy keys off the spec.
+        if !backend.is_forked_mode() && evm_env.spec.into() >= evm2::SpecId::PRAGUE {
             let account = backend.basic(HISTORY_STORAGE_ADDRESS).ok().flatten().unwrap_or_default();
             backend.insert_account_info(
                 HISTORY_STORAGE_ADDRESS,

@@ -599,7 +599,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let db = self.forks.active_db();
         let mut state = state.into_state(db.clone_backing());
         *state.logs_mut() = logs;
-        let running = mem::replace(evm.state_mut(), state).into_snapshot();
+        let running = mem::replace(evm.state_mut(), state).snapshot();
         let replaced = replaced.unwrap_or(running);
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
@@ -1153,9 +1153,26 @@ pub fn warm_set(state: &mut State<'_>) -> PrewarmSet {
     prewarm
 }
 
+/// Sets the warmth of every account and slot the running transaction in `state` loaded to
+/// `warm`, as returned by [`warm_accounts`] earlier, without journaling. Accounts and slots loaded
+/// since are cold; pre-warmed ones stay effectively warm.
+pub fn restore_warmth(state: &mut State<'_>, warm: &AddressMap<HashSet<U256>>) {
+    let loaded = state
+        .loaded_accounts()
+        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    for (address, slots) in loaded {
+        let warm_slots = warm.get(&address);
+        state.set_account_warm(&address, warm_slots.is_some());
+        for key in slots {
+            state.set_storage_warm(&address, key, warm_slots.is_some_and(|s| s.contains(&key)));
+        }
+    }
+}
+
 /// Returns the accounts the running transaction in `state` loaded and that are warm, with their
 /// warm slots.
-fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
+pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
     let loaded = state
         .loaded_accounts()
         .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))

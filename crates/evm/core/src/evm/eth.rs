@@ -66,6 +66,9 @@ impl FoundryEvmFactory for EthEvmFactory {
     fn version(&self, spec: SpecId, chain_id: u64) -> Version {
         let mut version = Version::new(spec);
         version.chain_id = chain_id;
+        // Like REVM, existing EIP-7702 delegations resolve on every spec; only authorization
+        // processing is fork-gated, by the transaction registry.
+        version.features.insert(evm2::EvmFeatures::EIP7702);
         version
     }
 

@@ -50,6 +50,7 @@ use foundry_evm_core::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
         FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
+        restore_warmth, warm_accounts,
     },
 };
 use foundry_evm_traces::{
@@ -3138,7 +3139,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let depth = interp.message().depth.saturating_add(1);
         let gas_limit = interp.gas().remaining();
         let evm = interp.host();
-        let checkpoint = evm.state().checkpoint();
+        let warmth = warm_accounts(evm.state_mut());
         let code = match evm
             .state_mut()
             .account(&hook.callback_target)
@@ -3173,7 +3174,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.active_storage_hook = None;
         self.restore_storage_hook_inspector_state(inspector_state);
         // The callback is instrumentation: accesses it warmed stay cold for the hooked frame.
-        evm.state_mut().restore_access_warmth(&checkpoint);
+        restore_warmth(evm.state_mut(), &warmth);
 
         match result {
             Ok(result) if result.is_success() => {}
