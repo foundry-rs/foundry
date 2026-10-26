@@ -9,7 +9,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync, eip2718::Encodable2718,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, bytes, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequest};
 use alloy_signer::SignerSync;
@@ -1401,6 +1401,83 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
         // The invisible transactions are removed so that resume can replay them.
         assert!(sequence["pending"].as_array().unwrap().is_empty());
     }
+}
+
+// Other tools parse broadcast files, so renaming or removing a key breaks them. A new key only
+// updates this snapshot.
+#[forgetest_init]
+async fn broadcast_file_keys(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "BroadcastKeys.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Child {}
+
+contract Factory {
+    constructor() {
+        new Child();
+    }
+
+    function deploy() external returns (Child) {
+        return new Child();
+    }
+}
+
+contract BroadcastKeys is Script {
+    function run() external returns (Factory factory) {
+        vm.startBroadcast();
+        factory = new Factory();
+        factory.deploy();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        script.to_str().unwrap(),
+        "--tc",
+        "BroadcastKeys",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ])
+    .assert_success();
+
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/BroadcastKeys.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    let additional_contracts =
+        transactions.iter().flat_map(|tx| tx["additionalContracts"].as_array().unwrap());
+    let keys = |values: Vec<&Value>| {
+        values
+            .into_iter()
+            .flat_map(|value| value.as_object().unwrap().keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    assert_data_eq!(
+        format!(
+            "top level: {}\ntransaction: {}\nadditional contract: {}\n",
+            keys(vec![&sequence]),
+            keys(transactions.iter().collect()),
+            keys(additional_contracts.collect()),
+        ),
+        str![[r#"
+top level: chain, commit, libraries, pending, receipts, recovery_generation, returns, timestamp, transactions
+transaction: additionalContracts, arguments, contractAddress, contractName, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
+additional contract: address, contractName, creatorCodeAddresses, initCode, transactionType
+
+"#]]
+    );
 }
 
 // A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
@@ -9170,4 +9247,77 @@ fn latest_broadcast_path(root: &Path) -> PathBuf {
             path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
         })
         .expect("no latest broadcast artifact")
+}
+
+// `vm.attachBlob` transactions are simulated with their blob hashes and broadcast with a blob fee.
+#[forgetest]
+async fn can_broadcast_attached_blob(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    prj.add_script(
+        "AttachBlob.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function attachBlob(bytes calldata blob) external;
+}
+
+contract BlobProbe {
+    bytes32 public observed;
+
+    event Observed(bytes32 hash);
+
+    function record() external {
+        bytes32 hash;
+        assembly {
+            hash := blobhash(0)
+        }
+        observed = hash;
+        emit Observed(hash);
+    }
+}
+
+contract AttachBlobScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        BlobProbe probe = new BlobProbe();
+        vm.attachBlob(abi.encode("blob"));
+        probe.record();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "script",
+        "AttachBlobScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "-vvvv",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Simulated On-chain Traces:
+...
+    ├─ emit Observed(hash: 0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c)
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    let observed =
+        handle.http_provider().get_storage_at(sender.create(0), U256::ZERO).await.unwrap();
+    assert_eq!(
+        B256::from(observed),
+        b256!("0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c")
+    );
 }

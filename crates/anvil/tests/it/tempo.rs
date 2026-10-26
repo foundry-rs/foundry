@@ -7243,6 +7243,7 @@ async fn tempo_consensus_rejects_ethereum_network() {
         ("consensus_getFinalization", serde_json::json!(["latest"])),
         ("consensus_getLatest", serde_json::json!([])),
         ("anvil_tempoConsensusIdentity", serde_json::json!([])),
+        ("anvil_tempoRotateConsensusIdentity", serde_json::json!([])),
     ] {
         let error =
             provider.client().request::<_, serde_json::Value>(method, params).await.unwrap_err();
@@ -7259,10 +7260,15 @@ async fn tempo_consensus_rejects_ethereum_network() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_rollback_reorg_and_reset_without_rotation() {
+    assert_tempo_consensus_rollback_reorg_and_reset(false).await;
+}
+
+async fn assert_tempo_consensus_rollback_reorg_and_reset(rotate: bool) {
     let (api, handle) =
         spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
     let provider = handle.http_provider();
     let initial = tempo_consensus_identity(&provider).await;
+    let rotated = if rotate { tempo_rotate_identity(&provider).await } else { initial.clone() };
     api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
     let first = tempo_finalization(&provider, 1).await;
     provider.client().request::<_, serde_json::Value>("anvil_rollback", (3,)).await.unwrap();
@@ -7271,9 +7277,9 @@ async fn tempo_consensus_rollback_reorg_and_reset_without_rotation() {
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let original = tempo_finalization(&provider, 3).await;
-    assert_tempo_certificate(&initial, &original);
+    assert_tempo_certificate(&rotated, &original);
 
-    api.evm_set_next_block_timestamp(2_000_000_000).unwrap();
+    api.anvil_set_coinbase(Address::repeat_byte(0x33)).await.unwrap();
     api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
     assert_eq!(tempo_finalization(&provider, 1).await, first);
     let replacement = tempo_finalization(&provider, 3).await;
@@ -7281,15 +7287,18 @@ async fn tempo_consensus_rollback_reorg_and_reset_without_rotation() {
     let latest: TempoCertifiedBlock =
         provider.client().request("consensus_getFinalization", ("latest",)).await.unwrap();
     assert_eq!(latest, replacement);
-    for height in 2..=3 {
+    for (height, identity) in [(2, &initial), (3, &rotated)] {
         let finalization = tempo_finalization(&provider, height).await;
-        assert_tempo_certificate(&initial, &finalization);
+        assert_tempo_certificate(identity, &finalization);
     }
 
     provider.client().request::<_, serde_json::Value>("anvil_reset", ()).await.unwrap();
     assert_tempo_missing(&provider, serde_json::json!("latest"), "certifications").await;
     assert_tempo_missing(&provider, serde_json::json!({ "height": 1 }), "certificate").await;
     assert_eq!(tempo_consensus_identity(&provider).await, initial);
+    if rotate {
+        assert_eq!(tempo_rotate_identity(&provider).await, rotated);
+    }
     api.mine_one().await.unwrap();
     assert_tempo_certificate(&initial, &tempo_finalization(&provider, 1).await);
 }
@@ -7336,4 +7345,62 @@ async fn tempo_consensus_imports_preserve_snapshots_and_unsigned_anchors() {
     assert!(provider.client().request::<_, bool>("evm_revert", (snapshot,)).await.unwrap());
     assert_eq!(provider.get_block_number().await.unwrap(), 3);
     assert_tempo_missing(&provider, serde_json::json!("latest"), "certifications").await;
+}
+
+async fn tempo_rotate_identity(provider: &RetryProvider) -> TempoConsensusIdentity {
+    provider.client().request("anvil_tempoRotateConsensusIdentity", ()).await.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_rotation_after_boundary_waits_an_epoch() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::new(3).unwrap())).await;
+    let provider = handle.http_provider();
+    let initial = tempo_consensus_identity(&provider).await;
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    let published = tempo_finalization(&provider, 2).await;
+    let rotated = tempo_rotate_identity(&provider).await;
+    assert_eq!(rotated.from_epoch, 2);
+    assert_ne!(rotated.identity, initial.identity);
+    assert_eq!(tempo_finalization(&provider, 2).await, published);
+    for height in 3..=5 {
+        api.mine_one().await.unwrap();
+        assert_tempo_certificate(&initial, &tempo_finalization(&provider, height).await);
+    }
+    let boundary = tempo_finalization(&provider, 5).await;
+    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    assert_eq!(outcome.epoch, 2);
+    assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
+    assert_eq!(tempo_consensus_identity(&provider).await, initial);
+    api.mine_one().await.unwrap();
+    assert_tempo_certificate(&rotated, &tempo_finalization(&provider, 6).await);
+    assert_eq!(tempo_consensus_identity(&provider).await, rotated);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_rotation_rollback_reorg_and_reset() {
+    assert_tempo_consensus_rollback_reorg_and_reset(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_single_block_epochs_announce_before_rotation() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_tempo_epoch_length(NonZeroU64::MIN)).await;
+    let provider = handle.http_provider();
+    let initial = tempo_consensus_identity(&provider).await;
+    let rotated = tempo_rotate_identity(&provider).await;
+    assert_eq!(rotated.from_epoch, 2);
+    api.mine_one().await.unwrap();
+    let boundary = tempo_finalization(&provider, 1).await;
+    assert_eq!((boundary.epoch, boundary.view), (1, 1));
+    assert_tempo_certificate(&initial, &boundary);
+    let outcome = OnchainDkgOutcome::decode(boundary.block.header.extra_data().as_ref()).unwrap();
+    assert_eq!(outcome.epoch, 2);
+    assert_eq!(outcome.network_identity().encode().as_ref(), rotated.identity.as_ref());
+    assert_eq!(tempo_consensus_identity(&provider).await, initial);
+    api.mine_one().await.unwrap();
+    let next_epoch = tempo_finalization(&provider, 2).await;
+    assert_eq!((next_epoch.epoch, next_epoch.view), (2, 1));
+    assert_tempo_certificate(&rotated, &next_epoch);
+    assert_eq!(tempo_consensus_identity(&provider).await, rotated);
 }

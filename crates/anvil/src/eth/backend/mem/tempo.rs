@@ -8,7 +8,7 @@
 //! remain usable, but reverting across that import boundary starts a new segment at the restored
 //! height. Snapshots within the current segment restore consensus exactly.
 //!
-//! All live consensus mutations, including future rotation RPCs, must acquire the database write
+//! All live consensus mutations, including rotation RPCs, must acquire the database write
 //! lock before the storage lock. Mining retains that database guard from preparation through
 //! publication, preventing snapshots, rewinds, resets, imports, or rotations from changing the
 //! prepared height or key schedule. Only initialization before the backend is shared and private
@@ -172,12 +172,26 @@ impl<N: Network> Backend<N> {
         let storage = self.blockchain.storage.read();
         latest_finalization(tempo_chain(&storage)?)
     }
+
+    /// Schedules a development identity change without racing canonical mining or rewinds.
+    pub async fn tempo_rotate_consensus_identity(
+        &self,
+    ) -> Result<TempoConsensusIdentity, BlockchainError> {
+        let _mining = self.mining.lock().await;
+        let _db = self.db.write().await;
+        let mut storage = self.blockchain.storage.write();
+        storage
+            .tempo
+            .as_mut()
+            .ok_or_else(tempo_unavailable)?
+            .consensus
+            .rotate()
+            .map_err(|error| BlockchainError::Internal(error.to_string()))
+    }
 }
 
 fn tempo_chain<N: Network>(storage: &BlockchainStorage<N>) -> Result<&TempoChain, BlockchainError> {
-    storage.tempo.as_ref().ok_or_else(|| {
-        RpcError::invalid_params("Tempo consensus is only available on the Tempo network").into()
-    })
+    storage.tempo.as_ref().ok_or_else(tempo_unavailable)
 }
 
 fn latest_finalization(
@@ -211,6 +225,10 @@ fn consensus_unavailable(content: &str) -> BlockchainError {
         data: Some(serde_json::Value::String(content.to_owned())),
     }
     .into()
+}
+
+fn tempo_unavailable() -> BlockchainError {
+    RpcError::invalid_params("Tempo consensus is only available on the Tempo network").into()
 }
 
 #[cfg(test)]
@@ -269,20 +287,23 @@ mod tests {
         let mut certificate = Box::pin(api.backend.tempo_finalization(None));
         let mut identity = Box::pin(api.backend.tempo_consensus_identity());
         let mut latest = Box::pin(api.backend.tempo_latest_finalization());
+        let mut rotation = Box::pin(api.backend.tempo_rotate_consensus_identity());
         assert!(futures::poll!(certificate.as_mut()).is_pending());
         assert!(futures::poll!(identity.as_mut()).is_pending());
         assert!(futures::poll!(latest.as_mut()).is_pending());
+        assert!(futures::poll!(rotation.as_mut()).is_pending());
         hook.resume.notify_one();
         let snapshot = timeout(Duration::from_secs(10), async {
             mining.await.unwrap().unwrap();
-            let (snapshot, certificate, identity, latest) =
-                tokio::join!(snapshot, certificate, identity, latest);
+            let (snapshot, certificate, identity, latest, rotation) =
+                tokio::join!(snapshot, certificate, identity, latest, rotation);
             let (certificate, block) = certificate.unwrap();
             assert_eq!(block.header.number(), 1);
             assert_eq!(block.header.hash_slow(), certificate.digest);
             assert_eq!(api.backend.best_hash(), certificate.digest);
             assert_eq!(latest.unwrap().unwrap().0.digest, certificate.digest);
             identity.unwrap();
+            rotation.unwrap();
             snapshot.unwrap()
         })
         .await
@@ -389,7 +410,7 @@ mod tests {
         api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
         let first = consensus(&api).finalization(1).unwrap().digest;
         let previous = consensus(&api).finalization(3).unwrap().digest;
-        api.evm_set_next_block_timestamp(2_000_000_000).unwrap();
+        api.anvil_set_coinbase(Address::repeat_byte(0x33)).await.unwrap();
         api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
         assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
         assert_ne!(consensus(&api).finalization(3).unwrap().digest, previous);
@@ -766,9 +787,7 @@ mod tests {
     }
 
     async fn rotate_consensus(api: &EthApi<FoundryNetwork>) -> TempoConsensusIdentity {
-        let _db = api.backend.db.write().await;
-        let mut storage = api.backend.blockchain.storage.write();
-        storage.tempo.as_mut().unwrap().consensus.rotate().unwrap()
+        api.anvil_tempo_rotate_consensus_identity().await.unwrap()
     }
 
     fn unsigned_tempo_block(height: u64) -> Block {

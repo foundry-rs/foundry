@@ -5,6 +5,7 @@ members = [
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
+    "crates/anvil/tests/fixtures/tempo-consensus-compat/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
@@ -593,10 +594,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "ca46f5e9692dfbdb7029ce82dce03596d9559bf6" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }

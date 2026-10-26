@@ -2171,10 +2171,6 @@ impl SymbolicWorld {
         if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
             return Ok(SymCode::concrete(cx, vec![0]));
         }
-        let spec_id = executor.spec_id;
-        if precompile_number_for_spec(address, spec_id).is_some() {
-            return Ok(SymCode::empty(cx));
-        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymCode::empty(cx));
         }
@@ -2256,15 +2252,11 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.extcode_hash_for_address(cx, executor, representative)?;
-        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
-        for (address, code) in cached_codes.into_iter().rev() {
-            let hash = if self.destroyed_accounts.contains(address) {
-                SymExpr::zero(cx)
-            } else {
-                let bytes = code.read_byte_exprs(cx, 0, code.len());
-                keccak_word(cx, bytes)
-            };
-            let address = SymExpr::constant(cx, address_word(*address));
+        // Cached code does not imply existence: empty accounts hash to zero.
+        let cached_addresses = self.code_cache.keys().copied().collect::<Vec<_>>();
+        for address in cached_addresses.into_iter().rev() {
+            let hash = self.extcode_hash_for_address(cx, executor, address)?;
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
             result = SymExpr::ite(cx, condition, hash, result);
         }
@@ -2325,7 +2317,7 @@ impl SymbolicWorld {
         for address in addresses {
             if address == CHEATCODE_ADDRESS
                 || address == SYMBOLIC_VM_COMPAT_ADDRESS
-                || precompile_number_for_spec(address, spec_id).is_some()
+                || is_precompile_for_spec(address, spec_id)
             {
                 continue;
             }

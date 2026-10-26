@@ -1,5 +1,4 @@
 use super::*;
-use foundry_evm::revm::precompile::u64_to_address;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -889,7 +888,7 @@ impl SymbolicExecutor {
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
         let spec_id = executor.spec_id;
-        if precompile_number_for_spec(code_address, spec_id).is_some() {
+        if is_precompile_for_spec(code_address, spec_id) {
             let input_len = in_size.size_word(&mut self.cx);
             let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {
@@ -1369,7 +1368,7 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend((1..=10).map(u64_to_address));
+        candidates.extend(active_precompiles(executor.spec_id).addresses().copied());
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {
