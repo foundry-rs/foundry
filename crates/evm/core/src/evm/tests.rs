@@ -581,12 +581,12 @@ fn rpc_transactions_convert_natively() {
 }
 
 #[test]
-fn celo_fee_currency_transactions_fail_explicitly() {
-    let tx: AnyRpcTransaction = serde_json::from_value(serde_json::json!({
+fn celo_fee_currency_transactions_execute_as_eip1559() {
+    let mut json = serde_json::json!({
         "accessList": [],
         "blockHash": B256::ZERO,
         "blockNumber": "0x1",
-        "chainId": "0xa4ec",
+        "chainId": "0x1",
         "feeCurrency": Address::with_last_byte(0xCC),
         "from": Address::with_last_byte(0xAA),
         "gas": "0x5208",
@@ -604,15 +604,18 @@ fn celo_fee_currency_transactions_fail_explicitly() {
         "v": "0x0",
         "value": "0x65",
         "yParity": "0x0"
-    }))
-    .unwrap();
-    assert_eq!(
-        EthEvmNetwork::tx_from_any_rpc(&tx).unwrap_err().to_string(),
-        format!(
-            "cannot replay Celo CIP-64 transaction {}: evm2 has no fee-currency transaction type",
-            B256::ZERO
-        )
-    );
+    });
+    // Another network's type 0x7b envelope does not acquire CIP-64 semantics.
+    let tx: AnyRpcTransaction = serde_json::from_value(json.clone()).unwrap();
+    assert!(EthEvmNetwork::tx_from_any_rpc(&tx).is_err());
+
+    json["chainId"] = "0xa4ec".into();
+    let tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
+    let tx = EthEvmNetwork::tx_from_any_rpc(&tx).unwrap();
+    assert_eq!((tx.signer(), tx.ty(), tx.nonce()), (Address::with_last_byte(0xAA), 2, 42));
+    assert_eq!((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()), (3, Some(1)));
+    assert_eq!((tx.value(), tx.input().as_ref()), (U256::from(0x65), &[0x12, 0x34][..]));
+    assert_eq!(tx.kind(), TxKind::Call(Address::with_last_byte(0xBB)));
 }
 
 #[test]
