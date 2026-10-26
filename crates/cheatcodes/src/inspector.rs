@@ -2246,14 +2246,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             return;
         }
         let root = usize::from(interp.version().initial_call_depth);
-        if !success {
-            let state = interp.host().state_mut();
-            for (write_depth, write) in &mut self.persistent_writes {
-                if *write_depth >= depth {
+        let state = interp.host().state_mut();
+        for (write_depth, write) in &mut self.persistent_writes {
+            if *write_depth >= depth {
+                if !success {
                     let _ = write.apply(state);
-                    if depth > root {
-                        *write_depth = depth - 1;
-                    }
+                }
+                // The parent owns the writes once the frame ends, so a failing sibling at the
+                // same depth does not replay them again.
+                if depth > root {
+                    *write_depth = depth - 1;
                 }
             }
         }
