@@ -4796,6 +4796,34 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 }
 
 #[forgetest_init]
+async fn dryrun_with_default_sender_warns(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Called {}
+
+contract DryRunTest is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Called();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["script", "DryRunTest", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
+
+"#]]);
+}
+
+#[forgetest_init]
 async fn unused_libraries_conditional_6215(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     prj.add_source(
@@ -8345,6 +8373,7 @@ async fn script_check_contract_sizes_warns_at_default_limit(prj: _, cmd: _) {
         .assert_success()
         .stderr_eq(str![[r#"
 Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
 }
@@ -8438,7 +8467,10 @@ async fn script_check_contract_sizes_honors_config_limit(prj: _, cmd: _) {
     }
     cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
-        .stderr_eq(str![[r#""#]]);
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
+
+"#]]);
 }
 
 // Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation

@@ -643,6 +643,16 @@ impl ScriptArgs {
     ) -> Result<Option<BundledState<FEN>>> {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
+            if bundled.sequence.sequences().iter().any(|sequence| {
+                sequence
+                    .transactions
+                    .iter()
+                    .any(|tx| tx.tx().from() == Some(Config::DEFAULT_SENDER))
+            }) {
+                sh_warn!(
+                    "Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender."
+                )?;
+            }
             if !shell::is_json() {
                 if shell::verbosity() >= 4 {
                     sh_println!("\n=== Transactions that will be broadcast ===\n")?;
