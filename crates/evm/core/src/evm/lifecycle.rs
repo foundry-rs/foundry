@@ -45,8 +45,8 @@ use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, AccountInfo, Cache, DbResult, EmptyDB, PendingState, PrewarmSet, State,
-        StateSnapshot,
+        AccountChanges, AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, PendingState,
+        PrewarmSet, State, StateSnapshot,
     },
 };
 use std::{mem, sync::Arc};
@@ -122,7 +122,8 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
     /// Executes the transaction observed by `inspector` and merges its changes into the running
     /// transaction of `evm` as journaled writes: all of them on the running transaction's
     /// context, where a failed transaction only keeps its nonce increment and fee payment, and
-    /// the changes to persistent accounts on an inactive context, which accepts the transaction.
+    /// the changes to persistent accounts on an inactive context, which accepts the transaction
+    /// and whose resulting state the running transaction's other loaded accounts then take.
     /// With `untracked`, changes on the active context survive reverts of the enclosing calls.
     pub fn execute(
         self,
@@ -148,6 +149,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
             false,
         )?;
         let result = executed.commit();
+        rebase_loaded_accounts(evm.state_mut(), executor.state_mut(), &persistent)?;
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
         Ok(ExecutedNested { result, context: Some((id, cache)), cursor })
@@ -737,7 +739,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     ///
     /// Persistent accounts carry the running transaction's state into the fork, and the
     /// transaction's changes to them are merged back into the running transaction as journaled
-    /// writes.
+    /// writes. The running transaction's other loaded accounts then take the fork's resulting
+    /// state, see [`Self::rebase_onto_inactive`].
     pub fn prepare_on_inactive(
         &self,
         evm: &mut Evm<'_, F::Types>,
@@ -793,6 +796,30 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             context.cache = Some(Arc::new(cache));
         }
         result
+    }
+
+    /// Replaces the accounts the running transaction of `evm` loaded, except persistent ones,
+    /// with their accepted state on the inactive fork `id`, or the local context for `None`, as
+    /// journaled writes, such as after replaying transactions there.
+    ///
+    /// Like the REVM backend, which reloaded every account of the running journal from a fork's
+    /// database after replaying a transaction on it while another fork was active.
+    pub fn rebase_onto_inactive(
+        &self,
+        evm: &mut Evm<'_, F::Types>,
+        id: Option<U256>,
+    ) -> eyre::Result<()> {
+        eyre::ensure!(id != self.forks.active(), "fork {} is active", id.unwrap_or_default());
+        let Some(context) = self.forks.context(id) else {
+            eyre::bail!("fork {} does not exist", id.unwrap_or_default());
+        };
+        let db = context.db.clone_backing();
+        let mut source = self.factory.configure_for(&db, &context.env).new_evm(db, context.env);
+        if let Some(cache) = &context.cache {
+            source.state_mut().overlay_db_mut().cache = Cache::clone(cache);
+        }
+        rebase_loaded_accounts(evm.state_mut(), source.state_mut(), &self.forks.persistent)?;
+        Ok(())
     }
 
     /// Accepts the running state and stores it, with the running environment, in the active
@@ -1204,6 +1231,54 @@ fn merge_changes<'c>(
             } else {
                 storage.set(slot.current);
             }
+        }
+    }
+    Ok(())
+}
+
+/// Replaces the accounts the running transaction in `state` loaded, except persistent ones, with
+/// their accepted state in `source`, as journaled writes: info and loaded storage slots.
+///
+/// Like the REVM backend, which reloaded every account of the running journal from a fork's
+/// database after replaying a transaction on that fork while another one was active.
+fn rebase_loaded_accounts(
+    state: &mut State<'_>,
+    source: &mut State<'_>,
+    persistent: &AddressSet,
+) -> DbResult<()> {
+    let loaded = state
+        .loaded_accounts()
+        .filter(|(address, _)| !persistent.contains(*address))
+        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    for (address, slots) in loaded {
+        let info = source.account_info_untracked(&address)?;
+        let (balance, nonce, code_hash) =
+            info.as_ref().map_or((U256::ZERO, 0, KECCAK256_EMPTY), |info| {
+                (info.balance, info.nonce, info.code_hash)
+            });
+        let code = match &info {
+            Some(info) if info.code_hash != KECCAK256_EMPTY => match &info.code {
+                Some(code) => code.clone(),
+                None => source.overlay_db_mut().get_code_by_hash(&info.code_hash)?,
+            },
+            _ => Bytecode::default(),
+        };
+        {
+            let mut account = state.account(&address)?;
+            if account.balance() != balance {
+                account.set_balance(balance);
+            }
+            if account.nonce() != nonce {
+                account.set_nonce(nonce);
+            }
+            if account.code_hash() != code_hash {
+                account.set_code(code_hash, code);
+            }
+        }
+        for key in slots {
+            let value = source.storage_slot_untracked(&address, &key)?;
+            state.storage_slot(&address, key)?.set(value);
         }
     }
     Ok(())
