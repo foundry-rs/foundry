@@ -160,7 +160,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             );
         }
 
-        if !backend.is_forked_mode() && evm_env.version.feature(evm2::EvmFeatures::EIP7702) {
+        // Foundry enables `EIP7702` on every spec, so the EIP-2935 predeploy keys off the spec.
+        if !backend.is_forked_mode() && evm_env.spec.into() >= evm2::SpecId::PRAGUE {
             let account = backend.basic(HISTORY_STORAGE_ADDRESS).ok().flatten().unwrap_or_default();
             backend.insert_account_info(
                 HISTORY_STORAGE_ADDRESS,
@@ -700,10 +701,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ///
     /// `context` holds the block context of networks whose execution depends on the block
     /// position, such as Monad's reserve balance; prefix and target transactions are positioned
-    /// in it, and, with a context, the target replays trusted protocol transactions. Prefix
-    /// transactions from known system senders are skipped, except canonical protocol transactions
-    /// of the network, which replay. `target_kind` is the target's kind, which decides the test
-    /// contract.
+    /// in it, and, with a context, the target replays trusted protocol transactions. The caller
+    /// selects which prefix transactions replay; canonical protocol transactions of the network
+    /// replay as such. `target_kind` is the target's kind, which decides the test contract.
     #[instrument(name = "transact_block_replay", level = "debug", skip_all)]
     pub fn transact_with_block_replay(
         &mut self,
@@ -736,9 +736,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let factory = EvmFactoryFor::<FEN>::default();
         for (tx_hash, tx) in replay {
             let is_protocol = ChainFor::<FEN>::is_protocol_transaction(tx);
-            if foundry_common::is_known_system_sender(tx.signer()) && !is_protocol {
-                continue;
-            }
             let backend = self.backend_mut();
             let mut evm = backend.create_evm();
             install_env::<FEN>(backend, &mut evm, evm_env);
@@ -2172,7 +2169,7 @@ mod tests {
         let snapshot = system_tx(0, 0, keccak256("syscallSnapshot()")[..4].to_vec());
         let gas_paying = system_tx(1, 100_000, keccak256("syscallSnapshot()")[..4].to_vec());
         let epoch_change = system_tx(
-            1,
+            2,
             0,
             [&keccak256("syscallOnEpochChange(uint64)")[..4], &B256::with_last_byte(1)[..]]
                 .concat(),
@@ -2186,8 +2183,9 @@ mod tests {
         let env = *executor.evm_env();
         let context = || Some(BlockContext::new(Vec::new(), Vec::new(), Vec::new()));
 
-        // The canonical prefix syscall replays, the gas-paying system envelope is skipped, and the
-        // canonical target replays at the prefix's nonce.
+        // The canonical prefix syscall replays as a protocol call, the gas-paying system envelope
+        // the caller selected runs as an ordinary transaction, and the canonical target replays
+        // at the prefix's nonce.
         let result = executor
             .transact_with_block_replay(
                 env,
@@ -2199,7 +2197,7 @@ mod tests {
             .unwrap();
         assert!(!result.reverted);
         assert_eq!(result.gas_used, 0);
-        assert_eq!(executor.get_nonce(system).unwrap(), 2);
+        assert_eq!(executor.get_nonce(system).unwrap(), 3);
         assert_eq!(executor.get_balance(system).unwrap(), U256::ZERO);
         assert_eq!(executor.get_balance(STAKING).unwrap(), U256::ONE);
         let epoch = U256::from(1) << 192;
@@ -2208,7 +2206,7 @@ mod tests {
 
         // Reusing the accepted backend must not retain permission to replay protocol envelopes.
         let mut evm = executor.backend().create_evm();
-        let next_snapshot = system_tx(2, 0, keccak256("syscallSnapshot()")[..4].to_vec());
+        let next_snapshot = system_tx(3, 0, keccak256("syscallSnapshot()")[..4].to_vec());
         assert!(matches!(
             evm.transact(&next_snapshot),
             Err(evm2::registry::HandlerError::IntrinsicGasTooLow { .. })
@@ -2222,7 +2220,7 @@ mod tests {
             error.root_cause().to_string(),
             "invalid Monad protocol system transaction: gas limit must be zero, got 100000"
         );
-        assert_eq!(executor.get_nonce(system).unwrap(), 2);
+        assert_eq!(executor.get_nonce(system).unwrap(), 3);
     }
 
     #[test]

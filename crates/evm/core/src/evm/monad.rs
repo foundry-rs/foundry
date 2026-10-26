@@ -170,7 +170,11 @@ impl FoundryEvmFactory for MonadEvmFactory {
     type Types = MonadEvmTypes;
 
     fn version(&self, spec: MonadHardfork, chain_id: u64) -> Version {
-        monad_version(spec, chain_id)
+        let mut version = monad_version(spec, chain_id);
+        // Like REVM, existing EIP-7702 delegations resolve on every spec; only authorization
+        // processing is fork-gated, by the transaction registry.
+        version.features.insert(evm2::EvmFeatures::EIP7702);
+        version
     }
 
     fn execution_config(

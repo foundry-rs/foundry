@@ -58,8 +58,8 @@ explicitly or is documented as different; none falls back to REVM.
 | --- | --- | --- | --- |
 | Cheatcodes | Transaction-base warmth is separate from runtime warmth. | Like master, `vm.cool` cools loaded accounts and storage slots and removes the target, such as the test contract as transaction recipient, from the pre-warmed set and from the warmth fork switches restore. Precompiles stay warm, as do the EIP-3651 coinbase, access-list entries and Arbitrum's ArbSys that the running transaction, or an isolated call's transaction, started with. | `PrewarmSet::remove` (mablr/evm2 fork). |
 | Isolation | evm2 has no per-call transaction boundary inside a running transaction. | With `isolate`, each top-level call runs as a nested fee-less transaction from the call's caller and nonce with the call's gas plus intrinsic gas, raised to the EIP-7623 floor and capped at the block gas limit; the parent frame is charged its execution and state gas and gets its refund on success. EIP-8037 state gas the parent precharged is not credited, cheatcode precompile flags do not apply, and without cheatcodes `ORIGIN` is the call's caller. | Nested transactions in the evm2 host. |
-| Replay | Protocol system transactions of known system senders, other than `0x7E` deposits and canonical Monad protocol system calls, have no native representation. | They are skipped when replaying a block prefix, so state they write is missing. Canonical Monad protocol system calls replay through `FoundryEvmExt::set_protocol_replay` in trusted historical execution only (prefix replay, `vm.transact`, `cast run`, `verify-bytecode`); a non-canonical envelope from the Monad system sender is skipped in a prefix and rejected as a target. | Family system-call handlers. |
-| Cast run | Block replay skips prefix transactions from known system senders other than canonical Monad protocol system calls. | `cast run` of a canonical Monad protocol system transaction replays it as a protocol system call, and a non-canonical envelope from the Monad system sender fails; `--replay-system-txes` still admits other system transaction targets and `0x7E` prefix transactions, but no longer replays other known-system-sender prefix transactions. | Family system-call handlers. |
+| Replay | Protocol system transactions of known system senders, other than `0x7E` deposits and canonical Monad protocol system calls, have no native representation. | Fork prefix replay (`vm.rollFork`, `vm.transact`) skips them, so state they write is missing; like master, `cast run --replay-system-txes` executes them as ordinary transactions. Canonical Monad protocol system calls replay through `FoundryEvmExt::set_protocol_replay` in trusted historical execution only (prefix replay, `vm.transact`, `cast run`, `verify-bytecode`); a non-canonical envelope from the Monad system sender is skipped in a fork prefix and in `cast run` without `--replay-system-txes`, and rejected as a target. | Family system-call handlers. |
+| Cast run | Block replay executes canonical Monad protocol system transactions as protocol system calls. | `cast run` of a canonical Monad protocol system transaction replays it as a protocol system call, and a non-canonical envelope from the Monad system sender fails as a target, even with `--replay-system-txes`. As on master, other system transaction targets and other prefix transactions from known system senders or of type `0x7E` replay only with `--replay-system-txes`. On Monad, prefix transactions that `cast run` skips are not recorded in the block context, so the target's reserve-balance checks do not see their senders or authorizations. | Family system-call handlers. |
 | Anvil precompiles | `PrecompileFactory` returns a fixed `(Address, PrecompileId, DynPrecompile)` list; REVM's dynamic precompile lookup (`install`) has no equivalent. | Library users must list precompile addresses up front. | evm2 lookup-based precompile provider. |
 | Dependencies | `foundry-evm-hardforks`, `foundry-evm-networks`, `foundry-common-fmt` and the native fork cache depend on no REVM crate, but external crates still compile REVM (`revm`, `alloy-evm`) transitively: `tempo-evm` (evm2 integration) through `reth-evm`, `reth-evm-ethereum` and `reth-consensus`; `base-consensus-upgrades`, `base-protocol`, `base-common-chains`, `base-common-network`, `base-common-rpc-types` and `base-common-precompiles` (`foundry-evm-traces`); `base-common-consensus` with its `evm` feature, which `foundry-evm-core` enables, so `base-evm2` and `base-common-eip8130` pull REVM in unified builds. Foundry retains REVM's serialized fork block metadata type. | REVM is compiled but not executed. | REVM-free releases of these crates, or dropping the `evm` features that enable it. |
 
@@ -68,16 +68,18 @@ explicitly or is documented as different; none falls back to REVM.
 Foundry and its satellites share
 [`mablr/evm2@mablr/foundry-completion`](https://github.com/mablr/evm2/tree/mablr/foundry-completion).
 It merges alloy-rs/evm2 up to `29690bd`, the newest revision tempoxyz/tempo#7871 still compiles
-against (evm2#785 changes `GasParams::get`), and adds suspended-state lifecycle APIs
-(`finalize_transaction`, warmth restoration, `cool_loaded_state`, `set_prewarm_set`,
-`mark_created_keeping_storage`), independent `BLOB_BASE_FEE_CHECK` policy, account warmth control
-from evm2#705, and resolution of already-present delegation code before Prague, matching REVM.
+against (evm2#785 changes `GasParams::get`), and adds host APIs that have no upstream equivalent
+yet: `loaded_accounts`, `set_prewarm_set`, `frame_checkpoint`, `mark_created_keeping_storage`,
+`initial_call_depth`, unjournaled writes and overrides, touched-account metadata and an
+independent `BLOB_BASE_FEE_CHECK` policy. Each is planned as an upstream PR so that no fork remains.
 `mark_created_keeping_storage` keeps an account created for EIP-6780 when a suspended or isolated
-transaction continues on a fresh overlay, without reading its storage as discarded.
-Authorization processing remains Prague-gated. The lockfile must contain one evm2 graph, not
-separate engines for different networks. Tempo and reth pin `alloy-rs/evm2`, while the satellites
-pin `mablr/evm2`; the root manifest patches both to that branch through the `DaniPopes/evm2` URL,
-since Cargo rejects a patch from the same source.
+transaction continues on a fresh overlay, without reading its storage as discarded. Foundry
+enables `EIP7702` on every spec so that already-present delegation code resolves before Prague,
+matching REVM; authorization processing remains Prague-gated by the transaction registry.
+
+The lockfile must contain one evm2 graph, not separate engines for different networks. Tempo and
+reth pin `alloy-rs/evm2`, while the satellites pin `mablr/evm2`; the root manifest patches both to
+that branch through the `DaniPopes/evm2` URL, since Cargo rejects a patch from the same source.
 
 [`foundry-core@mablr/fork-db-evm2-completion`](https://github.com/mablr/foundry-core/tree/mablr/fork-db-evm2-completion)
 stores native evm2 accounts and bytecode. Existing JSON/zstd caches remain readable, including

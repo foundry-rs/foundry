@@ -29,7 +29,7 @@ use foundry_evm_core::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested, FoundryEvmExt,
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, evm_env, merge_pending_changes,
+        TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, release_inspector, warm_set,
     },
     precompiles::P256_VERIFY,
@@ -2147,7 +2147,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        state.cool_loaded_state();
+        cool_loaded(state);
         for (address, slots) in arbitrary {
             state.set_account_warm(&address, true);
             for key in slots {
