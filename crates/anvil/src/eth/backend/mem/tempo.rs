@@ -389,7 +389,7 @@ mod tests {
         api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
         let first = consensus(&api).finalization(1).unwrap().digest;
         let previous = consensus(&api).finalization(3).unwrap().digest;
-        api.evm_set_next_block_timestamp(2_000_000_000).unwrap();
+        api.anvil_set_coinbase(Address::repeat_byte(0x33)).await.unwrap();
         api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
         assert_eq!(consensus(&api).finalization(1).unwrap().digest, first);
         assert_ne!(consensus(&api).finalization(3).unwrap().digest, previous);

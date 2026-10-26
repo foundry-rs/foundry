@@ -7273,7 +7273,7 @@ async fn tempo_consensus_rollback_reorg_and_reset_without_rotation() {
     let original = tempo_finalization(&provider, 3).await;
     assert_tempo_certificate(&initial, &original);
 
-    api.evm_set_next_block_timestamp(2_000_000_000).unwrap();
+    api.anvil_set_coinbase(Address::repeat_byte(0x33)).await.unwrap();
     api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: Vec::new() }).await.unwrap();
     assert_eq!(tempo_finalization(&provider, 1).await, first);
     let replacement = tempo_finalization(&provider, 3).await;
