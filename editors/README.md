@@ -59,7 +59,8 @@ cargo build --locked -p forge --bin forge
 
 The launched VS Code client uses the Forge executable that opened it, including
 for formatting and background checks. Separately installed VS Code and Zed
-extensions resolve Forge from their explicit Forge setting or the editor's PATH.
+extensions resolve Forge from their explicit Forge setting or the editor's PATH;
+the Zed extension downloads the latest stable Forge when neither has one.
 Foundry profiles, remappings, workspace discovery, and file watching remain
 owned by the existing server. LSP formatting uses the open document's unsaved
 contents and the owning project's `foundry.toml`.

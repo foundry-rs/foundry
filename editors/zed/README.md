@@ -1,9 +1,10 @@
 # Foundry Solidity
 
 Solidity support for [Zed](https://zed.dev), using `forge lsp --stdio` and the
-language server's `forge fmt` integration. Install a version of
-[Foundry](https://getfoundry.sh) that supports `forge lsp --stdio`.
-The extension never searches for, launches, or downloads a standalone Solar.
+language server's `forge fmt` integration. It uses your installed
+[Foundry](https://getfoundry.sh) when it supports `forge lsp --stdio`, and
+downloads the latest stable Forge when none is installed. The extension never
+searches for, launches, or downloads a standalone Solar.
 
 The extension ID is `forge-lsp`, matching the VS Code extension. The language
 server ID remains `solar` and the language remains `Solidity`. Existing language
@@ -16,10 +17,18 @@ By default, the extension resolves `forge` from the worktree's shell `PATH`.
 Zed launches `forge lsp --stdio` in the worktree directory, allowing version-manager
 shims to select the project's Forge installation. The extension does not run a
 separate capability probe because Zed's process API cannot set its working
-directory. Missing Forge on `PATH` produces installation guidance; missing custom
-executables and incompatible builds are reported by Zed's language server
-status/log during startup. To check an installation, run
+directory. Missing custom executables and incompatible builds are reported by
+Zed's language server status/log during startup. To check an installation, run
 `forge lsp --stdio --help` from the worktree directory.
+
+If `forge` is not on `PATH` and `forgePath` is unset, the extension downloads
+`forge` from the latest stable Foundry GitHub release into its own directory.
+It checks for a newer release once per Zed session, removes older downloads,
+and reuses the last download when GitHub cannot be reached. Prebuilt Forge
+exists for macOS and Linux on x86-64 and ARM64, and for Windows on x86-64; on
+other platforms, or when the download fails, the extension shows installation
+guidance. Installing Foundry yourself keeps the language server and formatter
+on the same Forge version as your builds.
 
 To select a specific Forge installation, set its absolute path in your Zed user
 or project settings:
