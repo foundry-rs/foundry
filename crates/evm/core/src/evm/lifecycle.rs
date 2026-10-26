@@ -510,6 +510,30 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.tx_prewarm.as_ref()
     }
 
+    /// Removes `address` from the running transaction's base warmth in `state` and in the
+    /// warmth that fork switches and isolated static calls restore, so it stays cold until it is
+    /// accessed again.
+    pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
+        if state.prewarm_set().is_warm(address) {
+            let mut prewarm = state.prewarm_set().clone();
+            prewarm.remove(address);
+            state.set_prewarm_set(prewarm);
+        }
+        if let Some(prewarm) = &mut self.tx_prewarm {
+            prewarm.remove(address);
+        }
+        // Like REVM's fork switches, which copy the journaled state of persistent accounts into
+        // the selected fork, a persistent account resumes cold in every context.
+        if self.forks.is_persistent(address) {
+            self.forks.local.warm.remove(address);
+            for entry in self.forks.forks.values_mut() {
+                entry.context.warm.remove(address);
+            }
+        } else {
+            self.active_mut().warm.remove(address);
+        }
+    }
+
     /// Applies an environment change deferred by an in-flight operation and forgets the warmth
     /// contexts kept from the previous transaction. Call before every transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {

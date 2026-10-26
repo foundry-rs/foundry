@@ -4,6 +4,7 @@ use super::{
     ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_consensus::transaction::Recovered;
+use alloy_eips::eip2930::AccessList;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
@@ -1244,7 +1245,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             request.set_max_fee_per_gas(0);
             request.set_max_priority_fee_per_gas(0);
         }
-        if let Some(access_list) = access_list {
+        if let Some(access_list) = access_list.clone() {
             request.set_access_list(access_list);
         }
         // A transaction that did not execute leaves the frame's reservoir untouched.
@@ -1298,7 +1299,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 &mut cheats.root_call_target,
                 (!is_create).then_some(message.destination),
             );
-            (previous, root_call_target)
+            let tx_warm_addresses = mem::replace(
+                &mut cheats.tx_warm_addresses,
+                tx_warm_addresses::<FEN>(&env, access_list.as_ref()),
+            );
+            (previous, root_call_target, tx_warm_addresses)
         });
         let previous_inner = self.inner.enter_inner_context(InnerRoot {
             depth: message.depth,
@@ -1327,9 +1332,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let restored = self.cheatcodes.as_deref_mut().zip(snapshot_restores).is_some_and(
             |(cheats, restores)| mem::replace(&mut cheats.snapshot_restores, restores).kept(),
         );
-        if let (Some(cheats), Some((previous, root_call_target))) =
+        if let (Some(cheats), Some((previous, root_call_target, tx_warm_addresses))) =
             (self.cheatcodes.as_deref_mut(), previous_cheats)
         {
+            cheats.tx_warm_addresses = tx_warm_addresses;
             cheats.origin_override = previous;
             cheats.in_isolation_context = false;
             cheats.isolation_env = None;
@@ -1443,6 +1449,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         warm_arbitrum_system_contract::<FEN>(interp);
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
+            // Transactions run from the test or script carry no access list.
+            cheatcodes.tx_warm_addresses = tx_warm_addresses::<FEN>(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
             cheatcodes.snapshot_restores = SnapshotRestores::default();
         }
@@ -2345,6 +2353,20 @@ fn warm_arbitrum_system_contract<FEN: FoundryEvmNetwork>(interp: &mut Interprete
     }
     // Other selectors can still execute code at the address.
     evm.state_mut().prewarm(&arbitrum::ARB_SYS_ADDRESS);
+}
+
+/// Returns the addresses a transaction in `env` with `access_list` warms when it starts and that
+/// `vm.cool` keeps warm, like REVM's `WarmAddresses`: the EIP-3651 coinbase, the access list and
+/// Arbitrum's ArbSys.
+fn tx_warm_addresses<FEN: FoundryEvmNetwork>(
+    env: &EvmEnvFor<FEN>,
+    access_list: Option<&AccessList>,
+) -> Vec<Address> {
+    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
+    let arb_sys =
+        arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
+    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
+    coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
 }
 
 /// Answers `ArbSys.arbBlockNumber()` on Arbitrum chains.

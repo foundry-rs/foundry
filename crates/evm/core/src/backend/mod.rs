@@ -51,7 +51,7 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, StateSnapshot,
+        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, State, StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
 };
@@ -379,6 +379,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// transaction executed on an EVM that was not freshly created.
     pub fn begin_transaction(&mut self, evm: &mut FoundryEvmFor<'_, FEN>) {
         self.lifecycle.begin_transaction(evm);
+    }
+
+    /// Removes `address` from the running transaction's base warmth, see
+    /// [`ExecutionLifecycle::remove_prewarm`].
+    pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
+        self.lifecycle.remove_prewarm(state, address);
     }
 
     /// Executes `tx` over the active context with `inspector` and discards its state.

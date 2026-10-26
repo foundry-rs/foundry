@@ -119,14 +119,89 @@ contract CoolPersistenceTest is Test {
         assertLt(balanceGas(address(this)), 2600);
     }
 
-    // Precompiles and the coinbase stay warm for the whole transaction (EIP-2929, EIP-3651).
+    // Only the coinbase the transaction started with stays warm.
+    function testCool_recipientMadeCoinbase() public {
+        vm.coinbase(address(this));
+        vm.cool(address(this));
+        assertGe(balanceGas(address(this)), 2600);
+    }
+
+    // `vm.accessList` applies to later isolated calls, not to the running transaction.
+    function testCool_recipientInConfiguredAccessList() public {
+        Vm.AccessListItem[] memory access = new Vm.AccessListItem[](1);
+        access[0] = Vm.AccessListItem(address(this), new bytes32[](0));
+        vm.accessList(access);
+        vm.cool(address(this));
+        assertGe(balanceGas(address(this)), 2600);
+    }
+
+    // Warmth from a frame that reverts is reverted with it.
+    function testCool_rewarmedInRevertedFrame() public {
+        CoolProbe probe = new CoolProbe();
+        vm.cool(address(this));
+        try probe.touchAndRevert(address(this)) {} catch {}
+        assertGe(balanceGas(address(this)), 2600);
+    }
+
+    // A fork switch after cooling keeps the persistent test contract cold.
+    function testCool_forkSwitchAfterCool() public {
+        vm.createSelectFork("mainnet");
+        uint256 other = vm.createFork("mainnet", block.number - 1);
+        vm.cool(address(this));
+        vm.selectFork(other);
+        assertGe(balanceGas(address(this)), 2600);
+    }
+
+    // Precompiles and the coinbase the transaction started with stay warm for the whole
+    // transaction (EIP-2929, EIP-3651).
     function testCool_keepsPrecompileAndCoinbaseWarm() public {
+        address coinbase = block.coinbase;
+        vm.coinbase(address(0xbeef));
         vm.cool(address(1));
-        vm.cool(block.coinbase);
+        vm.cool(coinbase);
         assertLt(balanceGas(address(1)), 2600);
-        assertLt(balanceGas(block.coinbase), 2600);
+        assertLt(balanceGas(coinbase), 2600);
+    }
+}
+
+contract CoolProbe is Test {
+    function touchAndRevert(address target) external view {
+        require(target.balance == 0xdeadbeef);
+    }
+
+    function coolAndMeasure(address target, Vm.AccessListItem[] memory access)
+        external
+        returns (uint256 gasUsed)
+    {
+        // Changing the configured access list leaves the running transaction's in place.
+        if (access.length == 0) {
+            vm.noAccessList();
+        } else {
+            vm.accessList(access);
+        }
+        vm.cool(target);
+        assembly {
+            let start := gas()
+            let targetBalance := balance(target)
+            gasUsed := sub(start, gas())
+            if eq(targetBalance, 0xdeadbeef) { revert(0, 0) }
+        }
     }
 }
 
 /// forge-config: default.isolate = true
-contract CoolPersistenceIsolatedTest is CoolPersistenceTest {}
+contract CoolPersistenceIsolatedTest is CoolPersistenceTest {
+    // Access-list entries of an isolated call's transaction stay warm (EIP-2930).
+    function testCool_keepsAccessListWarm() public {
+        CoolProbe probe = new CoolProbe();
+        Vm.AccessListItem[] memory access = new Vm.AccessListItem[](1);
+        access[0] = Vm.AccessListItem(address(0xbeef), new bytes32[](0));
+        Vm.AccessListItem[] memory replacement = new Vm.AccessListItem[](1);
+        replacement[0] = Vm.AccessListItem(address(0xcafe), new bytes32[](0));
+
+        vm.accessList(access);
+        assertLt(probe.coolAndMeasure(address(0xbeef), new Vm.AccessListItem[](0)), 2600);
+        vm.accessList(access);
+        assertLt(probe.coolAndMeasure(address(0xbeef), replacement), 2600);
+    }
+}
