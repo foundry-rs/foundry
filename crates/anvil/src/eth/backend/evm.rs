@@ -416,6 +416,8 @@ impl AnvilEvmNetwork for TempoEvmNetwork {
         override_authorities(&mut eip7702, overrides);
         // `from_recovered_eth` keeps recovered authorizations. It re-derives the sender-scoped
         // identifier from placeholder signatures, so restore the signed transaction's identifier.
+        // The rebuilt environment's `tx_hash` is the placeholder envelope's hash and its execution
+        // context is `Simulation`; only Tempo's block executor reads them, not Anvil's.
         let unique_tx_identifier = tx.unique_tx_identifier();
         let eth = Recovered::new_unchecked(
             evm2::ethereum::TxEnvelope::Eip7702(eip7702),
