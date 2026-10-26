@@ -15,4 +15,4 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: tempoxyz/gh-actions/.github/workflows/cargo-update-pr.yml@65b6b5834d9ad2b0d4b34d06baff37c143aa59eb # cargo-update-pr-cooldown
+    uses: tempoxyz/gh-actions/.github/workflows/cargo-update-pr.yml@75284a9f2d71122060d00c1b37bc0fa99568c5e5 # 2026-10-26T18-30-39Z-75284a9f
