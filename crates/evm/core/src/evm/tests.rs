@@ -851,7 +851,7 @@ fn from_any_rpc_transaction_for_captured_nonce_lane_tempo_aa() {
 #[test]
 fn from_any_rpc_transaction_for_captured_keychain_tempo_aa() {
     use alloy_primitives::{address, b256};
-    use tempo_primitives_evm2::TempoSignature;
+    use tempo_primitives::TempoSignature;
 
     let tx = captured_tempo_aa(include_str!("../../test-data/tempo-aa-keychain.json"));
     let sender = address!("0x5f704c6c7075acd14ee36527f03b5b5dcb4a966f");

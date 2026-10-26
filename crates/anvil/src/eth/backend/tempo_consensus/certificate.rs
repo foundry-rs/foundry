@@ -12,7 +12,7 @@
 //! [proposal]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/types.rs
 //! [vrf]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/scheme/bls12381_threshold/vrf.rs
 //! [namespaces]: https://github.com/commonwarexyz/monorepo/blob/d476a2361ce6840d2b9d0aa6fb30a924429046d4/consensus/src/simplex/scheme/mod.rs
-//! [tempo]: https://github.com/tempoxyz/tempo/blob/2c25f7cd8267b205a6b95e08bbc73baf887bea88/crates/consensus/src/config.rs
+//! [tempo]: https://github.com/tempoxyz/tempo/blob/572a6e91e055f22d9849fb1b611350ac9aff47b9/crates/consensus/src/config.rs
 
 use alloy_primitives::{B256, Bytes};
 use commonware_codec::{

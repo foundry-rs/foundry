@@ -28,7 +28,7 @@ impl<T: EvmTypes> Inspector<T> for TempoLabels {
         if address.is_tip20() && !self.labels.contains_key(&address) {
             let state = interp.host().state_mut();
             let name = 'decode: {
-                let slot = tempo_precompiles_evm2::tip20::slots::NAME;
+                let slot = tempo_precompiles::tip20::slots::NAME;
                 let Ok(value) = state.storage_slot_untracked(&address, &slot) else {
                     break 'decode None;
                 };

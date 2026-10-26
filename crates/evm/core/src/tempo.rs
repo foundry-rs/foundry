@@ -12,7 +12,7 @@ use tempo_contracts::{
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE, precompiles::VALIDATOR_CONFIG_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
-use tempo_precompiles_evm2::{
+use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
     tip20::{ITIP20, TIP20Token},
@@ -35,7 +35,7 @@ pub use tempo_contracts::precompiles::{
     STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
     TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
-pub use tempo_precompiles_evm2::{
+pub use tempo_precompiles::{
     address_registry::{AddressRegistry, IMPLICIT_APPROVAL_LIST, is_implicitly_approved},
     signature_verifier::SignatureVerifier,
     stablecoin_dex::StablecoinDEX,

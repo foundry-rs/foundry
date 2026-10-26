@@ -25,7 +25,7 @@ use tempo_alloy::primitives::{
 };
 use tempo_evm::{TempoEvmFactory, TempoEvmTypes, TempoTxEnv, tempo_execution_config};
 use tempo_hardfork::TempoHardfork;
-use tempo_precompiles_evm2::{
+use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
     account_keychain::{
         KeyRestrictions, SignatureType as KeychainSignatureType, TokenLimit as KeychainTokenLimit,

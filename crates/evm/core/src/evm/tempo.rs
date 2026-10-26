@@ -10,7 +10,7 @@ use crate::{
     tempo::{PATH_USD_ADDRESS, initialize_tempo_test_genesis_inner},
 };
 use alloy_consensus::{SignableTransaction, transaction::Recovered};
-use alloy_eips::{Decodable2718, Encodable2718, Typed2718};
+use alloy_eips::Typed2718;
 use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, NetworkTransactionBuilder, TransactionBuilder,
 };
@@ -24,11 +24,10 @@ use tempo_evm::{
     tempo_execution_config, tempo_tx_registry,
 };
 use tempo_hardfork::TempoHardfork;
-use tempo_precompiles_evm2::{
+use tempo_precompiles::{
     TempoPrecompiles,
     storage::{StorageActions, StorageCtx},
 };
-use tempo_primitives_evm2::TempoTxEnvelope;
 
 /// Tempo EVM network.
 #[derive(Clone, Copy, Debug, Default)]
@@ -114,17 +113,12 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
 }
 
 /// Converts a Tempo network envelope into Tempo's evm2 transaction.
-///
-/// Foundry's RPC types and Tempo's evm2 integration are pinned to different Tempo revisions, so the
-/// envelope crosses over as its exact EIP-2718 encoding.
 fn tempo_tx(
     envelope: TempoNetworkTxEnvelope,
     sender: Address,
     payload: TxPayload,
     key_id: Option<Address>,
 ) -> eyre::Result<Recovered<TempoTxEnv>> {
-    let encoded = envelope.encoded_2718();
-    let envelope = TempoTxEnvelope::decode_2718_exact(&encoded)?;
     let mut tx = TempoTxEnv::from(Recovered::new_unchecked(envelope, sender));
     if payload.is_simulated() {
         let id = tx.unique_tx_identifier();

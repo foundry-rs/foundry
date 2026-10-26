@@ -37,7 +37,7 @@ use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
 use foundry_test_utils::rpc::{next_tempo_mainnet_rpc_endpoint, next_tempo_testnet_rpc_endpoint};
 use std::fmt;
 use tempo_hardfork::TempoHardfork;
-use tempo_precompiles_evm2::TIP_FEE_MANAGER_ADDRESS;
+use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 
 /// Topic of the TIP20 `Transfer(address,address,uint256)` event.
 const TRANSFER_TOPIC: B256 =

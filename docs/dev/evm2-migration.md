@@ -76,7 +76,6 @@ explicitly or is documented as different; none falls back to REVM.
 | Executor | `call_tx`, `transact_tx` and block replay take converted network transactions, whose request fields are gone. | Their results report a zero `stipend`; `calculate_stipend` on a request omits EIP-7702 authorization costs. | None needed. |
 | Tempo | Tempo's EVM extension shares transaction-local state (storage action buffers, non-creditable slots) with its precompiles through `Rc`, which cannot cross threads. | Parked contexts and snapshots store a detached copy (`StoredExt`) that keeps fee settings and resets that transaction-local state. | Thread-safe Tempo extension state. |
 | OP | op-evm2 has no post-execution (`0x7D`) transactions. | Converting one fails with an explicit error. | Block-level order/index validation and refund settlement over preceding receipts, not a no-op transaction handler. |
-| Tempo | Foundry's RPC types and Tempo's evm2 integration pin different Tempo revisions. | Envelopes cross over as their exact EIP-2718 encoding. | Single Tempo pin. |
 | Fork cache | RPC endpoints report absent accounts as empty, so `ForkDb` cannot tell an existing empty account from an absent one. | `ForkDb` follows the EIP-161 rule of the latest EVM built or environment installed over the fork: with EIP-161 empty remote accounts load as absent, before it as existing (as REVM loaded them), so pre-Spurious Dragon execution sees absent empty accounts as existing. | None needed. |
 | Fuzz | Committed-session read observations are retained in the per-context cache, not just writes. | `EvmFuzzState::new` seeds accounts, code and storage from that cache after `setUp`, including read-only fork observations. Snapshot restoration drops observations obtained after the snapshot. The shared RPC cache is not a discovery source. | None needed for committed-session reads. |
 | Symbolic | Committed-session read observations are retained in the per-context cache, not just writes. | Symbolic calls to a symbolic address consider accounts cached by `setUp`, including read-only fork observations, and accounts the symbolic run itself loaded. Snapshot restoration drops observations obtained after the snapshot. The shared RPC cache is not a discovery source. | None needed for committed-session reads. |
@@ -101,26 +100,29 @@ explicitly or is documented as different; none falls back to REVM.
 
 ## Dependencies
 
-All migration dependencies use the `mablr` forks. Foundry and its satellites share
+Foundry and its satellites share
 [`mablr/evm2@mablr/foundry-completion`](https://github.com/mablr/evm2/tree/mablr/foundry-completion).
-It adds suspended-state lifecycle APIs (`finalize_transaction`, warmth restoration,
-`cool_loaded_state`, `set_prewarm_set`) and independent `BLOB_BASE_FEE_CHECK` policy on upstream
-`1dc7f6a`, including account warmth control from evm2#705, plus resolution of already-present
-delegation code before Prague, matching REVM.
+It merges alloy-rs/evm2 up to `29690bd`, the newest revision tempoxyz/tempo#7871 still compiles
+against (evm2#785 changes `GasParams::get`), and adds suspended-state lifecycle APIs
+(`finalize_transaction`, warmth restoration, `cool_loaded_state`, `set_prewarm_set`,
+`mark_created_keeping_storage`), independent `BLOB_BASE_FEE_CHECK` policy, account warmth control
+from evm2#705, and resolution of already-present delegation code before Prague, matching REVM.
+`mark_created_keeping_storage` keeps an account created for EIP-6780 when a suspended or isolated
+transaction continues on a fresh overlay, without reading its storage as discarded.
 Authorization processing remains Prague-gated. The lockfile must contain one evm2 graph, not
-separate engines for different networks.
+separate engines for different networks. Tempo and reth pin `alloy-rs/evm2`, while the satellites
+pin `mablr/evm2`; the root manifest patches both to that branch through the `DaniPopes/evm2` URL,
+since Cargo rejects a patch from the same source.
 
 [`foundry-core@mablr/fork-db-evm2-completion`](https://github.com/mablr/foundry-core/tree/mablr/fork-db-evm2-completion)
 stores native evm2 accounts and bytecode. Existing JSON/zstd caches remain readable, including
 legacy analyzed bytecode and EIP-7702 delegation. RPC cache reads remain separate from execution
-commits. [`evm2-networks`](https://github.com/mablr/evm2-networks/tree/main) provides the network
-adapters. Tempo's integration uses
-[`mablr/reth@mablr/evm2-migration`](https://github.com/mablr/reth/tree/mablr/evm2-migration).
+commits. [`evm2-networks`](https://github.com/mablr/evm2-networks) provides the network adapters.
 
-`tempo-evm` and `tempo-hardfork` use
-[`mablr/tempo@mablr/evm2-migration`](https://github.com/mablr/tempo/tree/mablr/evm2-migration).
-`tempo-primitives-evm2` and `tempo-precompiles-evm2` alias that revision while RPC types retain
-the REVM-era Tempo pin on the same fork.
+Every Tempo crate uses tempoxyz/tempo#7871 directly, which brings upstream reth and reth-core.
+Root patches do not propagate, so the root manifest repeats #7871's reth-core `[patch.crates-io]`
+entries and its evm2 patch. Anvil overrides EIP-7702 authorities for Tempo by rebuilding the
+transaction environment from the overridden Ethereum transaction, so no Tempo fork is needed.
 
 ## Completion follow-ups
 

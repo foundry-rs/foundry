@@ -42,7 +42,7 @@ base-evm2 = { workspace = true, optional = true }
 monad-evm2 = { workspace = true, optional = true }
 tempo-evm.workspace = true
 tempo-hardfork.workspace = true
-tempo-precompiles-evm2.workspace = true
+tempo-precompiles.workspace = true
 
 # Tempo consensus certificate primitives.
 commonware-codec.workspace = true
@@ -139,7 +139,7 @@ reqwest.workspace = true
 foundry-test-utils.workspace = true
 
 tempo-alloy.workspace = true
-tempo-precompiles-evm2 = { workspace = true, features = ["rpc"] }
+tempo-precompiles = { workspace = true, features = ["rpc"] }
 
 [features]
 default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]

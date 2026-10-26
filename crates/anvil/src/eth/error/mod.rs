@@ -420,7 +420,7 @@ impl From<HandlerError> for InvalidTransactionError {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
             HandlerError::RejectCallerWithCode => Self::SenderNoEOA,
-            HandlerError::InsufficientFunds => Self::InsufficientFunds,
+            HandlerError::InsufficientFunds { .. } => Self::InsufficientFunds,
             HandlerError::NonceOverflow => Self::NonceMaxValue,
             HandlerError::CreateInitCodeSizeLimit { .. } => Self::MaxInitCodeSizeExceeded,
             HandlerError::InvalidNonce { expected, got } if got > expected => Self::NonceTooHigh,

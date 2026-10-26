@@ -41,7 +41,7 @@ alloy-rpc-types = { workspace = true, features = ["trace"] }
 alloy-sol-types.workspace = true
 evm2.workspace = true
 evm2-inspectors.workspace = true
-tempo-precompiles-evm2.workspace = true
+tempo-precompiles.workspace = true
 tempo-primitives.workspace = true
 
 eyre.workspace = true

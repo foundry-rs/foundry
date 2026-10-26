@@ -74,12 +74,11 @@ tempo-primitives.workspace = true
 # evm2
 evm2.workspace = true
 tempo-hardfork.workspace = true
-tempo-precompiles-evm2.workspace = true
+tempo-precompiles.workspace = true
 monad-evm2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-tempo-primitives-evm2.workspace = true
 
 [features]
 default = ["optimism"]

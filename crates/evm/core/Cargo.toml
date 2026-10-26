@@ -67,8 +67,7 @@ tempo-contracts.workspace = true
 evm2.workspace = true
 tempo-evm.workspace = true
 tempo-hardfork.workspace = true
-tempo-precompiles-evm2.workspace = true
-tempo-primitives-evm2.workspace = true
+tempo-precompiles.workspace = true
 op-evm2 = { workspace = true, optional = true }
 base-evm2 = { workspace = true, optional = true }
 monad-evm2 = { workspace = true, optional = true }
@@ -89,6 +88,7 @@ alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
+tempo-primitives.workspace = true
 
 [[test]]
 name = "base_replay"

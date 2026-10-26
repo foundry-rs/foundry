@@ -99,7 +99,7 @@ pub fn transaction_error(err: HandlerError) -> eyre::Report {
         HandlerError::PriorityFeeGreaterThanMaxFee => {
             "priority fee is greater than max fee".to_string()
         }
-        HandlerError::InsufficientFunds
+        HandlerError::InsufficientFunds { .. }
         | HandlerError::NonceOverflow
         | HandlerError::EmptyBlobs
         | HandlerError::BlobVersionNotSupported => err.to_string(),
