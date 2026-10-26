@@ -331,3 +331,54 @@ async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
         }
     }
 }
+
+#[forgetest]
+async fn multi_resume_warns_that_rpc_url_is_not_used(prj: _, cmd: _) {
+    let (_, handle1) = spawn(NodeConfig::test()).await;
+    let (_, handle2) = spawn(NodeConfig::test()).await;
+    let (recording_rpc2, chain2_submissions) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc2, reject_chain2) =
+        spawn_rpc_proxy_rejecting_method_when_enabled(recording_rpc2, "eth_sendRawTransaction")
+            .await;
+    let (rpc_flag, flag_submissions) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
+    reject_chain2.store(true, Ordering::SeqCst);
+
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &rpc2])
+        .arg("--broadcast");
+    tester.cmd.assert_failure();
+    assert!(chain2_submissions.lock().unwrap().is_empty());
+
+    // The flag does not move chain 2 off its saved endpoint.
+    reject_chain2.store(false, Ordering::SeqCst);
+    tester.clear();
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &rpc2])
+        .args(&["--multi", "--resume", "--rpc-url", &rpc_flag]);
+    tester.cmd.assert_success().stderr_eq(str![[r#"
+Warning: Multichain resume submits and checks transactions through the RPC endpoints saved by the original run; `--rpc-url` is not used for that.
+
+"#]]);
+    assert!(flag_submissions.lock().unwrap().is_empty());
+    assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
+
+    // An RPC URL configured in `foundry.toml` is not the flag and does not warn.
+    prj.update_config(|config| config.eth_rpc_url = Some(rpc_flag.clone()));
+    tester.clear();
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &rpc2])
+        .args(&["--multi", "--resume"]);
+    tester.cmd.assert_success().stderr_eq(str![[r#""#]]);
+}

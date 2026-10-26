@@ -305,6 +305,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
     pub async fn resume(mut self) -> Result<BundledState<FEN>> {
         let endpoint = if self.args.multi {
+            if self.args.evm.rpc.rpc_url.is_some() {
+                sh_warn!(
+                    "Multichain resume submits and checks transactions through the RPC endpoints saved by the original run; `--rpc-url` is not used for that."
+                )?;
+            }
             None
         } else {
             let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
