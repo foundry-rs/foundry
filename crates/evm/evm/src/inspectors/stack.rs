@@ -1273,12 +1273,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         *child.ext_mut() = evm.ext().clone();
         child.ext_mut().set_preserve_transaction_state(true);
         // Accounts the running transaction created stay created in the nested one, so that
-        // EIP-6780 SELFDESTRUCT still deletes them.
+        // EIP-6780 SELFDESTRUCT still deletes them, and keep the storage it holds for them.
         for address in &self.inner.tx_created {
             match child.state_mut().account(address) {
                 Ok(mut account) => {
                     if account.exists() {
-                        account.mark_created();
+                        account.mark_created_keeping_storage();
                     }
                 }
                 Err(_) => return not_executed(Bytes::new()),

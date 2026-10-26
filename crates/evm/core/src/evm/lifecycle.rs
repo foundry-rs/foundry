@@ -968,12 +968,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             factory.initialize_evm(evm, db.is_forked_mode());
         }
         // The new transaction overlay does not know which accounts the transaction created, which
-        // EIP-6780 `SELFDESTRUCT` depends on.
+        // EIP-6780 `SELFDESTRUCT` depends on. Its database already holds their storage.
         for address in &created {
             if let Ok(mut account) = evm.state_mut().account(address)
                 && account.exists()
             {
-                account.mark_created();
+                account.mark_created_keeping_storage();
             }
         }
         factory.refresh_switched_transaction(evm, &self.tx_original);
@@ -1190,7 +1190,8 @@ fn merge_changes<'c>(
         {
             let mut account = state.account(&address)?;
             account.touch();
-            if change.created {
+            // An account the running transaction already created keeps the storage it holds.
+            if change.created && !account.is_created() {
                 account.mark_created();
             }
         }

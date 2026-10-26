@@ -102,10 +102,13 @@ explicitly or is documented as different; none falls back to REVM.
 
 Foundry and its satellites share
 [`mablr/evm2@mablr/foundry-completion`](https://github.com/mablr/evm2/tree/mablr/foundry-completion).
-It merges the alloy-rs/evm2 revision pinned by tempoxyz/tempo#7871 and adds suspended-state
-lifecycle APIs (`finalize_transaction`, warmth restoration, `cool_loaded_state`,
-`set_prewarm_set`), independent `BLOB_BASE_FEE_CHECK` policy, account warmth control from
-evm2#705, and resolution of already-present delegation code before Prague, matching REVM.
+It merges alloy-rs/evm2 up to `29690bd`, the newest revision tempoxyz/tempo#7871 still compiles
+against (evm2#785 changes `GasParams::get`), and adds suspended-state lifecycle APIs
+(`finalize_transaction`, warmth restoration, `cool_loaded_state`, `set_prewarm_set`,
+`mark_created_keeping_storage`), independent `BLOB_BASE_FEE_CHECK` policy, account warmth control
+from evm2#705, and resolution of already-present delegation code before Prague, matching REVM.
+`mark_created_keeping_storage` keeps an account created for EIP-6780 when a suspended or isolated
+transaction continues on a fresh overlay, without reading its storage as discarded.
 Authorization processing remains Prague-gated. The lockfile must contain one evm2 graph, not
 separate engines for different networks. Tempo and reth pin `alloy-rs/evm2`, while the satellites
 pin `mablr/evm2`; the root manifest patches both to that branch through the `DaniPopes/evm2` URL,

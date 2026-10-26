@@ -1631,3 +1631,85 @@ Ran 2 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
 }
+
+// A contract created in the running transaction keeps its storage across fork round trips and
+// isolated calls, and stays created there, so EIP-6780 `SELFDESTRUCT` still deletes it.
+#[forgetest_init]
+async fn fork_switch_keeps_created_account_storage(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.add_test(
+        "CreatedFork.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+
+contract Box {
+    uint256 public value = 7;
+    uint256 public other = 3;
+
+    function set(uint256 next) external returns (uint256 previous) {
+        previous = value;
+        value = next;
+    }
+
+    function kill() external {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract CreatedForkTest is Test {
+    uint256 a;
+    uint256 b;
+
+    function setUp() public {
+        a = vm.createFork("<rpc>");
+        b = vm.createFork("<rpc>");
+        vm.selectFork(a);
+    }
+
+    function roundTrip() internal {
+        vm.selectFork(b);
+        vm.selectFork(a);
+    }
+
+    function test_isolated_call_after_fork_switch() public {
+        Box box = new Box();
+        assertEq(box.set(8), 7);
+        roundTrip();
+        assertEq(box.set(9), 8);
+        assertEq(box.other(), 3);
+    }
+
+    // Only an isolated call ends its transaction, which deletes the contract.
+    function test_isolated_kill_after_fork_switch() public {
+        Box box = new Box();
+        roundTrip();
+        box.kill();
+        assertEq(address(box).code.length, 0);
+    }
+
+    function test_two_fork_switches() public {
+        Box box = new Box();
+        assertEq(box.set(8), 7);
+        roundTrip();
+        assertEq(box.value(), 8);
+        roundTrip();
+        assertEq(box.value(), 8);
+        assertEq(box.other(), 3);
+    }
+}
+"#
+        .replace("<rpc>", &handle.http_endpoint()),
+    );
+
+    cmd.args(["test", "--isolate"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+    cmd.forge_fuse().env("FOUNDRY_ISOLATE", "false");
+    cmd.args(["test", "--no-match-test", "kill"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+}

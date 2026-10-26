@@ -369,10 +369,10 @@ svm = { package = "svm-rs", version = "0.5.30", default-features = false, featur
 
 ## evm2
 # Keep all migration satellites on the same engine fork.
-evm2 = { git = "https://github.com/mablr/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317", default-features = false, features = [
+evm2 = { git = "https://github.com/mablr/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c", default-features = false, features = [
     "std",
 ] }
-evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317", features = [
+evm2-inspectors = { git = "https://github.com/mablr/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c", features = [
     "serde",
 ] }
 # Tempo's evm2 integration (tempoxyz/tempo#7871).
@@ -668,11 +668,11 @@ ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
 # `alloy-rs/evm2`, while evm2-networks and foundry-core pin `mablr/evm2`. Cargo rejects a patch
 # from the same source, so both go through `DaniPopes/evm2`, a URL in the same fork network.
 [patch."https://github.com/alloy-rs/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c" }
 
 [patch."https://github.com/mablr/evm2"]
-evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317" }
-evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317" }
-evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "f27835bf7bed31d0265c8192214e25983e854317" }
+evm2 = { git = "https://github.com/DaniPopes/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c" }
+evm2-inspectors = { git = "https://github.com/DaniPopes/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c" }
+evm2-macros = { git = "https://github.com/DaniPopes/evm2", rev = "4a4fdb3bedaa1c6b3d03af7588c04f941a652b4c" }
