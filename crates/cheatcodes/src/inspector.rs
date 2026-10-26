@@ -48,9 +48,9 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
-        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores, SpecFor,
-        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
-        restore_access_warmth,
+        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
+        SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor,
+        evm_env, release_inspector, restore_access_warmth,
     },
 };
 use foundry_evm_traces::{
@@ -190,7 +190,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        _depth: u16,
+        depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
@@ -199,10 +199,15 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
         // A failed transaction keeps its nonce increment.
-        foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        let persistent =
+            foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        let result = executed.result().clone();
+        drop(executed);
+        drop(child);
+        cheats.record_persistent(usize::from(depth).saturating_sub(1), persistent);
         // The nested transaction's changes are not the running transaction's execution.
         EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
-        Ok(executed.result().clone())
+        Ok(result)
     }
 
     // Without the inspector stack's nested-root handling, replayed transactions run without
@@ -229,11 +234,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        _depth: u16,
+        depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let result = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
+        let (result, persistent) = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
+        cheats.record_persistent(usize::from(depth).saturating_sub(1), persistent);
         result.logs.iter().for_each(|log| cheats.log_hook(log));
         Ok(result)
     }
@@ -859,6 +865,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,
 
+    /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
+    /// them, replayed when that frame or an enclosing one reverts.
+    pub persistent_writes: Vec<(usize, PersistentWrite)>,
+
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
@@ -988,6 +998,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcastable_transactions: Default::default(),
             skip_payloads: Default::default(),
             eth_deals: Default::default(),
+            persistent_writes: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -1618,6 +1629,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             &active_delegations,
                             new_origin,
                             chain_id,
+                            &mut self.persistent_writes,
+                            curr_depth,
                         ) {
                             return Some(message_result(
                                 call,
@@ -1642,7 +1655,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // The increment survives reverts of the enclosing calls.
                     if !isolate_call && let Ok(mut account) = evm.state_mut().account(&new_origin) {
                         let prev = account.nonce();
-                        account.set_nonce_untracked(prev + 1);
+                        account.set_nonce(prev + 1);
+                        self.persistent_writes
+                            .push((curr_depth, PersistentWrite::Nonce(new_origin, 1)));
                         debug!(target: "cheatcodes", address=%new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if single_call {
@@ -2213,6 +2228,40 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         record_logs(&mut self.core.recorded_logs, log);
     }
 
+    /// Records `writes` made in the frame at `depth`, see [`Self::persistent_writes`].
+    pub fn record_persistent(&mut self, depth: usize, writes: Vec<PersistentWrite>) {
+        self.persistent_writes.extend(writes.into_iter().map(|write| (depth, write)));
+    }
+
+    /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
+    /// failed and the writes were rolled back, as writes of the enclosing frame. A transaction's
+    /// writes are dropped when its root frame ends; a nested one merges its changes itself.
+    fn replay_persistent_writes(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        depth: usize,
+        success: bool,
+    ) {
+        if self.persistent_writes.is_empty() {
+            return;
+        }
+        let root = usize::from(interp.version().initial_call_depth);
+        if !success {
+            let state = interp.host().state_mut();
+            for (write_depth, write) in &mut self.persistent_writes {
+                if *write_depth >= depth {
+                    let _ = write.apply(state);
+                    if depth > root {
+                        *write_depth = depth - 1;
+                    }
+                }
+            }
+        }
+        if depth == root {
+            self.persistent_writes.retain(|(write_depth, _)| *write_depth < root);
+        }
+    }
+
     /// Called after a call message executes.
     pub fn call_end_hook(
         &mut self,
@@ -2222,6 +2271,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
+        self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
             self.deploy_code_caller_depth(curr_depth),
@@ -2643,6 +2693,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         _backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
+        self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
             self.deploy_code_caller_depth(curr_depth),
@@ -3695,6 +3746,8 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     authorizations: &[SignedAuthorization],
     sender: Address,
     chain_id: u64,
+    persistent: &mut Vec<(usize, PersistentWrite)>,
+    depth: usize,
 ) -> Result<()> {
     for auth in authorizations {
         if (!auth.chain_id.is_zero() && auth.chain_id != U256::from(chain_id))
@@ -3710,7 +3763,8 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         let nonce = account.nonce();
         if auth.nonce() == nonce + u64::from(authority == sender) {
-            account.set_nonce_untracked(nonce + 1);
+            account.set_nonce(nonce + 1);
+            persistent.push((depth, PersistentWrite::Nonce(authority, 1)));
         }
     }
     Ok(())

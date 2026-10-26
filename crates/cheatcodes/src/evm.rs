@@ -30,8 +30,8 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     evm::{
-        EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork, TxEnvelopeFor,
-        TxPayload, evm_env,
+        EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork, PersistentWrite,
+        TxEnvelopeFor, TxPayload, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -786,11 +786,12 @@ impl Cheatcode for dealCall {
         let old_balance = {
             let mut account = ccx.evm.state_mut().account(&address)?;
             let old_balance = account.balance();
-            // The balance survives reverts of the enclosing calls.
-            account.touch();
-            account.set_balance_untracked(new_balance);
+            account.set_balance(new_balance);
             old_balance
         };
+        // The balance survives reverts of the enclosing calls.
+        let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
+        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
         EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
@@ -835,7 +836,13 @@ impl Cheatcode for resetNonceCall {
         let nonce = if is_eoa { 0 } else { 1 };
         // Nonce cheatcodes survive reverts of the enclosing calls.
         account.touch();
-        account.set_nonce_untracked(nonce);
+        let previous = account.nonce();
+        account.set_nonce(nonce);
+        let address = account.address();
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        let write = PersistentWrite::Nonce(address, nonce.wrapping_sub(previous));
+        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
@@ -853,7 +860,13 @@ impl Cheatcode for setNonceCall {
              account's current nonce ({current})"
         );
         account.touch();
-        account.set_nonce_untracked(newNonce);
+        let previous = account.nonce();
+        account.set_nonce(newNonce);
+        let address = account.address();
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        let write = PersistentWrite::Nonce(address, newNonce.wrapping_sub(previous));
+        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
         Ok(Default::default())
     }
 }
@@ -863,7 +876,13 @@ impl Cheatcode for setNonceUnsafeCall {
         let Self { account, newNonce } = *self;
         let mut account = ccx.evm.state_mut().account(&account)?;
         account.touch();
-        account.set_nonce_untracked(newNonce);
+        let previous = account.nonce();
+        account.set_nonce(newNonce);
+        let address = account.address();
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        let write = PersistentWrite::Nonce(address, newNonce.wrapping_sub(previous));
+        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
         Ok(Default::default())
     }
 }

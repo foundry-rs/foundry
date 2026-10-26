@@ -622,7 +622,10 @@ fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
         else {
             return Ok(());
         };
-        db.refresh_fork_storage(address, slot, evm)?;
+        if let Some(write) = db.refresh_fork_storage(address, slot, evm)? {
+            let depth = ccx.caller_depth();
+            ccx.state.persistent_writes.push((depth, write));
+        }
     }
     Ok(())
 }

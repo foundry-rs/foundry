@@ -38,7 +38,7 @@ use crate::{
 };
 use alloy_consensus::{Typed2718, transaction::Recovered};
 use alloy_primitives::{
-    Address, KECCAK256_EMPTY, Log, U256,
+    Address, B256, KECCAK256_EMPTY, Log, U256,
     map::{AddressMap, AddressSet, Entry, HashSet},
 };
 use evm2::{
@@ -138,21 +138,27 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         }
         let executed = executor.transact(&tx).map_err(transaction_error)?;
         let Some((id, persistent)) = inactive else {
-            merge_changes(evm.state_mut(), executed.account_changes(), |_| true, untracked)?;
+            let mut persistent = Vec::new();
+            merge_changes(
+                evm.state_mut(),
+                executed.account_changes(),
+                |_| true,
+                untracked.then_some(&mut persistent),
+            )?;
             let result = executed.result().clone();
-            return Ok(ExecutedNested { result, context: None, cursor });
+            return Ok(ExecutedNested { result, context: None, cursor, persistent });
         };
         merge_changes(
             evm.state_mut(),
             executed.account_changes(),
             |address| persistent.contains(address),
-            false,
+            None,
         )?;
         let result = executed.commit();
         rebase_loaded_accounts(evm.state_mut(), executor.state_mut(), &persistent)?;
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
-        Ok(ExecutedNested { result, context: Some((id, cache)), cursor })
+        Ok(ExecutedNested { result, context: Some((id, cache)), cursor, persistent: Vec::new() })
     }
 }
 
@@ -164,12 +170,62 @@ pub struct ExecutedNested<T: EvmTypesHost> {
     context: Option<(Option<U256>, Cache)>,
     /// See [`PreparedTx::set_cursor`].
     cursor: Option<ForkCursor<T>>,
+    /// Writes of an untracked merge, to replay when an enclosing call reverts.
+    persistent: Vec<PersistentWrite>,
 }
 
 impl<T: EvmTypesHost> ExecutedNested<T> {
     /// Takes the fork cursor to advance, see [`PreparedTx::set_cursor`].
     pub const fn take_cursor(&mut self) -> Option<ForkCursor<T>> {
         self.cursor.take()
+    }
+
+    /// Takes the writes of an untracked merge, see [`PersistentWrite`].
+    pub fn take_persistent(&mut self) -> Vec<PersistentWrite> {
+        mem::take(&mut self.persistent)
+    }
+}
+
+/// A write that must survive reverts of the enclosing calls, like the unjournaled state edits
+/// of cheatcodes under REVM. It is applied as a journaled write, and the owner replays it after
+/// each enclosing call that reverts. Balance and nonce writes replay as deltas, so they compose
+/// with value transfers and nonce bumps undone by the revert, as REVM's relative undo did.
+#[derive(Clone, Debug)]
+pub enum PersistentWrite {
+    /// Adds a wrapping delta to an account's balance.
+    Balance(Address, U256),
+    /// Adds a wrapping delta to an account's nonce.
+    Nonce(Address, u64),
+    /// Sets an account's code.
+    Code(Address, B256, Bytecode),
+    /// Wipes an account's storage.
+    Wipe(Address),
+    /// Sets a storage slot.
+    Slot(Address, U256, U256),
+}
+
+impl PersistentWrite {
+    /// Applies the write to `state` as a journaled write.
+    pub fn apply(&self, state: &mut State<'_>) -> DbResult<()> {
+        match self {
+            Self::Balance(address, delta) => {
+                let mut account = state.account(address)?;
+                let balance = account.balance().wrapping_add(*delta);
+                account.set_balance(balance);
+            }
+            Self::Nonce(address, delta) => {
+                let mut account = state.account(address)?;
+                account.touch();
+                let nonce = account.nonce().wrapping_add(*delta);
+                account.set_nonce(nonce);
+            }
+            Self::Code(address, code_hash, code) => {
+                state.account(address)?.set_code(*code_hash, code.clone());
+            }
+            Self::Wipe(address) => state.storage(address)?.wipe(),
+            Self::Slot(address, key, value) => state.storage_slot(address, *key)?.set(*value),
+        }
+        Ok(())
     }
 }
 
@@ -1125,22 +1181,25 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true, false)
+    merge_changes(state, executed.account_changes(), |_| true, None)
 }
 
-/// Applies a nested transaction's changes to the running transaction's `state` so that they survive
-/// reverts of the enclosing calls, such as for `executeTransaction`.
+/// Applies a nested transaction's changes to the running transaction's `state` as journaled
+/// writes and returns them as [`PersistentWrite`]s, for the caller to replay when an enclosing
+/// call reverts, such as for `executeTransaction`.
 pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
-) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true, true)
+) -> DbResult<Vec<PersistentWrite>> {
+    let mut persistent = Vec::new();
+    merge_changes(state, executed.account_changes(), |_| true, Some(&mut persistent))?;
+    Ok(persistent)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
 /// transaction's `state` as journaled writes, like [`merge_nested_changes`].
 pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
-    merge_changes(state, pending.account_changes(), |_| true, false)
+    merge_changes(state, pending.account_changes(), |_| true, None)
 }
 
 /// Returns the warmth of the running transaction in `state`: its base warm set and the accounts and
@@ -1220,7 +1279,7 @@ fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
     filter: impl Fn(&Address) -> bool,
-    untracked: bool,
+    mut persistent: Option<&mut Vec<PersistentWrite>>,
 ) -> DbResult<()> {
     for change in changes.filter(|change| change.is_changed()) {
         let address = change.address;
@@ -1239,7 +1298,15 @@ fn merge_changes<'c>(
         let code = || Ok(change.code.map(|(_, code)| code.clone()).unwrap_or_default());
         let wiped = change.current.is_none() || change.storage.wiped;
         let slots = change.storage.changed_slots().map(|(key, slot)| (*key, slot.current));
-        apply_account(state, address, change.current, code, wiped, slots, untracked)?;
+        apply_account(
+            state,
+            address,
+            change.current,
+            code,
+            wiped,
+            slots,
+            persistent.as_deref_mut(),
+        )?;
     }
     Ok(())
 }
@@ -1272,15 +1339,15 @@ fn rebase_loaded_accounts(
             Some((_, code)) => Ok(code.clone().unwrap_or_default()),
             None => Ok(Bytecode::default()),
         };
-        apply_account(state, address, info.as_ref(), code, false, slots, false)?;
+        apply_account(state, address, info.as_ref(), code, false, slots, None)?;
     }
     Ok(())
 }
 
 /// Sets the account at `address` in `state` to `info`, or to no account, and writes `slots` to
-/// its storage after wiping it if `wiped`, as journaled writes, or so that they survive reverts
-/// of the enclosing calls if `untracked`. Fields that already hold their value are left alone;
-/// `code` is only built when the code hash changes.
+/// its storage after wiping it if `wiped`, as journaled writes, also recorded in `persistent` if
+/// given. Fields that already hold their value are left alone; `code` is only built when the code
+/// hash changes.
 ///
 /// A journaled wipe is not undone by a revert of the enclosing call: evm2 does not journal the
 /// wipe marker, and slots the running transaction never loaded cannot be cleared one by one.
@@ -1291,50 +1358,39 @@ fn apply_account(
     code: impl FnOnce() -> DbResult<Bytecode>,
     wiped: bool,
     slots: impl IntoIterator<Item = (U256, U256)>,
-    untracked: bool,
+    mut persistent: Option<&mut Vec<PersistentWrite>>,
 ) -> DbResult<()> {
+    let mut record = |write| {
+        if let Some(persistent) = persistent.as_deref_mut() {
+            persistent.push(write);
+        }
+    };
     {
         let mut account = state.account(&address)?;
         let (balance, nonce, code_hash) = info.map_or((U256::ZERO, 0, KECCAK256_EMPTY), |info| {
             (info.balance, info.nonce, info.code_hash)
         });
         if account.balance() != balance {
-            if untracked {
-                account.set_balance_untracked(balance);
-            } else {
-                account.set_balance(balance);
-            }
+            record(PersistentWrite::Balance(address, balance.wrapping_sub(account.balance())));
+            account.set_balance(balance);
         }
         if account.nonce() != nonce {
-            if untracked {
-                account.set_nonce_untracked(nonce);
-            } else {
-                account.set_nonce(nonce);
-            }
+            record(PersistentWrite::Nonce(address, nonce.wrapping_sub(account.nonce())));
+            account.set_nonce(nonce);
         }
         if account.code_hash() != code_hash {
-            if untracked {
-                account.override_code(code_hash, code()?);
-            } else {
-                account.set_code(code_hash, code()?);
-            }
+            let code = code()?;
+            record(PersistentWrite::Code(address, code_hash, code.clone()));
+            account.set_code(code_hash, code);
         }
     }
     if wiped {
-        let mut storage = state.storage(&address)?;
-        if untracked {
-            storage.override_wipe();
-        } else {
-            storage.wipe();
-        }
+        record(PersistentWrite::Wipe(address));
+        state.storage(&address)?.wipe();
     }
     for (key, value) in slots {
-        let mut slot = state.storage_slot(&address, key)?;
-        if untracked {
-            slot.set_untracked(value);
-        } else {
-            slot.set(value);
-        }
+        record(PersistentWrite::Slot(address, key, value));
+        state.storage_slot(&address, key)?.set(value);
     }
     Ok(())
 }

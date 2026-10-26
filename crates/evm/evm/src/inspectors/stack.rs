@@ -553,12 +553,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Ok(executed) => {
                 // A failed transaction keeps its nonce increment.
                 merge_untracked_nested_changes(evm.state_mut(), &executed)
-                    .map(|()| executed.result().clone())
+                    .map(|persistent| (executed.result().clone(), persistent))
                     .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        let result = result.map(|(result, persistent)| {
+            cheats.record_persistent(usize::from(depth).saturating_sub(1), persistent);
+            result
+        });
         // The nested transaction's changes are not the running transaction's execution.
         EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         cheats.snapshot_restores = snapshot_restores;
@@ -599,9 +603,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth + 1;
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
-        let executed = self.replay(cheats, &mut replay, evm, depth, prepared, true);
+        let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
-        Ok(backend.backend_mut().store_executed(evm, executed?))
+        cheats.record_persistent(usize::from(depth).saturating_sub(1), executed.take_persistent());
+        Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
     fn console_log(&mut self, msg: &str) {

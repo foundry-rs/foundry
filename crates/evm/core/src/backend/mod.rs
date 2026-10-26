@@ -28,8 +28,8 @@ use crate::{
         BackingDb, BlockContext, ChainFor, EnvTransition, EthEvmNetwork, EvmEnvFor, EvmFactoryFor,
         ExecutedNested, ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition,
         FoundryDatabase, FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork,
-        Parked, PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor, block_txs, evm_env,
-        merge_untracked_nested_changes,
+        Parked, PersistentWrite, PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor,
+        block_txs, evm_env, merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -968,15 +968,15 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm: &mut FoundryEvmFor<'_, FEN>,
         env: Option<EvmEnvFor<FEN>>,
         inspector: Option<&mut dyn Inspector<TypesFor<FEN>>>,
-    ) -> eyre::Result<TxResultFor<FEN>> {
+    ) -> eyre::Result<(TxResultFor<FEN>, Vec<PersistentWrite>)> {
         trace!("execute signed transaction");
         let mut executor = self.lifecycle.nested_evm(evm, tx, env, None);
         if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
         }
         let executed = executor.transact(tx).map_err(transaction_error)?;
-        merge_untracked_nested_changes(evm.state_mut(), &executed)?;
-        Ok(executed.result().clone())
+        let persistent = merge_untracked_nested_changes(evm.state_mut(), &executed)?;
+        Ok((executed.result().clone(), persistent))
     }
 
     /// Prepares [`Self::transact_from_tx`], such as for `vm.broadcastRawTransaction`, and returns
@@ -1203,9 +1203,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         address: Address,
         slot: U256,
         evm: &mut FoundryEvmFor<'_, FEN>,
-    ) -> Result<(), BackendError> {
+    ) -> Result<Option<PersistentWrite>, BackendError> {
         if !self.is_forked_mode() {
-            return Ok(());
+            return Ok(None);
         }
         trace!(?address, ?slot, "refresh fork storage");
         let db = &self.lifecycle.active().db;
@@ -1220,10 +1220,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             storage.slots.insert(slot, value);
         }
         let storage = state.storage(&address)?;
-        if storage.is_loaded(&slot) {
-            storage.into_slot(slot)?.override_value(value);
+        if !storage.is_loaded(&slot) {
+            return Ok(None);
         }
-        Ok(())
+        storage.into_slot(slot)?.set(value);
+        Ok(Some(PersistentWrite::Slot(address, slot, value)))
     }
 
     // ---- Snapshots ----
