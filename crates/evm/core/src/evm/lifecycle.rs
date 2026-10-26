@@ -280,6 +280,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.forks.context_mut(active).expect("active context exists")
     }
 
+    /// Records `value` as the accepted value of a slot the running transaction restored the
+    /// original of when it resumed the active context, such as after refreshing the slot from the
+    /// remote, so that a revert leaving the context keeps it.
+    pub fn refresh_switched_slot(&mut self, address: &Address, slot: U256, value: U256) {
+        if let Some(switched) = self.active_mut().switched.get_mut(address)
+            && let Some(accepted) = switched.get_mut(&slot)
+        {
+            *accepted = value;
+        }
+    }
+
     /// Returns the active context's accepted state for modification between executions,
     /// initializing the context first if it never ran.
     pub fn accepted_mut(&mut self) -> &mut Cache {

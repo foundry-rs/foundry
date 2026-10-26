@@ -1209,7 +1209,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// the enclosing calls, as on master, where the refresh replaced the journaled slot's present
     /// value. Its transaction-start original is kept.
     pub fn refresh_fork_storage(
-        &self,
+        &mut self,
         address: Address,
         slot: U256,
         evm: &mut FoundryEvmFor<'_, FEN>,
@@ -1233,6 +1233,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         if storage.is_loaded(&slot) {
             storage.into_slot(slot)?.override_value(value);
         }
+        self.lifecycle.refresh_switched_slot(&address, slot, value);
         Ok(())
     }
 
