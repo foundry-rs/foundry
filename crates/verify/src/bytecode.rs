@@ -44,7 +44,7 @@ use foundry_evm::{
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
-use foundry_evm_networks::NetworkVariant;
+use foundry_evm_networks::{NetworkVariant, celo::CELO_DYNAMIC_FEE_TX_TYPE};
 use std::path::PathBuf;
 
 #[cfg(feature = "base")]
@@ -901,9 +901,12 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
         } = self;
         // Keep the network-native transaction and replace only its sender and input.
         let mut tx: TransactionRequestFor<FEN> = FEN::envelope_from_any_rpc(&transaction)?.into();
-        // Restore CREATE's kind only for Ethereum envelopes, preserving native batches.
-        if let Some(envelope) = transaction.as_envelope() {
-            tx.set_kind(envelope.kind());
+        // Restore CREATE's kind only for Ethereum envelopes, including Celo CIP-64 transactions
+        // converted to EIP-1559, preserving native batches.
+        if transaction.as_envelope().is_some()
+            || transaction.transaction_type() == Some(CELO_DYNAMIC_FEE_TX_TYPE)
+        {
+            tx.set_kind(ConsensusTransaction::kind(&transaction));
         }
         tx.set_from(TransactionResponse::from(&transaction));
 
