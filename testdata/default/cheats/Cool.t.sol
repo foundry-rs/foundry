@@ -169,10 +169,7 @@ contract CoolProbe is Test {
         require(target.balance == 0xdeadbeef);
     }
 
-    function coolAndMeasure(address target, Vm.AccessListItem[] memory access)
-        external
-        returns (uint256 gasUsed)
-    {
+    function coolAndMeasure(address target, Vm.AccessListItem[] memory access) external returns (uint256 gasUsed) {
         // Changing the configured access list leaves the running transaction's in place.
         if (access.length == 0) {
             vm.noAccessList();
