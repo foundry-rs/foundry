@@ -760,6 +760,12 @@ contract PrecompileAccounts is Test {
         assertPrecompileAccounts();
     }
 
+    function checkSymbolicCodehashAfterCodeQuery(address who) public {
+        vm.assume(who == address(1));
+        assert(address(1).code.length == 0);
+        assert(who.codehash == bytes32(0));
+    }
+
     function assertPrecompileAccounts() internal {
         for (uint160 i = 1; i <= 10; ++i) {
             address target = address(i);
@@ -827,13 +833,21 @@ contract PrecompileAccounts is Test {
             "--evm-version",
             "osaka",
             "--match-test",
-            "checkPrecompileAccounts",
+            "checkPrecompileAccounts|checkSymbolicCodehashAfterCodeQuery",
         ])
         .assert_json_stdout(str![[r#"
 {
   "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
     "test_results": {
       "checkPrecompileAccounts()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      },
+      "checkSymbolicCodehashAfterCodeQuery(address)": {
         "status": "Success",
         "symbolic": {
           "status": "pass",
