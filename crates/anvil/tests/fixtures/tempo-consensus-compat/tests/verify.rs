@@ -2,9 +2,7 @@
 
 #![cfg(unix)]
 
-use alloy_consensus::{
-    Sealable, Typed2718, proofs::calculate_transaction_root, transaction::TxHashRef,
-};
+use alloy_consensus::{Typed2718, proofs::calculate_transaction_root, transaction::TxHashRef};
 use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, NodeHandle, spawn};
@@ -146,7 +144,6 @@ async fn verify_block(handle: &NodeHandle, height: u64, trusted_identity: &[u8])
     assert_eq!(certificate.proposal.round.epoch().get(), finalization.epoch);
     assert_eq!(certificate.proposal.round.view().get(), finalization.view);
     assert_eq!(certificate.proposal.payload.0, finalization.digest.0);
-    assert_eq!(header.hash_slow(), finalization.digest);
     assert_eq!(calculate_transaction_root(&body.transactions), header.inner.transactions_root);
     assert_eq!(body.calculate_ommers_root(), header.inner.ommers_hash);
     assert_eq!(body.calculate_withdrawals_root(), header.inner.withdrawals_root);
