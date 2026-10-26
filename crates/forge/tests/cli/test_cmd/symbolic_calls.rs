@@ -1526,3 +1526,192 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 
     assert!(!stdout.contains("symbolic CALLCODE value"), "{stdout}");
 }
+
+// An undefined opcode or one that underflows the stack halts its frame exceptionally, so the
+// call or create that ran it fails instead of the symbolic run stopping.
+#[forgetest_init]
+fn symbolic_invalid_opcode_halts_frame(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_invalid_opcode_halts_frame");
+
+    prj.add_test(
+        "SymbolicInvalidOpcode.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvalidOpcode is Test {
+    uint256 marker;
+
+    function checkCallToStackOverflowFails(uint256 value) public {
+        // Init code that returns a runtime of one PUSH0 more than the stack holds.
+        bytes memory init = hex"61040180600a5f395ff3PUSH0S";
+        address child;
+        assembly ("memory-safe") {
+            child := create(0, add(init, 0x20), mload(init))
+        }
+        assertEq(child.code.length, 1025);
+        marker = value;
+        (bool ok, bytes memory output) = child.call("");
+        assert(!ok);
+        assertEq(output.length, 0);
+        assertEq(marker, value);
+    }
+
+    function checkCallToStackUnderflowFails(uint256 value) public {
+        address child = address(0xC0DE);
+        // ADD with an empty stack.
+        vm.etch(child, hex"01");
+        marker = value;
+        (bool ok, bytes memory output) = child.call("");
+        assert(!ok);
+        assertEq(output.length, 0);
+        assertEq(marker, value);
+    }
+
+    function checkCallToUndefinedOpcodeFails(uint256 value) public {
+        address child = address(0xC0DE);
+        // 0xCC is not an opcode.
+        vm.etch(child, hex"cc");
+        marker = value;
+        (bool ok, bytes memory output) = child.call("");
+        assert(!ok);
+        assertEq(output.length, 0);
+        assertEq(marker, value);
+    }
+
+    function checkCreateWithStackUnderflowFails(uint256 value) public {
+        // ADDMOD with two of its three operands.
+        bytes memory initcode = hex"6001600208";
+        uint64 nonce = vm.getNonce(address(this));
+        marker = value;
+        address created;
+        assembly ("memory-safe") {
+            created := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assertEq(created, address(0));
+        assertEq(vm.getNonce(address(this)), nonce + 1);
+        assertEq(marker, value);
+    }
+}
+"#
+        .replace("PUSH0S", &"5f".repeat(1025)),
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "check.*Fails"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicInvalidOpcode.t.sol:SymbolicInvalidOpcode
+[PASS] checkCallToStackOverflowFails(uint256) ([METRICS])
+[PASS] checkCallToStackUnderflowFails(uint256) ([METRICS])
+[PASS] checkCallToUndefinedOpcodeFails(uint256) ([METRICS])
+[PASS] checkCreateWithStackUnderflowFails(uint256) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A call or create beyond the EVM call depth limit fails, so self-call recursion unwinds after
+// 1024 nested frames, as on a node, instead of exhausting the native stack.
+#[forgetest_init]
+fn symbolic_call_depth_limit_stops_recursion(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_depth_limit_stops_recursion");
+
+    prj.add_test(
+        "SymbolicCallDepth.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SelfCaller {
+    uint256 public frames;
+
+    fallback() external {
+        frames += 1;
+        (bool ok,) = address(this).call("");
+        ok;
+    }
+}
+
+// The deepest frame's self-call fails, so it tries a CREATE at the depth limit.
+contract DeepCreator {
+    address public created = address(1);
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            address child;
+            assembly {
+                child := create(0, 0, 0)
+            }
+            created = child;
+        }
+    }
+}
+
+// The deepest frame calls an address outside the known contracts.
+contract DeepSymbolicCaller {
+    address public to;
+    bool public reached;
+
+    function aim(address target) external {
+        to = target;
+    }
+
+    function descend() external {
+        (bool ok,) = address(this).call(abi.encodeCall(this.descend, ()));
+        if (!ok) {
+            (bool sent,) = to.call("");
+            reached = sent;
+        }
+    }
+}
+
+contract SymbolicCallDepth is Test {
+    function checkSelfCallsStopAtTheCallDepthLimit(uint256) public {
+        SelfCaller target = new SelfCaller();
+        (bool ok,) = address(target).call("");
+        assertTrue(ok);
+        assertEq(target.frames(), 1024);
+    }
+
+    function checkSymbolicTargetAtTheCallDepthLimitFails(address to) public {
+        DeepSymbolicCaller target = new DeepSymbolicCaller();
+        vm.assume(to != address(target) && to != address(this) && uint160(to) > 0xffff);
+        target.aim(to);
+        target.descend();
+        assertFalse(target.reached());
+    }
+
+    function checkCreateAtTheCallDepthLimitFails(uint256) public {
+        DeepCreator target = new DeepCreator();
+        target.descend();
+        assertEq(target.created(), address(0));
+        assertEq(vm.getNonce(address(target)), 1);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "check.*AtTheCallDepthLimit",
+        "--symbolic-call-targets",
+        // Every nested frame completes a path for each outcome of the deepest call, and the
+        // depth budget spans all 1024 frames.
+        "--symbolic-max-paths",
+        "16384",
+        "--symbolic-max-depth",
+        "1000000",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicCallDepth.t.sol:SymbolicCallDepth
+[PASS] checkCreateAtTheCallDepthLimitFails(uint256) ([METRICS])
+[PASS] checkSelfCallsStopAtTheCallDepthLimit(uint256) ([METRICS])
+[PASS] checkSymbolicTargetAtTheCallDepthLimitFails(address) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

@@ -17,6 +17,11 @@ pub(crate) const ERROR_DATA_MIN_LEN: usize = 68; // selector (4) + offset (32) +
 // Precompile address layout
 pub(crate) const PRECOMPILE_ADDRESS_LEADING_ZEROS: usize = 19;
 
+// Native stack reserved for nested call frames, which the EVM allows up to its call depth
+// limit.
+pub(crate) const CALL_FRAME_STACK_RED_ZONE: usize = 1024 * 1024;
+pub(crate) const CALL_FRAME_STACK_GROWTH: usize = 8 * 1024 * 1024;
+
 // Solver subprocess supervision.
 pub(crate) const SOLVER_CANCEL_CHECK_INTERVAL: Duration = Duration::from_millis(50);
 

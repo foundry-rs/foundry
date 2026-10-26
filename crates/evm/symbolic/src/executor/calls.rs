@@ -887,6 +887,15 @@ impl SymbolicExecutor {
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
+        // A call beyond the call depth limit fails before it transfers value or runs
+        // any code, including a precompile.
+        if state.call_depth >= CALL_STACK_LIMIT as usize {
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+            state.stack.push(SymExpr::zero(&mut self.cx))?;
+            return Ok(StepOutcome::Continue);
+        }
+
         let spec_id = executor.spec_id;
         if is_precompile_for_spec(code_address, spec_id) {
             let input_len = in_size.size_word(&mut self.cx);
@@ -1403,7 +1412,12 @@ impl SymbolicExecutor {
                 return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
             }
             let (call_caller, _, _) = branch.prank_for_next_call();
-            if matches!(kind, CallKind::Call | CallKind::CallCode) {
+            if branch.call_depth >= CALL_STACK_LIMIT as usize {
+                // Beyond the call depth limit the call fails before it transfers value.
+                branch.return_data = SymReturnData::empty(&mut self.cx);
+                branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                branch.stack.push(SymExpr::zero(&mut self.cx))?;
+            } else if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
                     branch.world.symbolic_address_slot(target)
                 } else {

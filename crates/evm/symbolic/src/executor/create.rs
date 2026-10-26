@@ -45,6 +45,14 @@ impl SymbolicExecutor {
 
         size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
+        // A create beyond the call depth limit fails before it increments the creator's
+        // nonce or transfers value.
+        if state.call_depth >= CALL_STACK_LIMIT as usize {
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            state.stack.push(SymExpr::zero(&mut self.cx))?;
+            return Ok(StepOutcome::Continue);
+        }
+
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
                 if let Some(offset) = state.constrained_usize(&mut self.cx, &offset) {
@@ -186,16 +194,19 @@ impl SymbolicExecutor {
         code: &SymCode,
         completed_paths: &mut usize,
     ) -> Result<Vec<CallOutcome>, SymbolicError> {
-        let mut worklist = VecDeque::from([initial]);
-        let mut deferred_worklist = VecDeque::new();
-        self.execute_call_path_batch(
-            executor,
-            code,
-            &mut worklist,
-            &mut deferred_worklist,
-            completed_paths,
-            CallPathKind::External,
-        )
+        // Each nested frame recurses on the native stack, so grow it on demand.
+        stacker::maybe_grow(CALL_FRAME_STACK_RED_ZONE, CALL_FRAME_STACK_GROWTH, || {
+            let mut worklist = VecDeque::from([initial]);
+            let mut deferred_worklist = VecDeque::new();
+            self.execute_call_path_batch(
+                executor,
+                code,
+                &mut worklist,
+                &mut deferred_worklist,
+                completed_paths,
+                CallPathKind::External,
+            )
+        })
     }
 }
 

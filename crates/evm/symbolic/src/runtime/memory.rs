@@ -5,6 +5,10 @@ use foundry_evm::revm::interpreter::STACK_LIMIT;
 pub(crate) struct SymStack(Vec<SymExpr>);
 
 impl SymStack {
+    pub(crate) const fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub(crate) fn push(&mut self, value: SymExpr) -> Result<(), SymbolicError> {
         if self.0.len() >= STACK_LIMIT {
             return Err(SymbolicError::StackOverflow);
