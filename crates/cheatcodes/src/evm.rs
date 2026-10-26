@@ -30,8 +30,8 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     evm::{
-        EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork, TxEnvelopeFor,
-        TxPayload, evm_env,
+        EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
+        TxEnvelopeFor, TxPayload, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -1340,14 +1340,21 @@ impl Cheatcode for broadcastRawTransactionCall {
             }
             env
         });
-        let _ = executor.transact_from_tx(
+        let previous = enter_tx_warm_addresses(
+            ccx.state,
+            &env.unwrap_or_else(|| ccx.evm_env()),
+            tx.access_list(),
+        );
+        let result = executor.transact_from_tx(
             ccx.state,
             ccx.backend,
             ccx.evm,
             ccx.depth as u16,
             &evm_tx,
             env,
-        )?;
+        );
+        ccx.state.tx_warm_addresses = previous;
+        let _ = result?;
         ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {
@@ -1410,6 +1417,7 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let created_address = tx.kind().is_create().then(|| sender.create(tx.nonce()));
+        let access_list = tx.access_list().cloned();
         let tx = FEN::evm_tx(tx, sender, TxPayload::Signed)?;
 
         // Execute in the running environment with realistic validation: no base fee or fee
@@ -1438,9 +1446,17 @@ impl Cheatcode for executeTransactionCall {
             ccx.state.record_created_account(fork_id, address);
         }
 
-        let res = executor
-            .nested_transaction(ccx.state, ccx.backend, ccx.evm, ccx.depth as u16, &tx, Some(env))
-            .map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
+        let previous = enter_tx_warm_addresses(ccx.state, &env, access_list.as_ref());
+        let res = executor.nested_transaction(
+            ccx.state,
+            ccx.backend,
+            ccx.evm,
+            ccx.depth as u16,
+            &tx,
+            Some(env),
+        );
+        ccx.state.tx_warm_addresses = previous;
+        let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
         // Return output bytes.
         if !res.status {
@@ -1832,6 +1848,22 @@ fn set_eip2935_blockhash(
 ///
 /// Warmth is preserved: slots that were cold stay cold. A database error reverts any partial
 /// clearing.
+/// Installs the addresses a nested transaction in `env` with `access_list` warms when it starts
+/// and that `vm.cool` keeps warm, returning the running transaction's. The inspector stack adds
+/// Arbitrum's ArbSys at the nested transaction's root.
+fn enter_tx_warm_addresses<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    env: &EvmEnvFor<FEN>,
+    access_list: Option<&alloy_rpc_types::AccessList>,
+) -> Vec<Address> {
+    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
+    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
+    std::mem::replace(
+        &mut state.tx_warm_addresses,
+        coinbase.into_iter().chain(access_list).collect(),
+    )
+}
+
 fn clear_eip2935_history_storage(state: &mut State<'_>, features: EvmFeatures) -> Result<()> {
     let checkpoint = state.checkpoint();
     for slot in 0..HISTORY_SERVE_WINDOW {

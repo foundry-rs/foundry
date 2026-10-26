@@ -1485,6 +1485,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return false;
         };
         warm_arbitrum_system_contract::<FEN>(interp);
+        // Nested transactions that cheatcodes execute install their own coinbase and access list.
+        if arbitrum::is_arbitrum_chain(interp.host().version().chain_id)
+            && let Some(cheatcodes) = self.cheatcodes.as_deref_mut()
+            && !cheatcodes.tx_warm_addresses.contains(&arbitrum::ARB_SYS_ADDRESS)
+        {
+            cheatcodes.tx_warm_addresses.push(arbitrum::ARB_SYS_ADDRESS);
+        }
         if !root.observe
             && !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
             && let Some(cheatcodes) = self.cheatcodes.as_deref()

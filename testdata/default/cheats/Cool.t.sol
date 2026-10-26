@@ -152,6 +152,85 @@ contract CoolPersistenceTest is Test {
         assertGe(balanceGas(address(this)), 2600);
     }
 
+    // The coinbase the running transaction started with stays protected after an isolated call
+    // installs its own.
+    function testCool_keepsCoinbaseAfterNestedCall() public {
+        address coinbase = block.coinbase;
+        vm.coinbase(address(0xc1));
+        CoolProbe probe = new CoolProbe();
+        try probe.touchAndRevert(address(0)) {} catch {}
+        vm.cool(coinbase);
+        assertLt(balanceGas(coinbase), 2600);
+    }
+
+    // A fork round trip before cooling keeps the persistent test contract cold on the other fork.
+    function testCool_forkRoundTripBeforeCool() public {
+        uint256 first = vm.createSelectFork("mainnet");
+        uint256 second = vm.createFork("mainnet", block.number - 1);
+        vm.selectFork(second);
+        vm.selectFork(first);
+        vm.cool(address(this));
+        vm.selectFork(second);
+        assertGe(balanceGas(address(this)), 2600);
+    }
+
+    // Like REVM's per-fork journals, cooling a non-persistent account only cools it on the active
+    // fork.
+    function testCool_forkNonPersistentPerContext() public {
+        address target = address(0xbeef);
+        uint256 first = vm.createSelectFork("mainnet");
+        uint256 second = vm.createFork("mainnet", block.number - 1);
+        balanceGas(target);
+        vm.selectFork(second);
+        balanceGas(target);
+        vm.selectFork(first);
+        vm.cool(target);
+        assertGe(balanceGas(target), 2600);
+        vm.cool(target);
+        vm.selectFork(second);
+        assertLt(balanceGas(target), 2600);
+        vm.selectFork(first);
+        assertGe(balanceGas(target), 2600);
+    }
+
+    // A transaction run with `vm.executeTransaction` keeps the coinbase it started with warm.
+    function testCool_keepsExecutedTransactionCoinbaseWarm() public {
+        CoolCoinbase target = new CoolCoinbase();
+        vm.coinbase(address(0xbeef));
+        uint256 key = 0xA11CE;
+        address signer = vm.addr(key);
+        vm.executeTransaction(signLegacy(key, vm.getNonce(signer), address(target), abi.encodeCall(target.run, ())));
+        assertLt(target.gasUsed(), 2600);
+    }
+
+    function signLegacy(uint256 key, uint256 nonce, address to, bytes memory data) internal returns (bytes memory) {
+        bytes[] memory fields = new bytes[](9);
+        fields[0] = rlpUint(nonce);
+        fields[1] = rlpUint(0);
+        fields[2] = rlpUint(1_000_000);
+        fields[3] = abi.encodePacked(to);
+        fields[4] = rlpUint(0);
+        fields[5] = data;
+        fields[6] = rlpUint(block.chainid);
+        fields[7] = rlpUint(0);
+        fields[8] = rlpUint(0);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, keccak256(vm.toRlp(fields)));
+        fields[6] = rlpUint(block.chainid * 2 + 8 + v);
+        fields[7] = rlpUint(uint256(r));
+        fields[8] = rlpUint(uint256(s));
+        return vm.toRlp(fields);
+    }
+
+    function rlpUint(uint256 value) internal pure returns (bytes memory out) {
+        bytes memory word = abi.encodePacked(value);
+        uint256 start;
+        while (start < 32 && word[start] == 0) start++;
+        out = new bytes(32 - start);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = word[start + i];
+        }
+    }
+
     // Precompiles and the coinbase the transaction started with stay warm for the whole
     // transaction (EIP-2929, EIP-3651).
     function testCool_keepsPrecompileAndCoinbaseWarm() public {
@@ -161,6 +240,23 @@ contract CoolPersistenceTest is Test {
         vm.cool(coinbase);
         assertLt(balanceGas(address(1)), 2600);
         assertLt(balanceGas(coinbase), 2600);
+    }
+}
+
+contract CoolCoinbase is Test {
+    uint256 public gasUsed;
+
+    function run() external {
+        address target = block.coinbase;
+        vm.cool(target);
+        uint256 used;
+        assembly {
+            let start := gas()
+            let targetBalance := balance(target)
+            used := sub(start, gas())
+            if eq(targetBalance, 0xdeadbeef) { revert(0, 0) }
+        }
+        gasUsed = used;
     }
 }
 
