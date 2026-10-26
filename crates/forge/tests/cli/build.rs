@@ -2,7 +2,10 @@ use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
 use foundry_test_utils::{
-    TestProject, forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt,
+    TestProject, forgetest, forgetest_init,
+    snapbox::IntoData,
+    str,
+    util::{OutputExt, SOLC_VERSION},
 };
 use globset::Glob;
 use std::{
@@ -2229,4 +2232,37 @@ contract Broken {
 "#]]
             .is_json(),
         );
+}
+
+// Moving a project must keep its compile cache valid.
+// <https://github.com/foundry-rs/foundry/issues/17829>
+#[forgetest]
+fn build_cache_survives_project_move(prj: _, cmd: _) {
+    let original = prj.root().join("original");
+    fs::create_dir_all(original.join("src")).unwrap();
+    fs::create_dir_all(original.join("lib/dep")).unwrap();
+    fs::write(
+        original.join("foundry.toml"),
+        "[profile.default]\nremappings = [\"dep/=lib/dep/\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        original.join("lib/dep/Dep.sol"),
+        format!("pragma solidity ={SOLC_VERSION};\ncontract Dep {{}}\n"),
+    )
+    .unwrap();
+    fs::write(
+        original.join("src/Counter.sol"),
+        format!(
+            "pragma solidity ={SOLC_VERSION};\nimport {{ Dep }} from \"dep/Dep.sol\";\ncontract Counter is Dep {{}}\n"
+        ),
+    )
+    .unwrap();
+    cmd.args(["build", "--root", "original"]).assert_success();
+
+    fs::rename(&original, prj.root().join("moved")).unwrap();
+    cmd.forge_fuse().args(["build", "--root", "moved"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 }
