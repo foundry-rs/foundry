@@ -112,10 +112,10 @@ The VS Code TextMate grammar retains its original license and attribution;
 Zed's tree-sitter grammar remains pinned in `extension.toml`.
 
 Public identities are retained: Solidity language ID, `solarLsp.*` settings and
-commands, server-returned `solar.*` commands, and Zed extension/server ID
-`solar`. The VS Code extension ID is `paradigm.forge-lsp`. In particular,
-`solar.copySelector`, `solar.showReferences` and `solar.showTypeHierarchy`
-remain registered by the VS Code client.
+commands, server-returned `solar.*` commands, and Zed language server ID
+`solar`. The VS Code extension ID is `paradigm.forge-lsp` and the Zed extension
+ID is `forge-lsp`. In particular, `solar.copySelector`, `solar.showReferences`
+and `solar.showTypeHierarchy` remain registered by the VS Code client.
 
 Executable settings require explicit migration; the old Solar path is never
 silently treated as Forge. See each client's README for exact settings and

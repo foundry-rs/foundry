@@ -1,14 +1,14 @@
-# Foundry Zed extension
+# Foundry Solidity
 
 Solidity support for [Zed](https://zed.dev), using `forge lsp --stdio` and the
 language server's `forge fmt` integration. Install a version of
 [Foundry](https://getfoundry.sh) that supports `forge lsp --stdio`.
 The extension never searches for, launches, or downloads a standalone Solar.
 
-The extension ID and language server ID remain `solar`; the language remains
-`Solidity`. Existing language preferences and initialization options keep their
-names. The language server implementation remains in Foundry's `solar_lsp`
-dependency.
+The extension ID is `forge-lsp`, matching the VS Code extension. The language
+server ID remains `solar` and the language remains `Solidity`. Existing language
+preferences and initialization options keep their names. The language server
+implementation remains in Foundry's `solar_lsp` dependency.
 
 ## Configuration
 
@@ -150,12 +150,12 @@ Zed builds and hosts extensions listed in the
 [`zed-industries/extensions`](https://github.com/zed-industries/extensions)
 registry. To release, bump `version` in `extension.toml` and `Cargo.toml` and
 merge that to `master`. Then open a registry PR that points the
-`extensions/solar` submodule at the merged commit and sets the same version in
-`extensions.toml`:
+`extensions/forge-lsp` submodule at the merged commit and sets the same version
+in `extensions.toml`:
 
 ```toml
-[solar]
-submodule = "extensions/solar"
+[forge-lsp]
+submodule = "extensions/forge-lsp"
 path = "editors/zed"
 version = "0.1.0"
 ```
