@@ -49,10 +49,16 @@ use foundry_evm::core::tempo::{
     active_tempo_precompile_addresses,
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
-use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
+use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
 use futures::StreamExt;
 use serde::Deserialize;
-use std::{num::NonZeroU64, sync::atomic::Ordering};
+use std::{
+    num::NonZeroU64,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_hardfork::{
@@ -7237,11 +7243,17 @@ async fn test_tempo_fork_rollback_rejects_invalid_root() {
     let (source_api, source) = spawn(config.clone()).await;
     source_api.mine_one().await.unwrap();
     let root = source.http_provider().get_block(1.into()).await.unwrap().unwrap();
-    let mut invalid_root = serde_json::to_value(root).unwrap();
-    invalid_root["timestampMillisPart"] = serde_json::json!("0x1");
-    let (url, calls) =
-        spawn_rpc_proxy_canned_method(source.http_endpoint(), "eth_getBlockByHash", invalid_root)
-            .await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let url = spawn_rpc_proxy_mapping_method(source.http_endpoint(), "eth_getBlockByHash", {
+        let calls = calls.clone();
+        move |_, mut result| {
+            if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                result["timestampMillisPart"] = serde_json::json!("0x1");
+            }
+            result
+        }
+    })
+    .await;
     let (api, handle) =
         spawn(config.with_eth_rpc_url(Some(url)).with_fork_block_number(Some(1u64))).await;
     let provider = handle.http_provider();
@@ -7283,6 +7295,18 @@ async fn test_tempo_fork_rollback_rejects_invalid_root() {
         provider.client().request::<_, serde_json::Value>("consensus_getLatest", ()).await.unwrap(),
         consensus,
     );
+
+    // Retry before querying the root so a successful query cannot hide a polluted cache.
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (1,)).await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    // A validated root remains reusable without another upstream request.
+    provider.client().request::<_, serde_json::Value>("anvil_rollback", (0,)).await.unwrap();
+    assert_eq!(provider.get_block(root.header.hash.into()).await.unwrap().unwrap(), root);
+    assert_eq!(provider.get_block(1.into()).await.unwrap().unwrap(), root);
+    assert_eq!(provider.get_block(BlockId::latest()).await.unwrap().unwrap(), root);
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+    assert_tempo_missing(&provider, serde_json::json!("latest"), "certifications").await;
 }
 
 async fn assert_tempo_missing(provider: &RetryProvider, query: serde_json::Value, data: &str) {
