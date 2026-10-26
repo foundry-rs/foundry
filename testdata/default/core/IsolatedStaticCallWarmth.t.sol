@@ -53,4 +53,15 @@ contract IsolatedStaticCallWarmthTest is Test {
         assertGt(balanceGas(address(counter)), 2600);
         assertLt(balanceGas(address(counter)), 2600);
     }
+
+    // An account the STATICCALL cooled is imported warm by an isolated CREATE once a snapshot
+    // revert has dropped it from the running transaction.
+    function testStaticCallCooledAccountWarmAfterRevertAndCreate() public {
+        uint256 snapshot = vm.snapshotState();
+        Counter created = new Counter();
+        created.n();
+        vm.revertToState(snapshot);
+        assertEq(address(new Counter()), address(created));
+        assertLt(balanceGas(address(created)), 2600);
+    }
 }

@@ -1402,16 +1402,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 || warm_accessed(evm.state_mut(), &executed.pending_state, &AddressSet::default())
                     .is_ok()
         } else {
-            // As on master, accounts a static call cooled stay cold if the running transaction has
-            // not accessed them since.
-            let cold = executed
-                .pending_state
-                .account_changes()
-                .map(|change| change.address)
-                .filter(|address| {
-                    self.inner.static_cooled.contains(address)
-                        && !evm.state_mut().account(address).is_ok_and(|account| account.is_warm())
-                })
+            // As on master, accounts a static call cooled stay cold if the running transaction
+            // still holds them cold. Accounts it no longer holds, such as after a
+            // snapshot revert, are imported warm.
+            let state = evm.state_mut();
+            let cooled = state
+                .loaded_accounts()
+                .map(|(address, _)| *address)
+                .filter(|address| self.inner.static_cooled.contains(address))
+                .collect::<Vec<_>>();
+            let cold = cooled
+                .into_iter()
+                .filter(|address| !state.account(address).is_ok_and(|account| account.is_warm()))
                 .collect();
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
                 && (!result.status
