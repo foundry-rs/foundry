@@ -1171,19 +1171,22 @@ pub fn cool_loaded(state: &mut State<'_>) {
 /// Undoes, without journaling, the warmth that the running transaction in `state` gained since
 /// `checkpoint`, keeping all other warmth, including unjournaled changes made since.
 pub fn restore_access_warmth(state: &mut State<'_>, checkpoint: &StateCheckpoint) {
-    let mut accounts = AddressMap::<bool>::default();
+    let mut accounts = AddressSet::default();
     let mut slots = Vec::new();
-    for entry in &state.journal()[checkpoint.journal_len()..] {
+    // A callback that reverted to a snapshot or switched forks can leave a shorter journal.
+    for entry in state.journal().get(checkpoint.journal_len()..).unwrap_or_default() {
         match entry {
-            JournalEntry::AccountChange { address, previous_is_warm, .. } => {
-                accounts.entry(*address).or_insert(*previous_is_warm);
+            // Any account mutation journals an entry; only one taken while cold means it was
+            // warmed since.
+            JournalEntry::AccountChange { address, previous_is_warm: false, .. } => {
+                accounts.insert(*address);
             }
             JournalEntry::StorageWarmed { address, key } => slots.push((*address, *key)),
             _ => {}
         }
     }
-    for (address, warm) in accounts {
-        state.set_account_warm(&address, warm);
+    for address in accounts {
+        state.set_account_warm(&address, false);
     }
     for (address, key) in slots {
         state.set_storage_warm(&address, key, false);
