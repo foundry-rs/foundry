@@ -28,8 +28,8 @@ use foundry_evm_core::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested, FoundryEvmExt,
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, evm_env, merge_pending_changes, merge_untracked_nested_changes,
-        release_inspector, warm_set,
+        TxResultFor, TypesFor, evm_env, merge_pending_changes,
+        merge_untracked_nested_changes_with_warmth, release_inspector, warm_set,
     },
     precompiles::P256_VERIFY,
 };
@@ -552,7 +552,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let result = match child.transact(tx) {
             Ok(executed) => {
                 // A failed transaction keeps its nonce increment.
-                merge_untracked_nested_changes(evm.state_mut(), &executed)
+                merge_untracked_nested_changes_with_warmth(evm.state_mut(), &executed)
                     .map(|()| executed.result().clone())
                     .map_err(Into::into)
             }

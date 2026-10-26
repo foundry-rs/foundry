@@ -1129,12 +1129,39 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
 }
 
 /// Applies a nested transaction's changes to the running transaction's `state` so that they survive
-/// reverts of the enclosing calls, such as for `executeTransaction`.
+/// reverts of the enclosing calls, such as for `broadcastRawTransaction`.
 pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
     merge_changes(state, executed.account_changes(), |_| true, true)
+}
+
+/// Like [`merge_untracked_nested_changes`], and also warms the accounts and slots the nested
+/// transaction accessed in the running transaction, such as for `executeTransaction`.
+///
+/// Accounts the running transaction had already loaded keep their warmth. Like the merged changes,
+/// the warmth survives reverts of the enclosing calls.
+pub fn merge_untracked_nested_changes_with_warmth<T: EvmTypesHost>(
+    state: &mut State<'_>,
+    executed: &ExecutedTx<'_, '_, T>,
+) -> DbResult<()> {
+    let loaded = state.loaded_accounts().map(|(address, _)| *address).collect::<AddressSet>();
+    merge_untracked_nested_changes(state, executed)?;
+    for change in executed.account_changes() {
+        let address = change.address;
+        if !loaded.contains(&address) {
+            state.account(&address)?;
+            state.set_account_warm(&address, true);
+        }
+        for (key, slot) in &change.storage.slots {
+            if slot.is_warm {
+                state.storage_slot(&address, *key)?;
+                state.set_storage_warm(&address, *key, true);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running

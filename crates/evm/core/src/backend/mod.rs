@@ -1118,7 +1118,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Writes the code, storage, nonce and balance of `source` to `target` in the running
-    /// transaction as journaled writes. Code is kept when `source` has none.
+    /// transaction as journaled writes, and warms `target`. Code is kept when `source` has none.
     pub fn clone_account(
         &self,
         source: &GenesisAccount,
@@ -1135,6 +1135,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             account.set_nonce(source.nonce.unwrap_or_default());
             // Touch the account so the loaded information persists if called in `setUp`.
             account.touch();
+            account.warm();
         }
         for (slot, value) in source.storage.iter().flatten() {
             state.storage_slot(target, (*slot).into())?.set((*value).into());
