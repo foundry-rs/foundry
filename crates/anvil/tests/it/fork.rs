@@ -493,6 +493,8 @@ async fn test_fork_transaction_hash_replays_before_startup() {
     origin_api.anvil_set_auto_mine(false).await.unwrap();
     let origin_provider = origin_handle.http_provider();
     let sender = origin_handle.dev_wallets().next().unwrap().address();
+    let recipient = Address::repeat_byte(0x42);
+    let root = origin_provider.get_block(0u64.into()).full().await.unwrap().unwrap();
 
     let first = origin_provider
         .send_transaction(WithOtherFields::new(
@@ -506,11 +508,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         .unwrap();
     let second = origin_provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default()
-                .from(sender)
-                .to(Address::random())
-                .value(U256::from(2))
-                .nonce(1),
+            TransactionRequest::default().from(sender).to(recipient).value(U256::from(2)).nonce(1),
         ))
         .await
         .unwrap();
@@ -565,7 +563,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         !fork_provider.get_transaction_receipt(expected_hashes[2]).await.unwrap().unwrap().status()
     );
 
-    let (prefix_api, _) = spawn(
+    let (prefix_api, prefix_handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
             .with_fork_transaction_hash(Some(expected_hashes[1]))
@@ -585,6 +583,35 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         expected_hashes[..2]
     );
     assert!(prefix_api.backend.mined_transaction_by_hash(expected_hashes[2]).is_none());
+
+    let prefix_provider = prefix_handle.http_provider();
+    assert_eq!(prefix_provider.get_transaction_count(sender).await.unwrap(), 2);
+    assert_eq!(prefix_provider.get_balance(recipient).await.unwrap(), U256::from(2));
+    for hash in &expected_hashes[..2] {
+        assert!(prefix_provider.get_transaction_receipt(*hash).await.unwrap().unwrap().status());
+    }
+
+    prefix_api.anvil_rollback(Some(1)).await.unwrap();
+
+    assert_eq!(prefix_provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), root);
+    assert_eq!(prefix_provider.get_transaction_count(sender).await.unwrap(), 0);
+    assert_eq!(prefix_provider.get_balance(recipient).await.unwrap(), U256::ZERO);
+    for hash in &expected_hashes[..2] {
+        assert!(prefix_provider.get_transaction_receipt(*hash).await.unwrap().is_none());
+    }
+    let pending = prefix_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).value(U256::ONE),
+        ))
+        .await
+        .unwrap();
+    prefix_api.mine_one().await.unwrap();
+    assert!(pending.get_receipt().await.unwrap().status());
+    assert_eq!(prefix_provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert_eq!(prefix_provider.get_balance(recipient).await.unwrap(), U256::ONE);
+    let replacement = prefix_provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(replacement.header.number, 1);
+    assert_eq!(replacement.header.parent_hash, root.header.hash);
 
     let (pruned_api, _) = spawn(
         NodeConfig::test()

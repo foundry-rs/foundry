@@ -1801,6 +1801,58 @@ async fn monad_fork_uses_monad_execution() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_block_number_rollback_to_root() {
+    let config = monad_nine_config().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    let source_provider = source.http_provider();
+    let sender = source.dev_accounts().next().unwrap();
+    let request = TransactionRequest::default().with_from(sender).with_to(ROLLBACK_RECIPIENT);
+    let pending = source_provider
+        .send_transaction(request.clone().with_value(U256::ONE).into())
+        .await
+        .unwrap();
+    source_api.mine_one().await.unwrap();
+    assert!(pending.get_receipt().await.unwrap().status());
+    let root = source_provider.get_block(1.into()).full().await.unwrap().unwrap();
+    assert_eq!(root.header.number, 1);
+    assert_eq!(root.transactions.len(), 1);
+
+    let (api, handle) = spawn(
+        config
+            .with_genesis_accounts(Vec::new())
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let pending =
+        provider.send_transaction(request.clone().with_value(U256::from(2)).into()).await.unwrap();
+    api.mine_one().await.unwrap();
+    let receipt = pending.get_receipt().await.unwrap();
+    assert!(receipt.status());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::from(3));
+
+    api.anvil_rollback(Some(1)).await.unwrap();
+
+    assert_eq!(provider.get_block(BlockId::latest()).full().await.unwrap().unwrap(), root);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
+    assert!(provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap().is_none());
+
+    let pending =
+        provider.send_transaction(request.with_value(U256::from(3)).into()).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(pending.get_receipt().await.unwrap().status());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::from(4));
+    let replacement = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(replacement.header.number, 2);
+    assert_eq!(replacement.header.parent_hash, root.header.hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_fork_preserves_source_chain_with_execution_override() {
     let (_origin, endpoint) = monad_boundary_origin().await;
     let config = NodeConfig::test()
