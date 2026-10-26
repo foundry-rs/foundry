@@ -123,6 +123,11 @@ pub struct Parked<T: EvmTypesHost> {
     /// before it last suspended it, which its accepted state no longer holds. Cleared between
     /// transactions, like `warm`.
     pub(super) originals: AddressMap<HashMap<U256, U256>>,
+    /// Values at the last fork switch of the slots whose transaction-start originals the running
+    /// transaction restored on resuming this context, which a revert that leaves the context
+    /// keeps as its accepted state. Cleared when the context is suspended and between
+    /// transactions.
+    pub(super) switched: AddressMap<HashMap<U256, U256>>,
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
@@ -138,6 +143,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             created: AddressSet::default(),
             warm: AddressMap::default(),
             originals: AddressMap::default(),
+            switched: AddressMap::default(),
         }
     }
 
@@ -213,6 +219,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
             created: self.created.clone(),
             warm: self.warm.clone(),
             originals: self.originals.clone(),
+            switched: self.switched.clone(),
         }
     }
 }

@@ -3,6 +3,14 @@ pragma solidity ^0.8.18;
 
 import "utils/Test.sol";
 
+contract Slot {
+    uint256 value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
 /// forge-config: default.isolate = false
 contract ForkSwitchStorageOriginalsTest is Test {
     // EIP-3529 refund for restoring a slot that was zero at transaction start.
@@ -11,10 +19,14 @@ contract ForkSwitchStorageOriginalsTest is Test {
     uint256 forkA;
     uint256 forkB;
     mapping(bool => uint256) values;
+    // Contracts that exist only on fork A and are not persistent.
+    mapping(bool => Slot) local;
 
     function setUp() public {
         forkA = vm.createSelectFork("mainnet");
         forkB = vm.createFork("mainnet");
+        local[false] = new Slot();
+        local[true] = new Slot();
     }
 
     function store(bool switching, uint256 value) internal returns (uint256 cost) {
@@ -80,6 +92,19 @@ contract ForkSwitchStorageOriginalsTest is Test {
 
         this.dirty(true);
         assertEq(this.rewrite(true), cost, "write after switching in a later call");
+    }
+
+    function writeLocal(bool switching) external returns (uint256 cost) {
+        local[switching].set(1);
+        roundTrip(switching);
+        uint256 start = gasleft();
+        local[switching].set(2);
+        cost = start - gasleft();
+    }
+
+    // A fork keeps the originals of accounts that do not leave it.
+    function testForkSwitchKeepsLocalStorageOriginals() public {
+        assertEq(this.writeLocal(true), this.writeLocal(false), "write after a round trip");
     }
 }
 
