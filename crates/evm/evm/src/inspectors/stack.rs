@@ -12,7 +12,7 @@ use alloy_primitives::{
 use evm2::{
     EvmFeatures, ExecutionError, Inspector,
     ethereum::intrinsic_and_floor_gas,
-    evm::{DbResult, JournalEntry, PendingState, PrewarmSet, State},
+    evm::{DbResult, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
 };
 use foundry_cheatcodes::{
@@ -2101,33 +2101,32 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         {
             state.set_prewarm_set(prewarm.clone());
         }
+        // Accounts with arbitrary storage keep their warm slots, and stay warm if they have any.
         let arbitrary = self
             .cheatcodes
             .as_deref()
             .map(|cheats| {
-                state
-                    .journal()
-                    .iter()
-                    .filter_map(|entry| match entry {
-                        JournalEntry::StorageWarmed { address, key }
-                            if cheats.has_arbitrary_storage(address) =>
-                        {
-                            Some((*address, *key))
-                        }
-                        _ => None,
+                let loaded = state
+                    .loaded_accounts()
+                    .filter(|(address, _)| cheats.has_arbitrary_storage(address))
+                    .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+                    .collect::<Vec<_>>();
+                loaded
+                    .into_iter()
+                    .filter_map(|(address, mut slots)| {
+                        let storage = state.storage(&address).ok()?;
+                        slots.retain(|key| storage.is_warm(key));
+                        (!slots.is_empty()).then_some((address, slots))
                     })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         state.cool_loaded_state();
-        let addresses = arbitrary.iter().map(|(address, _)| *address).collect::<AddressSet>();
-        for address in addresses {
-            if let Ok(mut account) = state.account(&address) {
-                account.warm();
+        for (address, slots) in arbitrary {
+            state.set_account_warm(&address, true);
+            for key in slots {
+                state.set_storage_warm(&address, key, true);
             }
-        }
-        for (address, key) in arbitrary {
-            state.set_storage_warm(&address, key, true);
         }
     }
 }

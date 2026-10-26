@@ -1195,7 +1195,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Refetches storage `slot` of `address` from the active fork's remote, after an out-of-band
     /// RPC mutation, and updates the running context with it.
     ///
-    /// A slot the running transaction already loaded is updated as a journaled write.
+    /// A slot the running transaction already loaded takes the refreshed value across reverts of
+    /// the enclosing calls, as on master, where the refresh replaced the journaled slot's present
+    /// value. Its transaction-start original is kept.
     pub fn refresh_fork_storage(
         &self,
         address: Address,
@@ -1219,7 +1221,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
         let storage = state.storage(&address)?;
         if storage.is_loaded(&slot) {
-            storage.into_slot(slot)?.set(value);
+            storage.into_slot(slot)?.override_value(value);
         }
         Ok(())
     }
