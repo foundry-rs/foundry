@@ -604,6 +604,14 @@ solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbaf
 solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdbafd48a55bcafd5e6c40fc05ed0c43" }
 
+## soldb
+# v0.4.3 from git until CI's registry proxy allows the release; same commit as crates.io 0.4.3.
+soldb-core = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
+soldb-debugger = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
+soldb-ethdebug = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
+soldb-repl = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
+soldb-tui = { git = "https://github.com/walnuthq/soldb", rev = "1a4c100c91c35f36840444e3e8e356b4894eb0dd" }
+
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }
