@@ -1176,12 +1176,45 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
 }
 
 /// Applies a nested transaction's changes to the running transaction's `state` so that they survive
-/// reverts of the enclosing calls, such as for `executeTransaction`.
+/// reverts of the enclosing calls, such as for `broadcastRawTransaction`.
 pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
     merge_changes(state, executed.account_changes(), |_| true, true, None)
+}
+
+/// Applies the changes of a nested transaction that `child` ran and detached into `pending` to the
+/// running transaction's `state` like [`merge_untracked_nested_changes`], and also warms the
+/// accounts and slots the nested transaction left warm, such as for `executeTransaction`.
+///
+/// Accounts the running transaction had already loaded keep their warmth, and accesses the nested
+/// transaction reverted stay cold. Like the merged changes, the warmth survives reverts of the
+/// enclosing calls.
+pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
+    state: &mut State<'_>,
+    child: &mut Evm<'_, T>,
+    pending: PendingState,
+) -> DbResult<()> {
+    // The detached accounts keep their warmth, which reattaching them to `child` exposes.
+    let child = child.state_mut();
+    child.set_pending_state(pending.clone());
+    let warm = warm_accounts(child);
+    child.clear_transaction_state();
+    // Warm before merging, so that the merge journals the warmth as the accounts' previous one and
+    // reverts of the enclosing calls restore it.
+    let loaded = state.loaded_accounts().map(|(address, _)| *address).collect::<AddressSet>();
+    for (address, slots) in warm {
+        state.account(&address)?;
+        if !loaded.contains(&address) {
+            state.set_account_warm(&address, true);
+        }
+        for key in slots {
+            state.storage_slot(&address, key)?;
+            state.set_storage_warm(&address, key, true);
+        }
+    }
+    merge_changes(state, pending.account_changes(), |_| true, true)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running

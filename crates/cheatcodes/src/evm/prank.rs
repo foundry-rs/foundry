@@ -159,6 +159,7 @@ fn prank<FEN: FoundryEvmNetwork>(
     // properly tracked.
     let mut account = ccx.evm.state_mut().account(new_caller)?;
     account.touch();
+    account.warm();
 
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
