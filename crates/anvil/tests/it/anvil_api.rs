@@ -8,6 +8,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::{eip2718::Decodable2718, eip4788::BEACON_ROOTS_ADDRESS};
+use alloy_genesis::{ChainConfig, Genesis};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -1784,6 +1785,36 @@ async fn test_reorg_prices_json_transactions_from_common_block() {
     let block2 = provider.get_block(2.into()).await.unwrap().unwrap();
     assert_eq!(block2.header.base_fee_per_gas, original_block2.header.base_fee_per_gas);
     assert_eq!(block2.transactions.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rollback_to_genesis_restores_initial_fees() {
+    // The genesis header records 1 gwei, but the explicit zero base fee applies to block 1.
+    let (zero_api, zero_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::default().into()))
+            .with_genesis(Some(Genesis {
+                config: ChainConfig { london_block: Some(0), ..Default::default() },
+                base_fee_per_gas: Some(INITIAL_BASE_FEE.into()),
+                ..Default::default()
+            }))
+            .with_base_fee(Some(0)),
+    )
+    .await;
+    // The reset genesis header keeps the live 123 wei, but block 1 starts at the default fee.
+    let (reset_api, reset_handle) = spawn(NodeConfig::test()).await;
+    reset_api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.unwrap();
+    reset_api.anvil_reset(None).await.unwrap();
+
+    for (api, handle, expected) in
+        [(zero_api, zero_handle, 0), (reset_api, reset_handle, INITIAL_BASE_FEE)]
+    {
+        api.mine_one().await.unwrap();
+        api.anvil_rollback(Some(1)).await.unwrap();
+        api.mine_one().await.unwrap();
+        let block1 = handle.http_provider().get_block(1.into()).await.unwrap().unwrap();
+        assert_eq!(block1.header.base_fee_per_gas, Some(expected));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
