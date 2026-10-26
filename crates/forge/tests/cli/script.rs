@@ -9,7 +9,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync, eip2718::Encodable2718,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, bytes, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, bytes, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{AccessList, AccessListItem, Authorization, TransactionRequest};
 use alloy_signer::SignerSync;
@@ -9113,4 +9113,77 @@ fn latest_broadcast_path(root: &Path) -> PathBuf {
             path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
         })
         .expect("no latest broadcast artifact")
+}
+
+// `vm.attachBlob` transactions are simulated with their blob hashes and broadcast with a blob fee.
+#[forgetest]
+async fn can_broadcast_attached_blob(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    prj.add_script(
+        "AttachBlob.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+    function attachBlob(bytes calldata blob) external;
+}
+
+contract BlobProbe {
+    bytes32 public observed;
+
+    event Observed(bytes32 hash);
+
+    function record() external {
+        bytes32 hash;
+        assembly {
+            hash := blobhash(0)
+        }
+        observed = hash;
+        emit Observed(hash);
+    }
+}
+
+contract AttachBlobScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        BlobProbe probe = new BlobProbe();
+        vm.attachBlob(abi.encode("blob"));
+        probe.record();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "script",
+        "AttachBlobScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "-vvvv",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Simulated On-chain Traces:
+...
+    ├─ emit Observed(hash: 0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c)
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+
+    let observed =
+        handle.http_provider().get_storage_at(sender.create(0), U256::ZERO).await.unwrap();
+    assert_eq!(
+        B256::from(observed),
+        b256!("0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c")
+    );
 }
