@@ -4,7 +4,7 @@ Solidity support for [Zed](https://zed.dev), using `forge lsp --stdio` and the
 language server's `forge fmt` integration. It uses the `forge` on your `PATH`,
 which must come from a [Foundry](https://getfoundry.sh) release that supports
 `forge lsp --stdio`, and downloads the latest stable Forge when there is none.
-The extension never searches for, launches, or downloads a standalone Solar.
+The extension never searches for or launches a standalone Solar.
 
 The extension ID is `forge-lsp`, matching the VS Code extension. The language
 server ID remains `solar` and the language remains `Solidity`. Existing language
@@ -26,10 +26,11 @@ If `forge` is not on `PATH` and `forgePath` is unset, the extension downloads
 checks for a newer release once per Zed session, keeps only `forge` from the
 archive, removes older downloads, and reuses the last complete download when the
 check or download fails. Prebuilt Forge exists for macOS and Linux on x86-64 and
-ARM64, and for Windows on x86-64; on other platforms, or when the download fails
-with nothing to fall back on, the extension shows installation guidance.
-Installing Foundry yourself keeps the language server and formatter on the same
-Forge version as your builds.
+ARM64, and for Windows on x86-64. On Linux the extension uses the static musl
+build, which does not depend on the system glibc. On other platforms, or when
+the download fails with nothing to fall back on, the extension shows
+installation guidance. Installing Foundry yourself keeps the language server and
+formatter on the same Forge version as your builds.
 
 To select a specific Forge installation, set its absolute path in your Zed user
 or project settings:

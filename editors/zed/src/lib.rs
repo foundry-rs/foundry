@@ -174,28 +174,30 @@ fn download_latest_forge(
     os: Os,
     arch: Architecture,
 ) -> Result<String> {
-    // `latest_github_release` only scans the first page, which daily nightlies can fill.
-    let release = zed::github_release_by_tag_name(FOUNDRY_REPO, &latest_release_tag()?)?;
-    let (asset_name, file_type) = release_asset(&release.version, os, arch)?;
-    let asset = release
-        .assets
-        .iter()
-        .find(|asset| asset.name == asset_name)
-        .ok_or_else(|| format!("Foundry {} has no {asset_name} asset", release.version))?;
-    let dir = format!("{DOWNLOAD_DIR_PREFIX}{}", release.version);
+    let release = latest_release()?;
+    let version = release["tag_name"].as_str().ok_or("the latest Foundry release has no tag")?;
+    let (asset_name, file_type) = release_asset(version, os, arch)?;
+    let download_url = release["assets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|asset| asset["name"] == asset_name.as_str())
+        .and_then(|asset| asset["browser_download_url"].as_str())
+        .ok_or_else(|| format!("Foundry {version} has no {asset_name} asset"))?;
+    let dir = format!("{DOWNLOAD_DIR_PREFIX}{version}");
     let binary = format!("{dir}/{}", forge_binary_name(os));
-    if !is_complete(&dir) {
+    if !is_complete(&dir, os) {
         zed::set_language_server_installation_status(
             language_server_id,
             &LanguageServerInstallationStatus::Downloading,
         );
         // Clear any partial download before extracting again.
         fs::remove_dir_all(&dir).ok();
-        zed::download_file(&asset.download_url, &dir, file_type)?;
+        zed::download_file(download_url, &dir, file_type)?;
         if os != Os::Windows {
             zed::make_file_executable(&binary)?;
         }
-        // The archive also holds anvil, cast and chisel; keep only Forge.
+        // The archive also holds anvil, cast, chisel and solar; keep only Forge.
         for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
             if entry.file_name() != forge_binary_name(os) {
                 fs::remove_file(entry.path()).ok();
@@ -209,7 +211,8 @@ fn download_latest_forge(
     Ok(binary)
 }
 
-fn latest_release_tag() -> Result<String> {
+// `latest_github_release` only scans the first page of releases, which daily nightlies can fill.
+fn latest_release() -> Result<serde_json::Value> {
     let response = HttpRequest::builder()
         .method(HttpMethod::Get)
         .url(format!("https://api.github.com/repos/{FOUNDRY_REPO}/releases/latest"))
@@ -218,17 +221,12 @@ fn latest_release_tag() -> Result<String> {
         .redirect_policy(RedirectPolicy::FollowAll)
         .build()?
         .fetch()?;
-    let release: serde_json::Value =
-        serde_json::from_slice(&response.body).map_err(|err| err.to_string())?;
-    release["tag_name"]
-        .as_str()
-        .map(Into::into)
-        .ok_or_else(|| "the latest Foundry release has no tag".into())
+    serde_json::from_slice(&response.body).map_err(|err| err.to_string())
 }
 
 fn cached_forge(os: Os) -> Option<String> {
     download_dirs()
-        .find(|dir| is_complete(dir))
+        .find(|dir| is_complete(dir, os))
         .map(|dir| format!("{dir}/{}", forge_binary_name(os)))
 }
 
@@ -241,8 +239,9 @@ fn download_dirs() -> impl Iterator<Item = String> {
         .filter(|name| name.starts_with(DOWNLOAD_DIR_PREFIX))
 }
 
-fn is_complete(dir: &str) -> bool {
+fn is_complete(dir: &str, os: Os) -> bool {
     is_file(&format!("{dir}/{COMPLETE_MARKER}"))
+        && is_file(&format!("{dir}/{}", forge_binary_name(os)))
 }
 
 fn release_asset(
@@ -253,8 +252,9 @@ fn release_asset(
     let platform = match (os, arch) {
         (Os::Mac, Architecture::Aarch64) => "darwin_arm64",
         (Os::Mac, Architecture::X8664) => "darwin_amd64",
-        (Os::Linux, Architecture::Aarch64) => "linux_arm64",
-        (Os::Linux, Architecture::X8664) => "linux_amd64",
+        // The static musl builds also run on distros with a glibc older than the release runners'.
+        (Os::Linux, Architecture::Aarch64) => "alpine_arm64",
+        (Os::Linux, Architecture::X8664) => "alpine_amd64",
         (Os::Windows, Architecture::X8664) => "win32_amd64",
         _ => return Err(format!("Foundry does not publish Forge for {os:?} {arch:?}")),
     };
@@ -415,8 +415,8 @@ mod tests {
         for (os, arch, name) in [
             (Os::Mac, Architecture::Aarch64, "foundry_v1.8.6_darwin_arm64.tar.gz"),
             (Os::Mac, Architecture::X8664, "foundry_v1.8.6_darwin_amd64.tar.gz"),
-            (Os::Linux, Architecture::Aarch64, "foundry_v1.8.6_linux_arm64.tar.gz"),
-            (Os::Linux, Architecture::X8664, "foundry_v1.8.6_linux_amd64.tar.gz"),
+            (Os::Linux, Architecture::Aarch64, "foundry_v1.8.6_alpine_arm64.tar.gz"),
+            (Os::Linux, Architecture::X8664, "foundry_v1.8.6_alpine_amd64.tar.gz"),
             (Os::Windows, Architecture::X8664, "foundry_v1.8.6_win32_amd64.zip"),
         ] {
             assert_eq!(release_asset("v1.8.6", os, arch).unwrap().0, name);
