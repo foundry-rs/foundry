@@ -5,7 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::cache::DiskStateCache,
+        mem::{cache::DiskStateCache, tempo::TempoChain},
     },
     pool::transactions::PoolTransaction,
 };
@@ -305,6 +305,8 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Tempo certificates and identity lifecycle, published with this canonical chain.
+    pub(crate) tempo: Option<TempoChain>,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
     pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
@@ -344,6 +346,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: best_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -365,6 +368,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]
@@ -410,6 +414,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            tempo: None,
             #[cfg(feature = "monad")]
             monad_block_participants: Default::default(),
             #[cfg(feature = "monad")]

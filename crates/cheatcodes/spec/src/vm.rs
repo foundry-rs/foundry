@@ -17,7 +17,6 @@ sol! {
 
 /// Foundry cheatcodes interface.
 #[derive(Debug, Cheatcode)] // Keep this list small to avoid unnecessary bloat.
-#[sol(abi)]
 interface Vm {
     //  ======== Types ========
 
