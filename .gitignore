@@ -6,7 +6,6 @@ CLAUDE.md
 # Foundry artifacts
 out/
 snapshots/
-/crates/*/cache/
 
 # IDEs and extensions
 .idea
