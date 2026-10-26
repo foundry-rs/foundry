@@ -517,21 +517,78 @@ Exiting debugger.
         &std::fs::read(dump_dir.join("contracts.json")).unwrap(),
     )
     .unwrap();
+    let mut names = bundle_programs(&mapping, "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f");
+    names.sort_unstable();
+    assert_eq!(names, ["Payload", "Trusted"]);
+}
+
+/// The names of the programs a bundle's `contracts.json` maps at `address`, after checking that
+/// each has its own directory and code hash.
+fn bundle_programs(mapping: &serde_json::Value, address: &str) -> Vec<String> {
     let entries = mapping["contracts"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|entry| {
-            assert!(entry["code_hash"].is_string());
-            (entry["name"].as_str().unwrap(), entry["debug_dir"].as_str().unwrap())
-        })
+        .filter(|entry| entry["address"] == address)
         .collect::<Vec<_>>();
+    let dirs = entries
+        .iter()
+        .map(|entry| entry["debug_dir"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    let hashes =
+        entries.iter().map(|entry| entry["code_hash"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(dirs.len(), entries.len());
+    assert_eq!(hashes.iter().collect::<std::collections::BTreeSet<_>>().len(), entries.len());
+    entries.iter().map(|entry| entry["name"].as_str().unwrap().to_string()).collect()
+}
+
+// Runtimes of one contract that differ only in immutables keep separate bundle entries when one
+// replaces the other at an address.
+#[forgetest]
+fn debugger_soldb_dump_keeps_etched_runtimes(prj: _, cmd: _) {
+    prj.add_test(
+        "Variant.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+}
+
+contract Variant {
+    uint256 private immutable value;
+
+    constructor(uint256 value_) {
+        value = value_;
+    }
+
+    function get() external view returns (uint256) {
+        return value;
+    }
+}
+
+contract VariantTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_etch_variant() public {
+        Variant first = new Variant(1);
+        Variant second = new Variant(2);
+        require(first.get() == 1);
+        vm.etch(address(first), address(second).code);
+        require(first.get() == 2);
+    }
+}
+"#,
+    );
+
+    let dump_dir = prj.root().join("soldb");
+    cmd.args(["test", "--debug", "--mt", "test_etch_variant", "--dump"])
+        .arg(&dump_dir)
+        .assert_success();
+    let mapping = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join("contracts.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(
-        entries,
-        [
-            ("Payload", "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f-Payload"),
-            ("Trusted", "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f-Trusted"),
-            ("EtchTest", "0x7fa9385be102ac3eac297483dd6233d62b3e1496"),
-        ]
+        bundle_programs(&mapping, "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f"),
+        ["Variant", "Variant"]
     );
 }

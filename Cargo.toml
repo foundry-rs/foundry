@@ -606,11 +606,11 @@ solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "3a70399dbdba
 
 ## soldb
 # Frame code hashes (walnuthq/soldb#215) on top of v0.4.3, until a release has them.
-soldb-core = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
-soldb-debugger = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
-soldb-ethdebug = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
-soldb-repl = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
-soldb-tui = { git = "https://github.com/figtracer/soldb", rev = "6df4c3dc756ca2e31bd2465239d1c5808c039b20" }
+soldb-core = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
+soldb-debugger = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
+soldb-ethdebug = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
+soldb-repl = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
+soldb-tui = { git = "https://github.com/figtracer/soldb", rev = "ac821b70686875d513a3c194e32d2af553cb9423" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "74d7919167900eb5867d12ba83be0360c67273b4" }

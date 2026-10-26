@@ -3644,7 +3644,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.21",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3797,7 +3797,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5055,7 +5055,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5368,7 +5368,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5527,7 +5527,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7870,7 +7870,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8754,7 +8754,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10195,7 +10195,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11759,7 +11759,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11818,7 +11818,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12841,7 +12841,7 @@ dependencies = [
 [[package]]
 name = "soldb-core"
 version = "0.4.3"
-source = "git+https://github.com/figtracer/soldb?rev=6df4c3dc756ca2e31bd2465239d1c5808c039b20#6df4c3dc756ca2e31bd2465239d1c5808c039b20"
+source = "git+https://github.com/figtracer/soldb?rev=ac821b70686875d513a3c194e32d2af553cb9423#ac821b70686875d513a3c194e32d2af553cb9423"
 dependencies = [
  "bytes",
  "serde",
@@ -12851,7 +12851,7 @@ dependencies = [
 [[package]]
 name = "soldb-debugger"
 version = "0.4.3"
-source = "git+https://github.com/figtracer/soldb?rev=6df4c3dc756ca2e31bd2465239d1c5808c039b20#6df4c3dc756ca2e31bd2465239d1c5808c039b20"
+source = "git+https://github.com/figtracer/soldb?rev=ac821b70686875d513a3c194e32d2af553cb9423#ac821b70686875d513a3c194e32d2af553cb9423"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -12863,7 +12863,7 @@ dependencies = [
 [[package]]
 name = "soldb-ethdebug"
 version = "0.4.3"
-source = "git+https://github.com/figtracer/soldb?rev=6df4c3dc756ca2e31bd2465239d1c5808c039b20#6df4c3dc756ca2e31bd2465239d1c5808c039b20"
+source = "git+https://github.com/figtracer/soldb?rev=ac821b70686875d513a3c194e32d2af553cb9423#ac821b70686875d513a3c194e32d2af553cb9423"
 dependencies = [
  "serde",
  "serde_json",
@@ -12873,7 +12873,7 @@ dependencies = [
 [[package]]
 name = "soldb-repl"
 version = "0.4.3"
-source = "git+https://github.com/figtracer/soldb?rev=6df4c3dc756ca2e31bd2465239d1c5808c039b20#6df4c3dc756ca2e31bd2465239d1c5808c039b20"
+source = "git+https://github.com/figtracer/soldb?rev=ac821b70686875d513a3c194e32d2af553cb9423#ac821b70686875d513a3c194e32d2af553cb9423"
 dependencies = [
  "serde",
  "serde_json",
@@ -12884,7 +12884,7 @@ dependencies = [
 [[package]]
 name = "soldb-tui"
 version = "0.4.3"
-source = "git+https://github.com/figtracer/soldb?rev=6df4c3dc756ca2e31bd2465239d1c5808c039b20#6df4c3dc756ca2e31bd2465239d1c5808c039b20"
+source = "git+https://github.com/figtracer/soldb?rev=ac821b70686875d513a3c194e32d2af553cb9423#ac821b70686875d513a3c194e32d2af553cb9423"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -13338,7 +13338,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13584,7 +13584,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -14713,7 +14713,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -14862,7 +14862,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
