@@ -50,7 +50,7 @@ use foundry_evm_core::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
         FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
-        restore_warmth, warm_accounts,
+        restore_access_warmth,
     },
 };
 use foundry_evm_traces::{
@@ -784,6 +784,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// transaction instead.
     pub root_call_target: Option<Address>,
 
+    /// The EIP-3651 coinbase and access-list addresses the running transaction warmed when it
+    /// started, which `vm.cool` keeps warm.
+    ///
+    /// While an isolated call or create runs as a nested transaction, these are that
+    /// transaction's instead.
+    pub tx_warm_addresses: Vec<Address>,
+
     /// Prank information, mapped to the call depth where pranks were added.
     pub pranks: BTreeMap<usize, Prank>,
 
@@ -966,6 +973,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             state_epoch: Default::default(),
             snapshot_restores: Default::default(),
             root_call_target: Default::default(),
+            tx_warm_addresses: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
             assume_no_revert: Default::default(),
@@ -3139,7 +3147,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let depth = interp.message().depth.saturating_add(1);
         let gas_limit = interp.gas().remaining();
         let evm = interp.host();
-        let warmth = warm_accounts(evm.state_mut());
+        let checkpoint = evm.state().checkpoint();
         let code = match evm
             .state_mut()
             .account(&hook.callback_target)
@@ -3174,7 +3182,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.active_storage_hook = None;
         self.restore_storage_hook_inspector_state(inspector_state);
         // The callback is instrumentation: accesses it warmed stay cold for the hooked frame.
-        restore_warmth(evm.state_mut(), &warmth);
+        restore_access_warmth(evm.state_mut(), &checkpoint);
 
         match result {
             Ok(result) if result.is_success() => {}
