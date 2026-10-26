@@ -50,9 +50,14 @@ pub fn apply_chain_specific_tx_replay_env_changes_for_chain<T: EvmTypesHost>(
     evm_env: &mut EvmEnv<T>,
     source_chain_id: ChainId,
 ) {
-    if NamedChain::try_from(source_chain_id).is_ok_and(|chain| chain.is_arbitrum()) {
+    let chain = NamedChain::try_from(source_chain_id);
+    if chain.is_ok_and(|chain| chain.is_arbitrum()) {
         // Arbitrum does not enforce the EIP-1559 priority fee ordering constraint.
         evm_env.set_feature(EvmFeatures::PRIORITY_FEE_CHECK, false);
+    }
+    if matches!(chain, Ok(NamedChain::Celo | NamedChain::CeloSepolia)) {
+        // CIP-64 fee caps are denominated in the fee currency, not in the native base fee.
+        evm_env.set_feature(EvmFeatures::BASE_FEE_CHECK, false);
     }
 }
 
@@ -453,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn tx_replay_env_changes_disable_priority_fee_check_only_for_arbitrum() {
+    fn tx_replay_env_changes_relax_fee_checks_per_chain() {
         let mut evm_env = env(BlockEnv::<BaseEvmTypes>::default());
         evm_env.set_chain_id(NamedChain::Arbitrum as u64);
         assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
@@ -465,6 +470,12 @@ mod tests {
         evm_env.set_feature(EvmFeatures::PRIORITY_FEE_CHECK, true);
 
         apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
+        assert!(evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
+
+        evm_env.set_chain_id(NamedChain::Celo as u64);
+        apply_chain_specific_tx_replay_env_changes(&mut evm_env);
+        assert!(!evm_env.version.feature(EvmFeatures::BASE_FEE_CHECK));
         assert!(evm_env.version.feature(EvmFeatures::PRIORITY_FEE_CHECK));
     }
 
