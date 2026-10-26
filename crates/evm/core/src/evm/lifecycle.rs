@@ -1006,8 +1006,11 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
         self.active_mut().warm = warm;
         // Persistent and carried accounts keep the originals they suspended with, other accounts
-        // the ones of their previous visit to this context.
+        // the ones of their previous visit to this context. Records this context kept for
+        // persistent accounts can predate the running transaction's baseline, such as that of an
+        // isolated call, so the suspended context's records replace them.
         let mut originals = mem::take(&mut self.active_mut().originals);
+        originals.retain(|address, _| !persistent.contains(address));
         for (address, slots) in source_originals {
             if persistent.contains(&address) || (carry && created.contains(&address)) {
                 originals.entry(address).or_default().extend(slots);
@@ -1241,8 +1244,11 @@ fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
     warm
 }
 
-/// Loads the slots of `originals` into the fresh transaction overlay of `state` with their
-/// accepted values, keeping the given transaction-start values as their originals.
+/// Turns the accepted values of the slots of `originals` in the fresh `state` back into pending
+/// writes of the running transaction over their transaction-start values.
+///
+/// The accepted state takes the transaction-start values as well, since committing the
+/// transaction only writes slots whose values differ from their originals.
 fn restore_originals(state: &mut State<'_>, originals: &AddressMap<HashMap<U256, U256>>) {
     let mut pending = PendingState::default();
     for (address, slots) in originals {
@@ -1251,6 +1257,8 @@ fn restore_originals(state: &mut State<'_>, originals: &AddressMap<HashMap<U256,
         for (key, original) in slots {
             if let Ok(current) = state.storage_slot_untracked(address, key) {
                 pending.insert_storage(*address, *key, *original, current);
+                let cache = &mut state.overlay_db_mut().cache;
+                cache.storage.entry(*address).or_default().slots.insert(*key, *original);
             }
         }
     }

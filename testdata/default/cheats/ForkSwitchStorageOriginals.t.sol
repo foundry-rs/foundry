@@ -42,6 +42,7 @@ contract ForkSwitchStorageOriginalsTest is Test {
         roundTrip(switching);
         third = store(switching, 3);
         restore = store(switching, 0);
+        roundTrip(switching);
     }
 
     // Fork switches keep the transaction-start originals of storage slots, so writes after a
@@ -55,6 +56,30 @@ contract ForkSwitchStorageOriginalsTest is Test {
         assertEq(secondSwitched, second, "write after one round trip");
         assertEq(thirdSwitched, third, "write after two round trips");
         assertEq(restoreSwitched, restore, "restoring write");
+        assertEq(values[true], 0, "restoring write after a round trip");
+    }
+
+    function dirty(bool switching) external {
+        store(switching, 1);
+        roundTrip(switching);
+    }
+
+    function rewrite(bool switching) external returns (uint256 cost) {
+        // Warm the slot in both cases, which carries its warmth across the switch.
+        require(values[switching] == 1);
+        if (switching) vm.selectFork(forkB);
+        cost = store(switching, 2);
+        if (switching) vm.selectFork(forkA);
+    }
+
+    // A fork switch in an earlier call does not leave its originals behind for a later call that
+    // switches to the same fork.
+    function testForkSwitchKeepsLaterCallStorageOriginals() public {
+        this.dirty(false);
+        uint256 cost = this.rewrite(false);
+
+        this.dirty(true);
+        assertEq(this.rewrite(true), cost, "write after switching in a later call");
     }
 }
 
