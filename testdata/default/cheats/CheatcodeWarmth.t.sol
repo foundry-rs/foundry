@@ -172,9 +172,8 @@ abstract contract CheatcodeWarmthBase is Test {
 
         // The authority is loaded before its nonce is checked.
         delegation = vm.signDelegation(implementation, 0x1005, 5);
-        (bool success,) = address(vm).call(abi.encodeWithSignature(
-            "attachDelegation((uint8,bytes32,bytes32,uint64,address))", delegation
-        ));
+        (bool success,) = address(vm)
+            .call(abi.encodeWithSignature("attachDelegation((uint8,bytes32,bytes32,uint64,address))", delegation));
         vm.assertFalse(success);
         vm.assertTrue(isWarm(vm.addr(0x1005)));
     }
