@@ -10,7 +10,7 @@ use alloy_primitives::{
     map::{AddressHashMap, AddressSet},
 };
 use evm2::{
-    EvmFeatures, ExecutionError, Inspector,
+    EvmFeatures, ExecutedTx, ExecutionError, Inspector, TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -29,7 +29,7 @@ use foundry_evm_core::{
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
         TxResultFor, TypesFor, evm_env, merge_pending_changes,
-        merge_untracked_nested_changes_with_warmth, release_inspector, warm_set,
+        merge_untracked_pending_changes_with_warmth, release_inspector, warm_set,
     },
     precompiles::P256_VERIFY,
 };
@@ -549,12 +549,17 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             inner: &mut *self,
             backend: Some(&mut *backend),
         });
-        let result = match child.transact(tx) {
-            Ok(executed) => {
+        let executed = child.transact(tx).map(ExecutedTx::detach);
+        let result = match executed {
+            Ok(TxResultWithState { result, pending_state, .. }) => {
                 // A failed transaction keeps its nonce increment.
-                merge_untracked_nested_changes_with_warmth(evm.state_mut(), &executed)
-                    .map(|()| executed.result().clone())
-                    .map_err(Into::into)
+                merge_untracked_pending_changes_with_warmth(
+                    evm.state_mut(),
+                    &mut child,
+                    pending_state,
+                )
+                .map(|()| result)
+                .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };

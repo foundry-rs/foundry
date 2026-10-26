@@ -27,7 +27,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
-    EvmTypesHost, ExecutionError,
+    EvmTypesHost, ExecutionError, TxResultWithState,
     evm::State,
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
@@ -197,14 +197,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let mut child = backend.backend().nested_evm(evm, tx, env);
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        let TxResultWithState { result, pending_state, .. } = executed.detach();
         // A failed transaction keeps its nonce increment.
-        foundry_evm_core::evm::merge_untracked_nested_changes_with_warmth(
+        foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
             evm.state_mut(),
-            &executed,
+            &mut child,
+            pending_state,
         )?;
         // The nested transaction's changes are not the running transaction's execution.
         EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
-        Ok(executed.result().clone())
+        Ok(result)
     }
 
     // Without the inspector stack's nested-root handling, replayed transactions run without

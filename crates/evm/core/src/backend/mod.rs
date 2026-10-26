@@ -1138,7 +1138,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             account.warm();
         }
         for (slot, value) in source.storage.iter().flatten() {
-            state.storage_slot(target, (*slot).into())?.set((*value).into());
+            let mut slot = state.storage_slot(target, (*slot).into())?;
+            slot.warm();
+            slot.set((*value).into());
         }
         Ok(())
     }

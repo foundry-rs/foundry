@@ -1317,8 +1317,9 @@ impl Cheatcode for broadcastRawTransactionCall {
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let from = sender;
         let contract_address = if tx.kind().is_create() {
-            let nonce = ccx.evm.state_mut().account(&sender)?.nonce();
-            Some(sender.create(nonce))
+            let mut account = ccx.evm.state_mut().account(&sender)?;
+            account.warm();
+            Some(sender.create(account.nonce()))
         } else {
             None
         };
