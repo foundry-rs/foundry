@@ -1,5 +1,7 @@
 //! Independent native Commonware decoding and verification of Anvil's Tempo RPC output.
 
+#![cfg(unix)]
+
 use alloy_consensus::{
     Sealable, Typed2718, proofs::calculate_transaction_root, transaction::TxHashRef,
 };

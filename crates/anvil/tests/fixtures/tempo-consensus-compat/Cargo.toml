@@ -16,7 +16,6 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider.workspace = true
 anvil.workspace = true
 commonware-codec.workspace = true
-commonware-consensus = "=2026.9.0"
 commonware-cryptography = { workspace = true, features = ["bls12381", "std"] }
 commonware-math.workspace = true
 commonware-parallel.workspace = true
@@ -26,3 +25,6 @@ serde_json.workspace = true
 tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 tokio.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+commonware-consensus = "=2026.9.0"

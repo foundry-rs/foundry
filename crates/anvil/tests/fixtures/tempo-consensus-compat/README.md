@@ -16,6 +16,10 @@ execute the checks on pull requests, including forks, without RPC secrets or
 artifact files. The `tempo-consensus-compat` job in
 `.github/workflows/ci-tempo.yml` also runs them nightly and on manual dispatch.
 
+These tests run only on Unix platforms because Commonware's native runtime does
+not support Windows. On non-Unix targets, both the `commonware-consensus`
+dependency and the native verification code are excluded from compilation.
+
 From the repository root:
 
 ```sh
