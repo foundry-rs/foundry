@@ -1391,6 +1391,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut executor = self.clone_executor();
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
+        if raw.result.as_ref() == MAGIC_ASSUME {
+            return Err("candidate replay rejected by `vm.assume`".to_string());
+        }
         if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
         }
@@ -2504,16 +2507,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let base_counterexample =
             BaseCounterExample::from_fuzz_call(calldata, args, raw.traces.clone());
-        if self.executor.is_raw_call_success(
-            self.address,
-            Cow::Borrowed(&raw.state_changeset),
-            &raw,
-        ) {
+        // Concrete replay rejected the input as an assumption, as fuzzing does.
+        let rejected_by_assume = raw.result.as_ref() == MAGIC_ASSUME;
+        if rejected_by_assume
+            || self.executor.is_raw_call_success(
+                self.address,
+                Cow::Borrowed(&raw.state_changeset),
+                &raw,
+            )
+        {
             // The solver model is not a user-facing counterexample until replay confirms it, so
             // report the mismatch as an incomplete run instead.
             let call_trace = SymbolicCallTrace::test_result_traces(raw.traces.is_some());
             self.result.extend(raw);
-            let reason = "symbolic counterexample did not replay".to_string();
+            let reason = if rejected_by_assume {
+                "symbolic counterexample did not replay: rejected by `vm.assume`"
+            } else {
+                "symbolic counterexample did not replay"
+            }
+            .to_string();
             let display_reason = format!(
                 "incomplete symbolic execution ({:?}): {reason}",
                 SymbolicStopReason::Error
