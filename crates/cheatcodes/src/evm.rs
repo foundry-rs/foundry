@@ -228,6 +228,29 @@ impl Display for AccountStateDiffs {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
                 match &slot_changes.slot_info {
+                    Some(slot_info)
+                        if slot_info.members.as_ref().is_some_and(|members| {
+                            members.iter().any(|member| member.decoded.is_some())
+                        }) =>
+                    {
+                        // Packed variables or struct members - show each decoded value.
+                        writeln!(
+                            f,
+                            "@ {slot} ({}, {}):",
+                            slot_info.label, slot_info.slot_type.dyn_sol_type
+                        )?;
+                        for member in slot_info.members.iter().flatten() {
+                            let Some(decoded) = &member.decoded else { continue };
+                            writeln!(
+                                f,
+                                "    {} ({}): {} → {}",
+                                member.label,
+                                member.slot_type.dyn_sol_type,
+                                format_token_raw(&decoded.previous_value),
+                                format_token_raw(&decoded.new_value)
+                            )?;
+                        }
+                    }
                     Some(slot_info) => {
                         if let Some(decoded) = &slot_info.decoded {
                             // Have slot info with decoded values - show decoded values

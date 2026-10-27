@@ -401,35 +401,22 @@ impl SlotIdentifier {
         let slot_u256 = Into::<U256>::into(*slot);
         let slot_str = slot_u256.to_string();
 
+        // Match on a base slot from the layout. This is always the case for primitive types, which
+        // may share the slot with other variables.
+        if let Some(slot_info) = self.slot_variables(
+            self.storage_layout
+                .storage
+                .iter()
+                .filter(|storage| storage.slot == slot_str)
+                .map(|storage| (storage.label.clone(), storage)),
+            &slot_str,
+        ) {
+            return Some(slot_info);
+        }
+
         for storage in &self.storage_layout.storage {
             let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
             let dyn_type = self.parsed_type(&storage.storage_type);
-
-            // Check if we're able to match on a slot from the layout i.e any of the base slots.
-            // This will always be the case for primitive types that fit in a single slot.
-            if storage.slot == slot_str
-                && let Some(parsed_type) = dyn_type.cloned()
-            {
-                // Successfully parsed - handle arrays or simple types
-                let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
-                    format!("{}{}", storage.label, get_array_base_indices(&parsed_type))
-                } else {
-                    storage.label.clone()
-                };
-
-                return Some(SlotInfo {
-                    label,
-                    slot_type: StorageTypeInfo {
-                        label: storage_type.label.clone(),
-                        dyn_sol_type: parsed_type,
-                    },
-                    offset: storage.offset,
-                    slot: storage.slot.clone(),
-                    members: None,
-                    decoded: None,
-                    keys: None,
-                });
-            }
 
             // Encoding types: <https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#json-output>
             if storage_type.encoding == ENCODING_INPLACE {
@@ -685,19 +672,14 @@ impl SlotIdentifier {
                 );
             }
 
-            // Return the first member as a primitive
-            return Some(SlotInfo {
-                label: member_label,
-                slot_type: StorageTypeInfo {
-                    label: member_type_info.label.clone(),
-                    dyn_sol_type: self.parsed_type(&first_member.storage_type)?.clone(),
-                },
-                offset: first_member.offset,
-                slot: slot_str.to_string(),
-                decoded: None,
-                members: None,
-                keys: None,
-            });
+            // Return the primitive members packed into the first slot.
+            return self.slot_variables(
+                members
+                    .iter()
+                    .filter(|m| m.slot == "0")
+                    .map(|m| (format!("{base_label}.{}", m.label), m)),
+                slot_str,
+            );
         }
 
         // Not the base slot - search through members
@@ -725,22 +707,14 @@ impl SlotIdentifier {
             }
 
             if member_slot == target_slot {
-                // Found the exact member slot
-
-                // Regular member
-                let member_type = self.parsed_type(&member.storage_type)?.clone();
-                return Some(SlotInfo {
-                    label: member_label,
-                    slot_type: StorageTypeInfo {
-                        label: member_type_info.label.clone(),
-                        dyn_sol_type: member_type,
-                    },
-                    offset: member.offset,
-                    slot: slot_str.to_string(),
-                    members: None,
-                    decoded: None,
-                    keys: None,
-                });
+                // Found the exact member slot, which may be shared by packed members.
+                return self.slot_variables(
+                    members
+                        .iter()
+                        .filter(|m| m.slot == member.slot)
+                        .map(|m| (format!("{base_label}.{}", m.label), m)),
+                    slot_str,
+                );
             }
         }
 
@@ -975,6 +949,58 @@ impl SlotIdentifier {
 
         None
     }
+
+    /// Identifies a slot holding the ABI-decodable variables in `entries`, all stored in it.
+    ///
+    /// A slot shared by several packed variables gets one member per variable, so each is decoded
+    /// from its own bytes and labeled with its own name. Returns `None` if there are no such
+    /// variables.
+    fn slot_variables<'a>(
+        &self,
+        entries: impl IntoIterator<Item = (String, &'a Storage)>,
+        slot_str: &str,
+    ) -> Option<SlotInfo> {
+        let mut variables = entries
+            .into_iter()
+            .filter_map(|(label, storage)| {
+                let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
+                let parsed_type = self.parsed_type(&storage.storage_type)?.clone();
+                let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
+                    format!("{label}{}", get_array_base_indices(&parsed_type))
+                } else {
+                    label
+                };
+                Some(SlotInfo {
+                    label,
+                    slot_type: StorageTypeInfo {
+                        label: storage_type.label.clone(),
+                        dyn_sol_type: parsed_type,
+                    },
+                    offset: storage.offset,
+                    slot: slot_str.to_string(),
+                    members: None,
+                    decoded: None,
+                    keys: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        if variables.len() <= 1 {
+            return variables.pop();
+        }
+
+        let label = variables.iter().map(|v| v.label.as_str()).collect::<Vec<_>>().join(", ");
+        let types = variables.iter().map(|v| v.slot_type.dyn_sol_type.clone()).collect::<Vec<_>>();
+        let tuple = DynSolType::Tuple(types);
+        Some(SlotInfo {
+            label,
+            slot_type: StorageTypeInfo { label: tuple.to_string(), dyn_sol_type: tuple },
+            offset: 0,
+            slot: slot_str.to_string(),
+            members: Some(variables),
+            decoded: None,
+            keys: None,
+        })
+    }
 }
 
 /// Returns the base indices for array types, e.g. "\[0\]\[0\]" for 2D arrays.
@@ -1031,5 +1057,97 @@ mod tests {
         ] {
             assert_eq!(parse_sol_type(label), DynSolType::parse(expected).ok(), "{label}");
         }
+    }
+
+    fn decoded(info: &SlotInfo) -> Vec<(&str, String, String)> {
+        info.members
+            .iter()
+            .flatten()
+            .map(|member| {
+                let decoded = member.decoded.as_ref().unwrap();
+                (
+                    member.label.as_str(),
+                    format_token_raw(&decoded.previous_value),
+                    format_token_raw(&decoded.new_value),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn decodes_each_packed_variable() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "initialized", "offset": 0, "slot": "5", "type": "t_uint64" },
+                { "astId": 2, "contract": "C", "label": "initializing", "offset": 8, "slot": "5", "type": "t_bool" },
+                { "astId": 3, "contract": "C", "label": "next", "offset": 0, "slot": "6", "type": "t_uint64" }
+            ],
+            "types": {
+                "t_uint64": { "encoding": "inplace", "label": "uint64", "numberOfBytes": "8" },
+                "t_bool": { "encoding": "inplace", "label": "bool", "numberOfBytes": "1" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let mut info = identifier.identify(&B256::from(U256::from(5)), None).unwrap();
+        assert_eq!(info.label, "initialized, initializing");
+        assert_eq!(info.slot_type.label, "(uint64,bool)");
+        let new_value = B256::from(U256::from(1) << 64 | U256::from(7));
+        info.decode_values(B256::ZERO, new_value);
+        assert_eq!(
+            decoded(&info),
+            [
+                ("initialized", "0".to_string(), "7".to_string()),
+                ("initializing", "false".to_string(), "true".to_string())
+            ]
+        );
+
+        let info = identifier.identify(&B256::from(U256::from(6)), None).unwrap();
+        assert_eq!(info.label, "next");
+        assert!(info.members.is_none());
+    }
+
+    #[test]
+    fn decodes_packed_struct_members_past_the_first_slot() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "data", "offset": 0, "slot": "0", "type": "t_struct(Data)" }
+            ],
+            "types": {
+                "t_struct(Data)": {
+                    "encoding": "inplace", "label": "struct C.Data", "numberOfBytes": "64",
+                    "members": [
+                        { "astId": 2, "contract": "C", "label": "total", "offset": 0, "slot": "0", "type": "t_uint256" },
+                        { "astId": 3, "contract": "C", "label": "owner", "offset": 0, "slot": "1", "type": "t_address" },
+                        { "astId": 4, "contract": "C", "label": "paused", "offset": 20, "slot": "1", "type": "t_bool" }
+                    ]
+                },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" },
+                "t_address": { "encoding": "inplace", "label": "address", "numberOfBytes": "20" },
+                "t_bool": { "encoding": "inplace", "label": "bool", "numberOfBytes": "1" }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+
+        let info = identifier.identify(&B256::ZERO, None).unwrap();
+        assert_eq!(info.label, "data.total");
+
+        let mut info = identifier.identify(&B256::from(U256::from(1)), None).unwrap();
+        assert_eq!(info.label, "data.owner, data.paused");
+        let new_value = B256::from(U256::from(1) << 160 | U256::from(0x1234));
+        info.decode_values(B256::ZERO, new_value);
+        assert_eq!(
+            decoded(&info),
+            [
+                (
+                    "data.owner",
+                    "0x0000000000000000000000000000000000000000".to_string(),
+                    "0x0000000000000000000000000000000000001234".to_string()
+                ),
+                ("data.paused", "false".to_string(), "true".to_string())
+            ]
+        );
     }
 }
