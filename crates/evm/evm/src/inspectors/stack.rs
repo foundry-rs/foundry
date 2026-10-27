@@ -547,9 +547,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let origin_override = cheats.origin_override.take();
         // The nested transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
-        // The transaction's root frame skips the cheatcode hooks, so the persistent writes its
-        // cheatcodes made are handled below.
-        let persistent_writes = cheats.persistent_writes.len();
+        // The nested transaction's persistent writes refer to its own journal, so they are kept
+        // apart. Its root frame skips the cheatcode hooks, so they are handled below.
+        let outer_writes = mem::take(&mut cheats.persistent_writes);
+        let frame_rollback = cheats.frame_rollback.take();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
@@ -572,7 +573,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         drop(release_inspector(child));
         // The merged changes include the writes of a successful transaction; a failed one rolled
         // them back, so they are replayed over its merged changes.
-        let writes = cheats.persistent_writes.split_off(persistent_writes);
+        let writes = mem::replace(&mut cheats.persistent_writes, outer_writes);
+        cheats.frame_rollback = frame_rollback;
         let result = result.and_then(|(result, mut persistent)| {
             if !result.is_success() {
                 let merged = persistent.len();
