@@ -457,9 +457,13 @@ fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicSLoadUnwrittenMapping.t.sol",
         r#"
-import "forge-std/Test.sol";
+interface Vm {
+    function assume(bool condition) external pure;
+}
 
-contract SymbolicSLoadUnwrittenMapping is Test {
+contract SymbolicSLoadUnwrittenMapping {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
     mapping(address => bool) isAdmin;
 
     function checkNoUserIsAdmin(address user) public view {

@@ -1391,9 +1391,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut executor = self.clone_executor();
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
-        if raw.result.as_ref() == MAGIC_ASSUME {
-            return Err("candidate replay rejected by `vm.assume`".to_string());
-        }
         if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
         }
