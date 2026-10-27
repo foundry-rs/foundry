@@ -11,11 +11,35 @@ contract Bumper {
     }
 }
 
+contract Reverter {
+    uint256 x;
+
+    function reverts() external {
+        x = 1;
+        revert();
+    }
+}
+
+contract Dealer {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    fallback() external payable {
+        vm.deal(address(0xA11CE), 100);
+    }
+}
+
 /// `deal` and nonce cheatcodes survive reverts of the enclosing calls, and compose with the
 /// transfers and nonce bumps those reverts undo, as on master.
 contract PersistentWritesTest is Test {
     address payable constant A = payable(address(0xA11CE));
+    address constant EOA = address(0xE0A);
+    // Transfers 17 wei from `SENDER` to `TARGET` at nonce 0 on chain 1.
+    bytes constant RAW_TX =
+        hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
+    address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+    address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
     Bumper bumper;
+    Reverter reverter = new Reverter();
 
     function setUp() public {
         vm.deal(address(this), 1 ether);
@@ -67,6 +91,29 @@ contract PersistentWritesTest is Test {
         revert();
     }
 
+    function setNonceOnCreated() external {
+        vm.setNonce(address(new Child{salt: 0}()), 5);
+        revert();
+    }
+
+    function resetNonceAfterCreate() external {
+        vm.prank(EOA);
+        new Child();
+        vm.resetNonce(EOA);
+        revert();
+    }
+
+    function broadcastReverting() external {
+        vm.startBroadcast(EOA);
+        try reverter.reverts() {} catch {}
+        vm.stopBroadcast();
+    }
+
+    function executeThenRevert() external {
+        vm.executeTransaction(RAW_TX);
+        revert();
+    }
+
     function callReverting(bytes memory data) internal {
         (bool ok,) = address(this).call(data);
         require(!ok, "expected revert");
@@ -89,5 +136,26 @@ contract PersistentWritesTest is Test {
         assertEq(vm.getNonce(address(bumper)), 9, "createThenSetNonce");
         callReverting(abi.encodeCall(this.setNonceTwice, ()));
         assertEq(vm.getNonce(A), 7, "setNonceTwice");
+    }
+
+    function testWritesUndoneWithTheirFrame() public {
+        // A revert that undoes an account's creation also undoes the nonce set on it.
+        callReverting(abi.encodeCall(this.setNonceOnCreated, ()));
+        address created = vm.computeCreate2Address(0, keccak256(type(Child).creationCode));
+        assertEq(vm.getNonce(created), 0, "setNonceOnCreated");
+        callReverting(abi.encodeCall(this.resetNonceAfterCreate, ()));
+        assertEq(vm.getNonce(EOA), 0, "resetNonceAfterCreate");
+
+        // The broadcast nonce bump of a failed call belongs to its caller's frame.
+        this.broadcastReverting();
+        assertEq(vm.getNonce(EOA), 1, "broadcastReverting");
+
+        // The executed transaction's own `deal` is part of its merged changes.
+        vm.chainId(1);
+        vm.deal(SENDER, 1 ether);
+        vm.deal(A, 50);
+        vm.etch(TARGET, type(Dealer).runtimeCode);
+        callReverting(abi.encodeCall(this.executeThenRevert, ()));
+        assertEq(A.balance, 100, "executeTransaction deal");
     }
 }

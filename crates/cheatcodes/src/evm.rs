@@ -848,10 +848,9 @@ impl Cheatcode for resetNonceCall {
         account.warm();
         let previous = account.nonce();
         account.set_nonce(nonce);
-        let address = account.address();
+        let write = PersistentWrite::nonce(&account, previous);
         drop(account);
         // Nonce cheatcodes survive reverts of the enclosing calls.
-        let write = PersistentWrite::Nonce(address, nonce.wrapping_sub(previous));
         ccx.state.persistent_writes.push((ccx.caller_depth(), write));
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
@@ -873,10 +872,9 @@ impl Cheatcode for setNonceCall {
         account.warm();
         let previous = account.nonce();
         account.set_nonce(newNonce);
-        let address = account.address();
+        let write = PersistentWrite::nonce(&account, previous);
         drop(account);
         // Nonce cheatcodes survive reverts of the enclosing calls.
-        let write = PersistentWrite::Nonce(address, newNonce.wrapping_sub(previous));
         ccx.state.persistent_writes.push((ccx.caller_depth(), write));
         Ok(Default::default())
     }
@@ -890,10 +888,9 @@ impl Cheatcode for setNonceUnsafeCall {
         account.warm();
         let previous = account.nonce();
         account.set_nonce(newNonce);
-        let address = account.address();
+        let write = PersistentWrite::nonce(&account, previous);
         drop(account);
         // Nonce cheatcodes survive reverts of the enclosing calls.
-        let write = PersistentWrite::Nonce(address, newNonce.wrapping_sub(previous));
         ccx.state.persistent_writes.push((ccx.caller_depth(), write));
         Ok(Default::default())
     }
