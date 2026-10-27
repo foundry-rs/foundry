@@ -47,10 +47,12 @@ contract PersistentWritesTest is Test {
     Bumper bumper;
     Reverter reverter = new Reverter();
     uint256 otherFork;
+    uint256 setUpSnapshot;
 
     function setUp() public {
         vm.deal(address(this), 1 ether);
         bumper = new Bumper();
+        setUpSnapshot = vm.snapshotState();
     }
 
     function dealTwice() external {
@@ -83,6 +85,26 @@ contract PersistentWritesTest is Test {
     function dealInRevertedChild() external {
         try this.dealTwice() {} catch {}
         A.transfer(10);
+        revert();
+    }
+
+    function dealThenRestore() external {
+        vm.deal(A, 100);
+        vm.revertToState(vm.snapshotState());
+        revert();
+    }
+
+    function restoreThenDeal() external {
+        uint256 id = vm.snapshotState();
+        vm.deal(A, 77);
+        vm.revertToState(id);
+        vm.deal(A, 100);
+        revert();
+    }
+
+    function dealThenRestoreSetUp() external {
+        vm.deal(A, 100);
+        vm.revertToState(setUpSnapshot);
         revert();
     }
 
@@ -170,6 +192,8 @@ contract PersistentWritesTest is Test {
         assertEq(balanceAfter(abi.encodeCall(this.dealInRevertedChild, ())), 2, "dealInRevertedChild");
         // A snapshot restore keeps the writes made before the snapshot.
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreInChild, ())), 100, "dealThenRestoreInChild");
+        assertEq(balanceAfter(abi.encodeCall(this.dealThenRestore, ())), 100, "dealThenRestore");
+        assertEq(balanceAfter(abi.encodeCall(this.restoreThenDeal, ())), 77, "restoreThenDeal");
 
         callReverting(abi.encodeCall(this.createThenSetNonce, ()));
         assertEq(vm.getNonce(address(bumper)), 9, "createThenSetNonce");
@@ -184,6 +208,10 @@ contract PersistentWritesTest is Test {
         vm.store(TARGET, 0, bytes32(uint256(1)));
         try vm.executeTransaction(RAW_TX) {} catch {}
         assertEq(A.balance, 100, "failed executeTransaction deal");
+
+        // A snapshot of an earlier transaction holds none of the writes; last, as it rolls back the
+        // rest of the state.
+        assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreSetUp, ())), 100, "dealThenRestoreSetUp");
     }
 
     function testWritesUndoneWithTheirFrame() public {
