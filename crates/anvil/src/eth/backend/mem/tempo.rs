@@ -225,11 +225,11 @@ impl<N: Network> Backend<N> {
         if certified.block.header.number() != height
             || certified.block.header.hash_slow() != certified.finalization.digest
             || (height == root && certified.finalization.digest != hash)
-            || calculate_transaction_root(&certified.block.body.transactions)
-                != certified.block.header.transactions_root()
-            || certified.block.body.calculate_ommers_root() != certified.block.header.ommers_hash()
-            || certified.block.body.calculate_withdrawals_root()
-                != certified.block.header.withdrawals_root()
+            || tempo_evm::consensus::validate_body_against_header(
+                &certified.block.body,
+                &certified.block.header,
+            )
+            .is_err()
         {
             return Err(consensus_unavailable(
                 "upstream finalization does not match the pinned fork history",
