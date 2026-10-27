@@ -1,11 +1,14 @@
 //! User-visible state snapshots.
 
-use super::{EvmEnv, ForkRegistry, SendableExt, StoredExt};
+use super::{EvmEnv, ForkRegistry, PersistentWrite, SendableExt, StoredExt};
 use evm2::{
     EvmFeatures, EvmTypesHost,
     evm::{EmptyDB, State, StateCheckpoint, StateSnapshot},
 };
 use std::{fmt, mem};
+
+/// Persistent writes with the depth and journal length they were recorded at.
+type Ledger = Vec<(usize, usize, PersistentWrite)>;
 
 /// Everything a snapshot revert restores.
 ///
@@ -64,7 +67,8 @@ impl<T: EvmTypesHost, C> fmt::Debug for LifecycleSnapshot<T, C> {
 #[derive(Clone, Debug, Default)]
 pub struct SnapshotRestores {
     frames: Vec<RestoreFrame>,
-    replaced: Vec<StateSnapshot>,
+    /// Each retained state, with the persistent writes recorded when it was replaced.
+    replaced: Vec<(StateSnapshot, Ledger)>,
     /// Whether a restoration survived the outermost frame.
     kept: bool,
 }
@@ -84,33 +88,39 @@ impl SnapshotRestores {
         self.frames.push(RestoreFrame { depth, checkpoint, replaced_len: self.replaced.len() });
     }
 
-    /// Retains `replaced`, the running state a restoration in the innermost frame replaced, if it
-    /// is the first restoration since that frame started.
-    pub fn capture(&mut self, replaced: StateSnapshot) {
+    /// Retains `replaced`, the running state a restoration in the innermost frame replaced, with
+    /// the persistent writes `ledger` recorded over it, if it is the first restoration since that
+    /// frame started.
+    pub fn capture(&mut self, replaced: StateSnapshot, ledger: &[(usize, usize, PersistentWrite)]) {
         if self.frames.last().is_some_and(|frame| frame.replaced_len == self.replaced.len()) {
-            self.replaced.push(replaced);
+            self.replaced.push((replaced, ledger.to_vec()));
         }
     }
 
     /// Closes the interpreter frame at `depth`, if one is open. If it failed, reinstates the state
     /// replaced by the first restoration made inside it, rolled back to the frame's checkpoint.
+    ///
+    /// Returns the checkpoint of the closed frame, and the persistent writes recorded over a
+    /// reinstated state.
     pub fn frame_end(
         &mut self,
         state: &mut State<'_>,
         depth: u16,
         failed: bool,
         features: EvmFeatures,
-    ) {
+    ) -> Option<(StateCheckpoint, Option<Ledger>)> {
         // Frames above `depth` aborted with an execution error and never ended.
         while self.frames.pop_if(|frame| frame.depth > depth).is_some() {}
-        let Some(frame) = self.frames.pop_if(|frame| frame.depth == depth) else { return };
+        let frame = self.frames.pop_if(|frame| frame.depth == depth)?;
+        let mut ledger = None;
         if failed && self.replaced.len() > frame.replaced_len {
             self.replaced.truncate(frame.replaced_len + 1);
-            let replaced = self.replaced.pop().expect("a restoration was retained");
+            let (replaced, writes) = self.replaced.pop().expect("a restoration was retained");
+            ledger = Some(writes);
             let db = mem::replace(&mut state.overlay_db_mut().db, Box::new(EmptyDB::default()));
             *state = replaced.into_state(EmptyDB::default());
             state.overlay_db_mut().db = db;
-            state.rollback(frame.checkpoint, features);
+            state.rollback(frame.checkpoint.clone(), features);
         }
         // The caller only needs the first restoration made since it started.
         if let Some(caller) = self.frames.last() {
@@ -119,6 +129,7 @@ impl SnapshotRestores {
             self.kept |= !self.replaced.is_empty();
             self.replaced.clear();
         }
+        Some((frame.checkpoint, ledger))
     }
 
     /// Returns whether a restoration survived the outermost frame.

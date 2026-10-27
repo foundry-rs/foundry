@@ -28,8 +28,8 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested, FoundryEvmExt,
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
-        MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
+        MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores, TransactionRequestFor,
+        TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
@@ -547,6 +547,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let origin_override = cheats.origin_override.take();
         // The nested transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
+        // The nested transaction's persistent writes refer to its own journal, so they are kept
+        // apart. Its root frame skips the cheatcode hooks, so they are handled below.
+        let outer_writes = mem::take(&mut cheats.persistent_writes);
+        let frame_rollback = cheats.frame_rollback.take();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
@@ -561,12 +565,25 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
                     &mut child,
                     pending_state,
                 )
-                .map(|()| result)
+                .map(|persistent| (result, persistent))
                 .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };
         drop(release_inspector(child));
+        // The merged changes include the writes of a successful transaction; a failed one rolled
+        // them back, so they are replayed over its merged changes.
+        let writes = mem::replace(&mut cheats.persistent_writes, outer_writes);
+        cheats.frame_rollback = frame_rollback;
+        let result = result.and_then(|(result, mut persistent)| {
+            if !result.is_success() {
+                let merged = persistent.len();
+                persistent.extend(writes.into_iter().map(|(.., write)| write));
+                PersistentWrite::apply_all(&persistent[merged..], evm.state_mut())?;
+            }
+            cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
+            Ok(result)
+        });
         // The nested transaction's changes are not the running transaction's execution.
         EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         cheats.snapshot_restores = snapshot_restores;
@@ -618,9 +635,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let mut env = env.unwrap_or_else(|| evm_env(evm));
         env.version.initial_call_depth = depth + 1;
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
-        let executed = self.replay(cheats, &mut replay, evm, depth, prepared, true);
+        let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
-        Ok(backend.backend_mut().store_executed(evm, executed?))
+        cheats.record_persistent(
+            usize::from(depth).saturating_sub(1),
+            evm.state(),
+            executed.take_persistent(),
+        );
+        Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -1507,6 +1529,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheatcodes.tx_warm_addresses = tx_warm_addresses::<FEN>(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
             cheatcodes.snapshot_restores = SnapshotRestores::default();
+            // A transaction that ended with an error did not drop its persistent writes.
+            cheatcodes.persistent_writes.clear();
+            cheatcodes.persistent_write_snapshots.clear();
         }
     }
 
@@ -1752,7 +1777,22 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             let evm = interp.host();
             let features = evm.version().features;
             let failed = !result.stop.is_success();
-            cheats.snapshot_restores.frame_end(evm.state_mut(), message.depth, failed, features);
+            let end = cheats.snapshot_restores.frame_end(
+                evm.state_mut(),
+                message.depth,
+                failed,
+                features,
+            );
+            // A frame ends here once per hook layer, and only the layer that opened it returns
+            // its checkpoint.
+            if let Some((checkpoint, ledger)) = end {
+                // The reinstated state holds the persistent writes recorded over it.
+                if let Some(ledger) = ledger {
+                    cheats.persistent_writes = ledger;
+                }
+                cheats.frame_rollback =
+                    Some((usize::from(message.depth), checkpoint.journal_len()));
+            }
         }
     }
 }
