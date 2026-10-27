@@ -226,6 +226,13 @@ pub struct ScriptArgs {
     )]
     pub resume_retry: bool,
 
+    /// Archives an unfinished previous broadcast of this script and broadcasts it anew.
+    ///
+    /// Without this flag, `--broadcast` refuses to replace a previous broadcast whose operations
+    /// have not all mined or reverted. Finish that broadcast with `--resume` instead.
+    #[arg(long, requires = "broadcast", conflicts_with = "resume")]
+    pub start_fresh: bool,
+
     /// If present, --resume or --verify will be assumed to be a multi chain deployment.
     #[arg(long)]
     pub multi: bool,

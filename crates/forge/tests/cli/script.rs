@@ -1287,9 +1287,18 @@ contract UnpolledReceipts is Script {
 "#,
     );
     let path = prj.root().join("broadcast/UnpolledReceipts.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/UnpolledReceipts.s.sol/31337/run-latest.json.recovery.json");
     prj.update_config(|config| config.transaction_timeout = 1);
 
     for revert in [false, true] {
+        // Each iteration broadcasts to a new chain, so the unfinished previous broadcast is
+        // dropped rather than resumed.
+        for path in [&path, &recovery_path] {
+            if path.exists() {
+                fs::remove_file(path).unwrap();
+            }
+        }
         let (api, handle) = spawn(NodeConfig::test()).await;
         // Runtime that reverts once storage slot 0 is set.
         api.anvil_set_code(gate, bytes!("60005415600b57600080fd5b00")).await.unwrap();
@@ -1656,6 +1665,26 @@ contract InterruptedResume is Script {
     #[cfg(unix)]
     assert_eq!(output.status.signal(), Some(9), "forge was not terminated by SIGKILL");
     assert!(recovery_path.exists(), "authoritative recovery snapshot was not checkpointed");
+
+    // A new broadcast refuses to replace the unfinished one, and sends nothing.
+    let snapshot = std::fs::read(&recovery_path).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--slow",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: the previous broadcast `[..]/broadcast/InterruptedResume.s.sol/31337/run-latest.json` has unfinished operations; finish it with `--resume`, or pass `--start-fresh` to archive it and broadcast anew
+
+"#]]);
+    assert_eq!(std::fs::read(&recovery_path).unwrap(), snapshot);
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+
     std::fs::remove_file(&path).unwrap();
     std::fs::remove_file(&sensitive_path).unwrap();
 
@@ -1686,6 +1715,86 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+// `--start-fresh` archives an unfinished broadcast before broadcasting anew, while a completed
+// broadcast is replaced without it.
+#[forgetest_init]
+async fn start_fresh_archives_unfinished_broadcast(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "StartFresh.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract StartFreshTarget {}
+
+contract StartFresh is Script {
+    function run() external {
+        vm.startBroadcast();
+        new StartFreshTarget();
+        new StartFreshTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, reject_after_first) = spawn_rpc_proxy_rejecting_method_after_when_enabled(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        1,
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let cache = prj.root().join("cache/StartFresh.s.sol/31337");
+    let recovery_path = cache.join("run-latest.json.recovery.json");
+    let archives = || {
+        fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path != &recovery_path
+                    && path.to_string_lossy().contains(".recovery.")
+                    && path.extension().is_some_and(|ext| ext == "json")
+            })
+            .collect::<Vec<_>>()
+    };
+    let args = [
+        "--tc",
+        "StartFresh",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ];
+
+    // Only the first operation is sent.
+    cmd.arg("script").arg(&script).args(args);
+    cmd.assert_failure();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    let unfinished = fs::read(&recovery_path).unwrap();
+
+    reject_after_first.store(false, Ordering::SeqCst);
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--start-fresh");
+    cmd.assert_success().stderr_eq(str![[r#"
+Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.json` to `[..]/cache/StartFresh.s.sol/31337/run-latest.json.recovery.[..].json`
+Archived `[..]/broadcast/StartFresh.s.sol/31337/run-latest.json` to `[..]/broadcast/StartFresh.s.sol/31337/run-latest.[..].json`
+Archived `[..]/cache/StartFresh.s.sol/31337/run-latest.json` to `[..]/cache/StartFresh.s.sol/31337/run-latest.[..].json`
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 3);
+    let [archive] = archives().try_into().unwrap();
+    assert_eq!(fs::read(archive).unwrap(), unfinished);
+    let unfinished: Value = serde_json::from_slice(&unfinished).unwrap();
+    let fresh: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_ne!(fresh["generation"], unfinished["generation"]);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args);
+    cmd.assert_success().stderr_eq(str![""]);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
+    assert_eq!(archives().len(), 1);
 }
 
 #[forgetest_init]
