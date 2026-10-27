@@ -12840,8 +12840,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-core"
-version = "0.4.4"
-source = "git+https://github.com/figtracer/soldb?rev=d983b879c19a23fe65a37a60bfc583488b8a222d#d983b879c19a23fe65a37a60bfc583488b8a222d"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70396322c0f84f1ff104f0b5815252500749b9f43fb2709baff41b9910d3d960"
 dependencies = [
  "bytes",
  "serde",
@@ -12850,8 +12851,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-debugger"
-version = "0.4.4"
-source = "git+https://github.com/figtracer/soldb?rev=d983b879c19a23fe65a37a60bfc583488b8a222d#d983b879c19a23fe65a37a60bfc583488b8a222d"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29da43bc7b4d2faad9768307bf6099de42b9e56796fec241051a5a67a1a3e1e5"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -12862,8 +12864,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-ethdebug"
-version = "0.4.4"
-source = "git+https://github.com/figtracer/soldb?rev=d983b879c19a23fe65a37a60bfc583488b8a222d#d983b879c19a23fe65a37a60bfc583488b8a222d"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8654a11366fa94283aa92e975d42f1ea63487237a284fc4b2ebdc33742ae6af4"
 dependencies = [
  "serde",
  "serde_json",
@@ -12872,8 +12875,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-repl"
-version = "0.4.4"
-source = "git+https://github.com/figtracer/soldb?rev=d983b879c19a23fe65a37a60bfc583488b8a222d#d983b879c19a23fe65a37a60bfc583488b8a222d"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "485d293b7e4a160f3cce365e1b5a112e61bc61edd62fc211b97f4e1249d78d65"
 dependencies = [
  "serde",
  "serde_json",
@@ -12883,8 +12887,9 @@ dependencies = [
 
 [[package]]
 name = "soldb-tui"
-version = "0.4.4"
-source = "git+https://github.com/figtracer/soldb?rev=d983b879c19a23fe65a37a60bfc583488b8a222d#d983b879c19a23fe65a37a60bfc583488b8a222d"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c786f694b3a5d8612baae88e6c066bb2eba345e86b13dd8179e18e847c23f2c6"
 dependencies = [
  "crossterm",
  "ratatui",
