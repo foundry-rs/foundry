@@ -9405,3 +9405,29 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
         b256!("0x0185c370ea4989f6959ae08350fe8f02bc3d6f43a8001b641fa89d4200649a2c")
     );
 }
+
+// Script gas limits must be simulated under a chain hardfork that is ahead of `evm_version`, since
+// Amsterdam (EIP-8037) charges far more gas per deployed code byte than Osaka.
+#[forgetest_init]
+async fn script_broadcast_simulates_chain_hardfork_ahead_of_evm_version(prj: _, cmd: _) {
+    write_large_runtime_deploy_script(&prj, 10_000);
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+
+    cmd.args([
+        "script",
+        "DeployLarge",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--non-interactive",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+...
+"#]]);
+}
