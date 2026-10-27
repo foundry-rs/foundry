@@ -204,6 +204,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
             evm.state_mut(),
             &mut child,
             pending_state,
+            // Without the inspector stack, destroyed accounts keep no pre-destruct state.
             Default::default(),
         )?;
         drop(child);
