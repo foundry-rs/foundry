@@ -16,8 +16,9 @@
 //! Consensus readers acquire the database read lock before storage.
 //!
 //! Historical queries can use the trusted fork provider at or below its pinned height. They
-//! snapshot the provider and root together with local history, then release all guards before
-//! network I/O. An overlapping reset can complete while the request returns the old snapshot;
+//! snapshot the provider, root, and known canonical hash together with local history, then release
+//! all guards before network I/O. Upstream blocks must match that canonical hash when known.
+//! An overlapping reset can complete while the request returns the old snapshot;
 //! upstream responses are never cached into the replacement chain. Upstream committees remain
 //! independent of the local development identity. Height-bounded forwarding does not establish
 //! an authenticated committee or ancestry chain from upstream history to locally signed blocks.
@@ -185,7 +186,7 @@ impl<N: Network> Backend<N> {
         &self,
         height: Option<u64>,
     ) -> Result<Option<TempoCertifiedBlock>, BlockchainError> {
-        let (provider, height, root, hash) = {
+        let (provider, height, root, hash, canonical_hash) = {
             let _db = self.db.read().await;
             let storage = self.blockchain.storage.read();
             let tempo = tempo_chain(&storage)?;
@@ -214,7 +215,13 @@ impl<N: Network> Backend<N> {
                 return Ok(None);
             }
             // Capture one fork snapshot while reset is excluded; release guards before network I/O.
-            (config.provider.clone(), height, config.block_number, config.block_hash)
+            (
+                config.provider.clone(),
+                height,
+                config.block_number,
+                config.block_hash,
+                storage.hashes.get(&height).copied(),
+            )
         };
         let certified = provider
             .raw_request::<_, TempoCertifiedBlock>(
@@ -225,6 +232,7 @@ impl<N: Network> Backend<N> {
         if certified.block.header.number() != height
             || certified.block.header.hash_slow() != certified.finalization.digest
             || (height == root && certified.finalization.digest != hash)
+            || canonical_hash.is_some_and(|hash| certified.finalization.digest != hash)
             || tempo_evm::consensus::validate_body_against_header(
                 &certified.block.body,
                 &certified.block.header,

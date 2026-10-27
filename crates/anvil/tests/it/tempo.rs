@@ -7470,6 +7470,63 @@ async fn tempo_consensus_fork_reset_does_not_wait_for_upstream() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_rejects_conflicting_imported_history() {
+    let config = NodeConfig::test_tempo().with_no_mining(true);
+    let (source_api, source) = spawn(config.clone()).await;
+    source_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let source_provider = source.http_provider();
+    let historical = tempo_finalization(&source_provider, 1).await;
+    let root = tempo_finalization(&source_provider, 2).await;
+    let (_, handle) = spawn(
+        config
+            .clone()
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(2u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    // Importing matching history still permits upstream certificates for known canonical blocks.
+    let saved: Bytes = source_provider.client().request("anvil_dumpState", ()).await.unwrap();
+    assert!(provider.client().request::<_, bool>("anvil_loadState", (saved,)).await.unwrap());
+    assert_eq!(provider.get_block_number().await.unwrap(), 3);
+    assert_eq!(tempo_finalization(&provider, 1).await, historical);
+    assert_eq!(tempo_finalization(&provider, 2).await, root);
+
+    let (replacement_api, replacement) = spawn(config).await;
+    replacement_api.anvil_set_coinbase(Address::repeat_byte(0x33)).await.unwrap();
+    replacement_api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+    let replacement_provider = replacement.http_provider();
+    let saved: Bytes = replacement_provider.client().request("anvil_dumpState", ()).await.unwrap();
+    assert!(provider.client().request::<_, bool>("anvil_loadState", (saved,)).await.unwrap());
+
+    // A higher imported head can replace canonical history without changing the fork provider.
+    for (height, original) in [(1, historical), (2, root)] {
+        let imported = tempo_finalization(&replacement_provider, height).await;
+        let canonical = provider.get_block_by_number(height.into()).await.unwrap().unwrap();
+        assert_eq!(canonical.header.hash, imported.digest);
+        assert_ne!(canonical.header.hash, original.digest);
+    }
+    for (method, params) in [
+        ("consensus_getFinalization", serde_json::json!([{ "height": 1 }])),
+        ("consensus_getFinalization", serde_json::json!([{ "height": 2 }])),
+        ("consensus_getFinalization", serde_json::json!(["latest"])),
+        ("consensus_getLatest", serde_json::json!([])),
+    ] {
+        let error =
+            provider.client().request::<_, serde_json::Value>(method, params).await.unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+            serde_json::json!({
+                "code": 503,
+                "message": "the consensus subservice was not available, but the request can be retried later",
+                "data": "upstream finalization does not match the pinned fork history",
+            }),
+        );
+    }
+}
+
 async fn spawn_tempo_consensus_proxy<F, Fut>(
     endpoint: String,
     intercept: F,
