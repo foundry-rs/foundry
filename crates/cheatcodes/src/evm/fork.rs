@@ -627,8 +627,7 @@ fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
             return Ok(());
         };
         if let Some(write) = db.refresh_fork_storage(address, slot, evm)? {
-            let depth = ccx.caller_depth();
-            ccx.state.persistent_writes.push((depth, write));
+            ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         }
     }
     Ok(())

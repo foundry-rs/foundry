@@ -10018,7 +10018,7 @@
     {
       "func": {
         "id": "recordLogs",
-        "description": "Record all the transaction logs.",
+        "description": "Record all the transaction logs. Logs emitted by calls or contract creations that revert or\nhalt are discarded, including reverts expected with `expectRevert`.",
         "declaration": "function recordLogs() external;",
         "visibility": "external",
         "mutability": "",

@@ -309,6 +309,29 @@ impl PersistentWrite {
         }
         Ok(())
     }
+
+    /// Applies `writes` in order like [`Self::apply`], except that the nonce deltas of each
+    /// account are summed and saturated once, as REVM's undo of the reverted nonce changes was.
+    pub fn apply_all<'w>(
+        writes: impl IntoIterator<Item = &'w Self>,
+        state: &mut State<'_>,
+    ) -> DbResult<()> {
+        let mut nonces = AddressMap::<i128>::default();
+        for write in writes {
+            match write {
+                Self::Nonce { address, delta, created } => {
+                    if !*created || state.account(address)?.is_created() {
+                        *nonces.entry(*address).or_default() += delta;
+                    }
+                }
+                write => write.apply(state)?,
+            }
+        }
+        for (address, delta) in nonces {
+            Self::Nonce { address, delta, created: false }.apply(state)?;
+        }
+        Ok(())
+    }
 }
 
 /// Fork, snapshot and nested-execution lifecycle for one EVM network family.

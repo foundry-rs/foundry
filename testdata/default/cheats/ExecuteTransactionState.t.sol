@@ -15,6 +15,12 @@ contract ExecuteTransactionStateTest is Test {
         hex"f862806483030d40808096600a600c600039600a6000f3602a60005260206000f326a0aa15e60239616b411e2ad4409d0017b52ec731ca00100bf59a2d73e3f692123ca07d7aec8bdb1d2202e5c618a6542e889b3e4ab352606232fb40d7b67521791366";
     uint256 public parentValue;
 
+    // Funds the senders outside the tests, so that funding them does not warm them.
+    function setUp() public {
+        vm.deal(SENDER, 1 ether);
+        vm.deal(CREATOR, 1 ether);
+    }
+
     function test_execute_success_preserves_parent_state() public {
         checkState(hex"600960005500", "", false);
     }
@@ -62,6 +68,62 @@ contract ExecuteTransactionStateTest is Test {
         }
         assertEq(vm.getNonce(CREATOR), 1);
         assertEq(vm.computeCreateAddress(CREATOR, 0).code, hex"602a60005260206000f3");
+    }
+
+    function executeBothThenRevert(address plain) external {
+        (bool success,) = plain.call("");
+        assertTrue(success);
+        vm.executeTransaction(RAW_TX);
+        vm.executeTransaction(CREATE_TX);
+        revert("parent reverted");
+    }
+
+    // The accounts the transactions touched stay warm after the parent reverts, unless the running
+    // transaction holds them cold, while the parent's own accesses do not.
+    function test_execute_warmth_survives_parent_revert() public {
+        address plain = address(0xBEEF01);
+        vm.chainId(1);
+        assertEq(TARGET.code.length, 0);
+        vm.cool(TARGET);
+        revertBoth(plain);
+        uint256 warm = accessCost(address(this));
+        assertEq(accessCost(vm.computeCreateAddress(CREATOR, 0)), warm);
+        assertEq(accessCost(SENDER), warm);
+        assertEq(accessCost(CREATOR), warm);
+        assertEq(accessCost(TARGET), warm + 2500);
+        assertEq(accessCost(plain), warm + 2500);
+    }
+
+    function callTargetThenRevert() external {
+        (bool success,) = TARGET.call("");
+        assertTrue(success);
+        revert("parent reverted");
+    }
+
+    // An account a reverted call loaded stays cold after a later reverted transaction touches it.
+    function test_execute_warmth_after_reverted_calls() public {
+        vm.chainId(1);
+        try this.callTargetThenRevert() {} catch {}
+        try this.executeInParent("", true) {} catch {}
+        uint256 warm = accessCost(address(this));
+        assertEq(accessCost(SENDER), warm);
+        assertEq(accessCost(TARGET), warm + 2500);
+    }
+
+    function revertBoth(address plain) internal {
+        try this.executeBothThenRevert(plain) {
+            revert("expected parent revert");
+        } catch Error(string memory reason) {
+            assertEq(reason, "parent reverted");
+        }
+    }
+
+    function accessCost(address account) internal view returns (uint256 cost) {
+        assembly {
+            let start := gas()
+            mstore(0, extcodesize(account))
+            cost := sub(start, gas())
+        }
     }
 
     function checkState(bytes memory code, string memory expectedError, bool revertParent) internal {
