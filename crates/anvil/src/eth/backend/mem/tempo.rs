@@ -14,15 +14,24 @@
 //! prepared height or key schedule. Only initialization before the backend is shared and private
 //! staged copies are exempt; publishing a staged copy still requires the database write lock.
 //! Consensus readers acquire the database read lock before storage.
+//!
+//! Historical queries can use the trusted fork provider at or below its pinned height. They
+//! snapshot the provider and root together with local history, then release all guards before
+//! network I/O. An overlapping reset can complete while the request returns the old snapshot;
+//! upstream responses are never cached into the replacement chain. Upstream committees remain
+//! independent of the local development identity. Height-bounded forwarding does not establish
+//! an authenticated committee or ancestry chain from upstream history to locally signed blocks.
 
 use super::{Backend, storage::BlockchainStorage};
 use crate::eth::{
     backend::tempo_consensus::{TempoConsensus, TempoConsensusIdentity, TempoFinalization},
     error::BlockchainError,
+    tempo_consensus::TempoCertifiedBlock,
 };
-use alloy_consensus::{BlockHeader, proofs::calculate_transaction_root};
+use alloy_consensus::{BlockHeader, Sealable, proofs::calculate_transaction_root};
 use alloy_network::Network;
 use alloy_primitives::{B256, U256, map::HashMap};
+use alloy_provider::Provider;
 use anvil_core::eth::block::{Block, canonical_block};
 use anvil_rpc::error::{ErrorCode, RpcError};
 use std::{fmt, num::NonZeroU64};
@@ -137,40 +146,23 @@ impl<N: Network> Backend<N> {
         Ok(tempo_chain(&storage)?.consensus.identity())
     }
 
-    /// Returns a certificate and its complete canonical block from the same chain snapshot.
+    /// Returns a local certificate, or pinned fork history when no local certificate exists.
     pub async fn tempo_finalization(
         &self,
         height: Option<u64>,
-    ) -> Result<(TempoFinalization, Block), BlockchainError> {
-        let _db = self.db.read().await;
-        let storage = self.blockchain.storage.read();
-        let tempo = tempo_chain(&storage)?;
-        match height {
-            Some(height) => {
-                let finalization = tempo
-                    .consensus
-                    .finalization(height)
-                    .ok_or_else(|| consensus_unavailable("certificate"))?;
-                let block = storage
-                    .hashes
-                    .get(&height)
-                    .and_then(|hash| storage.blocks.get(hash))
-                    .ok_or_else(|| consensus_unavailable("block"))?;
-                certified_block(finalization, block)
-            }
-            None => {
-                latest_finalization(tempo)?.ok_or_else(|| consensus_unavailable("certifications"))
-            }
-        }
+    ) -> Result<TempoCertifiedBlock, BlockchainError> {
+        self.tempo_certified_block(height).await?.ok_or_else(|| {
+            consensus_unavailable(if height.is_some() { "certificate" } else { "certifications" })
+        })
     }
 
-    /// Returns no finalized block until this local signer has produced its first certificate.
+    /// Returns local latest, falling back to the pinned upstream height before local mining.
+    ///
+    /// Standalone unsigned history returns `None`; upstream errors remain errors.
     pub async fn tempo_latest_finalization(
         &self,
-    ) -> Result<Option<(TempoFinalization, Block)>, BlockchainError> {
-        let _db = self.db.read().await;
-        let storage = self.blockchain.storage.read();
-        latest_finalization(tempo_chain(&storage)?)
+    ) -> Result<Option<TempoCertifiedBlock>, BlockchainError> {
+        self.tempo_certified_block(None).await
     }
 
     /// Schedules a development identity change without racing canonical mining or rewinds.
@@ -187,6 +179,63 @@ impl<N: Network> Backend<N> {
             .consensus
             .rotate()
             .map_err(|error| BlockchainError::Internal(error.to_string()))
+    }
+
+    async fn tempo_certified_block(
+        &self,
+        height: Option<u64>,
+    ) -> Result<Option<TempoCertifiedBlock>, BlockchainError> {
+        let (provider, height, root, hash) = {
+            let _db = self.db.read().await;
+            let storage = self.blockchain.storage.read();
+            let tempo = tempo_chain(&storage)?;
+            let local = match height {
+                Some(height) => tempo
+                    .consensus
+                    .finalization(height)
+                    .map(|finalization| {
+                        let block = storage
+                            .hashes
+                            .get(&height)
+                            .and_then(|hash| storage.blocks.get(hash))
+                            .ok_or_else(|| consensus_unavailable("block"))?;
+                        certified_block(finalization, block)
+                    })
+                    .transpose()?,
+                None => latest_finalization(tempo)?,
+            };
+            if let Some(local) = local {
+                return local.try_into().map(Some);
+            }
+            let Some(fork) = self.get_fork() else { return Ok(None) };
+            let config = fork.config.read();
+            let height = height.unwrap_or(config.block_number);
+            if height > config.block_number {
+                return Ok(None);
+            }
+            // Capture one fork snapshot while reset is excluded; release guards before network I/O.
+            (config.provider.clone(), height, config.block_number, config.block_hash)
+        };
+        let certified = provider
+            .raw_request::<_, TempoCertifiedBlock>(
+                "consensus_getFinalization".into(),
+                (serde_json::json!({ "height": height }),),
+            )
+            .await?;
+        if certified.block.header.number() != height
+            || certified.block.header.hash_slow() != certified.finalization.digest
+            || (height == root && certified.finalization.digest != hash)
+            || calculate_transaction_root(&certified.block.body.transactions)
+                != certified.block.header.transactions_root()
+            || certified.block.body.calculate_ommers_root() != certified.block.header.ommers_hash()
+            || certified.block.body.calculate_withdrawals_root()
+                != certified.block.header.withdrawals_root()
+        {
+            return Err(consensus_unavailable(
+                "upstream finalization does not match the pinned fork history",
+            ));
+        }
+        Ok(Some(certified))
     }
 }
 
@@ -297,11 +346,11 @@ mod tests {
             mining.await.unwrap().unwrap();
             let (snapshot, certificate, identity, latest, rotation) =
                 tokio::join!(snapshot, certificate, identity, latest, rotation);
-            let (certificate, block) = certificate.unwrap();
-            assert_eq!(block.header.number(), 1);
-            assert_eq!(block.header.hash_slow(), certificate.digest);
-            assert_eq!(api.backend.best_hash(), certificate.digest);
-            assert_eq!(latest.unwrap().unwrap().0.digest, certificate.digest);
+            let certificate = certificate.unwrap();
+            assert_eq!(certificate.block.header.number(), 1);
+            assert_eq!(certificate.block.header.hash_slow(), certificate.finalization.digest);
+            assert_eq!(api.backend.best_hash(), certificate.finalization.digest);
+            assert_eq!(latest.unwrap().unwrap().finalization, certificate.finalization);
             identity.unwrap();
             rotation.unwrap();
             snapshot.unwrap()
