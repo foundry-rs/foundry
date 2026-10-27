@@ -1,10 +1,13 @@
-use crate::sequence::{SequenceData, completed_transaction_prefix, operation_ordinal};
+use crate::{
+    multi_sequence::MultiChainSequence,
+    sequence::{SequenceData, completed_transaction_prefix, operation_ordinal},
+};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_network::{Network, TransactionBuilder, TransactionResponse};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
-use forge_script_sequence::TransactionWithMetadata;
+use forge_script_sequence::{ScriptSequence, TransactionWithMetadata, now};
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -140,11 +143,42 @@ where
                 pending.display()
             );
         }
+        if previous_unfinished::<N>(&lock.path, &paths, data.is_multi()) {
+            bail!(
+                "the previous broadcast `{}` has unfinished operations; finish it with `{}`, or pass `--start-fresh` to archive it and broadcast anew",
+                paths.0.display(),
+                if data.is_multi() { "--multi --resume" } else { "--resume" }
+            );
+        }
         let generation = B256::random();
         data.set_recovery_generation(generation);
         let plan = RecoveryPlan { sponsor, ..RecoveryPlan::new(data, batch, generation)? };
         write_snapshot(&lock.path, &plan)?;
         Self::finish_open(lock, plan)
+    }
+
+    /// Moves the unfinished progress of a previous execution of `data` to timestamped names, so
+    /// that a new execution can replace it.
+    pub(crate) fn archive_unfinished(data: &SequenceData<N>) -> Result<()> {
+        let paths = &data.paths();
+        let lock = RecoveryLock::acquire(paths)?;
+        // A crash mid-commit leaves the newest complete snapshot pending, as resume would find it.
+        let pending = pending_path(&lock.path);
+        if pending.exists() {
+            commit_pending_plan(&pending, &lock.path)?;
+        }
+        if !previous_unfinished::<N>(&lock.path, paths, data.is_multi()) {
+            return Ok(());
+        }
+        let timestamp = now().as_millis();
+        for path in [&lock.path, &paths.0, &paths.1] {
+            if path.exists() {
+                let archive = path.with_extension(format!("{timestamp}.json"));
+                std::fs::rename(path, &archive)?;
+                sh_status!("Archived `{}` to `{}`", path.display(), archive.display())?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn load(
@@ -917,6 +951,46 @@ where
         .wrap_err_with(|| format!("recovery snapshot `{}` is corrupt", path.display()))
 }
 
+/// Returns whether the previous execution at `paths` submitted anything and left an operation, on
+/// any chain, with neither a receipt nor a recorded revert. Without a recovery snapshot, progress
+/// saved before snapshots existed is read from the broadcast export. An unreadable snapshot counts
+/// as unfinished, as resume would refuse it too; an unreadable export counts as finished.
+fn previous_unfinished<N: Network>(snapshot: &Path, paths: &(PathBuf, PathBuf), multi: bool) -> bool
+where
+    N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
+{
+    let (data, attempted) = if snapshot.exists() {
+        let Ok(plan) = load_plan::<N>(snapshot) else { return true };
+        let attempted = plan.deployments.iter().any(|deployment| !deployment.attempts.is_empty());
+        (plan.data, attempted)
+    } else {
+        let data = if multi {
+            foundry_common::fs::read_json_file::<MultiChainSequence<N>>(&paths.0)
+                .map(SequenceData::Multi)
+        } else {
+            foundry_common::fs::read_json_file::<ScriptSequence<N>>(&paths.0)
+                .map(|sequence| SequenceData::Single(Box::new(sequence)))
+        };
+        let Ok(data) = data else { return false };
+        (data, false)
+    };
+    let sequences = data.sequences();
+    let submitted = attempted
+        || sequences.iter().flat_map(|sequence| &sequence.transactions).any(|tx| tx.hash.is_some());
+    submitted
+        && sequences.iter().any(|sequence| {
+            sequence.transactions.iter().any(|tx| {
+                !tx.hash.is_some_and(|hash| {
+                    sequence.reverted.contains(&hash)
+                        || sequence
+                            .receipts
+                            .iter()
+                            .any(|receipt| receipt.transaction_hash() == hash)
+                })
+            })
+        })
+}
+
 fn pending_path(path: &Path) -> PathBuf {
     path.with_extension("pending")
 }
@@ -1138,7 +1212,6 @@ fn expiring_replay_hash(payload: &[u8], sender_scoped_replay: bool) -> Result<Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::multi_sequence::MultiChainSequence;
     use alloy_consensus::{
         Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
         TxEnvelope, transaction::Recovered,
@@ -1147,7 +1220,6 @@ mod tests {
     use alloy_primitives::{Bloom, Signature, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
-    use forge_script_sequence::ScriptSequence;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
     use tempo_primitives::{
         AASigned, TempoSignature,
@@ -2002,5 +2074,47 @@ mod tests {
         value.as_object_mut().unwrap().remove("sponsor");
         std::fs::write(&snapshot, serde_json::to_vec(&value).unwrap()).unwrap();
         assert_eq!(load(&paths, false).unwrap().sponsor(), None);
+    }
+
+    #[test]
+    fn new_execution_refuses_unfinished_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = sequence(dir.path()).paths();
+        let refused = format!(
+            "the previous broadcast `{}` has unfinished operations; finish it with `--resume`, or pass `--start-fresh` to archive it and broadcast anew",
+            paths.0.display()
+        );
+        let create = || RecoveryStore::create(sequence(dir.path()), false, None).map(|_| ());
+
+        // Progress without any submission is replaced.
+        create().unwrap();
+        create().unwrap();
+
+        // A submission attempt makes it unfinished, also when its commit was interrupted.
+        let mut store = RecoveryStore::create(sequence(dir.path()), false, None).unwrap();
+        store.persist_delegated_request(0, 0, Default::default()).unwrap();
+        let snapshot = store.path.clone();
+        drop(store);
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        std::fs::rename(&snapshot, pending_path(&snapshot)).unwrap();
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!snapshot.exists() && !pending_path(&snapshot).exists());
+        create().unwrap();
+
+        // An unreadable snapshot is never silently replaced.
+        std::fs::write(&snapshot, "garbage").unwrap();
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        create().unwrap();
+
+        // Without a snapshot, progress saved before snapshots existed is checked.
+        std::fs::remove_file(&snapshot).unwrap();
+        let mut legacy = sequence(dir.path());
+        legacy.sequences_mut()[0].transactions[0].hash = Some(B256::ZERO);
+        foundry_common::fs::write_json_file(&paths.0, &legacy.sequences()[0]).unwrap();
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
+        assert!(!paths.0.exists());
+        create().unwrap();
     }
 }

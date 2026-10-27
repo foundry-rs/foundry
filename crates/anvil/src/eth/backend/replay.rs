@@ -13,7 +13,7 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable, TxHashRef},
 };
 use alloy_network::{BlockResponse, TransactionResponse};
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use anvil_core::eth::transaction::{MaybeImpersonatedTransaction, TransactionInfo};
 use evm2::evm::BlockStateAccumulator;
 use eyre::{Context, Result};
@@ -34,6 +34,7 @@ pub(crate) struct HistoricalReplayTransaction {
 /// A validated transaction prefix together with its source block execution inputs.
 pub(crate) struct PreparedForkTransactionReplay {
     pub(crate) transactions: Vec<HistoricalReplayTransaction>,
+    pub(crate) beneficiary: Address,
     pub(crate) timestamp: u64,
     pub(crate) parent_beacon_block_root: Option<B256>,
 }
@@ -76,6 +77,7 @@ pub(crate) fn prepare_fork_transaction_replay(
 ) -> Result<PreparedForkTransactionReplay> {
     let source_hash = replay.source_block.header().hash;
     let source_number = replay.source_block.header().number;
+    let beneficiary = replay.source_block.header().beneficiary();
     let timestamp = replay.source_block.header().timestamp();
     let parent_beacon_block_root = replay.source_block.header().parent_beacon_block_root();
     let source_transactions = replay
@@ -155,7 +157,12 @@ pub(crate) fn prepare_fork_transaction_replay(
         .filter_map(Result::transpose)
         .collect::<Result<_>>()?;
 
-    Ok(PreparedForkTransactionReplay { transactions, timestamp, parent_beacon_block_root })
+    Ok(PreparedForkTransactionReplay {
+        transactions,
+        beneficiary,
+        timestamp,
+        parent_beacon_block_root,
+    })
 }
 
 /// Executes a prepared prefix strictly, committing every transaction to the executor's block state.
