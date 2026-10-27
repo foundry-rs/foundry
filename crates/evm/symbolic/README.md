@@ -296,6 +296,13 @@ Current modeling notes:
   symbolic transaction, otherwise it transfers balance and halts while
   preserving code and storage. Cancun beneficiaries must resolve to concrete
   addresses; unresolved symbolic beneficiaries report incomplete.
+- With call isolation (`isolate`, on by default), a `CALL`, `CREATE` (not
+  `CREATE2`), or `vm.deployCode` made by the test, a handler, or an invariant
+  predicate runs as its own transaction, as in concrete Forge: it starts with
+  empty transient storage, the caller's transient storage is restored after
+  it, and a `CALL` increments the nonce of the caller (the pranked sender under
+  a prank) even when it fails. Cheatcode, console, and `vm.mockCall` calls are
+  not isolated.
 - Counterexamples are shown only after successful concrete replay.
 
 ## Writing Symbolic Tests
