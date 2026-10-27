@@ -50,7 +50,7 @@ use foundry_evm::core::tempo::{
     active_tempo_precompile_addresses,
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
-use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
+use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use futures::StreamExt;
 use serde::Deserialize;
 use std::{
@@ -7333,33 +7333,34 @@ async fn tempo_consensus_fork_rejects_invalid_upstream_blocks() {
         .await
         .unwrap();
     source_api.mine_one().await.unwrap();
-    assert_eq!(
-        tempo_finalization(&source.http_provider(), 1).await.block.body.transactions.len(),
-        1
-    );
+    let upstream = source
+        .http_provider()
+        .client()
+        .request::<_, anvil::eth::tempo_consensus::TempoCertifiedBlock>(
+            "consensus_getFinalization",
+            (serde_json::json!({ "height": 1 }),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(upstream.block.body.transactions.len(), 1);
 
     for corruption in 0..6 {
-        let endpoint = spawn_rpc_proxy_mapping_method(
+        let mut certified = upstream.clone();
+        match corruption {
+            0 => certified.block.header.inner.number += 1,
+            1 => certified.finalization.digest = B256::repeat_byte(0x44),
+            2 => {
+                certified.block.header.inner.extra_data = bytes!("1234");
+                certified.finalization.digest = certified.block.header.hash_slow();
+            }
+            3 => certified.block.body.transactions.clear(),
+            4 => certified.block.body.ommers.push(Default::default()),
+            _ => certified.block.body.withdrawals = None,
+        }
+        let (endpoint, _) = spawn_rpc_proxy_canned_method(
             source.http_endpoint(),
             "consensus_getFinalization",
-            move |_, result| {
-                let mut certified = serde_json::from_value::<
-                    anvil::eth::tempo_consensus::TempoCertifiedBlock,
-                >(result)
-                .unwrap();
-                match corruption {
-                    0 => certified.block.header.inner.number += 1,
-                    1 => certified.finalization.digest = B256::repeat_byte(0x44),
-                    2 => {
-                        certified.block.header.inner.extra_data = bytes!("1234");
-                        certified.finalization.digest = certified.block.header.hash_slow();
-                    }
-                    3 => certified.block.body.transactions.clear(),
-                    4 => certified.block.body.ommers.push(Default::default()),
-                    _ => certified.block.body.withdrawals = None,
-                }
-                serde_json::to_value(certified).unwrap()
-            },
+            serde_json::to_value(certified).unwrap(),
         )
         .await;
         let (_, handle) = spawn(
