@@ -1,13 +1,13 @@
-id = "solar"
-name = "Foundry"
+id = "forge-lsp"
+name = "Foundry Solidity"
 description = "Solidity support powered by forge lsp and forge fmt."
 version = "0.1.0"
 schema_version = 1
-authors = ["Oliver Nordbjerg <hi@notbjerg.me>"]
+authors = ["Foundry Contributors"]
 repository = "https://github.com/foundry-rs/foundry"
 
 [language_servers.solar]
-name = "Foundry"
+name = "Foundry Solidity"
 language = "Solidity"
 
 [grammars.solidity]

@@ -51,6 +51,7 @@ use foundry_evm::{
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
+    hardforks::ExecutionSpec,
     inspectors::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
@@ -224,6 +225,13 @@ pub struct ScriptArgs {
         conflicts_with = "resume_tx_hash"
     )]
     pub resume_retry: bool,
+
+    /// Archives an unfinished previous broadcast of this script and broadcasts it anew.
+    ///
+    /// Without this flag, `--broadcast` refuses to replace a previous broadcast whose operations
+    /// have not all mined or reverted. Finish that broadcast with `--resume` instead.
+    #[arg(long, requires = "broadcast", conflicts_with = "resume")]
+    pub start_fresh: bool,
 
     /// If present, --resume or --verify will be assumed to be a multi chain deployment.
     #[arg(long)]
@@ -627,6 +635,7 @@ impl ScriptArgs {
             let size_limits = pre_simulation.args.contract_size_limits::<FEN>(
                 &pre_simulation.script_config.config,
                 &pre_simulation.script_config.evm_opts,
+                pre_simulation.script_config.hardfork,
             );
             pre_simulation.args.check_contract_sizes(
                 size_limits,
@@ -646,6 +655,16 @@ impl ScriptArgs {
     ) -> Result<Option<BundledState<FEN>>> {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
+            if bundled.sequence.sequences().iter().any(|sequence| {
+                sequence
+                    .transactions
+                    .iter()
+                    .any(|tx| tx.tx().from() == Some(Config::DEFAULT_SENDER))
+            }) {
+                sh_warn!(
+                    "Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender."
+                )?;
+            }
             if !shell::is_json() {
                 if shell::verbosity() >= 4 {
                     sh_println!("\n=== Transactions that will be broadcast ===\n")?;
@@ -715,8 +734,10 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
-        if let Ok(decoded) = hex::decode(&self.sig) {
-            let selector = &decoded[..SELECTOR_LEN];
+        // Hex shorter than a selector cannot be calldata, so it is treated as a function name.
+        if let Ok(decoded) = hex::decode(&self.sig)
+            && let Some(selector) = decoded.get(..SELECTOR_LEN)
+        {
             let func =
                 abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
                     eyre::eyre!(
@@ -847,6 +868,7 @@ impl ScriptArgs {
         &self,
         config: &Config,
         evm_opts: &EvmOpts,
+        hardfork: Option<FoundryHardfork>,
     ) -> ContractSizeLimits {
         self.evm
             .env
@@ -861,7 +883,9 @@ impl ScriptArgs {
                     .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
             })
             .unwrap_or_else(|| {
-                let spec_id: SpecFor<FEN> = config.evm_spec_id();
+                let spec_id = hardfork
+                    .and_then(SpecFor::<FEN>::from_foundry_hardfork)
+                    .unwrap_or_else(|| config.evm_spec_id());
                 ContractSizeLimits::for_spec_id(spec_id.into())
             })
     }
@@ -1235,7 +1259,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.config.evm_version,
             self.config.hardfork,
             evm_env,
-            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            ExecutionSpecContext::local_or_script(fork_chain_id, fork_hardfork),
             None,
         );
     }
@@ -1910,6 +1934,33 @@ mod tests {
     }
 
     #[test]
+    fn short_hex_sig_is_resolved_as_function_name() {
+        let abi = JsonAbi::parse(["function fade()", "function run()"]).unwrap();
+        let method = |sig: &str| {
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig])
+                .get_method_and_calldata(&abi)
+        };
+
+        let fade = abi.function("fade").unwrap()[0].clone();
+        let (func, calldata) = method("fade").unwrap();
+        assert_eq!(func, fade);
+        assert_eq!(calldata, Bytes::from(fade.selector().to_vec()));
+
+        for sig in ["", "0x12"] {
+            assert_eq!(
+                method(sig).unwrap_err().to_string(),
+                format!("Function `{sig}` not found in the ABI")
+            );
+        }
+
+        // Hex with a full selector is still raw calldata.
+        let run = abi.function("run").unwrap()[0].clone();
+        let (func, calldata) = method(&hex::encode(run.selector())).unwrap();
+        assert_eq!(func, run);
+        assert_eq!(calldata, Bytes::from(run.selector().to_vec()));
+    }
+
+    #[test]
     fn parses_confirmations() {
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
         assert_eq!(args.confirmations, DEFAULT_CONFIRMATIONS);
@@ -2533,7 +2584,8 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
 
-        let limits = args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts);
+        let limits =
+            args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts, None);
 
         assert!(limits.runtime > ContractSizeLimits::default().runtime);
         assert!(limits.initcode > ContractSizeLimits::default().initcode);
@@ -2552,7 +2604,7 @@ mod tests {
         let mut config = Config { code_size_limit: Some(128), ..Default::default() };
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts, None),
             ContractSizeLimits::with_runtime_limit(64)
         );
 
@@ -2560,7 +2612,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         config.code_size_limit = Some(128);
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts,),
+            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts, None),
             ContractSizeLimits::with_runtime_limit(128)
         );
     }

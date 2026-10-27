@@ -1571,6 +1571,62 @@ contract SymbolicRevertedCheatcodeEffects is Test {
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{result}");
 }
 
+// Recorded logs follow chain semantics: a reverted handler call keeps its cheatcode effects, but
+// the logs it emitted are discarded.
+#[forgetest_init]
+fn symbolic_reverted_handler_discards_recorded_logs(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_reverted_handler_discards_recorded_logs");
+    prj.update_config(|config| config.invariant.runs = 10);
+
+    prj.add_test(
+        "SymbolicRevertedHandlerLogs.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RevertedLogHandler {
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    event Marker();
+
+    function startRecording() external {
+        VM.recordLogs();
+    }
+
+    function emitAndRevert() external {
+        emit Marker();
+        revert("after emit");
+    }
+}
+
+contract SymbolicRevertedHandlerLogs is Test {
+    RevertedLogHandler handler;
+
+    function setUp() public {
+        handler = new RevertedLogHandler();
+        targetContract(address(handler));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.fail_on_revert = false
+    function invariant_noRevertedLogs() public {
+        assertEq(vm.getRecordedLogs().length, 0);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_noRevertedLogs"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noRevertedLogs()");
+    assert_eq!(result["status"], "Success", "{result}");
+    assert_eq!(result["symbolic"]["status"], "pass", "{result}");
+}
+
 #[forgetest_init]
 fn symbolic_invariant_does_not_inherit_prank_into_nested_call(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_does_not_inherit_prank_into_nested_call");

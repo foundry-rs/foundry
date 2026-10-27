@@ -14,6 +14,7 @@ workspace = true
 alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider.workspace = true
+alloy-rlp.workspace = true
 anvil.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography = { workspace = true, features = ["bls12381", "std"] }
@@ -22,6 +23,7 @@ commonware-parallel.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempo-dkg-onchain-artifacts.workspace = true
 tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 tokio.workspace = true

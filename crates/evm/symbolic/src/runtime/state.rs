@@ -18,6 +18,9 @@ pub(crate) struct PathState {
     pub(crate) constraints: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
+    /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
+    /// was reset.
+    pub(crate) recorded_logs_generation: u64,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
     /// Predicate context follows child calls but is not committed back to handler state.
@@ -90,6 +93,7 @@ impl PathState {
             constraints: Vec::new(),
             next_symbol: 0,
             recorded_logs: None,
+            recorded_logs_generation: 0,
             access_record: None,
             root_calldata: None,
             invariant_predicate: false,
@@ -143,6 +147,12 @@ impl PathState {
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
         child
+    }
+
+    /// Returns whether a CALL or CREATE issued by this frame runs as its own transaction, as
+    /// Forge's call isolation does for calls made by the test, handler, or invariant frame.
+    pub(crate) const fn starts_isolated_transaction(&self, executor: &ExecutorView<'_>) -> bool {
+        executor.isolate && self.call_depth == 0
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
@@ -301,6 +311,7 @@ impl PathState {
         self.mapping_hook_keccak_preimages =
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
+        self.recorded_logs_generation = child.recorded_logs_generation;
         self.access_record = child.access_record.take();
         // Inspector state survives child reverts and exceptional halts.
         self.block = child.block.clone();
@@ -309,10 +320,23 @@ impl PathState {
         self.function_mocks = std::mem::take(&mut child.function_mocks);
     }
 
+    /// Drops logs recorded by a failed call that started with `len` logs in `generation`.
+    ///
+    /// If the buffer was replaced during the call, every log it holds was recorded by the call.
+    pub(crate) fn discard_failed_call_logs(&mut self, len: usize, generation: u64) {
+        if let Some(logs) = &mut self.recorded_logs {
+            logs.truncate(if generation == self.recorded_logs_generation { len } else { 0 });
+        }
+    }
+
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
+        let recorded_logs_len = self.recorded_logs.as_ref().map_or(0, Vec::len);
+        let recorded_logs_generation = self.recorded_logs_generation;
         self.take_noncommitting_check_state(&mut reverted);
         self.block = reverted.block;
         self.recorded_logs = reverted.recorded_logs;
+        self.recorded_logs_generation = reverted.recorded_logs_generation;
+        self.discard_failed_call_logs(recorded_logs_len, recorded_logs_generation);
         self.access_record = reverted.access_record;
         self.expected_revert = reverted.expected_revert;
         self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
@@ -1657,6 +1681,20 @@ impl SymbolicWorld {
         state.current_transaction_created_accounts.clear();
     }
 
+    /// Clears transient storage for a call that runs as its own transaction.
+    pub(crate) fn clear_transient_storage(&mut self) {
+        if !self.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage.clear();
+        }
+    }
+
+    /// Restores `outer`'s transient storage after a call that ran as its own transaction.
+    pub(crate) fn restore_transient_storage(&mut self, outer: &Self) {
+        if !self.transient_storage.is_empty() || !outer.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage = outer.transient_storage.clone();
+        }
+    }
+
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
         let state = Arc::make_mut(&mut self.state);
         state.created_accounts.insert(address);
@@ -2171,10 +2209,6 @@ impl SymbolicWorld {
         if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
             return Ok(SymCode::concrete(cx, vec![0]));
         }
-        let spec_id = executor.spec_id;
-        if is_precompile_for_spec(address, spec_id) {
-            return Ok(SymCode::empty(cx));
-        }
         if self.destroyed_accounts.contains(&address) {
             return Ok(SymCode::empty(cx));
         }
@@ -2256,15 +2290,11 @@ impl SymbolicWorld {
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let mut result = self.extcode_hash_for_address(cx, executor, representative)?;
-        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
-        for (address, code) in cached_codes.into_iter().rev() {
-            let hash = if self.destroyed_accounts.contains(address) {
-                SymExpr::zero(cx)
-            } else {
-                let bytes = code.read_byte_exprs(cx, 0, code.len());
-                keccak_word(cx, bytes)
-            };
-            let address = SymExpr::constant(cx, address_word(*address));
+        // Cached code does not imply existence: empty accounts hash to zero.
+        let cached_addresses = self.code_cache.keys().copied().collect::<Vec<_>>();
+        for address in cached_addresses.into_iter().rev() {
+            let hash = self.extcode_hash_for_address(cx, executor, address)?;
+            let address = SymExpr::constant(cx, address_word(address));
             let condition = SymBoolExpr::eq(cx, expr.clone(), address);
             result = SymExpr::ite(cx, condition, hash, result);
         }
