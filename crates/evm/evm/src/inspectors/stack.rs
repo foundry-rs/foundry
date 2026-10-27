@@ -609,8 +609,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let (prepared, mut replay) =
-            backend.backend().prepare_transact(fork_id, transaction, evm, depth + 1)?;
+        let (prepared, mut replay) = backend.backend().prepare_transact(
+            fork_id,
+            transaction,
+            evm,
+            depth + 1,
+            cheats.isolation_env.as_ref(),
+        )?;
         let fork_id = replay.backend().active_fork_id();
         let mut overrides = Default::default();
         cheats.env_overrides.swap(fork_id, &mut overrides);
@@ -1267,10 +1272,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let outer_basefee = env.block.basefee;
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
-        // As on master, a transaction without a fee charge skips the sender balance check, so an
-        // underfunded value transfer fails in the call and keeps the nonce increment.
-        env.set_feature(EvmFeatures::BALANCE_CHECK, false);
-        env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
+        // As on master, a call without a fee charge skips the sender balance check, so an
+        // underfunded value transfer fails in the call and keeps the nonce increment. An
+        // underfunded create keeps the check, which leaves the nonce unchanged.
+        if !is_create {
+            env.set_feature(EvmFeatures::BALANCE_CHECK, false);
+            env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
+        }
 
         let nonce = evm
             .state_mut()

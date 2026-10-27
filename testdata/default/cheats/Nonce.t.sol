@@ -25,4 +25,16 @@ contract NonceIsolatedTest is Test {
         counter.increment();
         assertEq(vm.getNonce(bob), 4);
     }
+
+    // An underfunded create fails before it increments the creator's nonce.
+    function testUnderfundedCreateKeepsNonce() public {
+        uint64 nonce = vm.getNonce(address(this));
+        uint256 value = address(this).balance + 1;
+        address created;
+        assembly {
+            created := create(value, 0, 0)
+        }
+        assertEq(created, address(0));
+        assertEq(vm.getNonce(address(this)), nonce);
+    }
 }
