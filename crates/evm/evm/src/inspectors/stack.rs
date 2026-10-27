@@ -4,13 +4,14 @@ use super::{
     ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_consensus::transaction::Recovered;
+use alloy_eips::eip2930::AccessList;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressSet},
 };
 use evm2::{
-    EvmFeatures, ExecutionError, Inspector,
+    EvmFeatures, ExecutedTx, ExecutionError, Inspector, TxResultWithState,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
@@ -29,7 +30,7 @@ use foundry_evm_core::{
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
         TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
-        merge_untracked_nested_changes, release_inspector, warm_set,
+        merge_untracked_pending_changes_with_warmth, release_inspector, warm_set,
     },
     precompiles::P256_VERIFY,
 };
@@ -455,6 +456,8 @@ pub struct InspectorStackInner {
     env_handoff_ended: bool,
     /// Accounts the running top-level transaction created, directly or through isolated calls.
     tx_created: AddressSet,
+    /// Accounts the running top-level transaction loaded when an isolated static call cooled it.
+    static_cooled: AddressSet,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack of the depths of CREATE frames that were redirected to the CREATE2 factory.
@@ -549,12 +552,17 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             inner: &mut *self,
             backend: Some(&mut *backend),
         });
-        let result = match child.transact(tx) {
-            Ok(executed) => {
+        let executed = child.transact(tx).map(ExecutedTx::detach);
+        let result = match executed {
+            Ok(TxResultWithState { result, pending_state, .. }) => {
                 // A failed transaction keeps its nonce increment.
-                merge_untracked_nested_changes(evm.state_mut(), &executed)
-                    .map(|persistent| (executed.result().clone(), persistent))
-                    .map_err(Into::into)
+                merge_untracked_pending_changes_with_warmth(
+                    evm.state_mut(),
+                    &mut child,
+                    pending_state,
+                )
+                .map(|persistent| (result, persistent))
+                .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };
@@ -585,7 +593,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let fork_id = replay.backend().active_fork_id();
         let mut overrides = Default::default();
         cheats.env_overrides.swap(fork_id, &mut overrides);
+        // The mined transaction starts with its own block's coinbase and its access list.
+        let tx_warm_addresses = mem::replace(
+            &mut cheats.tx_warm_addresses,
+            tx_warm_addresses::<FEN>(&prepared.env(), prepared.access_list()),
+        );
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, false);
+        cheats.tx_warm_addresses = tx_warm_addresses;
         cheats.env_overrides.swap(fork_id, &mut overrides);
         drop(replay);
         Ok(backend.backend_mut().store_executed(evm, executed?))
@@ -1249,7 +1263,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             request.set_max_fee_per_gas(0);
             request.set_max_priority_fee_per_gas(0);
         }
-        if let Some(access_list) = access_list {
+        if let Some(access_list) = access_list.clone() {
             request.set_access_list(access_list);
         }
         // A transaction that did not execute leaves the frame's reservoir untouched.
@@ -1303,7 +1317,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 &mut cheats.root_call_target,
                 (!is_create).then_some(message.destination),
             );
-            (previous, root_call_target)
+            let tx_warm_addresses = mem::replace(
+                &mut cheats.tx_warm_addresses,
+                tx_warm_addresses::<FEN>(&env, access_list.as_ref()),
+            );
+            (previous, root_call_target, tx_warm_addresses)
         });
         let previous_inner = self.inner.enter_inner_context(InnerRoot {
             depth: message.depth,
@@ -1332,9 +1350,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let restored = self.cheatcodes.as_deref_mut().zip(snapshot_restores).is_some_and(
             |(cheats, restores)| mem::replace(&mut cheats.snapshot_restores, restores).kept(),
         );
-        if let (Some(cheats), Some((previous, root_call_target))) =
+        if let (Some(cheats), Some((previous, root_call_target, tx_warm_addresses))) =
             (self.cheatcodes.as_deref_mut(), previous_cheats)
         {
+            cheats.tx_warm_addresses = tx_warm_addresses;
             cheats.origin_override = previous;
             cheats.in_isolation_context = false;
             cheats.isolation_env = None;
@@ -1390,11 +1409,25 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
             restored
                 || !result.status
-                || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok()
+                || warm_accessed(evm.state_mut(), &executed.pending_state, &AddressSet::default())
+                    .is_ok()
         } else {
+            // As on master, accounts a static call cooled stay cold if the running transaction
+            // still holds them cold. Accounts it no longer holds, such as after a
+            // snapshot revert, are imported warm.
+            let state = evm.state_mut();
+            let cooled = state
+                .loaded_accounts()
+                .map(|(address, _)| *address)
+                .filter(|address| self.inner.static_cooled.contains(address))
+                .collect::<Vec<_>>();
+            let cold = cooled
+                .into_iter()
+                .filter(|address| !state.account(address).is_ok_and(|account| account.is_warm()))
+                .collect();
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
                 && (!result.status
-                    || warm_accessed(evm.state_mut(), &executed.pending_state).is_ok());
+                    || warm_accessed(evm.state_mut(), &executed.pending_state, &cold).is_ok());
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             evm.ext_mut().replace_while_executing(child.ext().clone());
@@ -1447,7 +1480,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
         self.inner.tx_created.clear();
+        self.inner.static_cooled.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
+            // Transactions run from the test or script carry no access list.
+            cheatcodes.tx_warm_addresses = tx_warm_addresses::<FEN>(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
             cheatcodes.snapshot_restores = SnapshotRestores::default();
         }
@@ -1482,6 +1518,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return false;
         };
         warm_arbitrum_system_contract::<FEN>(interp);
+        // Nested transactions that cheatcodes execute install their own coinbase and access list.
+        if arbitrum::is_arbitrum_chain(interp.host().version().chain_id)
+            && let Some(cheatcodes) = self.cheatcodes.as_deref_mut()
+            && !cheatcodes.tx_warm_addresses.contains(&arbitrum::ARB_SYS_ADDRESS)
+        {
+            cheatcodes.tx_warm_addresses.push(arbitrum::ARB_SYS_ADDRESS);
+        }
         if !root.observe
             && !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
             && let Some(cheatcodes) = self.cheatcodes.as_deref()
@@ -2099,12 +2142,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     ///
     /// Storage of accounts with arbitrary storage stays warm, so its generated values are kept.
     fn cool_for_static_call(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        // The calling frame is the transaction's root, so its address is the recipient.
+        let recipient = interp.message().destination;
+        let is_precompile = interp.host().precompiles().contains(&recipient);
         let state = interp.host().state_mut();
         // Warmth carried across fork switches cools too.
         if let Some(prewarm) =
             self.backend.as_deref().and_then(|backend| backend.backend().lifecycle().tx_prewarm())
         {
             state.set_prewarm_set(prewarm.clone());
+        }
+        // As on master, the recipient cools like any other account the transaction loaded, unlike
+        // the addresses `vm.cool` also keeps warm.
+        if !is_precompile
+            && !self
+                .cheatcodes
+                .as_deref()
+                .is_some_and(|cheats| cheats.tx_warm_addresses.contains(&recipient))
+            && let Some(backend) = self.backend.as_deref_mut()
+        {
+            backend.backend_mut().remove_prewarm(state, &recipient);
         }
         // Accounts with arbitrary storage keep their warm slots, and stay warm if they have any.
         let arbitrary = self
@@ -2127,6 +2184,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             })
             .unwrap_or_default();
         cool_loaded(state);
+        self.inner.static_cooled.extend(state.loaded_accounts().map(|(address, _)| *address));
         for (address, slots) in arbitrary {
             state.set_account_warm(&address, true);
             for key in slots {
@@ -2308,9 +2366,12 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
 
 /// Warms in `state` the accounts a successful nested transaction loaded and the storage slots it
 /// accessed, as accesses across an isolated call boundary stay warm for the calling frame.
-fn warm_accessed(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
+/// Accounts in `cold` stay cold.
+fn warm_accessed(state: &mut State<'_>, pending: &PendingState, cold: &AddressSet) -> DbResult<()> {
     for change in pending.account_changes() {
-        state.account(&change.address)?.warm();
+        if !cold.contains(&change.address) {
+            state.account(&change.address)?.warm();
+        }
         for (key, slot) in &change.storage.slots {
             if slot.is_warm {
                 state.storage_slot(&change.address, *key)?.warm();
@@ -2350,6 +2411,20 @@ fn warm_arbitrum_system_contract<FEN: FoundryEvmNetwork>(interp: &mut Interprete
     }
     // Other selectors can still execute code at the address.
     evm.state_mut().prewarm(&arbitrum::ARB_SYS_ADDRESS);
+}
+
+/// Returns the addresses a transaction in `env` with `access_list` warms when it starts and that
+/// `vm.cool` keeps warm, like REVM's `WarmAddresses`: the EIP-3651 coinbase, the access list and
+/// Arbitrum's ArbSys.
+fn tx_warm_addresses<FEN: FoundryEvmNetwork>(
+    env: &EvmEnvFor<FEN>,
+    access_list: Option<&AccessList>,
+) -> Vec<Address> {
+    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
+    let arb_sys =
+        arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
+    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
+    coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
 }
 
 /// Answers `ArbSys.arbBlockNumber()` on Arbitrum chains.

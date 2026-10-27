@@ -27,7 +27,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
-    EvmTypesHost, ExecutionError,
+    EvmTypesHost, ExecutionError, TxResultWithState,
     evm::State,
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
@@ -198,11 +198,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let mut child = backend.backend().nested_evm(evm, tx, env);
         child.set_inspector(CheatcodesInspector { cheats, backend: &mut *backend });
         let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
+        let TxResultWithState { result, pending_state, .. } = executed.detach();
         // A failed transaction keeps its nonce increment.
-        let persistent =
-            foundry_evm_core::evm::merge_untracked_nested_changes(evm.state_mut(), &executed)?;
-        let result = executed.result().clone();
-        drop(executed);
+        let persistent = foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
+            evm.state_mut(),
+            &mut child,
+            pending_state,
+        )?;
         drop(child);
         cheats.record_persistent(usize::from(depth).saturating_sub(1), persistent);
         // The nested transaction's changes are not the running transaction's execution.
@@ -790,6 +792,13 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// transaction instead.
     pub root_call_target: Option<Address>,
 
+    /// The EIP-3651 coinbase and access-list addresses the running transaction warmed when it
+    /// started, which `vm.cool` keeps warm.
+    ///
+    /// While an isolated call or create runs as a nested transaction, these are that
+    /// transaction's instead.
+    pub tx_warm_addresses: Vec<Address>,
+
     /// Prank information, mapped to the call depth where pranks were added.
     pub pranks: BTreeMap<usize, Prank>,
 
@@ -976,6 +985,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             state_epoch: Default::default(),
             snapshot_restores: Default::default(),
             root_call_target: Default::default(),
+            tx_warm_addresses: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
             assume_no_revert: Default::default(),
@@ -1494,9 +1504,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
                 if let Some(new_caller) = changes.caller {
-                    // Ensure new caller is loaded and touched
+                    // Ensure new caller is loaded, warm and touched
                     if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
                         account.touch();
+                        account.warm();
                     }
                     call.caller = new_caller;
                 }
@@ -1673,11 +1684,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let evm = interp.host();
             let (initialized, old_balance, old_nonce) = match evm.state_mut().account(&target) {
-                Ok(account) => (
-                    account.get().is_some_and(|info| !info.is_empty()),
-                    account.balance(),
-                    account.nonce(),
-                ),
+                Ok(mut account) => {
+                    account.warm();
+                    (
+                        account.get().is_some_and(|info| !info.is_empty()),
+                        account.balance(),
+                        account.nonce(),
+                    )
+                }
                 Err(_) => (false, U256::ZERO, 0),
             };
             // Fork switches and `vm.chainId` take effect before the execution version changes.
@@ -2461,12 +2475,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // called at, there may not be any pending
                     // calls to update if execution has percolated up to a higher depth.
                     if call_access.depth == curr_depth as u64
-                        && let Ok(Some(account)) =
-                            interp.host().state_mut().account_info_untracked(&target)
+                        && let Ok(mut account) = interp.host().state_mut().account(&target)
                     {
                         debug_assert!(access_is_call(call_access.kind));
-                        call_access.newBalance = account.balance;
-                        call_access.newNonce = account.nonce;
+                        account.warm();
+                        call_access.newBalance = account.balance();
+                        call_access.newNonce = account.nonce();
                     }
                     merge_recorded_frame(recorded_account_diffs_stack, last_recorded_depth);
                 }
@@ -2571,9 +2585,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && let Some(changes) = prank.changes_for(curr_depth, input.caller)
         {
             if let Some(new_caller) = changes.caller {
-                // Ensure new caller is loaded and touched
+                // Ensure new caller is loaded, warm and touched
                 if let Ok(mut account) = interp.host().state_mut().account(&new_caller) {
                     account.touch();
+                    account.warm();
                 }
                 input.caller = new_caller;
                 caller_changed = true;
@@ -3284,10 +3299,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let target = Address::from_word(B256::from(target));
                 let state = interp.host().state_mut();
                 let (initialized, old_balance, old_nonce) = state
-                    .account_info_untracked(&target)
-                    .ok()
-                    .flatten()
-                    .map(|info| (!info.is_empty(), info.balance, info.nonce))
+                    .account(&target)
+                    .map(|mut account| {
+                        account.warm();
+                        (
+                            account.get().is_some_and(|info| !info.is_empty()),
+                            account.balance(),
+                            account.nonce(),
+                        )
+                    })
                     .unwrap_or_default();
 
                 // load balance of this account
@@ -3762,6 +3782,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // the local code that EIP-7702 validates.
         let mut account = evm.state_mut().account(&authority)?;
         account.touch();
+        account.warm();
         // The sender nonce has not been incremented for the transaction yet.
         let nonce = account.nonce();
         if auth.nonce() == nonce + u64::from(authority == sender) {

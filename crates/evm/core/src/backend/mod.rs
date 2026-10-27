@@ -39,7 +39,7 @@ use crate::{
     },
 };
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, Typed2718, transaction::Recovered};
+use alloy_consensus::{BlockHeader, Transaction as _, Typed2718, transaction::Recovered};
 use alloy_eips::BlockNumHash;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, TransactionResponse};
@@ -51,7 +51,7 @@ use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{
-        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, StateSnapshot,
+        AccountInfo, Cache, CacheDB, DynDatabase, EmptyDB, PendingState, State, StateSnapshot,
         bal::{Bal, BlockAccessIndex},
     },
 };
@@ -379,6 +379,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// transaction executed on an EVM that was not freshly created.
     pub fn begin_transaction(&mut self, evm: &mut FoundryEvmFor<'_, FEN>) {
         self.lifecycle.begin_transaction(evm);
+    }
+
+    /// Removes `address` from the running transaction's base warmth, see
+    /// [`ExecutionLifecycle::remove_prewarm`].
+    pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
+        self.lifecycle.remove_prewarm(state, address);
     }
 
     /// Executes `tx` over the active context with `inspector` and discards its state.
@@ -950,6 +956,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             prepared.set_cursor(id, position, cursor);
         }
 
+        prepared.set_access_list(target.transaction.access_list().cloned());
         let mut backend = CowBackend::new_borrowed(self);
         if !active {
             // The prepared transaction already runs over the target fork's state.
@@ -1118,7 +1125,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Writes the code, storage, nonce and balance of `source` to `target` in the running
-    /// transaction as journaled writes. Code is kept when `source` has none.
+    /// transaction as journaled writes, and warms `target`. Code is kept when `source` has none.
     pub fn clone_account(
         &self,
         source: &GenesisAccount,
@@ -1135,9 +1142,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             account.set_nonce(source.nonce.unwrap_or_default());
             // Touch the account so the loaded information persists if called in `setUp`.
             account.touch();
+            account.warm();
         }
         for (slot, value) in source.storage.iter().flatten() {
-            state.storage_slot(target, (*slot).into())?.set((*value).into());
+            let mut slot = state.storage_slot(target, (*slot).into())?;
+            slot.warm();
+            slot.set((*value).into());
         }
         Ok(())
     }
@@ -1199,7 +1209,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// the enclosing calls, as on master, where the refresh replaced the journaled slot's present
     /// value. Its transaction-start original is kept.
     pub fn refresh_fork_storage(
-        &self,
+        &mut self,
         address: Address,
         slot: U256,
         evm: &mut FoundryEvmFor<'_, FEN>,
@@ -1220,11 +1230,14 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             storage.slots.insert(slot, value);
         }
         let storage = state.storage(&address)?;
-        if !storage.is_loaded(&slot) {
-            return Ok(None);
-        }
-        storage.into_slot(slot)?.set(value);
-        Ok(Some(PersistentWrite::Slot(address, slot, value)))
+        let write = if storage.is_loaded(&slot) {
+            storage.into_slot(slot)?.set(value);
+            Some(PersistentWrite::Slot(address, slot, value))
+        } else {
+            None
+        };
+        self.lifecycle.refresh_switched_slot(&address, slot, value);
+        Ok(write)
     }
 
     // ---- Snapshots ----

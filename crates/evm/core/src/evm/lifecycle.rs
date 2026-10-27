@@ -37,15 +37,16 @@ use crate::{
     state_snapshot::StateSnapshots,
 };
 use alloy_consensus::{Typed2718, transaction::Recovered};
+use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{
     Address, B256, KECCAK256_EMPTY, Log, U256,
-    map::{AddressMap, AddressSet, Entry, HashSet},
+    map::{AddressMap, AddressSet, Entry, HashMap, HashSet},
 };
 use evm2::{
-    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult,
+    Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult, TxResultWithState,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, AccountInfo, Cache, DbResult, DynDatabase, EmptyDB, JournalEntry,
+        AccountChanges, AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB, JournalEntry,
         PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
     },
 };
@@ -102,6 +103,8 @@ pub struct PreparedTx<T: EvmTypesHost> {
     inactive: Option<(Option<U256>, AddressSet)>,
     /// The fork whose canonical position and block cursor advance once the transaction executed.
     cursor: Option<ForkCursor<T>>,
+    /// The transaction's EIP-2930 access list, if its caller recorded it.
+    access_list: Option<AccessList>,
 }
 
 /// A fork's canonical position and the network state retaining its block cursor.
@@ -119,6 +122,21 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         self.cursor = Some((id, position, cursor));
     }
 
+    /// Returns the environment the transaction executes in.
+    pub const fn env(&self) -> EvmEnv<T> {
+        evm_env(&self.executor)
+    }
+
+    /// Returns the transaction's EIP-2930 access list, if recorded.
+    pub const fn access_list(&self) -> Option<&AccessList> {
+        self.access_list.as_ref()
+    }
+
+    /// Records the transaction's EIP-2930 access list.
+    pub fn set_access_list(&mut self, access_list: Option<AccessList>) {
+        self.access_list = access_list;
+    }
+
     /// Executes the transaction observed by `inspector` and merges its changes into the running
     /// transaction of `evm` as journaled writes: all of them on the running transaction's
     /// context, where a failed transaction only keeps its nonce increment and fee payment, and
@@ -131,7 +149,7 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
         inspector: Option<&mut dyn Inspector<T>>,
         untracked: bool,
     ) -> eyre::Result<ExecutedNested<T>> {
-        let Self { executor, tx, inactive, cursor } = self;
+        let Self { executor, tx, inactive, cursor, access_list: _ } = self;
         let mut executor: Evm<'_, T> = executor;
         if let Some(inspector) = inspector {
             executor.set_inspector(inspector);
@@ -144,17 +162,22 @@ impl<T: EvmTypes<Tx: Typed2718>> PreparedTx<T> {
                 executed.account_changes(),
                 |_| true,
                 untracked.then_some(&mut persistent),
+                None,
             )?;
             let result = executed.result().clone();
             return Ok(ExecutedNested { result, context: None, cursor, persistent });
         };
+        // The inactive context's code is not in the running transaction's database.
+        let TxResultWithState { result, pending_state, .. } = executed.detach();
+        let source = executor.state_mut().overlay_db_mut();
         merge_changes(
             evm.state_mut(),
-            executed.account_changes(),
+            pending_state.account_changes(),
             |address| persistent.contains(address),
             None,
+            Some(source),
         )?;
-        let result = executed.commit();
+        source.commit_pending(&pending_state);
         rebase_loaded_accounts(evm.state_mut(), executor.state_mut(), &persistent)?;
         executor.clear_inspector();
         let cache = mem::take(&mut executor.state_mut().overlay_db_mut().cache);
@@ -312,6 +335,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     pub fn active_mut(&mut self) -> &mut Parked<F::Types> {
         let active = self.forks.active();
         self.forks.context_mut(active).expect("active context exists")
+    }
+
+    /// Records `value` as the accepted value of a slot the running transaction restored the
+    /// original of when it resumed the active context, such as after refreshing the slot from the
+    /// remote, so that a revert leaving the context keeps it.
+    pub fn refresh_switched_slot(&mut self, address: &Address, slot: U256, value: U256) {
+        if let Some(switched) = self.active_mut().switched.get_mut(address)
+            && let Some(accepted) = switched.get_mut(&slot)
+        {
+            *accepted = value;
+        }
     }
 
     /// Returns the active context's accepted state for modification between executions,
@@ -566,14 +600,42 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.tx_prewarm.as_ref()
     }
 
+    /// Removes `address` from the running transaction's base warmth in `state` and in the
+    /// warmth that fork switches and isolated static calls restore, so it stays cold until it is
+    /// accessed again.
+    pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
+        if state.prewarm_set().is_warm(address) {
+            let mut prewarm = state.prewarm_set().clone();
+            prewarm.remove(address);
+            state.set_prewarm_set(prewarm);
+        }
+        if let Some(prewarm) = &mut self.tx_prewarm {
+            prewarm.remove(address);
+        }
+        // Like REVM's fork switches, which copy the journaled state of persistent accounts into
+        // the selected fork, a persistent account resumes cold in every context.
+        if self.forks.is_persistent(address) {
+            self.forks.local.warm.remove(address);
+            for entry in self.forks.forks.values_mut() {
+                entry.context.warm.remove(address);
+            }
+        } else {
+            self.active_mut().warm.remove(address);
+        }
+    }
+
     /// Applies an environment change deferred by an in-flight operation and forgets the warmth
     /// contexts kept from the previous transaction. Call before every transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {
         self.tx_prewarm = None;
         self.tx_original.clear();
         self.forks.local.warm.clear();
+        self.forks.local.originals.clear();
+        self.forks.local.switched.clear();
         for entry in self.forks.forks.values_mut() {
             entry.context.warm.clear();
+            entry.context.originals.clear();
+            entry.context.switched.clear();
         }
         if let Some(mut env) = self.pending_env.take() {
             env.block = *evm.block();
@@ -640,7 +702,12 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             let state = evm.state_mut();
             let logs = mem::take(state.logs_mut());
             state.clear_transaction_state();
-            let cache = mem::take(&mut state.overlay_db_mut().cache);
+            let mut cache = mem::take(&mut state.overlay_db_mut().cache);
+            // Values accepted at the switch into the context stay accepted, as before their
+            // originals were restored.
+            for (address, slots) in mem::take(&mut self.active_mut().switched) {
+                cache.storage.entry(address).or_default().slots.extend(slots);
+            }
             self.active_mut().cache = Some(Arc::new(cache));
             (Some(replaced), logs)
         };
@@ -787,6 +854,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             tx,
             inactive: None,
             cursor: None,
+            access_list: None,
         }
     }
 
@@ -841,7 +909,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             &mut executor.state_mut().overlay_db_mut().cache,
         );
         let inactive = Some((id, self.forks.persistent.clone()));
-        Ok(PreparedTx { executor, tx, inactive, cursor: None })
+        Ok(PreparedTx { executor, tx, inactive, cursor: None, access_list: None })
     }
 
     /// Stores the outcome of a [`PreparedTx`]: an inactive context's new accepted state.
@@ -914,6 +982,15 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             if state.account(&address).is_ok_and(|account| account.is_created()) {
                 context.created.insert(address);
             }
+            // Committing the running transaction below makes the slots' current values their
+            // originals, so record the transaction-start ones SSTORE gas and refunds depend on.
+            for key in &slots {
+                if let Ok(slot) = state.storage_slot(&address, *key)
+                    && slot.original() != slot.current()
+                {
+                    context.originals.entry(address).or_default().insert(*key, slot.original());
+                }
+            }
             context.loaded.entry(address).or_default().extend(slots);
         }
         // The context keeps the warmth it resumed with, which the running state holds in its
@@ -931,11 +1008,13 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let ext = evm.ext().clone();
         let context = self.active_mut();
         context.cache = Some(Arc::new(cache.clone()));
+        context.switched.clear();
         context.ext = StoredExt::new(&ext);
         Suspended {
             cache,
             loaded: context.loaded.clone(),
             created: context.created.clone(),
+            originals: context.originals.clone(),
             logs,
             prewarm,
             warm,
@@ -956,6 +1035,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             cache: source,
             loaded: source_loaded,
             created: source_created,
+            originals: source_originals,
             logs,
             mut prewarm,
             warm: source_warm,
@@ -1005,6 +1085,17 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             prewarm.warm_storage(address, slots.iter().copied());
         }
         self.active_mut().warm = warm;
+        // Persistent and carried accounts keep the originals they suspended with, other accounts
+        // the ones of their previous visit to this context. Records this context kept for
+        // persistent accounts can predate the running transaction's baseline, such as that of an
+        // isolated call, so the suspended context's records replace them.
+        let mut originals = mem::take(&mut self.active_mut().originals);
+        originals.retain(|address, _| !persistent.contains(address));
+        for (address, slots) in source_originals {
+            if persistent.contains(&address) || (carry && created.contains(&address)) {
+                originals.entry(address).or_default().extend(slots);
+            }
+        }
 
         let mut state = State::new(db.clone_backing());
         state.overlay_db_mut().cache = cache;
@@ -1023,6 +1114,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         if fresh {
             factory.initialize_evm(evm, db.is_forked_mode());
         }
+        // After the network initialization, which can commit the overlay.
+        self.active_mut().switched = restore_originals(evm.state_mut(), &originals);
         // The new transaction overlay does not know which accounts the transaction created, which
         // EIP-6780 `SELFDESTRUCT` depends on. Its database already holds their storage.
         for address in &created {
@@ -1141,6 +1234,8 @@ struct Suspended {
     loaded: AddressMap<HashSet<U256>>,
     /// Accounts created in the suspended context.
     created: AddressSet,
+    /// Transaction-start values of the slots changed in the suspended context.
+    originals: AddressMap<HashMap<U256, U256>>,
     /// Logs of the running transaction.
     logs: Vec<Log>,
     /// Base warmth of the running transaction, such as its access list, without warmth carried
@@ -1181,25 +1276,60 @@ pub fn merge_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true, None)
+    merge_changes(state, executed.account_changes(), |_| true, None, None)
 }
 
 /// Applies a nested transaction's changes to the running transaction's `state` as journaled
 /// writes and returns them as [`PersistentWrite`]s, for the caller to replay when an enclosing
-/// call reverts, such as for `executeTransaction`.
+/// call reverts, such as for `broadcastRawTransaction`.
 pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
     state: &mut State<'_>,
     executed: &ExecutedTx<'_, '_, T>,
 ) -> DbResult<Vec<PersistentWrite>> {
     let mut persistent = Vec::new();
-    merge_changes(state, executed.account_changes(), |_| true, Some(&mut persistent))?;
+    merge_changes(state, executed.account_changes(), |_| true, Some(&mut persistent), None)?;
+    Ok(persistent)
+}
+
+/// Applies the changes of a nested transaction that `child` ran and detached into `pending` to the
+/// running transaction's `state` like [`merge_untracked_nested_changes`], and also warms the
+/// accounts and slots the nested transaction left warm, such as for `executeTransaction`.
+///
+/// Accounts the running transaction had already loaded keep their warmth, and accesses the nested
+/// transaction reverted stay cold. Like the merged changes, the warmth survives reverts of the
+/// enclosing calls.
+pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
+    state: &mut State<'_>,
+    child: &mut Evm<'_, T>,
+    pending: PendingState,
+) -> DbResult<Vec<PersistentWrite>> {
+    // The detached accounts keep their warmth, which reattaching them to `child` exposes.
+    let child = child.state_mut();
+    child.set_pending_state(pending.clone());
+    let warm = warm_accounts(child);
+    child.clear_transaction_state();
+    // Warm before merging, so that the merge journals the warmth as the accounts' previous one and
+    // reverts of the enclosing calls restore it.
+    let loaded = state.loaded_accounts().map(|(address, _)| *address).collect::<AddressSet>();
+    for (address, slots) in warm {
+        state.account(&address)?;
+        if !loaded.contains(&address) {
+            state.set_account_warm(&address, true);
+        }
+        for key in slots {
+            state.storage_slot(&address, key)?;
+            state.set_storage_warm(&address, key, true);
+        }
+    }
+    let mut persistent = Vec::new();
+    merge_changes(state, pending.account_changes(), |_| true, Some(&mut persistent), None)?;
     Ok(persistent)
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
 /// transaction's `state` as journaled writes, like [`merge_nested_changes`].
 pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
-    merge_changes(state, pending.account_changes(), |_| true, None)
+    merge_changes(state, pending.account_changes(), |_| true, None, None)
 }
 
 /// Returns the warmth of the running transaction in `state`: its base warm set and the accounts and
@@ -1254,7 +1384,7 @@ pub fn restore_access_warmth(state: &mut State<'_>, checkpoint: &StateCheckpoint
 
 /// Returns the accounts the running transaction in `state` loaded and that are warm, with their
 /// warm slots.
-fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
+pub fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
     let loaded = state
         .loaded_accounts()
         .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
@@ -1273,13 +1403,46 @@ fn warm_accounts(state: &mut State<'_>) -> AddressMap<HashSet<U256>> {
     warm
 }
 
+/// Turns the accepted values of the slots of `originals` in the fresh `state` back into pending
+/// writes of the running transaction over their transaction-start values.
+///
+/// The accepted state takes the transaction-start values as well, since committing the
+/// transaction only writes slots whose values differ from their originals. Returns the replaced
+/// accepted values.
+fn restore_originals(
+    state: &mut State<'_>,
+    originals: &AddressMap<HashMap<U256, U256>>,
+) -> AddressMap<HashMap<U256, U256>> {
+    let mut pending = PendingState::default();
+    let mut switched = AddressMap::<HashMap<_, _>>::default();
+    for (address, slots) in originals {
+        let Ok(info) = state.account_info_untracked(address) else { continue };
+        pending.insert_account(*address, info.clone(), info);
+        for (key, original) in slots {
+            if let Ok(current) = state.storage_slot_untracked(address, key) {
+                pending.insert_storage(*address, *key, *original, current);
+                switched.entry(*address).or_default().insert(*key, current);
+                let cache = &mut state.overlay_db_mut().cache;
+                cache.storage.entry(*address).or_default().slots.insert(*key, *original);
+            }
+        }
+    }
+    state.set_pending_state(pending);
+    switched
+}
+
 /// Applies a nested transaction's `changes` to the accounts selected by `filter` to `state` as
-/// journaled writes, or so that they survive reverts of the enclosing calls if `untracked`.
+/// journaled writes, also recorded in `persistent` if given.
+///
+/// Changes only carry changed code, so the code of an account whose code hash differs from
+/// `state`'s is read from `source`, the nested transaction's database. Without one, the nested
+/// transaction ran over a copy of `state`, where an unchanged code hash is already `state`'s.
 fn merge_changes<'c>(
     state: &mut State<'_>,
     changes: impl Iterator<Item = AccountChanges<'c>>,
     filter: impl Fn(&Address) -> bool,
     mut persistent: Option<&mut Vec<PersistentWrite>>,
+    mut source: Option<&mut CacheDB<Box<dyn DynDatabase + '_>>>,
 ) -> DbResult<()> {
     for change in changes.filter(|change| change.is_changed()) {
         let address = change.address;
@@ -1294,8 +1457,13 @@ fn merge_changes<'c>(
                 account.mark_created();
             }
         }
-        // Changes only carry non-empty code, so a different hash means cleared code.
-        let code = || Ok(change.code.map(|(_, code)| code.clone()).unwrap_or_default());
+        let code = || match (change.code, change.current, source.as_deref_mut()) {
+            (Some((_, code)), ..) => Ok(code.clone()),
+            (None, Some(info), Some(source)) if !info.is_empty_code_hash() => {
+                source.get_code_by_hash(&info.code_hash)
+            }
+            _ => Ok(Bytecode::default()),
+        };
         let wiped = change.current.is_none() || change.storage.wiped;
         let slots = change.storage.changed_slots().map(|(key, slot)| (*key, slot.current));
         apply_account(

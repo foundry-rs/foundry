@@ -12,7 +12,12 @@ use alloy_primitives::{
 };
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use evm2::{EvmFeatures, SpecId, bytecode::Bytecode, evm::State, interpreter::Host};
+use evm2::{
+    EvmFeatures, SpecId,
+    bytecode::Bytecode,
+    evm::{DbResult, State, StorageSlotHandle},
+    interpreter::Host,
+};
 use foundry_common::{
     TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
@@ -30,8 +35,8 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     evm::{
-        EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork, PersistentWrite,
-        TxEnvelopeFor, TxPayload, evm_env,
+        EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
+        PersistentWrite, TxEnvelopeFor, TxPayload, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -283,13 +288,14 @@ impl Cheatcode for loadCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
 
+        ccx.evm.state_mut().account(&target)?.warm();
         let (is_cold, mut value) = {
-            let slot = ccx
+            let mut slot = ccx
                 .evm
                 .state_mut()
                 .storage_slot(&target, slot.into())
                 .map_err(|e| fmt_err!("failed to load storage slot: {e}"))?;
-            (!slot.is_warm(), slot.current())
+            (slot.warm(), slot.current())
         };
 
         if is_cold
@@ -366,6 +372,7 @@ impl Cheatcode for cloneAccountCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { source, target } = self;
 
+        ccx.evm.state_mut().account(source)?.warm();
         let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), source);
         let genesis = genesis_account(ccx.evm.state_mut(), source, slots)?;
         EvmFactoryFor::<FEN>::default().sync_transaction(ccx.evm);
@@ -786,6 +793,7 @@ impl Cheatcode for dealCall {
         let old_balance = {
             let mut account = ccx.evm.state_mut().account(&address)?;
             let old_balance = account.balance();
+            account.warm();
             account.set_balance(new_balance);
             old_balance
         };
@@ -818,7 +826,9 @@ impl Cheatcode for etchCall {
         {
             clear_eip2935_history_storage(state, features)?;
         }
-        state.account(target)?.set_code_slow(bytecode);
+        let mut account = state.account(target)?;
+        account.warm();
+        account.set_code_slow(bytecode);
         Ok(Default::default())
     }
 }
@@ -834,8 +844,8 @@ impl Cheatcode for resetNonceCall {
             || code_hash.is_zero()
             || account.load_code()?.is_eip7702();
         let nonce = if is_eoa { 0 } else { 1 };
-        // Nonce cheatcodes survive reverts of the enclosing calls.
         account.touch();
+        account.warm();
         let previous = account.nonce();
         account.set_nonce(nonce);
         let address = account.address();
@@ -860,6 +870,7 @@ impl Cheatcode for setNonceCall {
              account's current nonce ({current})"
         );
         account.touch();
+        account.warm();
         let previous = account.nonce();
         account.set_nonce(newNonce);
         let address = account.address();
@@ -876,6 +887,7 @@ impl Cheatcode for setNonceUnsafeCall {
         let Self { account, newNonce } = *self;
         let mut account = ccx.evm.state_mut().account(&account)?;
         account.touch();
+        account.warm();
         let previous = account.nonce();
         account.set_nonce(newNonce);
         let address = account.address();
@@ -892,9 +904,8 @@ impl Cheatcode for storeCall {
         let Self { target, slot, value } = *self;
         ccx.ensure_not_precompile(&target)?;
         let state = ccx.evm.state_mut();
-        state.account(&target)?.touch();
-        state
-            .storage_slot(&target, slot.into())
+        touch_account(state, target)?;
+        warm_storage_slot(state, &target, slot.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
             .set(value.into());
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
@@ -929,6 +940,14 @@ impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
         let slots = ccx.backend.backend().lifecycle().loaded_storage(ccx.evm.state(), target);
+        // Like REVM's `WarmAddresses`, precompiles and the addresses the transaction warmed for
+        // its coinbase, access list and chain stay warm. The rest of the transaction-base
+        // warmth, such as the recipient, is cooled.
+        let keep = ccx.is_precompile(target) || ccx.state.tx_warm_addresses.contains(target);
+        if !keep {
+            let (evm, db) = ccx.evm_db_mut();
+            db.remove_prewarm(evm.state_mut(), target);
+        }
         let state = ccx.evm.state_mut();
         state.set_account_warm(target, false);
         for slot in slots {
@@ -1274,7 +1293,9 @@ impl Cheatcode for getStorageSlotsCall {
         if storage_type.encoding == ENCODING_BYTES {
             // Try to check if it's a long bytes/string by reading the current storage
             // value
-            if let Ok(value) = ccx.evm.state_mut().storage_slot(target, slot).map(|s| s.current()) {
+            if let Ok(value) =
+                warm_storage_slot(ccx.evm.state_mut(), target, slot).map(|s| s.current())
+            {
                 let value_bytes = value.to_be_bytes::<32>();
                 let length_byte = value_bytes[31];
                 // Check if it's a long bytes/string (LSB is 1)
@@ -1322,8 +1343,9 @@ impl Cheatcode for broadcastRawTransactionCall {
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let from = sender;
         let contract_address = if tx.kind().is_create() {
-            let nonce = ccx.evm.state_mut().account(&sender)?.nonce();
-            Some(sender.create(nonce))
+            let mut account = ccx.evm.state_mut().account(&sender)?;
+            account.warm();
+            Some(sender.create(account.nonce()))
         } else {
             None
         };
@@ -1351,14 +1373,21 @@ impl Cheatcode for broadcastRawTransactionCall {
             }
             env
         });
-        let _ = executor.transact_from_tx(
+        let previous = enter_tx_warm_addresses(
+            ccx.state,
+            &env.unwrap_or_else(|| ccx.evm_env()),
+            tx.access_list(),
+        );
+        let result = executor.transact_from_tx(
             ccx.state,
             ccx.backend,
             ccx.evm,
             ccx.depth as u16,
             &evm_tx,
             env,
-        )?;
+        );
+        ccx.state.tx_warm_addresses = previous;
+        let _ = result?;
         ccx.state.state_epoch += 1;
 
         if ccx.state.broadcast.is_some() {
@@ -1421,6 +1450,7 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let created_address = tx.kind().is_create().then(|| sender.create(tx.nonce()));
+        let access_list = tx.access_list().cloned();
         let tx = FEN::evm_tx(tx, sender, TxPayload::Signed)?;
 
         // Execute in the running environment with realistic validation: no base fee or fee
@@ -1449,9 +1479,17 @@ impl Cheatcode for executeTransactionCall {
             ccx.state.record_created_account(fork_id, address);
         }
 
-        let res = executor
-            .nested_transaction(ccx.state, ccx.backend, ccx.evm, ccx.depth as u16, &tx, Some(env))
-            .map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
+        let previous = enter_tx_warm_addresses(ccx.state, &env, access_list.as_ref());
+        let res = executor.nested_transaction(
+            ccx.state,
+            ccx.backend,
+            ccx.evm,
+            ccx.depth as u16,
+            &tx,
+            Some(env),
+        );
+        ccx.state.tx_warm_addresses = previous;
+        let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
         // Return output bytes.
         if !res.status {
@@ -1563,7 +1601,9 @@ pub(super) fn get_nonce<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     address: &Address,
 ) -> Result {
-    let nonce = ccx.evm.state_mut().account(address)?.nonce();
+    let mut account = ccx.evm.state_mut().account(address)?;
+    account.warm();
+    let nonce = account.nonce();
     Ok(nonce.abi_encode())
 }
 
@@ -1814,10 +1854,23 @@ fn read_callers<FEN: FoundryEvmNetwork>(
     Ok((mode, new_caller, new_origin).abi_encode_params())
 }
 
-/// Ensures the account is loaded and touched.
+/// Ensures the account is loaded, warm and touched.
 pub(super) fn touch_account(state: &mut State<'_>, addr: Address) -> Result<()> {
-    state.account(&addr)?.touch();
+    let mut account = state.account(&addr)?;
+    account.touch();
+    account.warm();
     Ok(())
+}
+
+/// Loads the storage slot and marks it warm, as an `SLOAD` or `SSTORE` of it would.
+fn warm_storage_slot<'s, 'db>(
+    state: &'s mut State<'db>,
+    address: &'s Address,
+    key: U256,
+) -> DbResult<StorageSlotHandle<'s, 'db>> {
+    let mut slot = state.storage_slot(address, key)?;
+    slot.warm();
+    Ok(slot)
 }
 
 /// Writes `block_hash` to the EIP-2935 history storage, if the history contract is deployed.
@@ -1843,6 +1896,22 @@ fn set_eip2935_blockhash(
 ///
 /// Warmth is preserved: slots that were cold stay cold. A database error reverts any partial
 /// clearing.
+/// Installs the addresses a nested transaction in `env` with `access_list` warms when it starts
+/// and that `vm.cool` keeps warm, returning the running transaction's. The inspector stack adds
+/// Arbitrum's ArbSys at the nested transaction's root.
+fn enter_tx_warm_addresses<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    env: &EvmEnvFor<FEN>,
+    access_list: Option<&alloy_rpc_types::AccessList>,
+) -> Vec<Address> {
+    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
+    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
+    std::mem::replace(
+        &mut state.tx_warm_addresses,
+        coinbase.into_iter().chain(access_list).collect(),
+    )
+}
+
 fn clear_eip2935_history_storage(state: &mut State<'_>, features: EvmFeatures) -> Result<()> {
     let checkpoint = state.checkpoint();
     for slot in 0..HISTORY_SERVE_WINDOW {
@@ -1892,15 +1961,13 @@ fn store_solidity_string(
     cleanup_long_string_tail(state, target, base_slot, bytes.len())?;
 
     if bytes.len() <= 31 {
-        state
-            .storage_slot(&target, base_slot)
+        warm_storage_slot(state, &target, base_slot)
             .map_err(|e| fmt_err!("failed to store TIP-20 logo URI: {e}"))?
             .set(encode_short_string(bytes));
         return Ok(Default::default());
     }
 
-    state
-        .storage_slot(&target, base_slot)
+    warm_storage_slot(state, &target, base_slot)
         .map_err(|e| fmt_err!("failed to store TIP-20 logo URI length: {e}"))?
         .set(U256::from(bytes.len() * 2 + 1));
 
@@ -1908,8 +1975,7 @@ fn store_solidity_string(
     for (index, chunk) in bytes.chunks(32).enumerate() {
         let mut chunk_bytes = [0u8; 32];
         chunk_bytes[..chunk.len()].copy_from_slice(chunk);
-        state
-            .storage_slot(&target, slot_start + U256::from(index))
+        warm_storage_slot(state, &target, slot_start + U256::from(index))
             .map_err(|e| fmt_err!("failed to store TIP-20 logo URI data: {e}"))?
             .set(U256::from_be_bytes(chunk_bytes));
     }
@@ -1923,8 +1989,7 @@ fn cleanup_long_string_tail(
     base_slot: U256,
     new_len: usize,
 ) -> Result<()> {
-    let previous = state
-        .storage_slot(&target, base_slot)
+    let previous = warm_storage_slot(state, &target, base_slot)
         .map_err(|e| fmt_err!("failed to load previous TIP-20 logo URI: {e}"))?
         .current();
     if !is_long_string(previous) {
@@ -1942,8 +2007,7 @@ fn cleanup_long_string_tail(
 
     let slot_start = solidity_dynamic_data_slot(base_slot);
     for index in new_chunks..previous_chunks {
-        state
-            .storage_slot(&target, slot_start + U256::from(index))
+        warm_storage_slot(state, &target, slot_start + U256::from(index))
             .map_err(|e| fmt_err!("failed to clear previous TIP-20 logo URI data: {e}"))?
             .set(U256::ZERO);
     }
@@ -2353,7 +2417,9 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     let artifacts = ccx.state.core.config.available_artifacts.as_ref()?;
 
     // Try to load the account and get its code
-    let code = ccx.evm.state_mut().account(&address).ok()?.load_code().ok()?;
+    let mut account = ccx.evm.state_mut().account(&address).ok()?;
+    account.warm();
+    let code = account.load_code().ok()?;
 
     // Skip if code is empty
     if code.is_empty() {

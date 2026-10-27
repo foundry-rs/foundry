@@ -74,7 +74,7 @@ use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_common::MONAD_SYSTEM_ADDRESS;
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
+use foundry_evm::core::evm::{BlockContext, ChainFor, FoundryEvmExt, MonadEvmNetwork};
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
@@ -937,8 +937,17 @@ impl PreparedRun<MonadEvmNetwork> {
         self.prepare_target();
 
         let mut replay = Vec::new();
+        let replay_system_txes = self.args.replay_system_txes;
         self.for_each_prefix_transaction(target_index, |_, tx| {
-            replay.push((tx.tx_hash(), self.transaction(tx)?));
+            // Canonical protocol transactions always replay; other system transactions only
+            // with `--replay-system-txes`.
+            let replayed = self.transaction(tx)?;
+            if !is_system_transaction(tx)
+                || replay_system_txes
+                || ChainFor::<MonadEvmNetwork>::is_protocol_transaction(&replayed)
+            {
+                replay.push((tx.tx_hash(), replayed));
+            }
             Ok(())
         })?;
         // The replay records each prefix transaction into the context, so it starts at the
