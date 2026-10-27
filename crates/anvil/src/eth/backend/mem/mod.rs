@@ -5888,8 +5888,12 @@ where
             .map(|fork| fork.execution_chain_id())
             .unwrap_or_else(|| self.chain_id().to());
         let execution_chain_id = prepared.execution_chain_id(fallback_execution_chain_id)?;
-        let PreparedForkTransactionReplay { transactions, timestamp, parent_beacon_block_root } =
-            prepared;
+        let PreparedForkTransactionReplay {
+            transactions,
+            beneficiary,
+            timestamp,
+            parent_beacon_block_root,
+        } = prepared;
         eyre::ensure!(!transactions.is_empty(), "fork transaction replay prefix is empty");
         let next_timestamp = timestamp.checked_add(1).ok_or_else(|| {
             eyre::eyre!("fork transaction replay timestamp cannot be incremented")
@@ -5919,6 +5923,9 @@ where
         );
 
         let mut replay_env = evm_env.clone();
+        // The prefix pays its fees to the source block's coinbase, as on chain. Blocks mined
+        // afterwards keep the local beneficiary.
+        replay_env.block_env.beneficiary = beneficiary;
         let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
             replay_env.block_env.number = evm;
             rpc
