@@ -199,10 +199,10 @@ snapshot; failure between their writes cannot roll authoritative recovery backwa
 
 A new `--broadcast` refuses to replace a previous broadcast that submitted anything, through a
 transaction hash or a saved attempt, and left an operation, on any chain, with neither a receipt nor
-a recorded revert. It names `--resume` instead. Without a snapshot, progress written before
-snapshots existed is checked through the broadcast export. With `--start-fresh`, it first moves the
-snapshot, including an interrupted pending commit, and both exports to timestamped names. Dry runs
-and runs that never submitted anything never block.
+a recorded revert. Without a snapshot, progress written before snapshots existed is checked through
+the broadcast export. With `--start-fresh`, it first moves the snapshot, including an interrupted
+pending commit, and both exports to timestamped names. Dry runs and runs that never signed or sent
+anything never block.
 
 Resume obtains the current chain ID for a single-chain run and loads the authoritative snapshot,
 restoring sensitive RPC URLs by stable operation position. Corrupt, inconsistent, or unsupported

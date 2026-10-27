@@ -167,20 +167,13 @@ impl<N: Network> ScriptSequenceKind<N>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
 {
+    #[cfg(test)]
     pub fn new_single(
         sequence: ScriptSequence<N>,
         batch: bool,
         sponsor: Option<Address>,
     ) -> Result<Self> {
         Self::create(SequenceData::Single(Box::new(sequence)), batch, sponsor)
-    }
-
-    pub fn new_multi(
-        sequence: MultiChainSequence<N>,
-        batch: bool,
-        sponsor: Option<Address>,
-    ) -> Result<Self> {
-        Self::create(SequenceData::Multi(sequence), batch, sponsor)
     }
 
     pub fn load_single(
@@ -244,7 +237,11 @@ where
         Ok(sequence)
     }
 
-    fn create(data: SequenceData<N>, batch: bool, sponsor: Option<Address>) -> Result<Self> {
+    pub(crate) fn create(
+        data: SequenceData<N>,
+        batch: bool,
+        sponsor: Option<Address>,
+    ) -> Result<Self> {
         let paths = data.paths();
         let recovery = RecoveryStore::create(data, batch, sponsor)?;
         let sequence = Self { recovery, rpc_override: None };

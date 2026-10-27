@@ -157,16 +157,17 @@ where
         Self::finish_open(lock, plan)
     }
 
-    /// Moves the unfinished progress of a previous execution at `paths` to timestamped names, so
+    /// Moves the unfinished progress of a previous execution of `data` to timestamped names, so
     /// that a new execution can replace it.
-    pub(crate) fn archive_unfinished(paths: &(PathBuf, PathBuf), multi: bool) -> Result<()> {
+    pub(crate) fn archive_unfinished(data: &SequenceData<N>) -> Result<()> {
+        let paths = &data.paths();
         let lock = RecoveryLock::acquire(paths)?;
         // A crash mid-commit leaves the newest complete snapshot pending, as resume would find it.
         let pending = pending_path(&lock.path);
         if pending.exists() {
             commit_pending_plan(&pending, &lock.path)?;
         }
-        if !previous_unfinished::<N>(&lock.path, paths, multi) {
+        if !previous_unfinished::<N>(&lock.path, paths, data.is_multi()) {
             return Ok(());
         }
         let timestamp = now().as_millis();
@@ -952,14 +953,14 @@ where
 
 /// Returns whether the previous execution at `paths` submitted anything and left an operation, on
 /// any chain, with neither a receipt nor a recorded revert. Without a recovery snapshot, progress
-/// saved before snapshots existed is read from the broadcast export. Unreadable progress counts as
-/// finished, so a new execution replaces it as before.
+/// saved before snapshots existed is read from the broadcast export. An unreadable snapshot counts
+/// as unfinished, as resume would refuse it too; an unreadable export counts as finished.
 fn previous_unfinished<N: Network>(snapshot: &Path, paths: &(PathBuf, PathBuf), multi: bool) -> bool
 where
     N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
 {
     let (data, attempted) = if snapshot.exists() {
-        let Ok(plan) = load_plan::<N>(snapshot) else { return false };
+        let Ok(plan) = load_plan::<N>(snapshot) else { return true };
         let attempted = plan.deployments.iter().any(|deployment| !deployment.attempts.is_empty());
         (plan.data, attempted)
     } else {
@@ -2096,8 +2097,14 @@ mod tests {
         drop(store);
         assert_eq!(create().unwrap_err().to_string(), refused);
         std::fs::rename(&snapshot, pending_path(&snapshot)).unwrap();
-        RecoveryStore::<Ethereum>::archive_unfinished(&paths, false).unwrap();
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
         assert!(!snapshot.exists() && !pending_path(&snapshot).exists());
+        create().unwrap();
+
+        // An unreadable snapshot is never silently replaced.
+        std::fs::write(&snapshot, "garbage").unwrap();
+        assert_eq!(create().unwrap_err().to_string(), refused);
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
         create().unwrap();
 
         // Without a snapshot, progress saved before snapshots existed is checked.
@@ -2106,7 +2113,7 @@ mod tests {
         legacy.sequences_mut()[0].transactions[0].hash = Some(B256::ZERO);
         foundry_common::fs::write_json_file(&paths.0, &legacy.sequences()[0]).unwrap();
         assert_eq!(create().unwrap_err().to_string(), refused);
-        RecoveryStore::<Ethereum>::archive_unfinished(&paths, false).unwrap();
+        RecoveryStore::<Ethereum>::archive_unfinished(&sequence(dir.path())).unwrap();
         assert!(!paths.0.exists());
         create().unwrap();
     }

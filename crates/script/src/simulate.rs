@@ -3,7 +3,7 @@ use super::{
     providers::{ProviderInfo, ProvidersManager},
     recovery::RecoveryStore,
     runner::ScriptRunner,
-    sequence::ScriptSequenceKind,
+    sequence::{ScriptSequenceKind, SequenceData},
     transaction::ScriptTransactionBuilder,
 };
 use crate::{
@@ -744,39 +744,22 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             }
         }
 
-        let sequence = if sequences.len() == 1 {
-            let sequence = sequences.pop().expect("empty sequences");
-            if self.args.start_fresh {
-                RecoveryStore::<FEN::Network>::archive_unfinished(
-                    sequence.paths.as_ref().expect("sequence paths not set"),
-                    false,
-                )?;
-            }
-            ScriptSequenceKind::new_single(
-                sequence,
-                self.args.batch,
-                self.script_config.tempo.sponsor,
-            )?
+        let data = if sequences.len() == 1 {
+            SequenceData::Single(Box::new(sequences.pop().expect("empty sequences")))
         } else {
-            let sequence = MultiChainSequence::new(
+            SequenceData::Multi(MultiChainSequence::new(
                 sequences,
                 &self.args.sig,
                 &self.build_data.build_data.target,
                 &self.script_config.config,
                 !self.args.broadcast,
-            )?;
-            if self.args.start_fresh {
-                RecoveryStore::<FEN::Network>::archive_unfinished(
-                    &(sequence.path.clone(), sequence.sensitive_path.clone()),
-                    true,
-                )?;
-            }
-            ScriptSequenceKind::new_multi(
-                sequence,
-                self.args.batch,
-                self.script_config.tempo.sponsor,
-            )?
+            )?)
         };
+        if self.args.start_fresh {
+            RecoveryStore::<FEN::Network>::archive_unfinished(&data)?;
+        }
+        let sequence =
+            ScriptSequenceKind::create(data, self.args.batch, self.script_config.tempo.sponsor)?;
 
         Ok(BundledState {
             args: self.args,
