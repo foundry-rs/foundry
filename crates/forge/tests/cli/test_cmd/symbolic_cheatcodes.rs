@@ -693,6 +693,18 @@ contract SymbolicLogEmitter {
         emit Helper(topic, data);
         revert();
     }
+
+    function drainJsonAndFail(uint256 topic, bytes memory data) external {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).getRecordedLogsJson();
+        emit Helper(topic, data);
+        revert();
+    }
+
+    function resetAndFail(uint256 topic, bytes memory data) external {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).recordLogs();
+        emit Helper(topic, data);
+        revert();
+    }
 }
 
 contract SymbolicRevertingLogConstructor {
@@ -765,9 +777,15 @@ contract SymbolicRecordedLogs is Test {
         vm.recordLogs();
         emit Local(topic, data);
         try emitter.drainAndFail(topic + 1, data) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
 
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 0);
+        emit Local(topic, data);
+        try emitter.drainJsonAndFail(topic + 1, data) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        emit Local(topic, data);
+        try emitter.resetAndFail(topic + 1, data) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
     }
 }
 "#,

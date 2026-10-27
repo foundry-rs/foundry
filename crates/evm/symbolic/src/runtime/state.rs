@@ -18,7 +18,8 @@ pub(crate) struct PathState {
     pub(crate) constraints: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
-    /// Incremented whenever `recorded_logs` is replaced.
+    /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
+    /// was reset.
     pub(crate) recorded_logs_generation: u64,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,

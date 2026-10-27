@@ -87,7 +87,7 @@ contract RevertingEmitter is Test {
     }
 
     function drain() external {
-        vm.getRecordedLogs();
+        vm.getRecordedLogsJson();
     }
 
     function storeEmitAndRevert(uint256 value) external {

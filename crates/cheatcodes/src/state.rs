@@ -59,8 +59,8 @@ pub struct CheatcodesCore {
     pub mapping_slots: Option<AddressHashMap<MappingSlots>>,
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
-    /// Incremented whenever `recorded_logs` is replaced, so frames can tell whether their
-    /// recorded log checkpoint still refers to the current buffer.
+    /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
+    /// was reset.
     pub recorded_logs_generation: u64,
     /// Current EIP-2930 access lists.
     pub access_list: Option<AccessList>,
