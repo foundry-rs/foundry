@@ -627,6 +627,7 @@ impl SymbolicExecutor {
             skip_0Call::SELECTOR | skip_1Call::SELECTOR => self.handle_skip(state, in_offset + 4),
             recordLogsCall::SELECTOR => {
                 state.recorded_logs = Some(Vec::new());
+                state.recorded_logs_generation += 1;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             recordCall::SELECTOR => {
@@ -714,10 +715,12 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             getRecordedLogsCall::SELECTOR => {
+                state.recorded_logs_generation += 1;
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
                 Ok(CheatcodeOutcome::ContinueData(recorded_logs_return_data(&mut self.cx, logs)))
             }
             getRecordedLogsJsonCall::SELECTOR => {
+                state.recorded_logs_generation += 1;
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
                 Ok(CheatcodeOutcome::ContinueData(recorded_logs_json_return_data(
                     &mut self.cx,

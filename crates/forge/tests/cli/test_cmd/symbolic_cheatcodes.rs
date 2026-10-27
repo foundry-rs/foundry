@@ -687,6 +687,24 @@ contract SymbolicLogEmitter {
         emit Helper(topic, data);
         revert();
     }
+
+    function drainAndFail(uint256 topic, bytes memory data) external {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).getRecordedLogs();
+        emit Helper(topic, data);
+        revert();
+    }
+
+    function drainJsonAndFail(uint256 topic, bytes memory data) external {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).getRecordedLogsJson();
+        emit Helper(topic, data);
+        revert();
+    }
+
+    function resetAndFail(uint256 topic, bytes memory data) external {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).recordLogs();
+        emit Helper(topic, data);
+        revert();
+    }
 }
 
 contract SymbolicRevertingLogConstructor {
@@ -716,7 +734,7 @@ contract SymbolicRecordedLogs is Test {
         try emitter.fail(topic + 2, data) {} catch {}
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 3);
+        assertEq(logs.length, 2);
 
         assertEq(logs[0].topics.length, 2);
         assertEq(logs[0].topics[0], keccak256("Local(uint256,bytes)"));
@@ -730,11 +748,6 @@ contract SymbolicRecordedLogs is Test {
         assertEq(logs[1].topics[0], keccak256("Helper(uint256,bytes)"));
         assertEq(logs[1].topics[1], bytes32(topic + 1));
         assertEq(logs[1].emitter, address(emitter));
-
-        assertEq(logs[2].topics.length, 2);
-        assertEq(logs[2].topics[0], keccak256("Helper(uint256,bytes)"));
-        assertEq(logs[2].topics[1], bytes32(topic + 2));
-        assertEq(logs[2].emitter, address(emitter));
 
         Vm.Log[] memory drained = vm.getRecordedLogs();
         assertEq(drained.length, 0);
@@ -757,8 +770,22 @@ contract SymbolicRecordedLogs is Test {
         try new SymbolicRevertingLogConstructor() {} catch {}
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 1);
-        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
+        assertEq(logs.length, 0);
+    }
+
+    function checkRecordedLogsDrainInRevertedCall(uint256 topic, bytes memory data) public {
+        vm.recordLogs();
+        emit Local(topic, data);
+        try emitter.drainAndFail(topic + 1, data) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        emit Local(topic, data);
+        try emitter.drainJsonAndFail(topic + 1, data) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        emit Local(topic, data);
+        try emitter.resetAndFail(topic + 1, data) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
     }
 }
 "#,
@@ -773,11 +800,12 @@ contract SymbolicRecordedLogs is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicRecordedLogs.t.sol:SymbolicRecordedLogs
+Ran 4 tests for test/SymbolicRecordedLogs.t.sol:SymbolicRecordedLogs
 [PASS] checkRecordedLogs(uint256,bytes) ([METRICS])
+[PASS] checkRecordedLogsDrainInRevertedCall(uint256,bytes) ([METRICS])
 [PASS] checkRecordedLogsJson(uint256,bytes) ([METRICS])
 [PASS] checkRecordedRevertedCreate() ([METRICS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
@@ -4491,8 +4519,7 @@ contract SymbolicDeployCodeCheatcode is Test {
         vm.deployCode(string.concat(TARGET, ":RevertingDeployCodeCtor"));
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 1);
-        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
+        assertEq(logs.length, 0);
     }
 
     function checkDeployCodeBranchingConstructor() public {

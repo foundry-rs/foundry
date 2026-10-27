@@ -149,6 +149,12 @@ impl SymbolicExecutor {
     ) -> Result<JoinedCallOutcome, SymbolicError> {
         let mut parent = state.clone();
         parent.take_call_outcome_state(&mut outcome.state);
+        if !matches!(outcome.status, CallStatus::Success) {
+            parent.discard_failed_call_logs(
+                state.recorded_logs.as_ref().map_or(0, Vec::len),
+                state.recorded_logs_generation,
+            );
+        }
 
         if let Some(assumption) = parent.assume_no_revert_next_call.take()
             && matches!(outcome.status, CallStatus::Revert)
