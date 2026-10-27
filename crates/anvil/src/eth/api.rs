@@ -1844,24 +1844,25 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
-    /// Returns a locally stored rollback ancestor, or the remote base of a Monad transaction-hash
-    /// fork when that integration is enabled.
+    /// Returns a local rollback ancestor, a Monad replay ancestor, or the pinned fork root.
     async fn rollback_block(&self, number: u64) -> Result<Option<Block>> {
         if let Some(block) = self.backend.get_block(number) {
             return Ok(Some(block));
         }
         #[cfg(feature = "monad")]
+        if self.backend.is_monad()
+            && let Some(block) = self.backend.monad_rollback_block(number).await?
         {
-            if self.backend.is_monad() {
-                self.backend.monad_rollback_block(number).await
-            } else {
-                Ok(None)
-            }
+            return Ok(Some(block));
         }
-        #[cfg(not(feature = "monad"))]
-        {
-            Ok(None)
-        }
+
+        let Some(fork) = self.get_fork().filter(|fork| fork.block_number() == number) else {
+            return Ok(None);
+        };
+        let Some(header) = fork.root_header().await? else { return Ok(None) };
+
+        // Rollback only needs the header; do not publish this placeholder as a complete block.
+        Ok(Some(Block { header, body: Default::default() }))
     }
 
     /// Rewinds through the selected execution family's recovery path.
