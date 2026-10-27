@@ -641,6 +641,8 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
         origin_api.block_by_number_full(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
     let source_timestamp = genesis.header.timestamp + 100;
     origin_api.evm_set_next_block_timestamp(source_timestamp).unwrap();
+    let coinbase = Address::random();
+    origin_api.anvil_set_coinbase(coinbase).await.unwrap();
 
     let first = origin_provider
         .send_transaction(WithOtherFields::new(
@@ -666,8 +668,10 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, source_timestamp);
+    let coinbase_balance = origin_provider.get_balance(coinbase).await.unwrap();
+    assert!(!coinbase_balance.is_zero());
 
-    let (fork_api, _) = spawn(
+    let (fork_api, fork_handle) = spawn(
         NodeConfig::test()
             .with_hardfork(Some(EthereumHardfork::Cancun.into()))
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
@@ -690,10 +694,14 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     );
     assert_eq!(replayed.header.timestamp, source.header.timestamp);
     assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
+    assert_eq!(replayed.header.beneficiary, source.header.beneficiary);
+    let fork_provider = fork_handle.http_provider();
+    assert_eq!(fork_provider.get_balance(coinbase).await.unwrap(), coinbase_balance);
 
     fork_api.mine_one().await.unwrap();
     let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
     assert!(next.header.timestamp > source.header.timestamp);
+    assert_eq!(next.header.beneficiary, Address::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
