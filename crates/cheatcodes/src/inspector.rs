@@ -204,6 +204,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
             evm.state_mut(),
             &mut child,
             pending_state,
+            Default::default(),
         )?;
         drop(child);
         cheats.record_persistent(usize::from(depth).saturating_sub(1), persistent);

@@ -233,9 +233,44 @@ pub enum PersistentWrite {
     Wipe(Address),
     /// Sets a storage slot.
     Slot(Address, U256, U256),
-    /// Empties an account's balance and marks it self-destructed, so the running transaction
-    /// destroys it when it ends.
+    /// Marks an account self-destructed, so the running transaction destroys it when it ends.
     Destruct(Address),
+}
+
+/// The state a nested transaction left an existing account in before the transaction ended and
+/// destroyed it, which the running transaction keeps until it ends itself, as on master.
+#[derive(Clone, Debug)]
+pub struct DestructedAccount {
+    info: AccountInfo,
+    code: Bytecode,
+    slots: Vec<(U256, U256)>,
+}
+
+/// Returns the accounts the running transaction in `state` self-destructed without creating them,
+/// with their state before the transaction ends and destroys them, such as at the end of the root
+/// frame of `executeTransaction`'s transaction.
+pub fn destructed_accounts(state: &mut State<'_>) -> DbResult<AddressMap<DestructedAccount>> {
+    let loaded = state
+        .loaded_accounts()
+        .map(|(address, slots)| (*address, slots.copied().collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    let mut destructed = AddressMap::default();
+    for (address, keys) in loaded {
+        let code = {
+            let mut account = state.account(&address)?;
+            if !account.is_destructed() || account.is_created() {
+                continue;
+            }
+            account.load_code()?
+        };
+        let Some(info) = state.account_info_untracked(&address)? else { continue };
+        let slots = keys
+            .into_iter()
+            .map(|key| Ok((key, state.storage_slot_untracked(&address, &key)?)))
+            .collect::<DbResult<_>>()?;
+        destructed.insert(address, DestructedAccount { info, code, slots });
+    }
+    Ok(destructed)
 }
 
 impl PersistentWrite {
@@ -270,11 +305,7 @@ impl PersistentWrite {
             }
             Self::Wipe(address) => state.storage(address)?.wipe(),
             Self::Slot(address, key, value) => state.storage_slot(address, *key)?.set(*value),
-            Self::Destruct(address) => {
-                let mut account = state.account(address)?;
-                account.set_balance(U256::ZERO);
-                account.mark_destructed();
-            }
+            Self::Destruct(address) => state.account(address)?.mark_destructed(),
         }
         Ok(())
     }
@@ -1326,10 +1357,15 @@ pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
 /// Accounts the running transaction had already loaded keep their warmth, and accesses the nested
 /// transaction reverted stay cold. Like the merged changes, the warmth survives reverts of the
 /// enclosing calls.
+///
+/// Existing accounts the nested transaction self-destructed take the state of `destructed`, see
+/// [`destructed_accounts`], and are only marked self-destructed. Without one, their balance is
+/// emptied and the rest of their state is kept.
 pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
     state: &mut State<'_>,
     child: &mut Evm<'_, T>,
     pending: PendingState,
+    mut destructed: AddressMap<DestructedAccount>,
 ) -> DbResult<Vec<PersistentWrite>> {
     // The detached accounts keep their warmth, which reattaching them to `child` exposes.
     let child = child.state_mut();
@@ -1349,17 +1385,26 @@ pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
             state.set_storage_warm(&address, key, true);
         }
     }
-    // As on master, an existing account the nested transaction self-destructed keeps its code and
-    // storage until the running transaction ends and destroys it.
-    let destructed = pending
+    // As on master, an existing account the nested transaction self-destructed keeps the state the
+    // transaction left it in until the running transaction ends and destroys it.
+    let destroyed = pending
         .account_changes()
         .filter(|change| change.selfdestructed && !change.created)
         .map(|change| change.address)
         .collect::<AddressSet>();
     let mut persistent = Vec::new();
-    let filter = |address: &Address| !destructed.contains(address);
+    let filter = |address: &Address| !destroyed.contains(address);
     merge_changes(state, pending.account_changes(), filter, Some(&mut persistent), None)?;
-    for address in destructed {
+    for address in destroyed {
+        if let Some(DestructedAccount { info, code, slots }) = destructed.remove(&address) {
+            let code = || Ok(code);
+            apply_account(state, address, Some(&info), code, false, slots, Some(&mut persistent))?;
+        } else {
+            let balance = state.account(&address)?.balance();
+            let write = PersistentWrite::Balance(address, U256::ZERO.wrapping_sub(balance));
+            write.apply(state)?;
+            persistent.push(write);
+        }
         let write = PersistentWrite::Destruct(address);
         write.apply(state)?;
         persistent.push(write);

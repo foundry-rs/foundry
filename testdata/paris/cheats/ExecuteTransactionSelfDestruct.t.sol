@@ -52,8 +52,8 @@ contract ExecuteTransactionSelfDestructTest is Test {
     }
 }
 
-/// Before the test transaction ends, an account the nested transaction self-destructed keeps its
-/// code and storage, also when an enclosing call reverts, as on master. The nonce survives.
+/// Before the test transaction ends, an account the nested transaction self-destructed keeps the
+/// state the transaction left it in, also when an enclosing call reverts, as on master.
 contract ExecuteTransactionSelfDestructInTransactionTest is Test {
     address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
     address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
@@ -66,16 +66,22 @@ contract ExecuteTransactionSelfDestructInTransactionTest is Test {
     }
 
     /// forge-config: default.evm_version = "paris"
+    /// forge-config: default.isolate = false
     function test_execute_selfdestruct_keeps_state_in_transaction() public {
         vm.chainId(1);
         vm.deal(SENDER, 1 ether);
-        vm.etch(TARGET, hex"6000ff");
+        vm.deal(TARGET, 5);
+        // `SSTORE(0, 1)`, then `SELFDESTRUCT(0)`.
+        vm.etch(TARGET, hex"60016000556000ff");
         vm.store(TARGET, 0, bytes32(uint256(9)));
         vm.store(TARGET, bytes32(uint256(2)), bytes32(uint256(4)));
+        uint256 beneficiary = address(0).balance;
         try this.executeThenRevert() {} catch {}
-        assertEq(TARGET.code.length, 3, "code");
-        assertEq(uint256(vm.load(TARGET, 0)), 9, "slot0");
+        assertEq(TARGET.code.length, 8, "code");
+        assertEq(uint256(vm.load(TARGET, 0)), 1, "slot0");
         assertEq(uint256(vm.load(TARGET, bytes32(uint256(2)))), 4, "slot2");
+        assertEq(TARGET.balance, 0, "balance");
+        assertEq(address(0).balance - beneficiary, 22, "beneficiary");
         assertEq(vm.getNonce(SENDER), 1, "nonce");
     }
 }
