@@ -747,6 +747,9 @@ contract PrecompileAccounts is Test {
     function setUp() public {
         vm.deal(address(2), 1);
         vm.setNonce(address(3), 1);
+        vm.etch(address(0x1234), hex"602a60005260206000f3");
+        vm.cloneAccount(address(0x1234), address(0x0b));
+        vm.cloneAccount(address(0x1234), address(0x100));
     }
 
     function checkPrecompileAccounts() public {
@@ -755,6 +758,12 @@ contract PrecompileAccounts is Test {
 
     function testPrecompileAccounts() public {
         assertPrecompileAccounts();
+    }
+
+    function checkSymbolicCodehashAfterCodeQuery(address who) public {
+        vm.assume(who == address(1));
+        assert(address(1).code.length == 0);
+        assert(who.codehash == bytes32(0));
     }
 
     function assertPrecompileAccounts() internal {
@@ -773,6 +782,22 @@ contract PrecompileAccounts is Test {
         assert(address(4).codehash == keccak256(""));
         vm.setNonce(address(5), 1);
         assert(address(5).codehash == keccak256(""));
+
+        // Account code remains observable even when calls dispatch to a precompile.
+        address[2] memory targets = [address(0x0b), address(0x100)];
+        for (uint256 i; i < targets.length; ++i) {
+            address target = targets[i];
+            assert(target.code.length == 10);
+            assert(target.codehash == keccak256(hex"602a60005260206000f3"));
+            assert(keccak256(target.code) == keccak256(hex"602a60005260206000f3"));
+        }
+
+        (bool blsOk, bytes memory blsOut) = address(0x0b).staticcall("");
+        assert(!blsOk);
+        assert(blsOut.length == 0);
+        (bool p256Ok, bytes memory p256Out) = address(0x100).staticcall("");
+        assert(p256Ok);
+        assert(p256Out.length == 0);
     }
 }
 "#,
@@ -782,7 +807,7 @@ contract PrecompileAccounts is Test {
         "test",
         "--json",
         "--evm-version",
-        "cancun",
+        "osaka",
         "--match-test",
         "testPrecompileAccounts",
     ])
@@ -806,15 +831,23 @@ contract PrecompileAccounts is Test {
             "--symbolic",
             "--json",
             "--evm-version",
-            "cancun",
+            "osaka",
             "--match-test",
-            "checkPrecompileAccounts",
+            "checkPrecompileAccounts|checkSymbolicCodehashAfterCodeQuery",
         ])
         .assert_json_stdout(str![[r#"
 {
   "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
     "test_results": {
       "checkPrecompileAccounts()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      },
+      "checkSymbolicCodehashAfterCodeQuery(address)": {
         "status": "Success",
         "symbolic": {
           "status": "pass",

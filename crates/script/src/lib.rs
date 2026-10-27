@@ -643,6 +643,16 @@ impl ScriptArgs {
     ) -> Result<Option<BundledState<FEN>>> {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
+            if bundled.sequence.sequences().iter().any(|sequence| {
+                sequence
+                    .transactions
+                    .iter()
+                    .any(|tx| tx.tx().from() == Some(Config::DEFAULT_SENDER))
+            }) {
+                sh_warn!(
+                    "Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender."
+                )?;
+            }
             if !shell::is_json() {
                 if shell::verbosity() >= 4 {
                     sh_println!("\n=== Transactions that will be broadcast ===\n")?;
@@ -712,8 +722,10 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
-        if let Ok(decoded) = hex::decode(&self.sig) {
-            let selector = &decoded[..SELECTOR_LEN];
+        // Hex shorter than a selector cannot be calldata, so it is treated as a function name.
+        if let Ok(decoded) = hex::decode(&self.sig)
+            && let Some(selector) = decoded.get(..SELECTOR_LEN)
+        {
             let func =
                 abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
                     eyre::eyre!(
@@ -1902,6 +1914,33 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn short_hex_sig_is_resolved_as_function_name() {
+        let abi = JsonAbi::parse(["function fade()", "function run()"]).unwrap();
+        let method = |sig: &str| {
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig])
+                .get_method_and_calldata(&abi)
+        };
+
+        let fade = abi.function("fade").unwrap()[0].clone();
+        let (func, calldata) = method("fade").unwrap();
+        assert_eq!(func, fade);
+        assert_eq!(calldata, Bytes::from(fade.selector().to_vec()));
+
+        for sig in ["", "0x12"] {
+            assert_eq!(
+                method(sig).unwrap_err().to_string(),
+                format!("Function `{sig}` not found in the ABI")
+            );
+        }
+
+        // Hex with a full selector is still raw calldata.
+        let run = abi.function("run").unwrap()[0].clone();
+        let (func, calldata) = method(&hex::encode(run.selector())).unwrap();
+        assert_eq!(func, run);
+        assert_eq!(calldata, Bytes::from(run.selector().to_vec()));
     }
 
     #[test]

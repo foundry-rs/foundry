@@ -1403,6 +1403,83 @@ Warning: Some transactions were discarded by the RPC node. Use `--resume` to ret
     }
 }
 
+// Other tools parse broadcast files, so renaming or removing a key breaks them. A new key only
+// updates this snapshot.
+#[forgetest_init]
+async fn broadcast_file_keys(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "BroadcastKeys.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Child {}
+
+contract Factory {
+    constructor() {
+        new Child();
+    }
+
+    function deploy() external returns (Child) {
+        return new Child();
+    }
+}
+
+contract BroadcastKeys is Script {
+    function run() external returns (Factory factory) {
+        vm.startBroadcast();
+        factory = new Factory();
+        factory.deploy();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        script.to_str().unwrap(),
+        "--tc",
+        "BroadcastKeys",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ])
+    .assert_success();
+
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/BroadcastKeys.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    let additional_contracts =
+        transactions.iter().flat_map(|tx| tx["additionalContracts"].as_array().unwrap());
+    let keys = |values: Vec<&Value>| {
+        values
+            .into_iter()
+            .flat_map(|value| value.as_object().unwrap().keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    assert_data_eq!(
+        format!(
+            "top level: {}\ntransaction: {}\nadditional contract: {}\n",
+            keys(vec![&sequence]),
+            keys(transactions.iter().collect()),
+            keys(additional_contracts.collect()),
+        ),
+        str![[r#"
+top level: chain, commit, libraries, pending, receipts, recovery_generation, returns, timestamp, transactions
+transaction: additionalContracts, arguments, contractAddress, contractName, function, functionAbi, hash, isFixedGasLimit, transaction, transactionType
+additional contract: address, contractName, creatorCodeAddresses, initCode, transactionType
+
+"#]]
+    );
+}
+
 // A mined revert is recorded outside `receipts`, and resume warns about it, never resubmits it, and
 // continues with the operations after it.
 #[forgetest_init]
@@ -4714,6 +4791,34 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]);
+}
+
+#[forgetest_init]
+async fn dryrun_with_default_sender_warns(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Called {}
+
+contract DryRunTest is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Called();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["script", "DryRunTest", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
 }
@@ -8268,6 +8373,7 @@ async fn script_check_contract_sizes_warns_at_default_limit(prj: _, cmd: _) {
         .assert_success()
         .stderr_eq(str![[r#"
 Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
 }
@@ -8361,7 +8467,10 @@ async fn script_check_contract_sizes_honors_config_limit(prj: _, cmd: _) {
     }
     cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
-        .stderr_eq(str![[r#""#]]);
+        .stderr_eq(str![[r#"
+Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
+
+"#]]);
 }
 
 // Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation
