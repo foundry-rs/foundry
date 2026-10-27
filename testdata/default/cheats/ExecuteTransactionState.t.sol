@@ -78,22 +78,36 @@ contract ExecuteTransactionStateTest is Test {
         revert("parent reverted");
     }
 
-    // The accounts the transactions touched stay warm after the parent reverts, while the parent's
-    // own accesses do not.
+    // The accounts the transactions touched stay warm after the parent reverts, unless the running
+    // transaction holds them cold, while the parent's own accesses do not.
     function test_execute_warmth_survives_parent_revert() public {
         address plain = address(0xBEEF01);
         vm.chainId(1);
+        assertEq(TARGET.code.length, 0);
+        vm.cool(TARGET);
+        revertBoth(plain);
+        uint256 warm = accessCost(address(this));
+        assertEq(accessCost(vm.computeCreateAddress(CREATOR, 0)), warm);
+        assertEq(accessCost(SENDER), warm);
+        assertEq(accessCost(CREATOR), warm);
+        assertEq(accessCost(TARGET), warm + 2500);
+        assertEq(accessCost(plain), warm + 2500);
+    }
+
+    function test_execute_warmth_after_reverted_call() public {
+        vm.chainId(1);
+        revertBoth(TARGET);
+        uint256 warm = accessCost(address(this));
+        assertEq(accessCost(SENDER), warm);
+        assertEq(accessCost(TARGET), warm + 2500);
+    }
+
+    function revertBoth(address plain) internal {
         try this.executeBothThenRevert(plain) {
             revert("expected parent revert");
         } catch Error(string memory reason) {
             assertEq(reason, "parent reverted");
         }
-        uint256 warm = accessCost(address(this));
-        assertEq(accessCost(vm.computeCreateAddress(CREATOR, 0)), warm);
-        assertEq(accessCost(TARGET), warm);
-        assertEq(accessCost(SENDER), warm);
-        assertEq(accessCost(CREATOR), warm);
-        assertEq(accessCost(plain), warm + 2500);
     }
 
     function accessCost(address account) internal view returns (uint256 cost) {
