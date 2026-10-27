@@ -36,7 +36,7 @@ use foundry_evm_core::{
     },
     evm::{
         EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
-        TxEnvelopeFor, TxPayload, evm_env,
+        PersistentWrite, TxEnvelopeFor, TxPayload, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
@@ -796,12 +796,13 @@ impl Cheatcode for dealCall {
         let old_balance = {
             let mut account = ccx.evm.state_mut().account(&address)?;
             let old_balance = account.balance();
-            // The balance survives reverts of the enclosing calls.
-            account.touch();
             account.warm();
-            account.set_balance_untracked(new_balance);
+            account.set_balance(new_balance);
             old_balance
         };
+        // The balance survives reverts of the enclosing calls.
+        let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
         EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
@@ -846,10 +847,14 @@ impl Cheatcode for resetNonceCall {
             || code_hash.is_zero()
             || account.load_code()?.is_eip7702();
         let nonce = if is_eoa { 0 } else { 1 };
-        // Nonce cheatcodes survive reverts of the enclosing calls.
         account.touch();
         account.warm();
-        account.set_nonce_untracked(nonce);
+        let previous = account.nonce();
+        account.set_nonce(nonce);
+        let write = PersistentWrite::nonce(&account, previous);
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
@@ -868,7 +873,12 @@ impl Cheatcode for setNonceCall {
         );
         account.touch();
         account.warm();
-        account.set_nonce_untracked(newNonce);
+        let previous = account.nonce();
+        account.set_nonce(newNonce);
+        let write = PersistentWrite::nonce(&account, previous);
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         Ok(Default::default())
     }
 }
@@ -879,7 +889,12 @@ impl Cheatcode for setNonceUnsafeCall {
         let mut account = ccx.evm.state_mut().account(&account)?;
         account.touch();
         account.warm();
-        account.set_nonce_untracked(newNonce);
+        let previous = account.nonce();
+        account.set_nonce(newNonce);
+        let write = PersistentWrite::nonce(&account, previous);
+        drop(account);
+        // Nonce cheatcodes survive reverts of the enclosing calls.
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         Ok(Default::default())
     }
 }
@@ -1599,6 +1614,7 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     ccx.state.env_overrides.save_snapshot(id);
     ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
     ccx.state.snapshot_created_accounts(id, fork_id);
+    ccx.state.persistent_write_snapshots.insert(id, ccx.state.persistent_writes.len());
     Ok(id.abi_encode())
 }
 
@@ -1630,7 +1646,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.snapshot_restores.capture(replaced);
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, false);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1658,7 +1674,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.snapshot_restores.capture(replaced);
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)

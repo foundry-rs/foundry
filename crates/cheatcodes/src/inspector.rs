@@ -23,12 +23,12 @@ use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
-    map::{AddressHashMap, HashMap, HashSet},
+    map::{AddressHashMap, AddressMap, HashMap, HashSet},
 };
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
     EvmTypesHost, ExecutionError, TxResultWithState,
-    evm::State,
+    evm::{State, StateSnapshot},
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
         derive_create_destination, op,
@@ -48,9 +48,9 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmFor,
-        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, SnapshotRestores, SpecFor,
-        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, evm_env, release_inspector,
-        restore_access_warmth,
+        FoundryEvmNetwork, InterpreterFor, MessageFor, MessageResultFor, PersistentWrite,
+        SnapshotRestores, SpecFor, TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor,
+        evm_env, release_inspector, restore_access_warmth,
     },
 };
 use foundry_evm_traces::{
@@ -190,7 +190,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        _depth: u16,
+        depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
@@ -200,11 +200,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let executed = child.transact(tx).map_err(|err| eyre::eyre!("{err:?}"))?;
         let TxResultWithState { result, pending_state, .. } = executed.detach();
         // A failed transaction keeps its nonce increment.
-        foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
+        let persistent = foundry_evm_core::evm::merge_untracked_pending_changes_with_warmth(
             evm.state_mut(),
             &mut child,
             pending_state,
         )?;
+        drop(child);
+        cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
         // The nested transaction's changes are not the running transaction's execution.
         EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
         Ok(result)
@@ -234,11 +236,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         backend: &mut dyn CheatcodesBackend<FEN>,
         evm: &mut FoundryEvmFor<'_, FEN>,
-        _depth: u16,
+        depth: u16,
         tx: &Recovered<TxFor<FEN>>,
         env: Option<EvmEnvFor<FEN>>,
     ) -> eyre::Result<TxResultFor<FEN>> {
-        let result = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
+        let (result, persistent) = backend.backend_mut().transact_from_tx(tx, evm, env, None)?;
+        cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
         result.logs.iter().for_each(|log| cheats.log_hook(log));
         Ok(result)
     }
@@ -876,6 +879,19 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,
 
+    /// Writes that survive reverts of the enclosing calls, with the depth of the frame that made
+    /// them and the journal length right after them, replayed when that frame or an enclosing one
+    /// reverts and its rollback undid them.
+    pub persistent_writes: Vec<(usize, usize, PersistentWrite)>,
+
+    /// The depth of the frame that ended last and the journal length of its checkpoint, which a
+    /// failure rolls the frame back to, recorded by the inspector stack.
+    pub frame_rollback: Option<(usize, usize)>,
+
+    /// The number of persistent writes recorded when each snapshot of the running transaction
+    /// was taken.
+    pub persistent_write_snapshots: HashMap<U256, usize>,
+
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
@@ -1006,6 +1022,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcastable_transactions: Default::default(),
             skip_payloads: Default::default(),
             eth_deals: Default::default(),
+            persistent_writes: Default::default(),
+            frame_rollback: Default::default(),
+            persistent_write_snapshots: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -1645,17 +1664,24 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Apply active EIP-7702 delegations, if any.
                     if !active_delegations.is_empty() {
-                        if let Err(err) = apply_authorization_nonces::<FEN>(
+                        match apply_authorization_nonces::<FEN>(
                             evm,
                             &active_delegations,
                             new_origin,
                             chain_id,
                         ) {
-                            return Some(message_result(
-                                call,
-                                InstrStop::Revert,
-                                err.abi_encode().into(),
-                            ));
+                            Ok(writes) => self.record_persistent(
+                                curr_depth.saturating_sub(1),
+                                evm.state(),
+                                writes,
+                            ),
+                            Err(err) => {
+                                return Some(message_result(
+                                    call,
+                                    InstrStop::Revert,
+                                    err.abi_encode().into(),
+                                ));
+                            }
                         }
                         tx_req.set_authorization_list(active_delegations);
                     }
@@ -1671,11 +1697,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
-                    // The increment survives reverts of the enclosing calls.
-                    if !isolate_call && let Ok(mut account) = evm.state_mut().account(&new_origin) {
+                    // The increment survives reverts of the enclosing calls. evm2 runs this hook
+                    // before the call's checkpoint, so the increment belongs to the caller's frame.
+                    let bump = if !isolate_call
+                        && let Ok(mut account) = evm.state_mut().account(&new_origin)
+                    {
                         let prev = account.nonce();
-                        account.set_nonce_untracked(prev + 1);
+                        account.set_nonce(prev + 1);
                         debug!(target: "cheatcodes", address=%new_origin, nonce=prev+1, prev, "incremented nonce");
+                        Some(PersistentWrite::nonce(&account, prev))
+                    } else {
+                        None
+                    };
+                    if let Some(write) = bump {
+                        self.record_persistent(curr_depth.saturating_sub(1), evm.state(), [write]);
                     }
                 } else if single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -2248,6 +2283,104 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         record_logs(&mut self.core.recorded_logs, log);
     }
 
+    /// Records `writes` the frame at `depth` just made to `state`, see
+    /// [`Self::persistent_writes`].
+    pub fn record_persistent(
+        &mut self,
+        depth: usize,
+        state: &State<'_>,
+        writes: impl IntoIterator<Item = PersistentWrite>,
+    ) {
+        let len = state.checkpoint().journal_len();
+        self.persistent_writes.extend(writes.into_iter().map(|write| (depth, len, write)));
+    }
+
+    /// Retains `replaced`, the running state a revert to `snapshot_id` replaced, and drops the
+    /// persistent writes recorded since the snapshot, which the restored state does not hold.
+    pub(crate) fn restore_persistent_writes(
+        &mut self,
+        snapshot_id: U256,
+        replaced: StateSnapshot,
+        remove: bool,
+    ) {
+        self.snapshot_restores.capture(replaced, &self.persistent_writes);
+        let len = if remove {
+            self.persistent_write_snapshots.remove(&snapshot_id)
+        } else {
+            self.persistent_write_snapshots.get(&snapshot_id).copied()
+        };
+        // A snapshot of an earlier transaction holds none of this transaction's writes. Under the
+        // inspector stack a failing frame reinstates the captured ledger instead; this covers the
+        // stackless executor.
+        self.persistent_writes.truncate(len.unwrap_or_default());
+    }
+
+    /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
+    /// failed and the writes were rolled back, as writes of the enclosing frame. A transaction's
+    /// writes are dropped when its root frame ends; a nested one merges its changes itself.
+    fn replay_persistent_writes(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        depth: usize,
+        success: bool,
+    ) {
+        if self.persistent_writes.is_empty() {
+            return;
+        }
+        let root = usize::from(interp.version().initial_call_depth);
+        let state = interp.host().state_mut();
+        let mut failed = None;
+        if !success {
+            // Without the frame's rollback, such as without the inspector stack, every write of
+            // the frame was undone. A context switch in the frame can leave later writes below
+            // its checkpoint, which the rollback keeps.
+            let rollback =
+                self.frame_rollback.take().filter(|(end, _)| *end == depth).map(|(_, len)| len);
+            let undone = |&(write_depth, len, _): &(usize, usize, PersistentWrite)| {
+                write_depth >= depth && rollback.is_none_or(|rollback| len > rollback)
+            };
+            // The nonces after the rollback, to collapse each account's replayed nonce writes into
+            // the one change the replay made, so an enclosing replay does not undo the saturation.
+            let mut nonces = AddressMap::<u64>::default();
+            for (.., write) in self.persistent_writes.iter().filter(|entry| undone(entry)) {
+                if let PersistentWrite::Nonce { address, .. } = write
+                    && let Ok(account) = state.account(address)
+                {
+                    nonces.entry(*address).or_insert(account.nonce());
+                }
+            }
+            let writes = self.persistent_writes.iter().filter(|entry| undone(entry));
+            failed = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state).err();
+            let len = state.checkpoint().journal_len();
+            self.persistent_writes.retain_mut(|entry| {
+                if !undone(entry) {
+                    return true;
+                }
+                entry.1 = len;
+                !matches!(entry.2, PersistentWrite::Nonce { .. })
+            });
+            for (address, previous) in nonces {
+                if let Ok(account) = state.account(&address) {
+                    let write = PersistentWrite::nonce(&account, previous);
+                    self.persistent_writes.push((depth, len, write));
+                }
+            }
+        }
+        for (write_depth, ..) in &mut self.persistent_writes {
+            // The parent owns the writes once the frame ends, so a failing sibling at the same
+            // depth does not replay them again.
+            if *write_depth >= depth && depth > root {
+                *write_depth = depth - 1;
+            }
+        }
+        if depth == root {
+            self.persistent_writes.retain(|(write_depth, ..)| *write_depth < root);
+        }
+        if let Some(err) = failed {
+            let _ = interp.fail(err);
+        }
+    }
+
     /// Called after a call message executes.
     pub fn call_end_hook(
         &mut self,
@@ -2257,6 +2390,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
+        self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
             self.deploy_code_caller_depth(curr_depth),
@@ -2679,6 +2813,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         _backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
+        self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
             self.deploy_code_caller_depth(curr_depth),
@@ -3738,7 +3873,8 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
     authorizations: &[SignedAuthorization],
     sender: Address,
     chain_id: u64,
-) -> Result<()> {
+) -> Result<Vec<PersistentWrite>> {
+    let mut writes = Vec::new();
     for auth in authorizations {
         if (!auth.chain_id.is_zero() && auth.chain_id != U256::from(chain_id))
             || auth.nonce() == u64::MAX
@@ -3754,10 +3890,11 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // The sender nonce has not been incremented for the transaction yet.
         let nonce = account.nonce();
         if auth.nonce() == nonce + u64::from(authority == sender) {
-            account.set_nonce_untracked(nonce + 1);
+            account.set_nonce(nonce + 1);
+            writes.push(PersistentWrite::nonce(&account, nonce));
         }
     }
-    Ok(())
+    Ok(writes)
 }
 #[cfg(test)]
 mod tests {

@@ -205,6 +205,12 @@ impl<'evm, FEN: FoundryEvmNetwork> CheatsCtxt<'_, 'evm, FEN> {
         self.depth
     }
 
+    /// Returns the depth of the frame that called the cheatcode, whose scope its writes join.
+    #[inline]
+    pub(crate) const fn caller_depth(&self) -> usize {
+        self.depth.saturating_sub(1)
+    }
+
     /// Returns the active hardfork: the one the calls and creates started next run with.
     ///
     /// Cheatcode calls run on the running EVM, which keeps its spec while a change requested by
