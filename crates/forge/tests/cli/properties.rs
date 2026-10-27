@@ -1361,3 +1361,60 @@ no generated test file was kept
         ["confirmed", "confirmed", "needs_validation", "needs_validation"]
     );
 }
+
+// When a generated file does not compile, each file that no other file imports runs with the
+// files that it imports. A file that two of them import counts once, and files that import each
+// other in a cycle still run.
+#[forgetest_init]
+fn properties_runs_each_file_once_when_one_does_not_compile(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$out/Broken.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+contract BrokenTest { function testFee() public { missing(); } }
+SOL
+cat > "$out/Shared.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+contract SharedTest {
+    // The fee is capped at 100 ether (src/Fee.sol:7).
+    function testCap() public pure { require(Fee.fee(1e30) == 100 ether); }
+}
+SOL
+for name in First Second; do
+cat > "$out/$name.t.sol" <<SOL
+pragma solidity ^0.8.20;
+import "./Shared.t.sol";
+contract ${name}Test {}
+SOL
+done
+cat > "$out/CycleA.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import "./CycleB.t.sol";
+contract CycleATest { function testA() public pure { require(false); } }
+SOL
+cat > "$out/CycleB.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import "./CycleA.t.sol";
+contract CycleBTest { function testB() public pure { require(false); } }
+SOL
+"#,
+    );
+    cmd.args(args).args(["--agents", "1"]).assert_success().stdout_eq(str![[r#"
+possible bug (1/1 agents): The fee is capped at 100 ether (src/Fee.sol:7).
+  agent 1: SharedTest::testCap (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    claim: The fee is capped at 100 ether (src/Fee.sol:7).
+    file: cache/properties/agent-1/tests/Shared.t.sol
+possible bug (1/1 agents): CycleATest::testA
+  agent 1: CycleATest::testA (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    file: cache/properties/agent-1/tests/CycleA.t.sol
+possible bug (1/1 agents): CycleBTest::testB
+  agent 1: CycleBTest::testB (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
+    file: cache/properties/agent-1/tests/CycleB.t.sol
+1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
+no generated test file was kept
+
+"#]]);
+}

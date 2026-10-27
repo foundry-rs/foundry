@@ -866,21 +866,30 @@ impl Campaign<'_> {
             None => self.run_tests(workspace.path(), files)?,
             // A file that does not compile, such as one that the agent was writing at the
             // timeout, must not hide the other tests. Each file that no other file imports then
-            // runs on its own, with the files that it imports.
+            // runs on its own, with the files that it imports. Files that import each other in a
+            // cycle have no such file, so the first of them that no group holds yet starts one.
             Some(_) => {
                 let imports = collected_imports(self.config, workspace.path(), files)?;
                 let no_imports = BTreeSet::new();
+                let (roots, others) = files.iter().partition::<Vec<_>, _>(|file| {
+                    !imports.values().any(|imported| imported.contains(&file.path))
+                });
+                let mut grouped = HashSet::new();
+                // A file that several groups import runs in each of them, but its results count
+                // once.
+                let mut ran = HashSet::new();
                 let mut run = TestRun::default();
-                for root in files
-                    .iter()
-                    .filter(|file| !imports.values().any(|imported| imported.contains(&file.path)))
-                {
+                for root in roots.into_iter().chain(others) {
+                    if grouped.contains(&root.path) {
+                        continue;
+                    }
                     let imported = imports.get(&root.path).unwrap_or(&no_imports);
                     let group = files
                         .iter()
                         .filter(|file| file.path == root.path || imported.contains(&file.path))
                         .cloned()
                         .collect::<Vec<_>>();
+                    grouped.extend(group.iter().map(|file| file.path.clone()));
                     let workspace = self.sandbox.workspace(&group)?;
                     if let Some(errors) = self.sandbox.build_errors(workspace.path())? {
                         let paths = group.into_iter().map(|file| file.path).collect();
@@ -888,10 +897,18 @@ impl Campaign<'_> {
                         continue;
                     }
                     let group_run = self.run_tests(workspace.path(), &group)?;
-                    run.possible_bugs.extend(group_run.possible_bugs);
-                    run.passing.extend(group_run.passing);
+                    run.possible_bugs.extend(
+                        group_run.possible_bugs.into_iter().filter(|bug| !ran.contains(&bug.path)),
+                    );
+                    run.passing.extend(
+                        group_run
+                            .passing
+                            .into_iter()
+                            .filter(|test| !ran.contains(&test_path(test))),
+                    );
                     run.failing_files.extend(group_run.failing_files);
                     run.errors.extend(group_run.errors);
+                    ran.extend(group.into_iter().map(|file| file.path));
                 }
                 run
             }
