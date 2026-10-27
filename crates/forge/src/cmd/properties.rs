@@ -88,7 +88,7 @@ const AGENT_CONFIG: [&str; 14] = [
 const PASSED_ENV: [&str; 7] = ["LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"];
 /// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
 /// contract or test name, and no project file is under `/forge-properties-none`.
-const SELECT_ALL_TESTS: [&str; 10] = [
+pub(crate) const SELECT_ALL_TESTS: [&str; 10] = [
     "--match-contract",
     ".*",
     "--match-test",
@@ -262,9 +262,9 @@ impl Add for Usage {
 
 /// A Solidity file that an agent wrote, by its path relative to the project root.
 #[derive(Clone, Debug)]
-struct TestFile {
-    path: PathBuf,
-    content: String,
+pub(crate) struct TestFile {
+    pub(crate) path: PathBuf,
+    pub(crate) content: String,
 }
 
 /// A test that fails on every seed.
@@ -444,49 +444,31 @@ impl PropertiesArgs {
         );
         let root = self.root.canonicalize().wrap_err("failed to resolve project root")?;
         let mut config = Config::load_with_root(&root)?.sanitized();
-        // Every workspace writes this config, so no generated test can call `vm.ffi` without
-        // `--allow-ffi`. Config ignores `FFI` environment variables.
-        config.ffi &= self.allow_ffi;
-        // Generated tests could send data to any host, and the endpoints can hold API keys.
-        if !self.allow_network {
-            config.eth_rpc_url = None;
-            config.eth_rpc_jwt = None;
-            config.eth_rpc_headers = None;
-            config.etherscan_api_key = None;
-            config.etherscan = Default::default();
-            config.rpc_endpoints = Default::default();
-        }
+        restrict_config(&mut config, self.allow_ffi, self.allow_network);
         let generated_tests =
             workspace::relative_to_root(&config.root, &config.test).join("generated");
         workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
-        let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
         let cache_root = config.cache_path.join("properties");
         let verifier_command = self
             .verifier_command
             .as_ref()
             .map(|command| command.canonicalize().wrap_err("failed to resolve verifier command"))
             .transpose()?;
-        let mut campaign = Campaign {
+        // Workspaces leave out the project's generated tests, so every agent starts without
+        // earlier generated tests.
+        let mut sandbox = Sandbox::new(&config, vec![config.root.join(&generated_tests)])?;
+        if let Some(errors) = sandbox.build()? {
+            sh_warn!("the project does not build, so every test run builds it: {errors}")?;
+        }
+        let campaign = Campaign {
             args: &self,
             config: &config,
-            forge,
+            sandbox,
             verifier_command,
             generated_tests,
             cache_root,
             quorum,
-            build_cache: None,
-            home: tempfile::Builder::new().prefix("forge-properties-home-").tempdir()?,
         };
-        if let Some(svm) = Solc::svm_home().filter(|svm| svm.is_dir()) {
-            workspace::symlink_entry(
-                &svm,
-                &campaign.home.path().join(".svm"),
-                fs::metadata(&svm)?.file_type(),
-            )?;
-        }
-        // One build up front: every workspace starts from its output, so a test run compiles
-        // only the files that it adds.
-        campaign.build_cache = campaign.build()?;
         campaign.run()
     }
 }
@@ -498,14 +480,40 @@ type Fingerprint = BTreeMap<PathBuf, (u64, Option<SystemTime>)>;
 struct Campaign<'a> {
     args: &'a PropertiesArgs,
     config: &'a Config,
-    forge: PathBuf,
+    sandbox: Sandbox<'a>,
     /// The verifier command, if the run has a verifier.
     verifier_command: Option<PathBuf>,
-    /// The directory of generated tests, relative to the project root. Workspaces leave out the
-    /// project's copy of it, so every agent starts without earlier generated tests.
+    /// The directory of generated tests, relative to the project root.
     generated_tests: PathBuf,
     cache_root: PathBuf,
     quorum: usize,
+}
+
+/// Turns off `ffi` unless `allow_ffi`, and removes the RPC and Etherscan settings unless
+/// `allow_network`. Every workspace of a [`Sandbox`] writes this config, so no generated test can
+/// call `vm.ffi` or reach an endpoint that the config names. Config ignores `FFI` environment
+/// variables.
+pub(crate) fn restrict_config(config: &mut Config, allow_ffi: bool, allow_network: bool) {
+    config.ffi &= allow_ffi;
+    // Generated tests could send data to any host, and the endpoints can hold API keys.
+    if !allow_network {
+        config.eth_rpc_url = None;
+        config.eth_rpc_jwt = None;
+        config.eth_rpc_headers = None;
+        config.etherscan_api_key = None;
+        config.etherscan = Default::default();
+        config.rpc_endpoints = Default::default();
+    }
+}
+
+/// Builds and runs generated code in temporary copies of the project. Generated code runs outside
+/// the sandbox of whatever wrote it, so a copy leaves out hidden root entries such as `.env` and
+/// agent settings, and Forge runs in it with only a few environment variables.
+pub(crate) struct Sandbox<'a> {
+    config: &'a Config,
+    forge: PathBuf,
+    /// Project paths that workspaces leave out, besides the build output and the cache.
+    skipped: Vec<PathBuf>,
     /// The workspace whose build output every new workspace copies.
     build_cache: Option<TempDir>,
     /// The home directory of builds and test runs, whose `.svm` links to the installed compilers.
@@ -781,36 +789,6 @@ impl Campaign<'_> {
         Ok(())
     }
 
-    /// Builds the project once in a workspace whose build output the other workspaces copy. A
-    /// project that does not build gets no shared output, and each test run builds it in full.
-    fn build(&self) -> Result<Option<TempDir>> {
-        let workspace = self.workspace(&[])?;
-        if let Some(errors) = self.build_errors(workspace.path())? {
-            sh_warn!("the project does not build, so every test run builds it: {errors}")?;
-            return Ok(None);
-        }
-        Ok(Some(workspace))
-    }
-
-    /// Builds a workspace and returns the compiler errors, if any. If the project denies
-    /// warnings, the warnings are errors. A workspace starts from a build without such warnings,
-    /// so only the files that this build compiles can warn.
-    fn build_errors(&self, workspace: &Path) -> Result<Option<String>> {
-        // The lint step can fail where the compiler succeeds, and it does not change the tests.
-        let output = self
-            .forge_command(workspace, &self.args.seed[0])
-            .args(["build", "--no-lint"])
-            .output()
-            .wrap_err("failed to build generated tests")?;
-        if !output.status.success() {
-            return Ok(Some(stderr(&output)));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.find("Warning (").filter(|_| self.config.deny.warnings()).map(|start| {
-            format!("the project denies compiler warnings: {}", shorten(&stdout[start..]))
-        }))
-    }
-
     /// Runs one agent session in its own copy of the project, then runs the tests that it wrote.
     fn run_agent(&self, id: usize, inputs: &AgentInputs) -> Result<Session> {
         let args = self.args;
@@ -820,7 +798,7 @@ impl Campaign<'_> {
             fs::remove_dir_all(&cache)?;
         }
         fs::create_dir_all(&cache)?;
-        let workspace = self.workspace(&[])?;
+        let workspace = self.sandbox.workspace(&[])?;
         let out = self.generated_tests.join(format!("agent-{id}"));
         let out_dir = workspace.path().join(&out);
         ensure_inside(workspace.path(), &out_dir, &out)?;
@@ -880,8 +858,8 @@ impl Campaign<'_> {
             return Ok(session);
         }
 
-        let workspace = self.workspace(files)?;
-        let run = match self.build_errors(workspace.path())? {
+        let workspace = self.sandbox.workspace(files)?;
+        let run = match self.sandbox.build_errors(workspace.path())? {
             None => self.run_tests(workspace.path(), files)?,
             // A file that does not compile, such as one that the agent was writing at the
             // timeout, must not hide the other tests. Each file that no other file imports then
@@ -900,8 +878,8 @@ impl Campaign<'_> {
                         .filter(|file| file.path == root.path || imported.contains(&file.path))
                         .cloned()
                         .collect::<Vec<_>>();
-                    let workspace = self.workspace(&group)?;
-                    if let Some(errors) = self.build_errors(workspace.path())? {
+                    let workspace = self.sandbox.workspace(&group)?;
+                    if let Some(errors) = self.sandbox.build_errors(workspace.path())? {
                         let paths = group.into_iter().map(|file| file.path).collect();
                         session.rejected.push(Rejected { agent: id, paths, reason: errors });
                         continue;
@@ -998,88 +976,12 @@ impl Campaign<'_> {
         Ok(run)
     }
 
-    /// Copies the project and the shared build output into a temporary workspace and adds the
-    /// files. The workspace has no generated tests of the project.
-    fn workspace(&self, files: &[TestFile]) -> Result<TempDir> {
-        let config = self.config;
-        let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
-        let dependencies = config
-            .libs
-            .iter()
-            .map(|lib| lib.as_path())
-            .chain(["node_modules".as_ref(), "dependencies".as_ref()])
-            .map(|path| config.root.join(path))
-            .collect::<Vec<_>>();
-        let skipped = [
-            config.out.clone(),
-            config.cache_path.clone(),
-            config.root.join(&self.generated_tests),
-        ];
-        copy_project_tree(config, workspace.path(), Path::new(""), &dependencies, &skipped)?;
-        // Internal runs see the project's resolved config, including inherited `extends` values,
-        // absolute paths, and environment overrides, without reading files outside the workspace.
-        let mut rebased = workspace::rebase_config_paths(config, workspace.path());
-        rebased.extends = None;
-        // Foundry turns the compiler cache off when it denies warnings, so a workspace builds with
-        // `deny = "never"`, and `Campaign::build_errors` checks the warnings instead.
-        rebased.deny = DenyLevel::Never;
-        // With dynamic test linking, every new source file makes the compiler rebuild all files, so
-        // a workspace compiles without it. It changes how tests deploy contracts, not what they
-        // assert.
-        rebased.dynamic_test_linking = false;
-        // Dependency entries link to the project's entries, and the compiler resolves links before
-        // it checks the allowed paths. A source that the compiler reads itself, such as an import
-        // that climbs above the root into a nested library, must stay readable.
-        rebased.allow_paths.extend(
-            dependencies
-                .iter()
-                .filter(|path| path.is_dir())
-                .filter_map(|path| canonicalize_path(path).ok()),
-        );
-        let mut toml = rebased.to_string_pretty()?.parse::<DocumentMut>()?;
-        // Inline config may name the project's other profiles, so they must still exist. The TOML
-        // writer quotes names such as `""` or `a.b` that are not bare keys.
-        let profiles = toml[Config::PROFILE_SECTION]
-            .as_table_mut()
-            .expect("the resolved config has a profile table");
-        for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
-            profiles.entry(profile.as_str().as_str()).or_insert_with(toml_edit::table);
-        }
-        fs::write(workspace.path().join(Config::FILE_NAME), toml.to_string())?;
-        // Remappings are already resolved and rebased in the workspace config. The Soldeer lock
-        // goes too: `forge build` then hashes each Soldeer dependency to check it, and the hash
-        // panics when the dependency is a link, as in a workspace.
-        for file in ["remappings.txt", "soldeer.lock"] {
-            let path = workspace.path().join(file);
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-        }
-        if let Some(build) = &self.build_cache {
-            copy_build_output(config, build.path(), workspace.path())?;
-        }
-        for file in files {
-            let path = workspace.path().join(&file.path);
-            ensure_inside(workspace.path(), &path, &file.path)?;
-            fs::create_dir_all(path.parent().expect("test path has a parent"))?;
-            fs::write(path, &file.content)?;
-        }
-        Ok(workspace)
-    }
-
     /// Returns a Forge command for one seed. Each seed persists fuzz and invariant failures in
     /// its own directory, so a counterexample found with one seed is not replayed with another.
     fn forge_command(&self, workspace: &Path, seed: &U256) -> Command {
         let seed_dir = seed_dir(self.config, workspace, seed);
-        let mut command = Command::new(&self.forge);
-        // A workspace has its own resolved `foundry.toml`, so the command needs only the selected
-        // profile from the environment. Generated tests cannot read other variables.
+        let mut command = self.sandbox.command(workspace);
         command
-            .current_dir(workspace)
-            .env_clear()
-            .envs(PASSED_ENV.iter().filter_map(|key| Some((key, std::env::var_os(key)?))))
-            .env("HOME", self.home.path())
-            .env("FOUNDRY_PROFILE", self.config.profile.as_str().as_str())
             .env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"))
             .env("FOUNDRY_FUZZ_FAILURE_PERSIST_DIR", seed_dir.join("fuzz"))
             .env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", seed_dir.join("invariant"))
@@ -1148,7 +1050,7 @@ impl Campaign<'_> {
             fs::remove_dir_all(&cache)?;
         }
         fs::create_dir_all(&cache)?;
-        let workspace = self.workspace(&group_files(sessions, group))?;
+        let workspace = self.sandbox.workspace(&group_files(sessions, group))?;
         let prompt_path = cache.join("prompt.md");
         let group_path = cache.join("group.json");
         let verdict_path = cache.join("verdict.json");
@@ -1219,6 +1121,136 @@ impl Campaign<'_> {
         let error = (!errors.is_empty())
             .then(|| format!("{}: see {}", errors.join("; "), log_display.display()));
         Ok(Verification { judgment, error, usage })
+    }
+}
+
+impl<'a> Sandbox<'a> {
+    /// Returns a sandbox for the project of `config`, whose workspaces leave out the `skipped`
+    /// project paths.
+    pub(crate) fn new(config: &'a Config, skipped: Vec<PathBuf>) -> Result<Self> {
+        let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
+        let home = tempfile::Builder::new().prefix("forge-properties-home-").tempdir()?;
+        if let Some(svm) = Solc::svm_home().filter(|svm| svm.is_dir()) {
+            workspace::symlink_entry(
+                &svm,
+                &home.path().join(".svm"),
+                fs::metadata(&svm)?.file_type(),
+            )?;
+        }
+        Ok(Self { config, forge, skipped, build_cache: None, home })
+    }
+
+    /// Builds the project once in a workspace whose build output later workspaces copy, so a
+    /// test run compiles only the files that it adds. Returns the compiler errors of a project
+    /// that does not build; it gets no shared output, and each test run builds it in full.
+    pub(crate) fn build(&mut self) -> Result<Option<String>> {
+        let workspace = self.workspace(&[])?;
+        if let Some(errors) = self.build_errors(workspace.path())? {
+            return Ok(Some(errors));
+        }
+        self.build_cache = Some(workspace);
+        Ok(None)
+    }
+
+    /// Builds a workspace and returns the compiler errors, if any. If the project denies
+    /// warnings, the warnings are errors. A workspace starts from a build without such warnings,
+    /// so only the files that this build compiles can warn.
+    pub(crate) fn build_errors(&self, workspace: &Path) -> Result<Option<String>> {
+        // The lint step can fail where the compiler succeeds, and it does not change the tests.
+        let output = self
+            .command(workspace)
+            .args(["build", "--no-lint"])
+            .output()
+            .wrap_err("failed to build generated tests")?;
+        if !output.status.success() {
+            return Ok(Some(stderr(&output)));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.find("Warning (").filter(|_| self.config.deny.warnings()).map(|start| {
+            format!("the project denies compiler warnings: {}", shorten(&stdout[start..]))
+        }))
+    }
+
+    /// Copies the project and the shared build output into a temporary workspace and adds the
+    /// files.
+    pub(crate) fn workspace(&self, files: &[TestFile]) -> Result<TempDir> {
+        let config = self.config;
+        let workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
+        let dependencies = config
+            .libs
+            .iter()
+            .map(|lib| lib.as_path())
+            .chain(["node_modules".as_ref(), "dependencies".as_ref()])
+            .map(|path| config.root.join(path))
+            .collect::<Vec<_>>();
+        let skipped = [config.out.clone(), config.cache_path.clone()]
+            .into_iter()
+            .chain(self.skipped.iter().cloned())
+            .collect::<Vec<_>>();
+        copy_project_tree(config, workspace.path(), Path::new(""), &dependencies, &skipped)?;
+        // Internal runs see the project's resolved config, including inherited `extends` values,
+        // absolute paths, and environment overrides, without reading files outside the workspace.
+        let mut rebased = workspace::rebase_config_paths(config, workspace.path());
+        rebased.extends = None;
+        // Foundry turns the compiler cache off when it denies warnings, so a workspace builds with
+        // `deny = "never"`, and `Sandbox::build_errors` checks the warnings instead.
+        rebased.deny = DenyLevel::Never;
+        // With dynamic test linking, every new source file makes the compiler rebuild all files, so
+        // a workspace compiles without it. It changes how tests deploy contracts, not what they
+        // assert.
+        rebased.dynamic_test_linking = false;
+        // Dependency entries link to the project's entries, and the compiler resolves links before
+        // it checks the allowed paths. A source that the compiler reads itself, such as an import
+        // that climbs above the root into a nested library, must stay readable.
+        rebased.allow_paths.extend(
+            dependencies
+                .iter()
+                .filter(|path| path.is_dir())
+                .filter_map(|path| canonicalize_path(path).ok()),
+        );
+        let mut toml = rebased.to_string_pretty()?.parse::<DocumentMut>()?;
+        // Inline config may name the project's other profiles, so they must still exist. The TOML
+        // writer quotes names such as `""` or `a.b` that are not bare keys.
+        let profiles = toml[Config::PROFILE_SECTION]
+            .as_table_mut()
+            .expect("the resolved config has a profile table");
+        for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
+            profiles.entry(profile.as_str().as_str()).or_insert_with(toml_edit::table);
+        }
+        fs::write(workspace.path().join(Config::FILE_NAME), toml.to_string())?;
+        // Remappings are already resolved and rebased in the workspace config. The Soldeer lock
+        // goes too: `forge build` then hashes each Soldeer dependency to check it, and the hash
+        // panics when the dependency is a link, as in a workspace.
+        for file in ["remappings.txt", "soldeer.lock"] {
+            let path = workspace.path().join(file);
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
+        if let Some(build) = &self.build_cache {
+            copy_build_output(config, build.path(), workspace.path())?;
+        }
+        for file in files {
+            let path = workspace.path().join(&file.path);
+            ensure_inside(workspace.path(), &path, &file.path)?;
+            fs::create_dir_all(path.parent().expect("test path has a parent"))?;
+            fs::write(path, &file.content)?;
+        }
+        Ok(workspace)
+    }
+
+    /// Returns a Forge command in a workspace. A workspace has its own resolved `foundry.toml`, so
+    /// the command needs only the selected profile from the environment. Generated tests cannot
+    /// read other variables.
+    pub(crate) fn command(&self, workspace: &Path) -> Command {
+        let mut command = Command::new(&self.forge);
+        command
+            .current_dir(workspace)
+            .env_clear()
+            .envs(PASSED_ENV.iter().filter_map(|key| Some((key, std::env::var_os(key)?))))
+            .env("HOME", self.home.path())
+            .env("FOUNDRY_PROFILE", self.config.profile.as_str().as_str());
+        command
     }
 }
 
@@ -1619,7 +1651,7 @@ fn test_results(output: &Output) -> Result<Vec<(RerunFailure, TestStatus, Option
 }
 
 /// Returns every test result in Forge's JSON output with its contract and test name.
-fn suite_results(output: &Output) -> Result<Vec<(String, String, TestResult)>> {
+pub(crate) fn suite_results(output: &Output) -> Result<Vec<(String, String, TestResult)>> {
     let suites = serde_json::from_slice::<serde_json::Value>(&output.stdout)
         .wrap_err_with(|| format!("invalid Forge JSON: {}", stderr(output)))?;
     let suites = suites.as_object().ok_or_else(|| eyre!("Forge JSON is not an object"))?;
@@ -1663,7 +1695,7 @@ fn test_path(test: &RerunFailure) -> PathBuf {
 
 /// Returns whether NatSpec inline config sets the setting at `path` in any profile, in dotted or
 /// inline-table form.
-fn has_inline_setting(source: &str, path: &[&str]) -> bool {
+pub(crate) fn has_inline_setting(source: &str, path: &[&str]) -> bool {
     source.lines().filter_map(|line| line.split_once("forge-config:")).any(|(_, setting)| {
         let setting = setting.split_once("*/").map_or(setting, |(setting, _)| setting);
         setting.trim().parse::<toml_edit::DocumentMut>().is_ok_and(|config| {
