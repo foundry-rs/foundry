@@ -58,14 +58,17 @@ contract ExecuteTransactionStateTest is Test {
     }
 
     // An underfunded sender fails validation without a nonce increment, also inside an isolated
-    // call.
+    // call. As on master, the sender only needs to afford the value, not the gas.
     function test_execute_underfunded_sender_keeps_nonce() public {
         vm.chainId(1);
-        vm.deal(SENDER, 0);
+        vm.deal(SENDER, 16);
         try this.executeRawTx() {
             revert("expected lack of funds");
         } catch {}
         assertEq(vm.getNonce(SENDER), 0);
+        vm.deal(SENDER, 17);
+        this.executeRawTx();
+        assertEq(vm.getNonce(SENDER), 1);
     }
 
     function transactUsdtTransfer() external {
@@ -74,16 +77,21 @@ contract ExecuteTransactionStateTest is Test {
     }
 
     // A replayed transaction from an underfunded sender fails validation without a nonce
-    // increment, also inside an isolated call.
+    // increment, also inside an isolated call. A funded sender pays the fees, as in the
+    // transaction the call runs in.
     function test_transact_fork_underfunded_sender_keeps_nonce() public {
         vm.createSelectFork("mainnet", 16260609);
         address sender = 0x2e09BB78B3D64d98Da44D1C776fa77dcd133ED54;
+        uint256 balance = sender.balance;
         vm.deal(sender, 0);
         uint64 nonce = vm.getNonce(sender);
         try this.transactUsdtTransfer() {
             revert("expected lack of funds");
         } catch {}
         assertEq(vm.getNonce(sender), nonce);
+        vm.deal(sender, balance);
+        this.transactUsdtTransfer();
+        assertLt(sender.balance, balance);
     }
 
     function executeCreateThenRevert() external {

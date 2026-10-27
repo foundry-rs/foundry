@@ -17,6 +17,7 @@ use evm2::{
     bytecode::Bytecode,
     evm::{DbResult, State, StorageSlotHandle},
     interpreter::Host,
+    registry::HandlerError,
 };
 use foundry_common::{
     TransactionMaybeSigned,
@@ -28,7 +29,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    backend::RevertStateSnapshotAction,
+    backend::{RevertStateSnapshotAction, transaction_error},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -1451,6 +1452,7 @@ impl Cheatcode for executeTransactionCall {
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let created_address = tx.kind().is_create().then(|| sender.create(tx.nonce()));
         let access_list = tx.access_list().cloned();
+        let value = tx.value();
         let tx = FEN::evm_tx(tx, sender, TxPayload::Signed)?;
 
         // Execute in the running environment with realistic validation: no base fee or fee
@@ -1461,12 +1463,17 @@ impl Cheatcode for executeTransactionCall {
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
         env.set_feature(EvmFeatures::NONCE_CHECK, true);
-        // Inside an isolated call, the sender's balance is checked as in the transaction the
-        // call runs in.
-        if let Some(outer) = &ccx.state.isolation_env {
-            for feature in [EvmFeatures::BALANCE_CHECK, EvmFeatures::BALANCE_TOP_UP] {
-                env.set_feature(feature, outer.version.features.contains(feature));
-            }
+        // As on master, which zeroes the gas price, the sender only needs to afford the value.
+        env.set_feature(EvmFeatures::BALANCE_CHECK, false);
+        env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
+        let balance = ccx
+            .evm
+            .state_mut()
+            .account_info_untracked(&sender)?
+            .map_or(U256::ZERO, |account| account.balance);
+        if balance < value {
+            let err = transaction_error(HandlerError::InsufficientFunds { fee: value, balance });
+            return Err(fmt_err!("transaction execution failed: {err}"));
         }
         // The nested transaction validates with a chain ID `vm.chainId` set in the running one.
         if let Some(chain_id) =

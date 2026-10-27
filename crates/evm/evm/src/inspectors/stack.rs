@@ -15,6 +15,7 @@ use evm2::{
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
     interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
+    registry::HandlerError,
 };
 use foundry_cheatcodes::{
     CheatcodeAnalysis, CheatcodesBackend, CheatcodesExecutor, Wallets, message_result,
@@ -457,8 +458,6 @@ pub struct InspectorStackInner {
     env_handoff_ended: bool,
     /// Accounts the running top-level transaction created, directly or through isolated calls.
     tx_created: AddressSet,
-    /// Accounts the running top-level transaction loaded when an isolated static call cooled it.
-    static_cooled: AddressSet,
     /// Existing accounts the running `executeTransaction` transaction self-destructed, captured
     /// when its root frame ends, before the transaction destroys them.
     executed_destructs: Option<AddressMap<DestructedAccount>>,
@@ -1377,7 +1376,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             inner: &mut *self.inner,
             backend: Some(&mut *backend),
         });
-        let executed = child.transact(&tx).ok().map(|executed| executed.detach());
+        let executed = child.transact(&tx).map(|executed| executed.detach());
         let mut child = release_inspector(child);
         self.inner.isolated_source_fork = previous_source_fork;
         backend.backend_mut().restore_persistent_warmth(persistent_warmth);
@@ -1399,9 +1398,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheats.root_call_target = root_call_target;
         }
 
-        let Some(executed) = executed else {
+        let executed = match executed {
+            Ok(executed) => executed,
+            // As on master, an underfunded create fails in its frame, without a nonce increment,
+            // after its transaction paid the intrinsic gas.
+            Err(HandlerError::InsufficientFunds { .. }) if is_create => {
+                let mut outcome = not_executed(Bytes::new());
+                if outcome.gas.spend(intrinsic.max(floor)).is_err() {
+                    outcome.gas.spend_all();
+                }
+                return outcome;
+            }
             // Should we match, encode and propagate error as a revert reason?
-            return not_executed(Bytes::new());
+            Err(_) => return not_executed(Bytes::new()),
         };
         let mut result = executed.result;
         if skip_floor {
@@ -1451,16 +1460,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 || warm_accessed(evm.state_mut(), &executed.pending_state, &AddressSet::default())
                     .is_ok()
         } else {
-            // As on master, accounts a static call cooled stay cold if the running transaction
-            // still holds them cold. Accounts it no longer holds, such as after a
-            // snapshot revert, are imported warm.
-            // After a failure, every account the running transaction holds cold stays cold.
+            // As on master, accounts the running transaction holds cold, such as after `vm.cool`
+            // or a static call cooled them, stay cold. Accounts it no longer holds, such as after
+            // a snapshot revert, are imported warm.
             let state = evm.state_mut();
-            let cooled = state
-                .loaded_accounts()
-                .map(|(address, _)| *address)
-                .filter(|address| !result.status || self.inner.static_cooled.contains(address))
-                .collect::<Vec<_>>();
+            let cooled = state.loaded_accounts().map(|(address, _)| *address).collect::<Vec<_>>();
             let cold = cooled
                 .into_iter()
                 .filter(|address| !state.account(address).is_ok_and(|account| account.is_warm()))
@@ -1531,7 +1535,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
         self.inner.tx_created.clear();
-        self.inner.static_cooled.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             // Transactions run from the test or script carry no access list.
             cheatcodes.tx_warm_addresses = tx_warm_addresses::<FEN>(&evm_env(interp.host()), None);
@@ -2268,7 +2271,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             })
             .unwrap_or_default();
         cool_loaded(state);
-        self.inner.static_cooled.extend(state.loaded_accounts().map(|(address, _)| *address));
         for (address, slots) in arbitrary {
             state.set_account_warm(&address, true);
             for key in slots {

@@ -881,8 +881,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Cheatcodes running in the transaction see the throwaway backend with the target fork active
     /// at the transaction's block; their changes to it are discarded.
     ///
-    /// `isolation_env` is the environment of the transaction an isolated call runs in, whose
-    /// sender balance checks apply on the active fork instead of the isolated call's.
+    /// `isolation_env` is the environment of the transaction an isolated call runs in, whose fee
+    /// charge and sender balance checks apply on the active fork instead of the isolated call's.
     pub fn prepare_transact(
         &self,
         id: Option<LocalForkId>,
@@ -910,7 +910,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let mut env = if active {
             let mut env = evm_env(evm);
             if let Some(outer) = isolation_env {
-                for feature in [EvmFeatures::BALANCE_CHECK, EvmFeatures::BALANCE_TOP_UP] {
+                for feature in [
+                    EvmFeatures::FEE_CHARGE,
+                    EvmFeatures::BALANCE_CHECK,
+                    EvmFeatures::BALANCE_TOP_UP,
+                ] {
                     env.set_feature(feature, outer.version.features.contains(feature));
                 }
             }

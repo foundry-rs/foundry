@@ -1627,8 +1627,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // know the target chain supports EIP-1559.
                 if !is_static(call) {
                     let evm = interp.host();
+                    // Like master's journal load, reading the nonce warms the broadcaster.
                     let nonce = match evm.state_mut().account(&new_origin) {
-                        Ok(account) => account.nonce(),
+                        Ok(mut account) => {
+                            account.warm();
+                            account.nonce()
+                        }
                         Err(err) => {
                             return Some(message_result(
                                 call,
@@ -2717,8 +2721,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && curr_depth >= broadcast.depth
             && input.caller == broadcast.original_caller
         {
+            // Like master's journal load, reading the nonce warms the broadcaster.
             let nonce = match interp.host().state_mut().account(&broadcast.new_origin) {
-                Ok(account) => account.nonce(),
+                Ok(mut account) => {
+                    account.warm();
+                    account.nonce()
+                }
                 Err(err) => {
                     return Some(message_result(input, InstrStop::Revert, Error::encode(err)));
                 }

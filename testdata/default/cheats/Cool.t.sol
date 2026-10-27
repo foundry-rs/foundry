@@ -172,6 +172,16 @@ contract CoolPersistenceTest is Test {
         assertGe(balanceGas(target), 2600);
     }
 
+    // Like master's journal load, a broadcast call warms the broadcaster.
+    function testCool_broadcastWarmsBroadcaster() public {
+        address broadcaster = address(0xb0b);
+        vm.startBroadcast(broadcaster);
+        vm.cool(broadcaster);
+        preexisting.set(3);
+        vm.stopBroadcast();
+        assertLt(balanceGas(broadcaster), 2600);
+    }
+
     // A transaction run with `vm.executeTransaction` keeps the coinbase it started with warm.
     function testCool_keepsExecutedTransactionCoinbaseWarm() public {
         CoolCoinbase target = new CoolCoinbase();
@@ -245,6 +255,12 @@ contract CoolCoinbase is Test {
 }
 
 contract CoolProbe is Test {
+    uint256 public touched;
+
+    function touch(address target) external {
+        touched = target.balance;
+    }
+
     function touchAndRevert(address target) external view {
         require(target.balance == 0xdeadbeef);
     }
@@ -280,5 +296,16 @@ contract CoolPersistenceIsolatedTest is CoolPersistenceTest {
         assertLt(probe.coolAndMeasure(address(0xbeef), new Vm.AccessListItem[](0)), 2600);
         vm.accessList(access);
         assertLt(probe.coolAndMeasure(address(0xbeef), replacement), 2600);
+    }
+
+    // As on master, an account the running transaction holds cold stays cold after a successful
+    // isolated call touched it.
+    function testCool_staysColdAfterIsolatedCall() public {
+        CoolProbe probe = new CoolProbe();
+        address target = address(preexisting);
+        balanceGas(target);
+        vm.cool(target);
+        probe.touch(target);
+        assertGe(balanceGas(target), 2600);
     }
 }
