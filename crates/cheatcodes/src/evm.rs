@@ -498,6 +498,7 @@ impl Cheatcode for recordLogsCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
         state.recorded_logs = Some(Default::default());
+        state.recorded_logs_generation += 1;
         Ok(Default::default())
     }
 }
@@ -505,6 +506,7 @@ impl Cheatcode for recordLogsCall {
 impl Cheatcode for getRecordedLogsCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
+        state.recorded_logs_generation += 1;
         Ok(state.recorded_logs.replace(Default::default()).unwrap_or_default().abi_encode())
     }
 }
@@ -512,6 +514,7 @@ impl Cheatcode for getRecordedLogsCall {
 impl Cheatcode for getRecordedLogsJsonCall {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self {} = self;
+        state.recorded_logs_generation += 1;
         let logs = state.recorded_logs.replace(Default::default()).unwrap_or_default();
         let json_logs: Vec<_> = logs
             .into_iter()
