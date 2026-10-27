@@ -144,9 +144,12 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
     // Preserve workspace library links, but resolve aliases copied into independent files.
     let lexical = normalize_path(&root.join(path));
+    // Both sides of the containment check must use the resolved spelling of the workspace, such
+    // as `/private/var` for `/var` on macOS.
     if let Ok(rel) = lexical.strip_prefix(normalize_path(root))
         && temp_path.join(rel).exists()
-        && !normalize_existing_ancestor(&temp_path.join(rel)).starts_with(temp_path)
+        && !normalize_existing_ancestor(&temp_path.join(rel))
+            .starts_with(normalize_existing_ancestor(temp_path))
     {
         return temp_path.join(rel);
     }
@@ -1028,7 +1031,11 @@ mod tests {
     fn test_rebase_copied_alias_and_linked_library() {
         let temp = TempDir::new().unwrap();
         let root = normalize_existing_ancestor(&temp.path().join("project"));
-        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
+        // The workspace is reached through a link, as a temporary directory can be on macOS.
+        let real_workspace = temp.path().join("real-workspace");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&real_workspace).unwrap();
+        symlink_dir(&real_workspace, &workspace).unwrap();
         create_test_dir_structure(&root, &["src/Real.sol", "lib/example/Lib.sol"]);
         symlink_file("Real.sol", root.join("src/Alias.sol")).unwrap();
         let config = Config { root: root.clone(), ..Default::default() }.sanitized();
