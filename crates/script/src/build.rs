@@ -18,7 +18,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    erc7201, external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path, namespaced_storage,
     provider::ProviderBuilder,
 };
 use foundry_compilers::{
@@ -169,8 +169,10 @@ impl LinkedBuildData {
             Some(&libraries),
         )?;
 
-        let storage_layouts =
-            erc7201::project_storage_layouts(&mut build_data.output, &build_data.project_root);
+        let storage_layouts = namespaced_storage::project_storage_layouts(
+            &mut build_data.output,
+            &build_data.project_root,
+        );
         let linked_contracts = build_data.get_linker().get_linked_artifacts(&libraries)?;
         let known_contracts = ContractsByArtifactBuilder::new(
             linked_contracts.iter().map(|(id, artifact)| (id.clone(), artifact.into())),

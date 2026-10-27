@@ -4,7 +4,7 @@
 //! `@custom:storage-location erc7201:<id>` are computed with Solar and appended to it, so storage
 //! decoding labels namespaced fields as `<id>.<field>`.
 
-use alloy_primitives::{U256, keccak256};
+use alloy_primitives::U256;
 use eyre::Result;
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -82,15 +82,17 @@ pub fn extend_storage_layouts(
 /// Appends the ERC-7201 namespaces of `contract` and its bases to its storage layout.
 ///
 /// Namespaced fields are labeled `<namespace>.<field>`. Malformed annotations, duplicate namespace
-/// roots, conflicting type definitions, and errors emitted while computing types are errors.
+/// roots, and errors emitted while computing types are errors, in which case `layout` is unchanged.
 pub fn extend_storage_layout(
     layout: &mut StorageLayout,
     gcx: Gcx<'_>,
     root: &Path,
     contract: hir::ContractId,
 ) -> Result<()> {
+    // Only errors emitted for this contract count; earlier ones may come from unrelated sources.
+    let errors = gcx.sess.dcx.err_count();
     let namespaces = collect_storage_layouts(gcx, root, contract)?;
-    if gcx.sess.dcx.has_errors().is_err() {
+    if gcx.sess.dcx.err_count() > errors {
         return Err(solar_error(gcx.sess));
     }
     merge_storage_namespaces(layout, namespaces)
@@ -99,14 +101,12 @@ pub fn extend_storage_layout(
 /// Lowers the parsed sources to HIR unless that has already happened.
 ///
 /// Only the HIR and the types reachable from namespaced structs are needed, so this does not run
-/// full semantic analysis; solc has already validated the sources.
+/// full semantic analysis; solc has already validated the sources. Diagnostics emitted while
+/// lowering unrelated sources are not errors here.
 pub fn lower(compiler: &mut CompilerRef<'_>) -> Result<()> {
     if compiler.gcx().stage().is_none_or(|stage| stage.is_parsing())
         && !matches!(compiler.lower_asts(), Ok(ControlFlow::Continue(())))
     {
-        return Err(solar_error(compiler.sess()));
-    }
-    if compiler.sess().dcx.has_errors().is_err() {
         return Err(solar_error(compiler.sess()));
     }
     Ok(())
@@ -116,7 +116,7 @@ pub fn lower(compiler: &mut CompilerRef<'_>) -> Result<()> {
 ///
 /// Returns `None` if no source declares an ERC-7201 namespace.
 pub fn parse_standard_json(sources: &Sources, remappings: &[Remapping]) -> Option<Compiler> {
-    if !sources.values().any(|source| source.content.contains(ANNOTATION)) {
+    if !sources.values().any(|source| has_annotation(&source.content)) {
         return None;
     }
     let source_map = Arc::new(SourceMap::empty());
@@ -202,7 +202,12 @@ impl FileLoader for NoFileLoader {
 
 /// Returns whether any parsed source mentions an ERC-7201 storage location.
 pub fn has_annotations(compiler: &Compiler) -> bool {
-    compiler.sess().source_map().files().iter().any(|file| file.src.contains(ANNOTATION))
+    compiler.sess().source_map().files().iter().any(|file| has_annotation(&file.src))
+}
+
+/// Returns whether `source` mentions an ERC-7201 storage location.
+fn has_annotation(source: &str) -> bool {
+    source.contains(ANNOTATION)
 }
 
 /// Maps `(source, name)` to contracts, with sources relative to `root` and slash-separated.
@@ -246,7 +251,7 @@ fn collect_storage_layouts(
                 _ => gcx.contract_fully_qualified_name(base).to_string(),
             };
             let declaration = format!("{contract_name}.{}", strukt.name);
-            let root = erc7201_root(namespace);
+            let root = crate::erc7201(namespace).into();
             let mut output = gcx.storage_layout_for_struct(id, root);
             scope_layout(&mut output, namespace, &contract_name);
             namespaces.push(StorageNamespace {
@@ -293,12 +298,6 @@ fn parse_namespace(annotation: &str) -> Result<Option<&str>> {
     Ok(Some(id))
 }
 
-/// Computes `keccak256(abi.encode(uint256(keccak256(id)) - 1)) & ~uint256(0xff)`.
-fn erc7201_root(id: &str) -> U256 {
-    let inner = U256::from_be_bytes(keccak256(id.as_bytes()).0).wrapping_sub(U256::from(1));
-    U256::from_be_bytes(keccak256(inner.to_be_bytes::<32>()).0) & !U256::from(0xff)
-}
-
 /// Scopes type IDs to `namespace` and attributes every entry to `contract`.
 fn scope_layout(output: &mut StorageLayoutOutput, namespace: &str, contract: &str) {
     let scope = |id: &mut String| *id = format!("erc7201({namespace})::{id}");
@@ -323,31 +322,25 @@ fn scope_layout(output: &mut StorageLayoutOutput, namespace: &str, contract: &st
         .collect();
 }
 
-/// Merges namespaces without allowing duplicate declarations or conflicting type definitions.
+/// Merges namespaces, rejecting duplicate declarations before `layout` is modified.
+///
+/// Type IDs are scoped to their namespace, so they can't collide with each other or with solc's.
 fn merge_storage_namespaces(
     layout: &mut StorageLayout,
     namespaces: Vec<StorageNamespace>,
 ) -> Result<()> {
     let mut declarations = BTreeMap::new();
-    for namespace in namespaces {
-        if let Some(previous) = declarations.insert(namespace.root, namespace.declaration.clone()) {
+    for namespace in &namespaces {
+        if let Some(previous) = declarations.insert(namespace.root, &namespace.declaration) {
             eyre::bail!(
                 "Duplicate ERC-7201 namespace `{}` in `{previous}` and `{}`",
                 namespace.id,
                 namespace.declaration
             );
         }
-        for (id, ty) in namespace.layout.types {
-            if let Some(existing) = layout.types.get(&id) {
-                eyre::ensure!(
-                    existing == &ty,
-                    "Conflicting storage type `{id}` in namespace `{}`",
-                    namespace.id
-                );
-            } else {
-                layout.types.insert(id, ty);
-            }
-        }
+    }
+    for namespace in namespaces {
+        layout.types.extend(namespace.layout.types);
         for mut entry in namespace.layout.storage {
             entry.label = format!("{}.{}", namespace.id, entry.label);
             layout.storage.push(entry);
@@ -560,16 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn root_and_annotations() {
-        assert_eq!(
-            erc7201_root("openzeppelin.storage.Initializable").to_string(),
-            U256::from_str_radix(
-                "f0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00",
-                16
-            )
-            .unwrap()
-            .to_string()
-        );
+    fn annotations() {
         assert_eq!(parse_namespace(" erc7201:example.main \n").unwrap(), Some("example.main"));
         assert_eq!(parse_namespace("erc9999:example.main").unwrap(), None);
         for invalid in ["erc7201", "erc7201:", "erc7201:two words"] {
@@ -578,40 +562,40 @@ mod tests {
     }
 
     #[test]
-    fn namespace_type_collisions() {
-        let layout: StorageLayout = serde_json::from_value(serde_json::json!({
-            "storage": [],
-            "types": {"erc7201(example)::t_uint256": {
-                "encoding": "inplace", "label": "uint256", "numberOfBytes": "32"
-            }}
-        }))
-        .unwrap();
-        let namespace = StorageNamespace {
-            id: "example".into(),
-            declaration: "test.sol:C.Data".into(),
-            root: U256::ZERO,
-            layout: layout.clone(),
+    fn duplicate_namespaces_leave_layout_unchanged() {
+        let namespace = |id: &str, root: u64| StorageNamespace {
+            id: id.into(),
+            declaration: format!("test.sol:C.{id}"),
+            root: U256::from(root),
+            layout: serde_json::from_value(serde_json::json!({
+                "storage": [{
+                    "astId": 1, "contract": "test.sol:C", "label": "x", "offset": 0,
+                    "slot": root.to_string(), "type": format!("erc7201({id})::t_uint256")
+                }],
+                "types": {format!("erc7201({id})::t_uint256"): {
+                    "encoding": "inplace", "label": "uint256", "numberOfBytes": "32"
+                }}
+            }))
+            .unwrap(),
         };
-        let mut merged = layout.clone();
-        merge_storage_namespaces(&mut merged, vec![namespace.clone()]).unwrap();
-        assert_eq!(merged, layout);
-
-        let mut conflicting = namespace.clone();
-        conflicting.layout.types.values_mut().next().unwrap().number_of_bytes = "16".into();
-        assert_eq!(
-            merge_storage_namespaces(&mut merged, vec![conflicting]).unwrap_err().to_string(),
-            "Conflicting storage type `erc7201(example)::t_uint256` in namespace `example`"
-        );
-        assert_eq!(merged, layout);
+        let mut layout = StorageLayout::default();
         assert_eq!(
             merge_storage_namespaces(
-                &mut StorageLayout::default(),
-                vec![namespace.clone(), namespace]
+                &mut layout,
+                vec![namespace("a", 1), namespace("b", 2), namespace("c", 1)]
             )
             .unwrap_err()
             .to_string(),
-            "Duplicate ERC-7201 namespace `example` in `test.sol:C.Data` and `test.sol:C.Data`"
+            "Duplicate ERC-7201 namespace `c` in `test.sol:C.a` and `test.sol:C.c`"
         );
+        assert_eq!(layout, StorageLayout::default());
+
+        merge_storage_namespaces(&mut layout, vec![namespace("a", 1), namespace("b", 2)]).unwrap();
+        assert_eq!(
+            layout.storage.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(),
+            ["a.x", "b.x"]
+        );
+        assert_eq!(layout.types.len(), 2);
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! ERC-7201 storage inspection through the CLI.
 
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
+
 #[forgetest]
 fn erc7201_storage_layout(prj: _, cmd: _) {
     prj.add_source(
@@ -97,4 +99,55 @@ fn erc7201_malformed_namespace(prj: _, cmd: _) {
 Error: ERC-7201 namespace must be nonempty and contain no whitespace
 
 "#]]);
+}
+
+// Namespaces of contracts whose sources weren't recompiled are still decoded in state diffs.
+#[forgetest]
+fn erc7201_state_diff_after_partial_recompile(prj: _, cmd: _) {
+    prj.update_config(|config| config.extra_output = vec![ContractOutputSelection::StorageLayout]);
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    /// @custom:storage-location erc7201:example.counter
+    struct CounterStorage { uint256 count; }
+
+    function increment() external {
+        CounterStorage storage $;
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.counter")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+        $.count += 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "../src/Counter.sol";
+
+interface Vm {
+    function startStateDiffRecording() external;
+    function getStateDiffJson() external returns (string memory);
+    function contains(string calldata subject, string calldata search) external returns (bool);
+}
+
+contract CounterTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testNamespaceLabel() public {
+        Counter counter = new Counter();
+        vm.startStateDiffRecording();
+        counter.increment();
+        require(vm.contains(vm.getStateDiffJson(), '"label":"example.counter.count"'));
+    }
+}
+"#,
+    );
+    prj.add_test("Other.t.sol", "contract OtherTest { function testOther() public {} }");
+    cmd.arg("test").assert_success();
+
+    // Only `Other.t.sol` is recompiled.
+    prj.add_test("Other.t.sol", "contract OtherTest { function testOther() public pure {} }");
+    cmd.forge_fuse().arg("test").assert_success();
 }

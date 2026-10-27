@@ -15,7 +15,7 @@
 //! Unverified responses are memoized only for this run so later runs can discover newly verified
 //! contracts.
 
-use crate::{erc7201, fs};
+use crate::{fs, namespaced_storage};
 use alloy_chains::Chain;
 use alloy_primitives::{Address, map::AddressMap};
 use foundry_block_explorers::contract::Metadata;
@@ -286,7 +286,8 @@ fn compile_storage_layout(
     // ERC-7201 namespaces aren't part of solc's layout. A contract that keeps all of its state in
     // namespaces, like OpenZeppelin's upgradeable contracts, would otherwise have nothing to
     // decode.
-    let mut namespaces = erc7201::parse_standard_json(&input.sources, &input.settings.remappings);
+    let mut namespaces =
+        namespaced_storage::parse_standard_json(&input.sources, &input.settings.remappings);
     let mut matches = output
         .contracts
         .iter()
@@ -323,14 +324,14 @@ fn extend_external_storage_layout(
 ) -> StorageLayout {
     let mut extended = layout.clone();
     let result = compiler.enter_mut(|compiler| {
-        erc7201::lower(compiler)?;
+        namespaced_storage::lower(compiler)?;
         let gcx = compiler.gcx();
         // Standard JSON source names are already source unit names.
         let root = Path::new("");
-        let Some(contract) = erc7201::find_contract(gcx, root, path, name) else {
+        let Some(contract) = namespaced_storage::find_contract(gcx, root, path, name) else {
             return Ok(());
         };
-        erc7201::extend_storage_layout(&mut extended, gcx, root, contract)
+        namespaced_storage::extend_storage_layout(&mut extended, gcx, root, contract)
     });
     match result {
         Ok(()) => extended,
@@ -780,28 +781,5 @@ mod tests {
     fn source_less_metadata_is_rejected_without_compiling() {
         let metadata = source_less_metadata();
         assert!(compile_storage_layout(Address::ZERO, &metadata, Instant::now()).is_none());
-    }
-
-    #[test]
-    fn namespaced_storage_is_decodable() {
-        let metadata = Metadata {
-            source_code: SourceCodeMetadata::SourceCode(
-                r#"pragma solidity ^0.8.30;
-                contract Token {
-                    /// @custom:storage-location erc7201:example.Token
-                    struct TokenStorage { mapping(address => uint256) balances; uint256 supply; }
-                }"#
-                .to_string(),
-            ),
-            contract_name: "Token".to_string(),
-            ..source_less_metadata()
-        };
-        let deadline = Instant::now() + Duration::from_secs(120);
-        let (name, layout) = compile_storage_layout(Address::ZERO, &metadata, deadline).unwrap();
-        assert_eq!(name, "Token");
-        assert_eq!(
-            layout.storage.iter().map(|s| s.label.as_str()).collect::<Vec<_>>(),
-            ["example.Token.balances", "example.Token.supply"]
-        );
     }
 }

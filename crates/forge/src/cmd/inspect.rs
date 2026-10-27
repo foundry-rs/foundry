@@ -12,7 +12,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    erc7201, find_matching_contract_artifact, find_target_path, shell,
+    find_matching_contract_artifact, find_target_path, namespaced_storage, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -159,12 +159,18 @@ impl InspectArgs {
                 let mut layout =
                     artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
                 let compiler = output.parser_mut().solc_mut().compiler_mut();
-                if is_solidity_source(&target_path) && erc7201::has_annotations(compiler) {
+                if is_solidity_source(&target_path) && namespaced_storage::has_annotations(compiler)
+                {
                     compiler.enter_mut(|compiler| {
-                        erc7201::lower(compiler)?;
+                        namespaced_storage::lower(compiler)?;
                         let gcx = compiler.gcx();
                         let target = find_target_contract(&gcx.hir, &target_path, contract.name())?;
-                        erc7201::extend_storage_layout(&mut layout, gcx, project.root(), target)
+                        namespaced_storage::extend_storage_layout(
+                            &mut layout,
+                            gcx,
+                            project.root(),
+                            target,
+                        )
                     })?;
                 }
                 print_storage_layout(Some(&layout), "storage layout", wrap)?;
