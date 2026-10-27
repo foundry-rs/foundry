@@ -719,6 +719,15 @@ pub(crate) fn write_bundle(
     sources: &ContractSources,
     known_contracts: &ContractsByArtifact,
 ) -> Result<()> {
+    // The bundle copies the compiler's sources under their project paths, and they can differ
+    // from the files on disk, so a directory with files, such as the project root, could have its
+    // files replaced.
+    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        eyre::bail!(
+            "cannot write the SolDB bundle to {}: the directory is not empty",
+            dir.display()
+        );
+    }
     // One entry per deployed code, so code replaced at an address keeps its own source maps.
     let mut contracts = BTreeMap::<(Address, B256), CombinedJson>::new();
     let mut written_sources = HashSet::<PathBuf>::default();
@@ -1184,5 +1193,18 @@ mod tests {
         let trace = std::fs::read_to_string(dir.path().join("trace.json")).unwrap();
         let trace = serde_json::from_str::<TransactionTrace>(&trace).unwrap();
         assert_eq!(trace.steps.len(), 2);
+
+        // A second bundle would replace the files of the first, as it would a project's sources.
+        let (sources, arena, names) = executed_c();
+        let error = write_bundle(
+            dir.path(),
+            vec![arena],
+            Vec::new(),
+            &[names],
+            &sources,
+            &Default::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().ends_with("the directory is not empty"));
     }
 }
