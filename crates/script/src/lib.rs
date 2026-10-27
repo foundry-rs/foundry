@@ -1244,7 +1244,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.config.evm_version,
             self.config.hardfork,
             evm_env,
-            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            ExecutionSpecContext::local_or_script(fork_chain_id, fork_hardfork),
             None,
         );
     }
