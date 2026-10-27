@@ -2309,7 +2309,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         } else {
             self.persistent_write_snapshots.get(&snapshot_id).copied()
         };
-        // A snapshot of an earlier transaction holds none of this transaction's writes.
+        // A snapshot of an earlier transaction holds none of this transaction's writes. Under the
+        // inspector stack a failing frame reinstates the captured ledger instead; this covers the
+        // stackless executor.
         self.persistent_writes.truncate(len.unwrap_or_default());
     }
 
