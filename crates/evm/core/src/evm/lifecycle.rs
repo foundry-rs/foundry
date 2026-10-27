@@ -50,7 +50,7 @@ use evm2::{
         PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
     },
 };
-use std::{mem, sync::Arc};
+use std::{iter, mem, sync::Arc};
 
 /// Whether a lifecycle operation runs between transactions or inside one, such as from a
 /// cheatcode.
@@ -567,6 +567,39 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         }
     }
 
+    /// Takes the warmth of persistent accounts that contexts kept for the running transaction, so
+    /// that a nested transaction, such as an isolated call, resumes them cold in every context as
+    /// REVM's fresh journal did. Hand it back with [`Self::restore_persistent_warmth`] when the
+    /// nested transaction ends.
+    pub fn take_persistent_warmth(&mut self) -> Vec<(Option<U256>, AddressMap<HashSet<U256>>)> {
+        let ForkRegistry { local, forks, persistent, .. } = &mut self.forks;
+        let forks = forks.iter_mut().map(|(id, entry)| (Some(*id), &mut entry.context));
+        iter::once((None, local))
+            .chain(forks)
+            .map(|(id, context)| {
+                let (taken, kept) = mem::take(&mut context.warm)
+                    .into_iter()
+                    .partition::<AddressMap<_>, _>(|(address, _)| persistent.contains(address));
+                context.warm = kept;
+                (id, taken)
+            })
+            .collect()
+    }
+
+    /// Hands persistent warmth taken with [`Self::take_persistent_warmth`] back to its contexts.
+    pub fn restore_persistent_warmth(
+        &mut self,
+        warmth: Vec<(Option<U256>, AddressMap<HashSet<U256>>)>,
+    ) {
+        for (id, warm) in warmth {
+            if let Some(context) = self.forks.context_mut(id) {
+                for (address, slots) in warm {
+                    context.warm.entry(address).or_default().extend(slots);
+                }
+            }
+        }
+    }
+
     /// Applies an environment change deferred by an in-flight operation and forgets the warmth
     /// contexts kept from the previous transaction. Call before every transaction.
     pub fn begin_transaction(&mut self, evm: &mut Evm<'_, F::Types>) {
@@ -919,7 +952,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             .loaded_accounts()
             .map(|(address, slots)| (*address, slots.copied().collect::<HashSet<_>>()))
             .collect::<Vec<_>>();
-        let mut warm = warm_accounts(state);
+        let warm = warm_accounts(state);
         let context = self.active_mut();
         for (address, slots) in loaded {
             if state.account(&address).is_ok_and(|account| account.is_created()) {
@@ -940,23 +973,6 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         // prewarm set rather than in loaded accounts, even if this visit did not touch it.
         for (address, slots) in &warm {
             context.warm.entry(*address).or_default().extend(slots);
-        }
-        // Persistent accounts carry that warmth into the next context too, but not the warmth the
-        // context kept from an earlier isolated call, which the running state no longer holds.
-        let prewarm = state.prewarm_set();
-        let resumed = context
-            .warm
-            .iter()
-            .filter(|(address, _)| prewarm.is_warm(address))
-            .map(|(address, slots)| {
-                let slots = slots.iter().filter(|key| prewarm.is_storage_warm(address, key));
-                (*address, slots.copied().collect::<Vec<_>>())
-            })
-            .collect::<Vec<_>>();
-        for (address, slots) in resumed {
-            if self.forks.is_persistent(&address) {
-                warm.entry(address).or_default().extend(slots);
-            }
         }
         self.materialize(evm);
         let state = evm.state_mut();
@@ -1027,10 +1043,8 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         let created = context.created.clone();
         // Like REVM's per-fork journals, a selected context resumes with its own warmth from this
         // transaction, and a rolled one warms every account the running transaction loaded, with
-        // slots for created and persistent accounts. Persistent accounts take the running
-        // transaction's warmth, as REVM copied their journaled state into the selected fork.
+        // slots for created and persistent accounts. Persistent accounts keep their warmth.
         let mut warm = mem::take(&mut context.warm);
-        warm.retain(|address, _| !persistent.contains(address));
         if carry {
             for (address, slots) in &source_loaded {
                 warm.entry(*address).or_default().extend(slots);

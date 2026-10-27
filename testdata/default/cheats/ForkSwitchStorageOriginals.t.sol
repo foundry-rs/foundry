@@ -138,6 +138,24 @@ contract ForkSwitchStorageOriginalsTest is Test {
         assertEq(persistentOnB, onA, "persistent slot warmth");
         assertEq(localCost - localOnB, 4500, "fork-local account and slot warmth");
     }
+
+    function readAfterRevertAndPersist() external returns (uint256 persistentOnB, uint256 localSaved) {
+        uint256 snapshot = vm.snapshotState();
+        (,, uint256 localCost) = this.readAcrossForks();
+        vm.revertToState(snapshot);
+        vm.makePersistent(WETH);
+        uint256 localOnB;
+        (, persistentOnB, localOnB) = this.readAcrossForks();
+        localSaved = localCost - localOnB;
+    }
+
+    // Within a call, a fork keeps the warmth of persistent slots it read across a snapshot revert
+    // and of accounts made persistent since.
+    function testForkSwitchKeepsPersistentWarmthWithinCall() public {
+        (uint256 persistentOnB, uint256 localSaved) = this.readAfterRevertAndPersist();
+        assertEq(persistentOnB, 110, "persistent slot warmth after a snapshot revert");
+        assertEq(localSaved, 4500, "warmth of an account made persistent");
+    }
 }
 
 /// forge-config: default.isolate = true
