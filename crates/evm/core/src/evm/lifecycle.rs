@@ -50,7 +50,7 @@ use evm2::{
         PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
     },
 };
-use std::{mem, sync::Arc};
+use std::{iter, mem, sync::Arc};
 
 /// Whether a lifecycle operation runs between transactions or inside one, such as from a
 /// cheatcode.
@@ -564,6 +564,39 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
             }
         } else {
             self.active_mut().warm.remove(address);
+        }
+    }
+
+    /// Takes the warmth of persistent accounts that contexts kept for the running transaction, so
+    /// that a nested transaction, such as an isolated call, resumes them cold in every context as
+    /// REVM's fresh journal did. Hand it back with [`Self::restore_persistent_warmth`] when the
+    /// nested transaction ends.
+    pub fn take_persistent_warmth(&mut self) -> Vec<(Option<U256>, AddressMap<HashSet<U256>>)> {
+        let ForkRegistry { local, forks, persistent, .. } = &mut self.forks;
+        let forks = forks.iter_mut().map(|(id, entry)| (Some(*id), &mut entry.context));
+        iter::once((None, local))
+            .chain(forks)
+            .map(|(id, context)| {
+                let (taken, kept) = mem::take(&mut context.warm)
+                    .into_iter()
+                    .partition::<AddressMap<_>, _>(|(address, _)| persistent.contains(address));
+                context.warm = kept;
+                (id, taken)
+            })
+            .collect()
+    }
+
+    /// Hands persistent warmth taken with [`Self::take_persistent_warmth`] back to its contexts.
+    pub fn restore_persistent_warmth(
+        &mut self,
+        warmth: Vec<(Option<U256>, AddressMap<HashSet<U256>>)>,
+    ) {
+        for (id, warm) in warmth {
+            if let Some(context) = self.forks.context_mut(id) {
+                for (address, slots) in warm {
+                    context.warm.entry(address).or_default().extend(slots);
+                }
+            }
         }
     }
 
