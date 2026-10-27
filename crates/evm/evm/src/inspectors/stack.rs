@@ -1346,6 +1346,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
 
         let previous_source_fork = self.inner.isolated_source_fork.replace(source_fork);
+        let persistent_warmth = backend.backend_mut().take_persistent_warmth();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
@@ -1354,6 +1355,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let executed = child.transact(&tx).ok().map(|executed| executed.detach());
         let mut child = release_inspector(child);
         self.inner.isolated_source_fork = previous_source_fork;
+        backend.backend_mut().restore_persistent_warmth(persistent_warmth);
         let switch_warmth = self.inner.isolated_switch_warmth.take();
 
         self.inner.exit_inner_context(previous_inner);

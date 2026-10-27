@@ -15,6 +15,7 @@ contract Slot {
 contract ForkSwitchStorageOriginalsTest is Test {
     // EIP-3529 refund for restoring a slot that was zero at transaction start.
     uint256 constant RESTORE_ZERO_REFUND = 19_900;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     uint256 forkA;
     uint256 forkB;
@@ -105,6 +106,55 @@ contract ForkSwitchStorageOriginalsTest is Test {
     // A fork keeps the originals of accounts that do not leave it.
     function testForkSwitchKeepsLocalStorageOriginals() public {
         assertEq(this.writeLocal(true), this.writeLocal(false), "write after a round trip");
+    }
+
+    function sloadCost(uint256 key) internal view returns (uint256 cost) {
+        assembly {
+            cost := gas()
+            let value := sload(key)
+            cost := sub(cost, gas())
+            if eq(value, 0xdeadbeef) { revert(0, 0) }
+        }
+    }
+
+    // Reads a slot of this persistent contract on fork A, then another one and a slot of WETH,
+    // which is local to fork B, on fork B.
+    function readAcrossForks() external returns (uint256 onA, uint256 persistentOnB, uint256 localOnB) {
+        onA = sloadCost(0x1234);
+        vm.selectFork(forkB);
+        persistentOnB = sloadCost(0x1235);
+        uint256 start = gasleft();
+        (bool success,) = WETH.staticcall(abi.encodeWithSignature("balanceOf(address)", address(this)));
+        require(success);
+        localOnB = start - gasleft();
+        vm.selectFork(forkA);
+    }
+
+    // A persistent slot an earlier call read on a fork is as warm in a later call as one it read
+    // before switching, while a fork-local account stays warm on its fork.
+    function testForkSwitchKeepsLaterCallPersistentWarmth() public {
+        (,, uint256 localCost) = this.readAcrossForks();
+        (uint256 onA, uint256 persistentOnB, uint256 localOnB) = this.readAcrossForks();
+        assertEq(persistentOnB, onA, "persistent slot warmth");
+        assertEq(localCost - localOnB, 4500, "fork-local account and slot warmth");
+    }
+
+    function readAfterRevertAndPersist() external returns (uint256 persistentOnB, uint256 localSaved) {
+        uint256 snapshot = vm.snapshotState();
+        (,, uint256 localCost) = this.readAcrossForks();
+        vm.revertToState(snapshot);
+        vm.makePersistent(WETH);
+        uint256 localOnB;
+        (, persistentOnB, localOnB) = this.readAcrossForks();
+        localSaved = localCost - localOnB;
+    }
+
+    // Within a call, a fork keeps the warmth of persistent slots it read across a snapshot revert
+    // and of accounts made persistent since.
+    function testForkSwitchKeepsPersistentWarmthWithinCall() public {
+        (uint256 persistentOnB, uint256 localSaved) = this.readAfterRevertAndPersist();
+        assertEq(persistentOnB, 110, "persistent slot warmth after a snapshot revert");
+        assertEq(localSaved, 4500, "warmth of an account made persistent");
     }
 }
 
