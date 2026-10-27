@@ -212,8 +212,9 @@ pub struct PropertiesArgs {
     ///
     /// Two failing tests have the same root cause when their `@bug` tags name the same function
     /// in the same Solidity file at near lines. Without both tags, their claims must name the same
-    /// Solidity file and share a function name or at least 30% of their words. Forge lists the
-    /// groups below the quorum after the possible bugs. Defaults to 2, or 1 with a single agent.
+    /// Solidity file and share a function name at near lines or at least 30% of their words. Forge
+    /// lists the groups below the quorum after the possible bugs. Defaults to 2, or 1 with a
+    /// single agent.
     #[arg(long, value_name = "K")]
     quorum: Option<usize>,
 

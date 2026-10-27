@@ -29,9 +29,17 @@ static BUG_TAG: LazyLock<Regex> = LazyLock::new(|| {
 });
 /// A Solidity file path.
 static SOLIDITY_FILE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w./-]+\.sol").unwrap());
+/// A Solidity file path and an optional line.
+static SOLIDITY_LOCATION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([\w./-]+\.sol)(?::(\d+))?").unwrap());
 /// A function name followed by its argument list.
 static FUNCTION_CALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b[A-Za-z_][A-Za-z0-9_]*\(").unwrap());
+/// A call that names no function of the code under test, such as a builtin or a type conversion.
+static GENERIC_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:require|assert|revert|keccak256|sha256|ecrecover|encode\w*|decode|call|delegatecall|staticcall|address|payable|type|bool|string|bytes\d*|u?int\d*)\($")
+        .unwrap()
+});
 /// A camelCase identifier.
 static CAMEL_CASE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b_?[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b").unwrap());
@@ -42,7 +50,7 @@ static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-z0-9_]+").unwrap
 /// same file, at lines that are near.
 #[derive(Debug, PartialEq)]
 struct BugTag {
-    /// The file name of the path in the tag.
+    /// The path in the tag.
     file: String,
     function: String,
     line: u64,
@@ -52,25 +60,28 @@ impl BugTag {
     fn new(claim: &str) -> Option<Self> {
         let captures = BUG_TAG.captures(claim)?;
         Some(Self {
-            file: captures[2].rsplit('/').next()?.to_string(),
+            file: captures[2].to_string(),
             function: captures[1].to_string(),
             line: captures[3].parse().ok()?,
         })
     }
 
     fn agrees(&self, other: &Self) -> bool {
-        self.file == other.file
+        same_file(&self.file, &other.file)
             && self.function == other.function
             && self.line.abs_diff(other.line) <= LINE_WINDOW
     }
 }
 
 /// What two failing tests with free-text claims must share to have one root cause: the file that
-/// their claims name, and a function name or most of the claims' words.
+/// their claims name, and a function name at near lines or most of the claims' words.
 struct RootCause {
-    /// The file name of the first Solidity path in the claim.
+    /// The first Solidity path in the claim.
     file: String,
-    /// The function calls and camelCase identifiers in the claim.
+    /// The line after that path, if any.
+    line: Option<u64>,
+    /// The function calls and camelCase identifiers in the claim, without builtins and type
+    /// conversions.
     identifiers: HashSet<String>,
     /// The words of the claim outside Solidity paths, without stop words and words of one or two
     /// letters.
@@ -79,11 +90,15 @@ struct RootCause {
 
 impl RootCause {
     fn new(claim: &str) -> Option<Self> {
-        let file = SOLIDITY_FILE.find(claim)?.as_str().rsplit('/').next()?.to_string();
+        let location = SOLIDITY_LOCATION.captures(claim)?;
+        let file = location[1].to_string();
+        let line = location.get(2).and_then(|line| line.as_str().parse().ok());
         let identifiers = FUNCTION_CALL
             .find_iter(claim)
             .chain(CAMEL_CASE.find_iter(claim))
-            .map(|identifier| identifier.as_str().to_string())
+            .map(|identifier| identifier.as_str())
+            .filter(|identifier| !GENERIC_CALL.is_match(identifier))
+            .map(String::from)
             .collect();
         let claim = SOLIDITY_FILE.replace_all(claim, " ").to_lowercase();
         let words = WORD
@@ -92,16 +107,35 @@ impl RootCause {
             .filter(|word| word.len() > 2 && !STOP_WORDS.contains(word))
             .map(String::from)
             .collect();
-        Some(Self { file, identifiers, words })
+        Some(Self { file, line, identifiers, words })
     }
 
+    /// A shared identifier, such as `transfer(` or `totalSupply`, can name a function that many
+    /// claims call, so it agrees only when the lines that both claims name, if they do, are near.
     fn agrees(&self, other: &Self) -> bool {
         let shared = self.words.intersection(&other.words).count();
         let all = self.words.union(&other.words).count();
-        self.file == other.file
-            && (!self.identifiers.is_disjoint(&other.identifiers)
+        let near = match (self.line, other.line) {
+            (Some(a), Some(b)) => a.abs_diff(b) <= LINE_WINDOW,
+            _ => true,
+        };
+        same_file(&self.file, &other.file)
+            && ((near && !self.identifiers.is_disjoint(&other.identifiers))
                 || (shared > 0 && shared * CLAIM_OVERLAP.1 >= all * CLAIM_OVERLAP.0))
     }
+}
+
+/// Returns whether two Solidity paths of claims can name the same file: one is the other or ends
+/// with it. Agents name a file relative to the project, by its file name, or by its path in their
+/// copy of the project, so `Vault.sol` and `/tmp/copy/src/Vault.sol` agree with `src/Vault.sol`,
+/// but `src/one/Vault.sol` and `src/two/Vault.sol` do not.
+fn same_file(a: &str, b: &str) -> bool {
+    fn components(path: &str) -> impl Iterator<Item = &str> {
+        path.rsplit('/')
+            .filter(|component| !matches!(*component, "" | "."))
+            .take_while(|component| *component != "..")
+    }
+    components(a).zip(components(b)).all(|(a, b)| a == b)
 }
 
 /// Returns a group number for the claim of each failing test: tests with the same number have one
@@ -151,30 +185,60 @@ mod tests {
         assert!(RootCause::new("The fee is capped at 100 ether.").is_none());
     }
 
+    // A function that many claims call, or a builtin, does not make two claims about different
+    // lines agree. Without a line on both sides, a shared function name still agrees.
+    #[test]
+    fn root_causes_ignore_generic_calls_and_far_lines() {
+        let approve =
+            cause("src/Token.sol:40 approve() lets anyone reset the allowance via transfer(");
+        let burn = cause("src/Token.sol:200 burn() skips the balance check in transfer(");
+        assert!(!approve.agrees(&burn));
+        assert!(approve.agrees(&cause("src/Token.sol:44 transfer( drops the allowance check")));
+        assert!(approve.agrees(&cause("Allowance resets in src/Token.sol: transfer( is open")));
+        assert!(
+            !cause("src/Token.sol mint() skips require( on the cap")
+                .agrees(&cause("src/Token.sol pause() has no require( on the owner"))
+        );
+    }
+
+    // Paths agree when one ends with the other, so a file name or a path in an agent's copy of
+    // the project names the same file, but paths in different directories do not.
+    #[test]
+    fn paths_agree_by_their_trailing_components() {
+        assert!(same_file("src/Vault.sol", "Vault.sol"));
+        assert!(same_file("./src/Vault.sol", "/tmp/forge-properties-1/src/Vault.sol"));
+        assert!(!same_file("src/one/Vault.sol", "src/two/Vault.sol"));
+        assert!(!same_file("src/Vault.sol", "src/MyVault.sol"));
+    }
+
     // A tag names the function and the source line. The contract and an argument list are
     // optional, and a claim without the tag at its start has none.
     #[test]
     fn bug_tags_parse_the_target() {
-        let tag = |function: &str, line| BugTag {
-            file: "Fee.sol".into(),
+        let tag = |file: &str, function: &str, line| BugTag {
+            file: file.into(),
             function: function.into(),
             line,
         };
         assert_eq!(
             BugTag::new("@bug Fee.fee src/Fee.sol:7 — the cap is 10 ether"),
-            Some(tag("fee", 7))
+            Some(tag("src/Fee.sol", "fee", 7))
         );
         assert_eq!(
             BugTag::new("@bug fee(uint256) contracts/Fee.sol:12 - wrong"),
-            Some(tag("fee", 12))
+            Some(tag("contracts/Fee.sol", "fee", 12))
         );
-        assert_eq!(BugTag::new("@custom:bug Fee.charges Fee.sol:11"), Some(tag("charges", 11)));
+        assert_eq!(
+            BugTag::new("@custom:bug Fee.charges Fee.sol:11"),
+            Some(tag("Fee.sol", "charges", 11))
+        );
         assert_eq!(BugTag::new("The fee is capped; @bug Fee.fee src/Fee.sol:7"), None);
         assert_eq!(BugTag::new("@bug Fee.fee src/Fee.sol — no line"), None);
     }
 
     // Tagged claims group on the file and the function, whatever their words, and lines far apart
-    // split them. Free-text claims, and pairs with only one tag, fall back to the word matcher.
+    // or files with one name in different directories split them. Free-text claims, and pairs
+    // with only one tag, fall back to the word matcher.
     #[test]
     fn tagged_claims_group_on_file_and_function() {
         let groups = root_cause_groups(&[
@@ -186,7 +250,9 @@ mod tests {
             Some("A zero amount is charged; src/Fee.sol:11 charges() returns true"),
             Some("The fee is capped at 100 ether; src/Fee.sol:7 fee() caps at 10 ether."),
             None,
+            Some("@bug A.f src/one/Vault.sol:2 — returns zero"),
+            Some("@bug B.f src/two/Vault.sol:2 — returns one"),
         ]);
-        assert_eq!(groups, [0, 0, 2, 3, 4, 3, 0, 7]);
+        assert_eq!(groups, [0, 0, 2, 3, 4, 3, 0, 7, 8, 9]);
     }
 }
