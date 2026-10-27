@@ -12,10 +12,7 @@ use crate::{
 use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
-use foundry_common::{
-    fs::{canonicalize_path, normalize_path},
-    sh_println, sh_warn,
-};
+use foundry_common::{fs::canonicalize_path, sh_println, sh_warn};
 use foundry_compilers::{
     Graph,
     cache::SOLIDITY_FILES_CACHE_FILENAME,
@@ -119,9 +116,6 @@ static BLOCKED_CHEATCODE: LazyLock<Regex> = LazyLock::new(|| {
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)//[^\n]*|/\*.*?\*/").unwrap());
 /// A contract declaration and its name.
 static CONTRACT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bcontract\s+(\w+)").unwrap());
-/// The path of an import directive.
-static IMPORT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\bimport\s+(?:[^;]*?\bfrom\s+)?["']([^"']+)["']"#).unwrap());
 /// The process groups of the running agent sessions, which Forge ends if it is interrupted.
 #[cfg(unix)]
 static SESSIONS: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
@@ -430,6 +424,9 @@ struct Session {
     kept: Vec<TestFile>,
     /// Every file that the agent wrote and Forge ran.
     files: Vec<TestFile>,
+    /// The files of `files` that each of them imports, directly or not, as the compiler resolves
+    /// the imports.
+    imports: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
 impl PropertiesArgs {
@@ -733,12 +730,14 @@ impl Campaign<'_> {
         let mut seen = HashSet::new();
         let mut kept = Vec::new();
         let mut duplicates = Vec::new();
-        for files in sessions.iter().map(|session| &session.kept) {
-            for file in files {
+        for session in sessions {
+            for file in &session.kept {
                 let normalized =
                     COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
-                let imported =
-                    files.iter().any(|other| other.path != file.path && imports(other, &file.path));
+                let imported = session.kept.iter().any(|other| {
+                    other.path != file.path
+                        && session.imports.get(&other.path).is_some_and(|i| i.contains(&file.path))
+                });
                 let path = self.config.root.join(&file.path);
                 // A linked directory on the path must not lead outside the project.
                 ensure_inside(&self.config.root, &path, &file.path)?;
@@ -847,6 +846,7 @@ impl Campaign<'_> {
             rejected: vec![],
             kept: vec![],
             files: vec![],
+            imports: BTreeMap::new(),
         };
         session.files = collect_tests(workspace.path(), &out, id, &mut session.rejected)?;
         let files = &session.files;
@@ -862,14 +862,16 @@ impl Campaign<'_> {
         }
 
         let workspace = self.sandbox.workspace(files)?;
+        let imports = collected_imports(self.config, workspace.path(), files)?;
         let run = match self.sandbox.build_errors(workspace.path())? {
             None => self.run_tests(workspace.path(), files)?,
             // A file that does not compile, such as one that the agent was writing at the
             // timeout, must not hide the other tests. Each file that no other file imports then
             // runs on its own, with the files that it imports. Files that import each other in a
             // cycle have no such file, so the first of them that no group holds yet starts one.
+            // A group that does not compile rejects and holds only its first file, so the files
+            // that it imports still run without it.
             Some(_) => {
-                let imports = collected_imports(self.config, workspace.path(), files)?;
                 let no_imports = BTreeSet::new();
                 let (roots, others) = files.iter().partition::<Vec<_>, _>(|file| {
                     !imports.values().any(|imported| imported.contains(&file.path))
@@ -889,13 +891,14 @@ impl Campaign<'_> {
                         .filter(|file| file.path == root.path || imported.contains(&file.path))
                         .cloned()
                         .collect::<Vec<_>>();
-                    grouped.extend(group.iter().map(|file| file.path.clone()));
                     let workspace = self.sandbox.workspace(&group)?;
                     if let Some(errors) = self.sandbox.build_errors(workspace.path())? {
-                        let paths = group.into_iter().map(|file| file.path).collect();
+                        grouped.insert(root.path.clone());
+                        let paths = vec![root.path.clone()];
                         session.rejected.push(Rejected { agent: id, paths, reason: errors });
                         continue;
                     }
+                    grouped.extend(group.iter().map(|file| file.path.clone()));
                     let group_run = self.run_tests(workspace.path(), &group)?;
                     run.possible_bugs.extend(
                         group_run.possible_bugs.into_iter().filter(|bug| !ran.contains(&bug.path)),
@@ -917,8 +920,9 @@ impl Campaign<'_> {
             let paths = files.iter().map(|file| file.path.clone()).collect();
             session.rejected.push(Rejected { agent: id, paths, reason: run.errors.join("; ") });
         }
-        let kept = kept_files(self.config, workspace.path(), files, &run)?;
+        let kept = kept_files(files, &imports, &run)?;
         session.kept = files.iter().filter(|file| kept.contains(&file.path)).cloned().collect();
+        session.imports = imports;
         let root = &self.config.root;
         session.possible_bugs = run
             .possible_bugs
@@ -1461,9 +1465,8 @@ fn collected_imports(
 /// Returns the files whose tests all pass on every seed, with the files that they import. A
 /// passing file that imports a file with a failing test is not kept.
 fn kept_files(
-    config: &Config,
-    workspace: &Path,
     files: &[TestFile],
+    imports: &BTreeMap<PathBuf, BTreeSet<PathBuf>>,
     run: &TestRun,
 ) -> Result<HashSet<PathBuf>> {
     let passing = files
@@ -1480,7 +1483,6 @@ fn kept_files(
     if passing.len() == files.len() {
         return Ok(passing.into_iter().cloned().collect());
     }
-    let imports = collected_imports(config, workspace, files)?;
     let mut kept = HashSet::new();
     for path in passing {
         let imported = imports.get(path).ok_or_else(|| {
@@ -1815,49 +1817,20 @@ fn verify_prompt(
 fn group_files(sessions: &[Session], group: &BugGroup) -> Vec<TestFile> {
     let mut files = Vec::new();
     for session in sessions.iter().filter(|session| group.agents.contains(&session.id)) {
-        let mut paths = group
+        let failing = group
             .failures
             .iter()
             .filter(|failure| failure.agent == session.id)
             .map(|failure| &failure.failure.path)
             .collect::<BTreeSet<_>>();
-        loop {
-            let imported = session
-                .files
-                .iter()
-                .filter(|file| !paths.contains(&file.path))
-                .filter(|file| {
-                    session
-                        .files
-                        .iter()
-                        .any(|other| paths.contains(&other.path) && imports(other, &file.path))
-                })
-                .map(|file| &file.path)
-                .collect::<Vec<_>>();
-            if imported.is_empty() {
-                break;
-            }
-            paths.extend(imported);
-        }
+        let paths = failing
+            .iter()
+            .copied()
+            .chain(failing.iter().filter_map(|path| session.imports.get(*path)).flatten())
+            .collect::<BTreeSet<_>>();
         files.extend(session.files.iter().filter(|file| paths.contains(&file.path)).cloned());
     }
     files
-}
-
-/// Returns whether a file has an import directive that names `path`, relative to the importing
-/// file or to the project root. A path with the same file name in a dependency, such as
-/// `forge-std/Test.sol` for `Test.sol`, is not a match.
-fn imports(file: &TestFile, path: &Path) -> bool {
-    let dir = file.path.parent().unwrap_or(Path::new(""));
-    IMPORT.captures_iter(&file.content).any(|import| {
-        let import = Path::new(&import[1]);
-        let resolved = if import.starts_with(".") || import.starts_with("..") {
-            normalize_path(&dir.join(import))
-        } else {
-            normalize_path(import)
-        };
-        resolved == path
-    })
 }
 
 /// Runs a session command in its own process group until it exits or reaches the timeout in
@@ -2071,20 +2044,5 @@ contract OtherTest {
                 "test/generated/agent-1/Seed.t.sol sets a seed in inline config",
             ]
         );
-    }
-
-    // An import names a file by its path relative to the importing file or to the project root.
-    // A dependency file with the same name, such as `forge-std/Test.sol`, is another file.
-    #[test]
-    fn imports_resolve_paths_not_file_names() {
-        let file = |content: &str| TestFile {
-            path: PathBuf::from("test/generated/agent-1/sub/Fee.t.sol"),
-            content: content.to_string(),
-        };
-        let test = Path::new("test/generated/agent-1/Test.sol");
-        assert!(!imports(&file(r#"import {Test} from "forge-std/Test.sol";"#), test));
-        assert!(imports(&file(r#"import {Test} from "../Test.sol";"#), test));
-        assert!(imports(&file(r#"import "test/generated/agent-1/Test.sol";"#), test));
-        assert!(!imports(&file(r#"import "./Test.sol";"#), test));
     }
 }

@@ -1363,8 +1363,8 @@ no generated test file was kept
 }
 
 // When a generated file does not compile, each file that no other file imports runs with the
-// files that it imports. A file that two of them import counts once, and files that import each
-// other in a cycle still run.
+// files that it imports. A file that two of them import counts once, files that import each other
+// in a cycle still run, and files that only a broken file imports run and are kept without it.
 #[forgetest_init]
 fn properties_runs_each_file_once_when_one_does_not_compile(prj: _, cmd: _) {
     prj.add_source("Fee.sol", FEE);
@@ -1373,7 +1373,18 @@ fn properties_runs_each_file_once_when_one_does_not_compile(prj: _, cmd: _) {
         r#"
 cat > "$out/Broken.t.sol" <<'SOL'
 pragma solidity ^0.8.20;
+import "./Kept.t.sol";
 contract BrokenTest { function testFee() public { missing(); } }
+SOL
+cat > "$out/Kept.t.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import "./KeptHelper.sol";
+contract KeptTest { function testKept() public pure { require(KeptHelper.one() == 1); } }
+SOL
+cat > "$out/KeptHelper.sol" <<'SOL'
+pragma solidity ^0.8.20;
+import "./Kept.t.sol";
+library KeptHelper { function one() internal pure returns (uint256) { return 1; } }
 SOL
 cat > "$out/Shared.t.sol" <<'SOL'
 pragma solidity ^0.8.20;
@@ -1414,7 +1425,44 @@ possible bug (1/1 agents): CycleBTest::testB
   agent 1: CycleBTest::testB (seed 24301: EvmError: Revert; seed 12648430: EvmError: Revert)
     file: cache/properties/agent-1/tests/CycleB.t.sol
 1 generated test file(s) did not compile or were not allowed: see cache/properties/report.json
-no generated test file was kept
+added 2 generated test file(s):
+  test/generated/agent-1/Kept.t.sol
+  test/generated/agent-1/KeptHelper.sol
 
 "#]]);
+}
+
+// A file that another file of the same agent imports through a remapping stays, even when another
+// agent wrote the same file, so the kept tests still compile.
+#[forgetest_init]
+fn properties_keeps_remapped_imports(prj: _, cmd: _) {
+    prj.add_source("Fee.sol", FEE);
+    prj.update_config(|config| {
+        config.remappings.push(Remapping::from_str("generated/=test/generated/").unwrap().into());
+    });
+    let args = properties_args(
+        &prj,
+        r#"
+cat > "$out/Helper.sol" <<'SOL'
+pragma solidity ^0.8.20;
+library Helper { function fee(uint256 amount) internal pure returns (uint256) { return amount / 100; } }
+SOL
+cat > "$out/Property.t.sol" <<SOL
+pragma solidity ^0.8.20;
+import {Fee} from "../../../src/Fee.sol";
+import {Helper} from "generated/agent-$agent/Helper.sol";
+contract Property${agent}Test { function testFee() public pure { require(Fee.fee(199) == Helper.fee(199)); } }
+SOL
+"#,
+    );
+    cmd.args(args).args(["--agents", "2"]).assert_success().stdout_eq(str![[r#"
+added 4 generated test file(s):
+  test/generated/agent-1/Helper.sol
+  test/generated/agent-1/Property.t.sol
+  test/generated/agent-2/Helper.sol
+  test/generated/agent-2/Property.t.sol
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--match-path", "test/generated/**"]).assert_success();
 }
