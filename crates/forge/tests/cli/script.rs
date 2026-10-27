@@ -2107,6 +2107,54 @@ async fn can_resume_script(prj: _, cmd: _) {
         .await;
 }
 
+// Resume reports a failed signer-collecting run, and only fails if signers are still missing.
+#[forgetest_init]
+async fn resume_reports_failed_signer_rerun(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let script = prj.add_script(
+        "ResumeRerun.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract ResumeRerunTarget {}
+
+contract ResumeRerun is Script {
+    function run() external {
+        vm.startBroadcast(vm.envUint("RESUME_RERUN_PK"));
+        new ResumeRerunTarget();
+        vm.stopBroadcast();
+        require(vm.envOr("RESUME_RERUN_GO", false), "resume gate closed");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.env("RESUME_RERUN_GO", "true");
+    cmd.assert_success();
+
+    // The run fails before it reaches the signer.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: No associated wallet for addresses: [0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266]. Unlocked wallets: []
+Resume re-ran the script to collect signers, but it failed: vm.envUint: environment variable "RESUME_RERUN_PK" not found
+
+"#]]);
+
+    // The run fails after it collects the signer, so resume still broadcasts.
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--resume"]);
+    cmd.env("RESUME_RERUN_PK", private_key);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: Resume re-ran the script to collect signers, but it failed: resume gate closed
+
+"#]]);
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+}
+
 #[forgetest]
 async fn can_deploy_broadcast_wrap(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;

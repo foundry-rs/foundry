@@ -28,7 +28,10 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::source_files_iter,
 };
-use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
+use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
+    traces::{CallTraceDecoder, debug::ContractSources},
+};
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{
@@ -436,7 +439,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
         }
 
-        let (args, build_data, script_wallets, browser_wallet, script_config) =
+        let (args, build_data, script_wallets, browser_wallet, script_config, resume_script_error) =
             if self.args.unlocked {
                 (
                     self.args,
@@ -444,6 +447,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_wallets,
                     self.browser_wallet,
                     self.script_config,
+                    None,
                 )
             } else {
                 let remaining_transactions =
@@ -469,6 +473,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         self.script_wallets,
                         self.browser_wallet,
                         self.script_config,
+                        None,
                     )
                 } else {
                     // IF we are missing required signers, execute script as we might need to
@@ -479,12 +484,25 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         .update_tempo_session_sender(&state.args.wallets, state.args.evm.sender)
                         .await?;
                     let executed = state.link().await?.prepare_execution().await?.execute().await?;
+                    // A failed run may still have collected every signer, so broadcast decides
+                    // whether this error is fatal.
+                    let resume_script_error = (!executed.execution_result.success).then(|| {
+                        CallTraceDecoder::new()
+                            .revert_decoder
+                            .clone()
+                            .with_abis(executed.build_data.known_contracts.values().map(|c| &c.abi))
+                            .decode(
+                                &executed.execution_result.returned,
+                                executed.execution_result.exit_reason,
+                            )
+                    });
                     (
                         executed.args,
                         executed.build_data.build_data,
                         executed.script_wallets,
                         executed.browser_wallet,
                         executed.script_config,
+                        resume_script_error,
                     )
                 }
             };
@@ -506,6 +524,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             browser_wallet,
             build_data: linked_build_data,
             sequence,
+            resume_script_error,
         })
     }
 
