@@ -8,7 +8,7 @@ use alloy_eips::eip2930::AccessList;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressSet},
+    map::{AddressHashMap, AddressMap, AddressSet},
 };
 use evm2::{
     EvmFeatures, ExecutedTx, ExecutionError, Inspector, TxResultWithState,
@@ -26,10 +26,11 @@ use foundry_evm_core::{
     backend::transaction_error,
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested, FoundryEvmExt,
-        FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
-        MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores, TransactionRequestFor,
-        TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
+        BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
+        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
+        MessageFor, MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores,
+        TransactionRequestFor, TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded,
+        destructed_accounts, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
@@ -458,6 +459,9 @@ pub struct InspectorStackInner {
     tx_created: AddressSet,
     /// Accounts the running top-level transaction loaded when an isolated static call cooled it.
     static_cooled: AddressSet,
+    /// Existing accounts the running `executeTransaction` transaction self-destructed, captured
+    /// when its root frame ends, before the transaction destroys them.
+    executed_destructs: Option<AddressMap<DestructedAccount>>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack of the depths of CREATE frames that were redirected to the CREATE2 factory.
@@ -551,12 +555,15 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // apart. Its root frame skips the cheatcode hooks, so they are handled below.
         let outer_writes = mem::take(&mut cheats.persistent_writes);
         let frame_rollback = cheats.frame_rollback.take();
+        let outer_destructs = self.executed_destructs.replace(AddressMap::default());
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: Some(&mut *cheats),
             inner: &mut *self,
             backend: Some(&mut *backend),
         });
         let executed = child.transact(tx).map(ExecutedTx::detach);
+        let mut child = release_inspector(child);
+        let destructed = mem::replace(&mut self.executed_destructs, outer_destructs);
         let result = match executed {
             Ok(TxResultWithState { result, pending_state, .. }) => {
                 // A failed transaction keeps its nonce increment.
@@ -564,13 +571,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
                     evm.state_mut(),
                     &mut child,
                     pending_state,
+                    destructed.unwrap_or_default(),
                 )
                 .map(|persistent| (result, persistent))
                 .map_err(Into::into)
             }
             Err(err) => Err(transaction_error(err)),
         };
-        drop(release_inspector(child));
+        drop(child);
         // The merged changes include the writes of a successful transaction; a failed one rolled
         // them back, so they are replayed over its merged changes.
         let writes = mem::replace(&mut cheats.persistent_writes, outer_writes);
@@ -1527,6 +1535,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
+    /// Captures the accounts an `executeTransaction` transaction self-destructed when its root
+    /// frame ends, before the transaction destroys them. See [`destructed_accounts`].
+    fn capture_executed_destructs(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
+        if let Some(destructs) = &mut self.inner.executed_destructs {
+            match destructed_accounts(interp.host().state_mut()) {
+                Ok(captured) => *destructs = captured,
+                Err(err) => {
+                    let _ = interp.fail(err);
+                }
+            }
+        }
+    }
+
     /// Captures the warmth of an isolated call whose root frame succeeded on another fork than it
     /// started on, before its transaction ends and clears it.
     fn capture_switch_warmth(
@@ -2001,6 +2022,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         // surrounding transaction.
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
+            self.capture_executed_destructs(interp);
             return;
         }
         if mem::take(&mut self.inner.env_handoff_ended) {
@@ -2138,6 +2160,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
+            self.capture_executed_destructs(interp);
             return;
         }
 
