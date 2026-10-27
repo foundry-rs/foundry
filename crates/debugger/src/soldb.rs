@@ -259,6 +259,7 @@ impl TraceBuilder {
         let ordering = std::mem::take(&mut node.ordering);
         let children = std::mem::take(&mut node.children);
         let mut steps = std::mem::take(&mut node.trace.steps);
+        let runs_steps = !steps.is_empty();
         let trace = &node.trace;
         let address = trace.address;
         let depth = trace.depth as u64 + 1;
@@ -289,7 +290,7 @@ impl TraceBuilder {
             }
         }
 
-        self.close_frame(creation, call, self.steps.len());
+        self.close_frame(creation, call, self.steps.len(), runs_steps);
     }
 
     /// Records node `idx` and its subcalls, whose steps `frames` locate in the step table from
@@ -311,17 +312,22 @@ impl TraceBuilder {
 
         // The frame's own steps are the ones between its subcalls.
         let mut next_step = offset + frame.entry_step;
+        let mut runs_steps = false;
         for order in ordering {
             if let TraceMemberOrder::Call(child) = order {
                 let child = children[child];
-                self.record_hits(address, next_step..offset + frames[child].entry_step);
+                let own = next_step..offset + frames[child].entry_step;
+                runs_steps |= !own.is_empty();
+                self.record_hits(address, own);
                 self.visit_recorded(nodes, child, call.or(parent), frames, offset);
                 next_step = offset + frames[child].exit_step;
             }
         }
-        self.record_hits(address, next_step..offset + frame.exit_step);
+        let own = next_step..offset + frame.exit_step;
+        runs_steps |= !own.is_empty();
+        self.record_hits(address, own);
 
-        self.close_frame(creation, call, offset + frame.exit_step);
+        self.close_frame(creation, call, offset + frame.exit_step, runs_steps);
     }
 
     /// Records the `steps` of a frame of `address` that run a breakpoint location.
@@ -399,14 +405,33 @@ impl TraceBuilder {
         (creation, call)
     }
 
-    /// Records that the creation or call that `open_frame` returned ends before `exit_step`.
-    fn close_frame(&mut self, creation: Option<usize>, call: Option<usize>, exit_step: usize) {
-        let exit_step = Some(exit_step);
-        if let Some(id) = creation {
-            self.creations[id].exit_step = exit_step;
+    /// Records that the creation or call that `open_frame` returned ends before `exit_step`, and
+    /// whether it `runs_steps` of its own.
+    ///
+    /// SolDB finds the frame that runs a step by the step it was entered at. A frame that runs no
+    /// step of its own but whose subcalls do, such as `vm.deployCode` around the creation it
+    /// makes, would share its entry step with its first subcall and take the subcall's steps, so
+    /// it records no entry step.
+    fn close_frame(
+        &mut self,
+        creation: Option<usize>,
+        call: Option<usize>,
+        exit_step: usize,
+        runs_steps: bool,
+    ) {
+        let (entry, exit) = if let Some(id) = creation {
+            let creation = &mut self.creations[id];
+            (&mut creation.entry_step, &mut creation.exit_step)
         } else if let Some(id) = call {
-            self.calls[id].exit_step = exit_step;
+            let call = &mut self.calls[id];
+            (&mut call.entry_step, &mut call.exit_step)
+        } else {
+            return;
+        };
+        if !runs_steps && entry.is_some_and(|entry| entry < exit_step) {
+            *entry = None;
         }
+        *exit = Some(exit_step);
     }
 
     /// Records `step`. `next` is the following step of the same frame, if any.

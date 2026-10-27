@@ -282,20 +282,21 @@ Exiting debugger.
         .as_array()
         .unwrap()
         .iter()
-        .map(|call| (call["call_type"].as_str().unwrap(), call["entry_step"].as_u64().unwrap()))
+        .map(|call| (call["call_type"].as_str().unwrap(), call["entry_step"].as_u64()))
         .collect::<Vec<_>>();
     assert_eq!(trace["backend"], "foundry");
     assert_eq!(trace["steps"].as_array().unwrap().len(), 1125);
     assert_eq!(
         calls,
         [
-            ("CALL", 17),
-            ("CALL", 149),
-            ("CALL", 304),
-            ("CALL", 469),
-            ("CALL", 711),
-            ("CALL", 766),
-            ("STATICCALL", 924)
+            ("CALL", Some(17)),
+            // `vm.deployCode` runs no step of its own, so the creation it makes owns its steps.
+            ("CALL", None),
+            ("CALL", Some(304)),
+            ("CALL", Some(469)),
+            ("CALL", Some(711)),
+            ("CALL", Some(766)),
+            ("STATICCALL", Some(924))
         ]
     );
 }
@@ -591,4 +592,75 @@ contract VariantTest {
         bundle_programs(&mapping, "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f"),
         ["Variant", "Variant"]
     );
+}
+
+// With dynamic test linking, `new Child()` runs as a `vm.deployCode` call around the creation, and
+// the constructor's steps and storage writes still belong to the creation.
+#[forgetest]
+fn debugger_soldb_constructor_under_deploy_code(prj: _, cmd: _) {
+    prj.add_source(
+        "Child.sol",
+        r#"
+contract Child {
+    uint256 public number;
+
+    constructor() {
+        number = 41;
+    }
+
+    function bump() external {
+        number += 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Child.t.sol",
+        r#"
+import {Child} from "../src/Child.sol";
+
+contract ChildTest {
+    function test_child() public {
+        Child child = new Child();
+        child.bump();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--debug", "--mt", "test_child"])
+        .stdin("break src/Child.sol:8\nbreak src/Child.sol:12\ncontinue\nbacktrace\ncontinue\nprint number\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Child.t.sol:ChildTest
+[PASS] test_child() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Loaded trace with 441 steps.
+Sources loaded for: ChildTest (0x7fa9385be102ac3eac297483dd6233d62b3e1496), Child (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f)
+test/Child.t.sol:6  (step 0/440, pc 0, PUSH1, gas 1073679004)
+    6 | contract ChildTest {
+Breakpoint #1 set at src/Child.sol:8
+Breakpoint #2 set at src/Child.sol:12
+Breakpoint #1 hit at step 160, src/Child.sol:8
+src/Child.sol:8 in constructor  (step 160/440, pc 16, PUSH1, gas 1040394615)
+    8 |         number = 41;
+#0  constructor at src/Child.sol:8  step 160, PC 16
+#1  Child at src/Child.sol:4  step 152, PC 4
+#2  Child at src/Child.sol:4  step 150, PC 0
+#3  test_child at test/Child.t.sol:8  step 149, PC 144
+#4  ChildTest at test/Child.t.sol:6  step 40, PC 40
+Breakpoint #2 hit at step 354, src/Child.sol:12
+src/Child.sol:12 in bump  (step 354/440, pc 87, PUSH1, gas 1056769917)
+   12 |         number += 1;
+warning: local variables are inferred from the legacy source map and the stack layout of solc's legacy code generator, not from compiler-reported variable locations
+uint256 number = 41 [slot 0x0]
+Exiting debugger.
+
+"#]]);
 }
