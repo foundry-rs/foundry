@@ -30,7 +30,7 @@ use foundry_evm_core::{
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
         TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
-        merge_untracked_pending_changes_with_warmth, release_inspector, warm_set,
+        merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
 };
@@ -1421,8 +1421,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .filter(|address| !state.account(address).is_ok_and(|account| account.is_warm()))
                 .collect();
             let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
-                && (!result.status
-                    || warm_accessed(evm.state_mut(), &executed.pending_state, &cold).is_ok());
+                && if result.status {
+                    warm_accessed(evm.state_mut(), &executed.pending_state, &cold)
+                } else {
+                    warm_surviving(
+                        evm.state_mut(),
+                        child.state_mut(),
+                        &executed.pending_state,
+                        &cold,
+                    )
+                }
+                .is_ok();
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             evm.ext_mut().replace_while_executing(child.ext().clone());
@@ -2371,6 +2380,31 @@ fn warm_accessed(state: &mut State<'_>, pending: &PendingState, cold: &AddressSe
             if slot.is_warm {
                 state.storage_slot(&change.address, *key)?.warm();
             }
+        }
+    }
+    Ok(())
+}
+
+/// Warms in `state` the accounts and storage slots still warm at the end of a failed nested
+/// transaction detached into `pending`, which reattaching it to `child` exposes. As on master,
+/// warmth no revert undid survives the failure, such as of the accounts a `vm.executeTransaction`
+/// within it touched, while accesses of its reverted frames do not. Accounts in `cold` stay cold.
+fn warm_surviving(
+    state: &mut State<'_>,
+    child: &mut State<'_>,
+    pending: &PendingState,
+    cold: &AddressSet,
+) -> DbResult<()> {
+    child.set_pending_state(pending.clone());
+    let warm = warm_accounts(child);
+    child.clear_transaction_state();
+    for (address, slots) in warm {
+        if cold.contains(&address) {
+            continue;
+        }
+        state.account(&address)?.warm();
+        for key in slots {
+            state.storage_slot(&address, key)?.warm();
         }
     }
     Ok(())
