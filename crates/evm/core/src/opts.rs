@@ -1913,34 +1913,28 @@ mod tests {
     fn resolve_execution_spec_follows_ethereum_chain_ahead_for_scripts() {
         let amsterdam = EthereumHardfork::Amsterdam.sepolia_activation_timestamp().unwrap();
         let sepolia = NamedChain::Sepolia as u64;
-        let resolve = |hardfork, timestamp: u64, context| {
+        let resolve = |timestamp: u64, context| {
             let mut block = BlockEnv::default();
             block.set_timestamp(U256::from(timestamp));
             let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), block);
             let resolved =
-                resolve_execution_spec(EvmVersion::Prague, hardfork, &mut env, context, None);
+                resolve_execution_spec(EvmVersion::Prague, None, &mut env, context, None);
             (resolved, env.cfg_env.spec)
         };
         let ethereum = |hardfork| Some(FoundryHardfork::Ethereum(hardfork));
 
         // The source schedule applies once the chain is ahead of `evm_version`.
         assert_eq!(
-            resolve(None, amsterdam, ExecutionSpecContext::local_or_script(Some(sepolia), None)),
+            resolve(amsterdam, ExecutionSpecContext::local_or_script(Some(sepolia), None)),
             (ethereum(EthereumHardfork::Amsterdam), SpecId::AMSTERDAM)
         );
         assert_eq!(
-            resolve(
-                None,
-                amsterdam - 1,
-                ExecutionSpecContext::local_or_script(Some(sepolia), None)
-            )
-            .1,
+            resolve(amsterdam - 1, ExecutionSpecContext::local_or_script(Some(sepolia), None)).1,
             SpecId::OSAKA
         );
         // Anvil reports its hardfork for chains without a known schedule.
         assert_eq!(
             resolve(
-                None,
                 amsterdam,
                 ExecutionSpecContext::local_or_script(
                     Some(NamedChain::Dev as u64),
@@ -1952,26 +1946,12 @@ mod tests {
         // An endpoint that is not ahead keeps `evm_version` instead of the source schedule.
         assert_eq!(
             resolve(
-                None,
                 amsterdam,
                 ExecutionSpecContext::local_or_script(
                     Some(sepolia),
                     ethereum(EthereumHardfork::Prague)
                 )
             ),
-            (None, SpecId::PRAGUE)
-        );
-        // An explicit hardfork and non-script forks are unchanged.
-        assert_eq!(
-            resolve(
-                ethereum(EthereumHardfork::Prague),
-                amsterdam,
-                ExecutionSpecContext::local_or_script(Some(sepolia), None)
-            ),
-            (ethereum(EthereumHardfork::Prague), SpecId::PRAGUE)
-        );
-        assert_eq!(
-            resolve(None, amsterdam, ExecutionSpecContext::fork(sepolia, None)),
             (None, SpecId::PRAGUE)
         );
     }
