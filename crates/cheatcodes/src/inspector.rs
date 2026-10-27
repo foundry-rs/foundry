@@ -1641,7 +1641,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             new_origin,
                             chain_id,
                             &mut self.persistent_writes,
-                            curr_depth,
+                            curr_depth.saturating_sub(1),
                         ) {
                             return Some(message_result(
                                 call,
@@ -1663,12 +1663,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
-                    // The increment survives reverts of the enclosing calls.
+                    // The increment survives reverts of the enclosing calls. evm2 runs this hook
+                    // before the call's checkpoint, so the increment belongs to the caller's frame.
                     if !isolate_call && let Ok(mut account) = evm.state_mut().account(&new_origin) {
                         let prev = account.nonce();
                         account.set_nonce(prev + 1);
-                        self.persistent_writes
-                            .push((curr_depth, PersistentWrite::Nonce(new_origin, 1)));
+                        let write = PersistentWrite::nonce(&account, prev);
+                        self.persistent_writes.push((curr_depth.saturating_sub(1), write));
                         debug!(target: "cheatcodes", address=%new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if single_call {
@@ -2261,10 +2262,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
         let root = usize::from(interp.version().initial_call_depth);
         let state = interp.host().state_mut();
+        let mut failed = None;
         for (write_depth, write) in &mut self.persistent_writes {
             if *write_depth >= depth {
-                if !success {
-                    let _ = write.apply(state);
+                if !success && let Err(err) = write.apply(state) {
+                    failed = Some(err);
                 }
                 // The parent owns the writes once the frame ends, so a failing sibling at the
                 // same depth does not replay them again.
@@ -2275,6 +2277,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
         if depth == root {
             self.persistent_writes.retain(|(write_depth, _)| *write_depth < root);
+        }
+        if let Some(err) = failed {
+            let _ = interp.fail(err);
         }
     }
 
@@ -3787,7 +3792,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         let nonce = account.nonce();
         if auth.nonce() == nonce + u64::from(authority == sender) {
             account.set_nonce(nonce + 1);
-            persistent.push((depth, PersistentWrite::Nonce(authority, 1)));
+            persistent.push((depth, PersistentWrite::nonce(&account, nonce)));
         }
     }
     Ok(())

@@ -46,8 +46,8 @@ use evm2::{
     Evm, EvmFeatures, EvmTypes, EvmTypesHost, ExecutedTx, Inspector, TxResult, TxResultWithState,
     bytecode::Bytecode,
     evm::{
-        AccountChanges, AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB, JournalEntry,
-        PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
+        AccountChanges, AccountHandle, AccountInfo, Cache, CacheDB, DbResult, DynDatabase, EmptyDB,
+        JournalEntry, PendingState, PrewarmSet, State, StateCheckpoint, StateSnapshot,
     },
 };
 use std::{mem, sync::Arc};
@@ -217,8 +217,16 @@ impl<T: EvmTypesHost> ExecutedNested<T> {
 pub enum PersistentWrite {
     /// Adds a wrapping delta to an account's balance.
     Balance(Address, U256),
-    /// Adds a wrapping delta to an account's nonce.
-    Nonce(Address, u64),
+    /// Adds a delta to an account's nonce, saturating at its bounds.
+    Nonce {
+        /// The account.
+        address: Address,
+        /// The change to the nonce.
+        delta: i128,
+        /// Whether the running transaction had created the account when the write was made. A
+        /// revert that undoes the creation also undoes the write, as on master.
+        created: bool,
+    },
     /// Sets an account's code.
     Code(Address, B256, Bytecode),
     /// Wipes an account's storage.
@@ -228,6 +236,15 @@ pub enum PersistentWrite {
 }
 
 impl PersistentWrite {
+    /// Returns the nonce write that `account`, whose nonce was `previous`, just made.
+    pub fn nonce(account: &AccountHandle<'_, '_>, previous: u64) -> Self {
+        Self::Nonce {
+            address: account.address(),
+            delta: i128::from(account.nonce()) - i128::from(previous),
+            created: account.is_created(),
+        }
+    }
+
     /// Applies the write to `state` as a journaled write.
     pub fn apply(&self, state: &mut State<'_>) -> DbResult<()> {
         match self {
@@ -236,11 +253,14 @@ impl PersistentWrite {
                 let balance = account.balance().wrapping_add(*delta);
                 account.set_balance(balance);
             }
-            Self::Nonce(address, delta) => {
+            Self::Nonce { address, delta, created } => {
                 let mut account = state.account(address)?;
+                if *created && !account.is_created() {
+                    return Ok(());
+                }
                 account.touch();
-                let nonce = account.nonce().wrapping_add(*delta);
-                account.set_nonce(nonce);
+                let nonce = (i128::from(account.nonce()) + delta).max(0);
+                account.set_nonce(u64::try_from(nonce).unwrap_or(u64::MAX));
             }
             Self::Code(address, code_hash, code) => {
                 state.account(address)?.set_code(*code_hash, code.clone());
@@ -1543,8 +1563,9 @@ fn apply_account(
             account.set_balance(balance);
         }
         if account.nonce() != nonce {
-            record(PersistentWrite::Nonce(address, nonce.wrapping_sub(account.nonce())));
+            let previous = account.nonce();
             account.set_nonce(nonce);
+            record(PersistentWrite::nonce(&account, previous));
         }
         if account.code_hash() != code_hash {
             let code = code()?;
