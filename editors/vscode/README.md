@@ -8,8 +8,8 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then install `paradigm.forge-lsp` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge-lsp).
+[Foundry](https://getfoundry.sh), then install `paradigm.forge-lsp` from
+[Open VSX](https://open-vsx.org/extension/paradigm/forge-lsp).
 
 To try the extension without installing it, run this in your Solidity project's
 terminal:
