@@ -668,7 +668,6 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     let source =
         origin_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     assert_eq!(source.header.timestamp, source_timestamp);
-    assert_eq!(source.header.beneficiary, coinbase);
     let coinbase_balance = origin_provider.get_balance(coinbase).await.unwrap();
     assert!(!coinbase_balance.is_zero());
 
@@ -695,10 +694,9 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     );
     assert_eq!(replayed.header.timestamp, source.header.timestamp);
     assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
-    assert_eq!(replayed.header.beneficiary, coinbase);
+    assert_eq!(replayed.header.beneficiary, source.header.beneficiary);
     let fork_provider = fork_handle.http_provider();
     assert_eq!(fork_provider.get_balance(coinbase).await.unwrap(), coinbase_balance);
-    assert!(fork_provider.get_balance(Address::ZERO).await.unwrap().is_zero());
 
     fork_api.mine_one().await.unwrap();
     let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();

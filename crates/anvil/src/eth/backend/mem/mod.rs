@@ -5923,8 +5923,8 @@ where
         );
 
         let mut replay_env = evm_env.clone();
-        // The prefix pays its fees to the source block's coinbase, as on chain. Blocks mined
-        // afterwards keep the local beneficiary.
+        // Execute the prefix with the source block's coinbase so priority fees, COINBASE, and the
+        // header miner match the source. Later blocks keep the local beneficiary.
         replay_env.block_env.beneficiary = beneficiary;
         let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
             replay_env.block_env.number = evm;
