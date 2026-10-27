@@ -1523,6 +1523,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheatcodes.snapshot_restores = SnapshotRestores::default();
             // A transaction that ended with an error did not drop its persistent writes.
             cheatcodes.persistent_writes.clear();
+            cheatcodes.persistent_write_snapshots.clear();
         }
     }
 
@@ -1774,14 +1775,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 failed,
                 features,
             );
-            if let Some((checkpoint, reinstated)) = end {
-                // The persistent writes made since the restoration went to the restored state,
-                // which the reinstated one replaced.
-                if reinstated {
-                    cheats.persistent_writes.clear();
+            // A frame ends here once per hook layer, and only the layer that opened it returns
+            // its checkpoint.
+            if let Some((checkpoint, ledger)) = end {
+                // The reinstated state holds the persistent writes recorded over it.
+                if let Some(ledger) = ledger {
+                    cheats.persistent_writes = ledger;
                 }
-                let depth = usize::from(message.depth);
-                cheats.frame_rollback = Some((depth, checkpoint.journal_len()));
+                cheats.frame_rollback =
+                    Some((usize::from(message.depth), checkpoint.journal_len()));
             }
         }
     }

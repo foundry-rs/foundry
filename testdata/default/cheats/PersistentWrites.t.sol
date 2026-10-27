@@ -86,6 +86,22 @@ contract PersistentWritesTest is Test {
         revert();
     }
 
+    function dealThenRestoreInChild() external {
+        vm.deal(A, 100);
+        this.restoreSnapshot();
+        revert();
+    }
+
+    function restoreSnapshot() external {
+        vm.revertToState(vm.snapshotState());
+    }
+
+    function resetInRevertedChild() external {
+        try this.resetNonceAfterCreate(0) {} catch {}
+        vm.setNonceUnsafe(EOA, 5);
+        revert();
+    }
+
     function createThenSetNonce() external {
         bumper.create();
         vm.setNonce(address(bumper), 10);
@@ -152,6 +168,8 @@ contract PersistentWritesTest is Test {
         assertEq(balanceAfter(abi.encodeCall(this.dealThenTransfer, ())), 100, "dealThenTransfer");
         assertEq(balanceAfter(abi.encodeCall(this.dealInChild, ())), 100, "dealInChild");
         assertEq(balanceAfter(abi.encodeCall(this.dealInRevertedChild, ())), 2, "dealInRevertedChild");
+        // A snapshot restore keeps the writes made before the snapshot.
+        assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreInChild, ())), 100, "dealThenRestoreInChild");
 
         callReverting(abi.encodeCall(this.createThenSetNonce, ()));
         assertEq(vm.getNonce(address(bumper)), 9, "createThenSetNonce");
@@ -183,6 +201,9 @@ contract PersistentWritesTest is Test {
         // The undone nonce changes add up before saturating.
         callReverting(abi.encodeCall(this.resetNonceAfterCreate, (10)));
         assertEq(vm.getNonce(EOA), 9, "setNonceUnsafeAfterCreate");
+        // An enclosing revert keeps the saturated nonce.
+        callReverting(abi.encodeCall(this.resetInRevertedChild, ()));
+        assertEq(vm.getNonce(EOA), 5, "resetInRevertedChild");
 
         // The executed transaction's own `deal` is part of its merged changes.
         vm.chainId(1);

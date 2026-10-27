@@ -23,12 +23,12 @@ use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
-    map::{AddressHashMap, HashMap, HashSet},
+    map::{AddressHashMap, AddressMap, HashMap, HashSet},
 };
 use alloy_sol_types::{SolCall, SolInterface};
 use evm2::{
     EvmTypesHost, ExecutionError, TxResultWithState,
-    evm::State,
+    evm::{State, StateSnapshot},
     interpreter::{
         Gas, GasTracker, Host, InstrStop, Interpreter, MessageExt, MessageKind, MessageResultExt,
         derive_create_destination, op,
@@ -888,6 +888,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// failure rolls the frame back to, recorded by the inspector stack.
     pub frame_rollback: Option<(usize, usize)>,
 
+    /// The number of persistent writes recorded when each snapshot of the running transaction
+    /// was taken.
+    pub persistent_write_snapshots: HashMap<U256, usize>,
+
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
@@ -1020,6 +1024,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             eth_deals: Default::default(),
             persistent_writes: Default::default(),
             frame_rollback: Default::default(),
+            persistent_write_snapshots: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             pc: Default::default(),
@@ -2290,6 +2295,24 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.persistent_writes.extend(writes.into_iter().map(|write| (depth, len, write)));
     }
 
+    /// Retains `replaced`, the running state a revert to `snapshot_id` replaced, and drops the
+    /// persistent writes recorded since the snapshot, which the restored state does not hold.
+    pub(crate) fn restore_persistent_writes(
+        &mut self,
+        snapshot_id: U256,
+        replaced: StateSnapshot,
+        remove: bool,
+    ) {
+        self.snapshot_restores.capture(replaced, &self.persistent_writes);
+        let len = if remove {
+            self.persistent_write_snapshots.remove(&snapshot_id)
+        } else {
+            self.persistent_write_snapshots.get(&snapshot_id).copied()
+        };
+        // A snapshot of an earlier transaction holds none of this transaction's writes.
+        self.persistent_writes.truncate(len.unwrap_or_default());
+    }
+
     /// Replays the persistent writes made in the frame at `depth` or deeper after the frame
     /// failed and the writes were rolled back, as writes of the enclosing frame. A transaction's
     /// writes are dropped when its root frame ends; a nested one merges its changes itself.
@@ -2314,12 +2337,30 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let undone = |&(write_depth, len, _): &(usize, usize, PersistentWrite)| {
                 write_depth >= depth && rollback.is_none_or(|rollback| len > rollback)
             };
+            // The nonces after the rollback, to collapse each account's replayed nonce writes into
+            // the one change the replay made, so an enclosing replay does not undo the saturation.
+            let mut nonces = AddressMap::<u64>::default();
+            for (.., write) in self.persistent_writes.iter().filter(|entry| undone(entry)) {
+                if let PersistentWrite::Nonce { address, .. } = write
+                    && let Ok(account) = state.account(address)
+                {
+                    nonces.entry(*address).or_insert(account.nonce());
+                }
+            }
             let writes = self.persistent_writes.iter().filter(|entry| undone(entry));
             failed = PersistentWrite::apply_all(writes.map(|(_, _, write)| write), state).err();
             let len = state.checkpoint().journal_len();
-            for entry in &mut self.persistent_writes {
-                if undone(entry) {
-                    entry.1 = len;
+            self.persistent_writes.retain_mut(|entry| {
+                if !undone(entry) {
+                    return true;
+                }
+                entry.1 = len;
+                !matches!(entry.2, PersistentWrite::Nonce { .. })
+            });
+            for (address, previous) in nonces {
+                if let Ok(account) = state.account(&address) {
+                    let write = PersistentWrite::nonce(&account, previous);
+                    self.persistent_writes.push((depth, len, write));
                 }
             }
         }
