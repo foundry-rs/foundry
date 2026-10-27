@@ -880,12 +880,16 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ///
     /// Cheatcodes running in the transaction see the throwaway backend with the target fork active
     /// at the transaction's block; their changes to it are discarded.
+    ///
+    /// `isolation_env` is the environment of the transaction an isolated call runs in, whose
+    /// sender balance checks apply on the active fork instead of the isolated call's.
     pub fn prepare_transact(
         &self,
         id: Option<LocalForkId>,
         transaction: B256,
         evm: &mut FoundryEvmFor<'_, FEN>,
         depth: u16,
+        isolation_env: Option<&EvmEnvFor<FEN>>,
     ) -> eyre::Result<(PreparedTx<TypesFor<FEN>>, CowBackend<'_, FEN>)> {
         trace!(?id, ?transaction, "execute transaction");
         let id = self.ensure_fork(id)?;
@@ -904,7 +908,13 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let tx = FEN::tx_from_any_rpc(&target.transaction)?;
         let active = self.is_active_fork(id);
         let mut env = if active {
-            evm_env(evm)
+            let mut env = evm_env(evm);
+            if let Some(outer) = isolation_env {
+                for feature in [EvmFeatures::BALANCE_CHECK, EvmFeatures::BALANCE_TOP_UP] {
+                    env.set_feature(feature, outer.version.features.contains(feature));
+                }
+            }
+            env
         } else {
             self.lifecycle.forks().context(Some(id)).expect("fork exists").env
         };

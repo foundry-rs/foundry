@@ -53,6 +53,39 @@ contract ExecuteTransactionStateTest is Test {
         if (revertParent) revert("parent reverted");
     }
 
+    function executeRawTx() external {
+        vm.executeTransaction(RAW_TX);
+    }
+
+    // An underfunded sender fails validation without a nonce increment, also inside an isolated
+    // call.
+    function test_execute_underfunded_sender_keeps_nonce() public {
+        vm.chainId(1);
+        vm.deal(SENDER, 0);
+        try this.executeRawTx() {
+            revert("expected lack of funds");
+        } catch {}
+        assertEq(vm.getNonce(SENDER), 0);
+    }
+
+    function transactUsdtTransfer() external {
+        // https://etherscan.io/tx/0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c
+        vm.transact(0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c);
+    }
+
+    // A replayed transaction from an underfunded sender fails validation without a nonce
+    // increment, also inside an isolated call.
+    function test_transact_fork_underfunded_sender_keeps_nonce() public {
+        vm.createSelectFork("mainnet", 16260609);
+        address sender = 0x2e09BB78B3D64d98Da44D1C776fa77dcd133ED54;
+        vm.deal(sender, 0);
+        uint64 nonce = vm.getNonce(sender);
+        try this.transactUsdtTransfer() {
+            revert("expected lack of funds");
+        } catch {}
+        assertEq(vm.getNonce(sender), nonce);
+    }
+
     function executeCreateThenRevert() external {
         vm.executeTransaction(CREATE_TX);
         revert("parent reverted");

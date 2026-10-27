@@ -1446,6 +1446,13 @@ impl Cheatcode for executeTransactionCall {
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
         env.set_feature(EvmFeatures::NONCE_CHECK, true);
+        // Inside an isolated call, the sender's balance is checked as in the transaction the
+        // call runs in.
+        if let Some(outer) = &ccx.state.isolation_env {
+            for feature in [EvmFeatures::BALANCE_CHECK, EvmFeatures::BALANCE_TOP_UP] {
+                env.set_feature(feature, outer.version.features.contains(feature));
+            }
+        }
         // The nested transaction validates with a chain ID `vm.chainId` set in the running one.
         if let Some(chain_id) =
             ccx.state.env_overrides.get(ccx.active_fork_id()).and_then(|o| o.chain_id)
