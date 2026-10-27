@@ -1,38 +1,167 @@
-//! ERC-7201 namespace discovery and conversion to solc-compatible storage layouts.
+//! ERC-7201 namespaced storage layouts.
 //!
-//! Packing and type generation are delegated to Solar.
+//! solc's `storageLayout` output only covers conventional storage. Namespaces declared with
+//! `@custom:storage-location erc7201:<id>` are computed with Solar and appended to it, so storage
+//! decoding labels namespaced fields as `<id>.<field>`.
 
-use super::find_target_contract;
 use alloy_primitives::{U256, keccak256};
 use eyre::Result;
-use foundry_compilers::artifacts::StorageLayout;
+use foundry_compilers::{
+    ArtifactId, ProjectCompileOutput,
+    artifacts::{Remapping, Sources, StorageLayout},
+};
 use path_slash::PathExt;
 use solar::{
     ast::NatSpecKind,
-    sema::{
-        Compiler, Gcx, hir,
-        interface::{Session, source_map::FileName},
-        output::StorageLayoutOutput,
+    interface::{
+        ColorChoice, Session,
+        config::{CompileOpts, ImportRemapping},
+        source_map::{FileLoader, FileName, SourceMap},
     },
+    sema::{Compiler, CompilerRef, Gcx, hir, output::StorageLayoutOutput},
 };
-use std::{collections::BTreeMap, ops::ControlFlow, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io,
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-/// Appends the ERC-7201 namespaces of a contract and its bases to its storage layout.
+/// Returns the storage layouts of `output`'s artifacts with ERC-7201 namespaces appended.
 ///
-/// Namespaced fields are labeled `<namespace>.<field>`. Duplicate namespace roots and conflicting
-/// type definitions are errors.
-pub fn extend_storage_layout(
-    layout: &mut StorageLayout,
+/// See [`extend_storage_layouts`].
+pub fn project_storage_layouts(
+    output: &mut ProjectCompileOutput,
+    root: &Path,
+) -> Vec<(ArtifactId, StorageLayout)> {
+    let layouts = output
+        .artifact_ids()
+        .filter_map(|(id, artifact)| {
+            artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
+        })
+        .collect::<Vec<_>>();
+    extend_storage_layouts(output.parser_mut().solc_mut().compiler_mut(), root, layouts)
+}
+
+/// Returns `layouts` with the ERC-7201 namespaces of each contract appended.
+///
+/// `compiler` must contain the parsed sources of the artifacts; it is lowered if necessary. Source
+/// names are made relative to `root` to match solc's. Namespaces are optional decoding metadata, so
+/// failures are logged and leave the affected layouts unchanged.
+pub fn extend_storage_layouts(
     compiler: &mut Compiler,
     root: &Path,
-    target_path: &Path,
-    target_name: Option<&str>,
-) -> Result<()> {
-    merge_storage_namespaces(
-        layout,
-        erc7201_storage_layouts(compiler, root, target_path, target_name)?,
-    )
+    layouts: impl IntoIterator<Item = (ArtifactId, StorageLayout)>,
+) -> Vec<(ArtifactId, StorageLayout)> {
+    let mut layouts = layouts.into_iter().collect::<Vec<_>>();
+    if layouts.is_empty() || !has_annotations(compiler) {
+        return layouts;
+    }
+    let result = compiler.enter_mut(|compiler| -> Result<()> {
+        lower(compiler)?;
+        let gcx = compiler.gcx();
+        let contracts = contracts_by_source(gcx, root);
+        for (id, layout) in &mut layouts {
+            let source = id.source.strip_prefix(root).unwrap_or(&id.source).to_slash_lossy();
+            let Some(&contract) = contracts.get(&(source.into_owned(), id.name.clone())) else {
+                continue;
+            };
+            if let Err(err) = extend_storage_layout(layout, gcx, root, contract) {
+                warn!(target: "erc7201", artifact = %id.identifier(), %err, "skipping ERC-7201 namespaces");
+            }
+        }
+        Ok(())
+    });
+    if let Err(err) = result {
+        warn!(target: "erc7201", %err, "skipping ERC-7201 namespaces");
+    }
+    layouts
 }
+
+/// Appends the ERC-7201 namespaces of `contract` and its bases to its storage layout.
+///
+/// Namespaced fields are labeled `<namespace>.<field>`. Malformed annotations, duplicate namespace
+/// roots, conflicting type definitions, and errors emitted while computing types are errors.
+pub fn extend_storage_layout(
+    layout: &mut StorageLayout,
+    gcx: Gcx<'_>,
+    root: &Path,
+    contract: hir::ContractId,
+) -> Result<()> {
+    let namespaces = collect_storage_layouts(gcx, root, contract)?;
+    if gcx.sess.dcx.has_errors().is_err() {
+        return Err(solar_error(gcx.sess));
+    }
+    merge_storage_namespaces(layout, namespaces)
+}
+
+/// Lowers the parsed sources to HIR unless that has already happened.
+///
+/// Only the HIR and the types reachable from namespaced structs are needed, so this does not run
+/// full semantic analysis; solc has already validated the sources.
+pub fn lower(compiler: &mut CompilerRef<'_>) -> Result<()> {
+    if compiler.gcx().stage().is_none_or(|stage| stage.is_parsing())
+        && !matches!(compiler.lower_asts(), Ok(ControlFlow::Continue(())))
+    {
+        return Err(solar_error(compiler.sess()));
+    }
+    if compiler.sess().dcx.has_errors().is_err() {
+        return Err(solar_error(compiler.sess()));
+    }
+    Ok(())
+}
+
+/// Parses Standard JSON `sources`, keyed by source unit name, without touching the filesystem.
+///
+/// Returns `None` if no source declares an ERC-7201 namespace.
+pub fn parse_standard_json(sources: &Sources, remappings: &[Remapping]) -> Option<Compiler> {
+    if !sources.values().any(|source| source.content.contains(ANNOTATION)) {
+        return None;
+    }
+    let source_map = Arc::new(SourceMap::empty());
+    source_map.set_file_loader(NoFileLoader);
+    let opts = CompileOpts {
+        standard_json: true,
+        import_remappings: remappings
+            .iter()
+            .filter_map(|remapping| remapping.to_string().parse::<ImportRemapping>().ok())
+            .collect(),
+        ..Default::default()
+    };
+    let sess = Session::builder()
+        .source_map(source_map)
+        .with_buffer_emitter(ColorChoice::Never)
+        .opts(opts)
+        .build();
+    let mut compiler = Compiler::new(sess);
+    let _ = compiler.enter_mut(|compiler| -> solar::interface::Result {
+        let mut pcx = compiler.parse();
+        pcx.par_load_files_with_contents(
+            sources
+                .iter()
+                .map(|(path, source)| (path.clone(), source.content.as_str().to_owned()))
+                .collect::<Vec<_>>(),
+        )?;
+        pcx.parse();
+        Ok(())
+    });
+    Some(compiler)
+}
+
+/// Returns the contract `name` declared in the source `path`, relative to `root`.
+pub fn find_contract(
+    gcx: Gcx<'_>,
+    root: &Path,
+    path: &Path,
+    name: &str,
+) -> Option<hir::ContractId> {
+    let source = path.strip_prefix(root).unwrap_or(path).to_slash_lossy().into_owned();
+    contracts_by_source(gcx, root).remove(&(source, name.to_owned()))
+}
+
+/// The NatSpec tag content that marks a namespace; cheap to search for in source text.
+const ANNOTATION: &str = "erc7201";
 
 /// A storage namespace declared by a struct in a contract or one of its bases.
 #[derive(Clone, Debug)]
@@ -50,34 +179,45 @@ struct StorageNamespace {
     layout: StorageLayout,
 }
 
-/// Computes ERC-7201 layouts for a contract in the resolved project.
-///
-/// Only the HIR and the types reachable from namespaced structs are needed, so this does not run
-/// full semantic analysis; solc has already validated the sources. Errors emitted while lowering
-/// or computing types are returned rather than silently emitting incomplete layouts.
-fn erc7201_storage_layouts(
-    compiler: &mut Compiler,
-    root: &Path,
-    target_path: &Path,
-    target_name: Option<&str>,
-) -> Result<Vec<StorageNamespace>> {
-    compiler.enter_mut(|compiler| {
-        if compiler.gcx().stage().is_none_or(|stage| stage.is_parsing())
-            && !matches!(compiler.lower_asts(), Ok(ControlFlow::Continue(())))
-        {
-            return Err(solar_error(compiler.sess()));
-        }
-        let gcx = compiler.gcx();
-        if gcx.sess.dcx.has_errors().is_err() {
-            return Err(solar_error(gcx.sess));
-        }
-        let target = find_target_contract(&gcx.hir, target_path, target_name)?;
-        let namespaces = collect_storage_layouts(gcx, root, target)?;
-        if gcx.sess.dcx.has_errors().is_err() {
-            return Err(solar_error(gcx.sess));
-        }
-        Ok(namespaces)
-    })
+/// Rejects filesystem access, so Standard JSON imports only resolve to the supplied sources.
+struct NoFileLoader;
+
+impl FileLoader for NoFileLoader {
+    fn canonicalize_path(&self, path: &Path) -> io::Result<PathBuf> {
+        Ok(path.to_path_buf())
+    }
+
+    fn load_stdin(&self) -> io::Result<String> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    fn load_file(&self, _path: &Path) -> io::Result<String> {
+        Err(io::ErrorKind::NotFound.into())
+    }
+
+    fn load_binary_file(&self, _path: &Path) -> io::Result<Vec<u8>> {
+        Err(io::ErrorKind::NotFound.into())
+    }
+}
+
+/// Returns whether any parsed source mentions an ERC-7201 storage location.
+pub fn has_annotations(compiler: &Compiler) -> bool {
+    compiler.sess().source_map().files().iter().any(|file| file.src.contains(ANNOTATION))
+}
+
+/// Maps `(source, name)` to contracts, with sources relative to `root` and slash-separated.
+fn contracts_by_source(gcx: Gcx<'_>, root: &Path) -> HashMap<(String, String), hir::ContractId> {
+    gcx.hir
+        .contract_ids()
+        .filter_map(|id| {
+            let contract = gcx.hir.contract(id);
+            let FileName::Real(path) = &gcx.hir.source(contract.source).file.name else {
+                return None;
+            };
+            let source = path.strip_prefix(root).unwrap_or(path).to_slash_lossy().into_owned();
+            Some(((source, contract.name.to_string()), id))
+        })
+        .collect()
 }
 
 /// Returns namespaces declared in `contract` and its linearized bases, once per declaration.
@@ -141,7 +281,7 @@ fn parse_namespace(annotation: &str) -> Result<Option<&str>> {
     let annotation = annotation.trim();
     let Some(id) = annotation.strip_prefix("erc7201:") else {
         eyre::ensure!(
-            annotation.split_whitespace().next() != Some("erc7201"),
+            annotation.split_whitespace().next() != Some(ANNOTATION),
             "expected `erc7201:<namespace>` storage location"
         );
         return Ok(None);
@@ -224,7 +364,25 @@ fn solar_error(sess: &Session) -> eyre::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+
+    /// Lowers `compiler` and collects the namespaces of `name` in `path`.
+    fn erc7201_storage_layouts(
+        compiler: &mut Compiler,
+        root: &Path,
+        path: &Path,
+        name: Option<&str>,
+    ) -> Result<Vec<StorageNamespace>> {
+        compiler.enter_mut(|compiler| {
+            lower(compiler)?;
+            let gcx = compiler.gcx();
+            let contract = find_contract(gcx, root, path, name.unwrap()).unwrap();
+            let namespaces = collect_storage_layouts(gcx, root, contract)?;
+            if gcx.sess.dcx.has_errors().is_err() {
+                return Err(solar_error(gcx.sess));
+            }
+            Ok(namespaces)
+        })
+    }
 
     fn parser_at(source: &str, path: &str) -> Compiler {
         let mut compiler = Compiler::new(Session::builder().with_test_emitter().build());
@@ -454,5 +612,92 @@ mod tests {
             .to_string(),
             "Duplicate ERC-7201 namespace `example` in `test.sol:C.Data` and `test.sol:C.Data`"
         );
+    }
+
+    #[test]
+    fn artifact_layouts() {
+        let mut parser = parser_at(
+            r#"contract C {
+            /// @custom:storage-location erc7201:example
+            struct Data { uint256 value; }
+        }
+        contract Plain { uint256 value; }"#,
+            "/project/src/test.sol",
+        );
+        let id = |name: &str| ArtifactId {
+            path: PathBuf::new(),
+            name: name.to_owned(),
+            source: PathBuf::from("src/test.sol"),
+            version: semver::Version::new(0, 8, 30),
+            build_id: String::new(),
+            profile: String::new(),
+        };
+        let layouts = extend_storage_layouts(
+            &mut parser,
+            Path::new("/project"),
+            [(id("C"), StorageLayout::default()), (id("Plain"), StorageLayout::default())],
+        );
+        assert_eq!(
+            layouts
+                .iter()
+                .map(|(id, layout)| (
+                    id.name.as_str(),
+                    layout.storage.iter().map(|s| s.label.as_str()).collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>(),
+            [("C", vec!["example.value"]), ("Plain", vec![])]
+        );
+        assert_eq!(layouts[0].1.storage[0].contract, "src/test.sol:C");
+    }
+
+    #[test]
+    fn standard_json_sources() {
+        let sources = Sources::from_iter([
+            (
+                PathBuf::from("src/Token.sol"),
+                foundry_compilers::artifacts::Source::new(
+                    r#"import "@oz/Base.sol";
+                    contract Token is Base {}"#,
+                ),
+            ),
+            (
+                PathBuf::from("lib/oz/Base.sol"),
+                foundry_compilers::artifacts::Source::new(
+                    r#"contract Base {
+                    /// @custom:storage-location erc7201:openzeppelin.storage.ERC20
+                    struct ERC20Storage { mapping(address => uint256) balances; uint256 totalSupply; }
+                }"#,
+                ),
+            ),
+        ]);
+        let remappings = ["@oz/=lib/oz/".parse::<Remapping>().unwrap()];
+        let mut compiler = parse_standard_json(&sources, &remappings).unwrap();
+        let mut layout = StorageLayout::default();
+        compiler
+            .enter_mut(|compiler| {
+                lower(compiler)?;
+                let gcx = compiler.gcx();
+                let contract =
+                    find_contract(gcx, Path::new(""), Path::new("src/Token.sol"), "Token").unwrap();
+                extend_storage_layout(&mut layout, gcx, Path::new(""), contract)
+            })
+            .unwrap();
+        assert_eq!(
+            layout
+                .storage
+                .iter()
+                .map(|s| (s.label.as_str(), s.contract.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("openzeppelin.storage.ERC20.balances", "lib/oz/Base.sol:Base"),
+                ("openzeppelin.storage.ERC20.totalSupply", "lib/oz/Base.sol:Base"),
+            ]
+        );
+
+        let plain = Sources::from_iter([(
+            PathBuf::from("src/Plain.sol"),
+            foundry_compilers::artifacts::Source::new("contract Plain { uint256 x; }"),
+        )]);
+        assert!(parse_standard_json(&plain, &[]).is_none());
     }
 }

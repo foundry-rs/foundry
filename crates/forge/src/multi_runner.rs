@@ -16,7 +16,8 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
-    TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
+    TestFunctionKind, erc7201, external_compiler::external_artifact_is_test_eligible,
+    get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -847,13 +848,6 @@ impl MultiContractRunnerBuilder {
             );
         }
 
-        // Create known contracts from linked contracts and storage layout information (if any).
-        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
-            .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
-                artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
-            }))
-            .build();
-
         // Initialize and configure the solar compiler.
         let mut analysis = solar::sema::Compiler::new(
             solar::interface::Session::builder().with_stderr_emitter().build(),
@@ -879,6 +873,19 @@ impl MultiContractRunnerBuilder {
             let _ = compiler.lower_asts();
             Ok(())
         })?;
+
+        // Create known contracts from linked contracts and storage layout information (if any),
+        // including ERC-7201 namespaces.
+        let storage_layouts = erc7201::extend_storage_layouts(
+            &mut analysis,
+            root,
+            output.artifact_ids().filter_map(|(id, artifact)| {
+                artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
+            }),
+        );
+        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
+            .with_storage_layouts(storage_layouts)
+            .build();
         let analysis = Arc::new(analysis);
 
         // Enum variant counts used to constrain fuzzed enum inputs to valid values.

@@ -12,7 +12,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_matching_contract_artifact, find_target_path, shell,
+    erc7201, find_matching_contract_artifact, find_target_path, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -31,8 +31,6 @@ use regex::Regex;
 use serde_json::{Map, Value};
 use solar::sema::{hir, interface::source_map::FileName};
 use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
-
-mod erc7201;
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -160,14 +158,14 @@ impl InspectArgs {
             ContractArtifactField::StorageLayout => {
                 let mut layout =
                     artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
-                if is_solidity_source(&target_path) {
-                    erc7201::extend_storage_layout(
-                        &mut layout,
-                        output.parser_mut().solc_mut().compiler_mut(),
-                        project.root(),
-                        &target_path,
-                        contract.name(),
-                    )?;
+                let compiler = output.parser_mut().solc_mut().compiler_mut();
+                if is_solidity_source(&target_path) && erc7201::has_annotations(compiler) {
+                    compiler.enter_mut(|compiler| {
+                        erc7201::lower(compiler)?;
+                        let gcx = compiler.gcx();
+                        let target = find_target_contract(&gcx.hir, &target_path, contract.name())?;
+                        erc7201::extend_storage_layout(&mut layout, gcx, project.root(), target)
+                    })?;
                 }
                 print_storage_layout(Some(&layout), "storage layout", wrap)?;
             }

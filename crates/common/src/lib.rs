@@ -22,6 +22,7 @@ pub mod comments;
 pub mod compile;
 pub mod constants;
 pub mod contracts;
+pub mod erc7201;
 pub mod errors;
 pub mod external_compiler;
 pub mod external_storage;
