@@ -333,7 +333,7 @@ Ran 1 test for test/CancunTransient.t.sol:CancunTransient
 
 // With call isolation, each CALL or CREATE made by the test runs as its own
 // transaction: it starts with empty transient storage, its transient writes end
-// with it, and a CALL increments the test's nonce even when it reverts. A
+// with it, and a CALL increments the test's nonce even when it fails. A
 // STATICCALL is not isolated. Without isolation, every check passes.
 #[forgetest_init]
 fn symbolic_isolated_calls_are_transactions(prj: _, cmd: _) {
@@ -429,6 +429,25 @@ abstract contract IsolationChecks is Test {
         }
         assert(t.peek() == 7);
     }
+
+    function checkTestTransientSurvivesCall() public {
+        assembly {
+            tstore(0, 7)
+        }
+        t.set();
+        uint256 v;
+        assembly {
+            v := tload(0)
+        }
+        assert(v == 7);
+    }
+
+    function checkUnderfundedCallKeepsNonce() public {
+        uint64 nonce = vm.getNonce(address(this));
+        (bool ok,) = address(t).call{value: address(this).balance + 1}("");
+        assert(!ok);
+        assert(vm.getNonce(address(this)) == nonce);
+    }
 }
 
 contract SymbolicIsolation is IsolationChecks {}
@@ -447,14 +466,16 @@ contract SymbolicNoIsolation is IsolationChecks {}
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicIsolation.t.sol:SymbolicIsolation
+Ran 8 tests for test/SymbolicIsolation.t.sol:SymbolicIsolation
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCallKeepsNonce() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCalleeSeesTestTransient() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCalleeTransientPersists() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkConstructorSeesTestTransient() ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRevertingCallKeepsNonce() ([METRICS])
 [PASS] checkStaticCallSeesTestTransient() ([METRICS])
-Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
+[PASS] checkTestTransientSurvivesCall() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkUnderfundedCallKeepsNonce() ([METRICS])
+Suite result: FAILED. 2 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
@@ -467,14 +488,16 @@ Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicIsolation.t.sol:SymbolicNoIsolation
+Ran 8 tests for test/SymbolicIsolation.t.sol:SymbolicNoIsolation
 [PASS] checkCallKeepsNonce() ([METRICS])
 [PASS] checkCalleeSeesTestTransient() ([METRICS])
 [PASS] checkCalleeTransientPersists() ([METRICS])
 [PASS] checkConstructorSeesTestTransient() ([METRICS])
 [PASS] checkRevertingCallKeepsNonce() ([METRICS])
 [PASS] checkStaticCallSeesTestTransient() ([METRICS])
-Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] checkTestTransientSurvivesCall() ([METRICS])
+[PASS] checkUnderfundedCallKeepsNonce() ([METRICS])
+Suite result: ok. 8 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
