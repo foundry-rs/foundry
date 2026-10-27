@@ -1677,8 +1677,13 @@ fn apply_account(
         state.storage(&address)?.wipe();
     }
     for (key, value) in slots {
-        record(PersistentWrite::Slot(address, key, value));
-        state.storage_slot(&address, key)?.set(value);
+        // A slot the account already holds, such as one the nested transaction only read, is not
+        // a write.
+        let mut slot = state.storage_slot(&address, key)?;
+        if slot.current() != value {
+            record(PersistentWrite::Slot(address, key, value));
+            slot.set(value);
+        }
     }
     Ok(())
 }
