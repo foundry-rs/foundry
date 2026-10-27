@@ -145,6 +145,12 @@ impl PathState {
         child
     }
 
+    /// Returns whether a CALL or CREATE issued by this frame runs as its own transaction, as
+    /// Forge's call isolation does for calls made by the test, handler, or invariant frame.
+    pub(crate) const fn starts_isolated_transaction(&self, executor: &ExecutorView<'_>) -> bool {
+        executor.isolate && self.call_depth == 0
+    }
+
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
         let mut child = self.child(frame);
         child.storage_hook_active = true;
@@ -1655,6 +1661,20 @@ impl SymbolicWorld {
         let state = Arc::make_mut(&mut self.state);
         state.transient_storage.clear();
         state.current_transaction_created_accounts.clear();
+    }
+
+    /// Clears transient storage for a call that runs as its own transaction.
+    pub(crate) fn clear_transient_storage(&mut self) {
+        if !self.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage.clear();
+        }
+    }
+
+    /// Restores `outer`'s transient storage after a call that ran as its own transaction.
+    pub(crate) fn restore_transient_storage(&mut self, outer: &Self) {
+        if !self.transient_storage.is_empty() || !outer.transient_storage.is_empty() {
+            Arc::make_mut(&mut self.state).transient_storage = outer.transient_storage.clone();
+        }
     }
 
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {

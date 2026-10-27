@@ -886,6 +886,13 @@ impl SymbolicExecutor {
         }
         let (call_caller, call_caller_word, pranked_origin) =
             call_context.unwrap_or_else(|| state.prank_for_next_call());
+        // An isolated CALL is its own transaction, so it bumps the caller's nonce even when the
+        // call reverts.
+        let isolated =
+            matches!(kind, CallKind::Call) && state.starts_isolated_transaction(executor);
+        if isolated {
+            state.world.increment_nonce(executor, call_caller)?;
+        }
 
         let spec_id = executor.spec_id;
         if is_precompile_for_spec(code_address, spec_id) {
@@ -1004,6 +1011,9 @@ impl SymbolicExecutor {
 
         let original_world = state.world.clone();
         let mut child = state.child(frame);
+        if isolated {
+            child.world.clear_transient_storage();
+        }
         if let Some((origin, origin_word)) = pranked_origin {
             child.origin = origin;
             child.origin_word = origin_word;
@@ -1039,6 +1049,9 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.world = child.world;
+                    if isolated {
+                        parent.world.restore_transient_storage(&original_world);
+                    }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = child.expected_creates;
                     parent.return_data = child.frame.return_data;
@@ -1395,9 +1408,33 @@ impl SymbolicExecutor {
         }
 
         let mut parents = VecDeque::new();
-        if outside_sat {
+        let mut outside_branches = Vec::new();
+        if outside_sat
+            && matches!(kind, CallKind::Call)
+            && state.starts_isolated_transaction(executor)
+        {
+            // Isolation runs a CALL as its own transaction, which bumps the caller's nonce,
+            // except for cheatcode and console calls.
+            let mut isolated_constraints = outside_constraints.clone();
+            for address in [CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS] {
+                let address = SymExpr::constant(&mut self.cx, address_word(address));
+                let is_address = SymBoolExpr::eq(&mut self.cx, target.clone(), address);
+                let mut constraints = outside_constraints.clone();
+                constraints.push(is_address.clone());
+                if self.is_sat_with_state(state, &constraints)? {
+                    outside_branches.push((constraints, false));
+                }
+                isolated_constraints.push(is_address.not(&mut self.cx));
+            }
+            if self.is_sat_with_state(state, &isolated_constraints)? {
+                outside_branches.push((isolated_constraints, true));
+            }
+        } else if outside_sat {
+            outside_branches.push((outside_constraints, false));
+        }
+        for (constraints, bump_nonce) in outside_branches {
             let mut branch = state.clone();
-            branch.constraints = outside_constraints;
+            branch.constraints = constraints;
 
             if matches!(kind, CallKind::DelegateCall) && branch.prank.has_active() {
                 return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
@@ -1405,7 +1442,7 @@ impl SymbolicExecutor {
             let (call_caller, _, _) = branch.prank_for_next_call();
             if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
-                    branch.world.symbolic_address_slot(target)
+                    branch.world.symbolic_address_slot(target.clone())
                 } else {
                     branch.address
                 };
@@ -1419,6 +1456,9 @@ impl SymbolicExecutor {
                     out_offset.clone(),
                     &out_size,
                 )? {
+                    if bump_nonce {
+                        branch.world.increment_nonce(executor, call_caller)?;
+                    }
                     branch.world.transfer(
                         &mut self.cx,
                         executor,

@@ -313,9 +313,14 @@ impl SymbolicExecutor {
             CallFrame::new(&mut self.cx, created, created, state.address, zero, false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
+        // Isolation runs a `deployCode` from the test frame as its own transaction.
+        let isolated = state.starts_isolated_transaction(executor);
         let mut child = state.child(frame);
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
+        if isolated {
+            child.world.clear_transient_storage();
+        }
         child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
 
@@ -355,6 +360,9 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.world = child.world;
+                    if isolated {
+                        parent.world.restore_transient_storage(&failure_world);
+                    }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = pending_expected_creates.clone();
                     self.observe_expected_create(
