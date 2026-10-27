@@ -551,8 +551,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let origin_override = cheats.origin_override.take();
         // The nested transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
-        // The merged changes below include the persistent writes the transaction's cheatcodes
-        // made, so those are dropped rather than replayed twice.
+        // The transaction's root frame skips the cheatcode hooks, so the persistent writes its
+        // cheatcodes made are handled below.
         let persistent_writes = cheats.persistent_writes.len();
         let outer_destructs = self.executed_destructs.replace(AddressMap::default());
         child.set_inspector(InspectorStackRefMut {
@@ -578,10 +578,18 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             Err(err) => Err(transaction_error(err)),
         };
         drop(child);
-        cheats.persistent_writes.truncate(persistent_writes);
-        let result = result.map(|(result, persistent)| {
+        // The merged changes include the writes of a successful transaction; a failed one rolled
+        // them back, so they are replayed over its merged changes.
+        let writes = cheats.persistent_writes.split_off(persistent_writes);
+        let result = result.and_then(|(result, mut persistent)| {
+            if !result.is_success() {
+                for (_, write) in writes {
+                    write.apply(evm.state_mut())?;
+                    persistent.push(write);
+                }
+            }
             cheats.record_persistent(usize::from(depth).saturating_sub(1), persistent);
-            result
+            Ok(result)
         });
         // The nested transaction's changes are not the running transaction's execution.
         EvmFactoryFor::<FEN>::default().refresh_transaction(evm);
@@ -1346,6 +1354,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             self.cheatcodes.as_deref_mut().map(|cheats| mem::take(&mut cheats.snapshot_restores));
 
         let previous_source_fork = self.inner.isolated_source_fork.replace(source_fork);
+        let persistent_warmth = backend.backend_mut().take_persistent_warmth();
         child.set_inspector(InspectorStackRefMut {
             cheatcodes: self.cheatcodes.as_deref_mut(),
             inner: &mut *self.inner,
@@ -1354,6 +1363,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let executed = child.transact(&tx).ok().map(|executed| executed.detach());
         let mut child = release_inspector(child);
         self.inner.isolated_source_fork = previous_source_fork;
+        backend.backend_mut().restore_persistent_warmth(persistent_warmth);
         let switch_warmth = self.inner.isolated_switch_warmth.take();
 
         self.inner.exit_inner_context(previous_inner);

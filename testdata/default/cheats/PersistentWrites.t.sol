@@ -22,9 +22,11 @@ contract Reverter {
 
 contract Dealer {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    bool fails;
 
     fallback() external payable {
         vm.deal(address(0xA11CE), 100);
+        require(!fails);
     }
 }
 
@@ -38,8 +40,11 @@ contract PersistentWritesTest is Test {
         hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
     address constant SENDER = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
     address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+    // Unfunded on the forked chains.
+    address constant FRESH = address(uint160(uint256(keccak256("persistent writes"))));
     Bumper bumper;
     Reverter reverter = new Reverter();
+    uint256 otherFork;
 
     function setUp() public {
         vm.deal(address(this), 1 ether);
@@ -114,6 +119,12 @@ contract PersistentWritesTest is Test {
         revert();
     }
 
+    function dealThenSelectFork() external {
+        vm.deal(FRESH, 100);
+        vm.selectFork(otherFork);
+        revert();
+    }
+
     function callReverting(bytes memory data) internal {
         (bool ok,) = address(this).call(data);
         require(!ok, "expected revert");
@@ -136,6 +147,15 @@ contract PersistentWritesTest is Test {
         assertEq(vm.getNonce(address(bumper)), 9, "createThenSetNonce");
         callReverting(abi.encodeCall(this.setNonceTwice, ()));
         assertEq(vm.getNonce(A), 7, "setNonceTwice");
+
+        // A failed executed transaction rolls back its own `deal`, which survives as well.
+        vm.chainId(1);
+        vm.deal(SENDER, 1 ether);
+        vm.deal(A, 50);
+        vm.etch(TARGET, type(Dealer).runtimeCode);
+        vm.store(TARGET, 0, bytes32(uint256(1)));
+        try vm.executeTransaction(RAW_TX) {} catch {}
+        assertEq(A.balance, 100, "failed executeTransaction deal");
     }
 
     function testWritesUndoneWithTheirFrame() public {
@@ -157,5 +177,16 @@ contract PersistentWritesTest is Test {
         vm.etch(TARGET, type(Dealer).runtimeCode);
         callReverting(abi.encodeCall(this.executeThenRevert, ()));
         assertEq(A.balance, 100, "executeTransaction deal");
+    }
+
+    // A fork switch accepts the writes on the fork it leaves, so a later revert does not replay
+    // them on the fork it selected.
+    function testForkWritesStayOnTheirFork() public {
+        uint256 fork = vm.createSelectFork("mainnet");
+        otherFork = vm.createFork("mainnet");
+        callReverting(abi.encodeCall(this.dealThenSelectFork, ()));
+        assertEq(FRESH.balance, 0, "selected fork");
+        vm.selectFork(fork);
+        assertEq(FRESH.balance, 100, "left fork");
     }
 }

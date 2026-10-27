@@ -44,7 +44,9 @@ use alloy_eips::BlockNumHash;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, TransactionResponse};
 use alloy_primitives::{
-    Address, B256, ChainId, KECCAK256_EMPTY, TxKind, U256, keccak256, map::AddressSet, uint,
+    Address, B256, ChainId, KECCAK256_EMPTY, TxKind, U256, keccak256,
+    map::{AddressMap, AddressSet, HashSet},
+    uint,
 };
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use evm2::{
@@ -385,6 +387,20 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// [`ExecutionLifecycle::remove_prewarm`].
     pub fn remove_prewarm(&mut self, state: &mut State<'_>, address: &Address) {
         self.lifecycle.remove_prewarm(state, address);
+    }
+
+    /// Takes the persistent warmth contexts kept for the running transaction, see
+    /// [`ExecutionLifecycle::take_persistent_warmth`].
+    pub fn take_persistent_warmth(&mut self) -> Vec<(Option<U256>, AddressMap<HashSet<U256>>)> {
+        self.lifecycle.take_persistent_warmth()
+    }
+
+    /// Hands back persistent warmth taken with [`Self::take_persistent_warmth`].
+    pub fn restore_persistent_warmth(
+        &mut self,
+        warmth: Vec<(Option<U256>, AddressMap<HashSet<U256>>)>,
+    ) {
+        self.lifecycle.restore_persistent_warmth(warmth);
     }
 
     /// Executes `tx` over the active context with `inspector` and discards its state.
