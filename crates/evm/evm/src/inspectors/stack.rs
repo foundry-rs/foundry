@@ -1237,6 +1237,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let outer_basefee = env.block.basefee;
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
+        // As on master, a transaction without a fee charge skips the sender balance check, so an
+        // underfunded value transfer fails in the call and keeps the nonce increment.
+        env.set_feature(EvmFeatures::BALANCE_CHECK, false);
+        env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
 
         let nonce = evm
             .state_mut()
