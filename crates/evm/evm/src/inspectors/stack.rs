@@ -28,8 +28,8 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested, FoundryEvmExt,
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
-        MessageResultFor, PreparedTx, SnapshotRestores, TransactionRequestFor, TxEnvFor, TxFor,
-        TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
+        MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores, TransactionRequestFor,
+        TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
         merge_untracked_pending_changes_with_warmth, release_inspector, warm_set,
     },
     precompiles::P256_VERIFY,
@@ -575,12 +575,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let writes = cheats.persistent_writes.split_off(persistent_writes);
         let result = result.and_then(|(result, mut persistent)| {
             if !result.is_success() {
-                for (_, write) in writes {
-                    write.apply(evm.state_mut())?;
-                    persistent.push(write);
-                }
+                let merged = persistent.len();
+                persistent.extend(writes.into_iter().map(|(.., write)| write));
+                PersistentWrite::apply_all(&persistent[merged..], evm.state_mut())?;
             }
-            cheats.record_persistent(usize::from(depth).saturating_sub(1), persistent);
+            cheats.record_persistent(usize::from(depth).saturating_sub(1), evm.state(), persistent);
             Ok(result)
         });
         // The nested transaction's changes are not the running transaction's execution.
@@ -631,7 +630,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let (prepared, mut replay) = backend.backend().prepare_nested(tx.clone(), evm, Some(env));
         let mut executed = self.replay(cheats, &mut replay, evm, depth, prepared, true)?;
         drop(replay);
-        cheats.record_persistent(usize::from(depth).saturating_sub(1), executed.take_persistent());
+        cheats.record_persistent(
+            usize::from(depth).saturating_sub(1),
+            evm.state(),
+            executed.take_persistent(),
+        );
         Ok(backend.backend_mut().store_executed(evm, executed))
     }
 
@@ -1747,7 +1750,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             let evm = interp.host();
             let features = evm.version().features;
             let failed = !result.stop.is_success();
-            cheats.snapshot_restores.frame_end(evm.state_mut(), message.depth, failed, features);
+            let end = cheats.snapshot_restores.frame_end(
+                evm.state_mut(),
+                message.depth,
+                failed,
+                features,
+            );
+            if let Some((checkpoint, reinstated)) = end {
+                // The persistent writes made since the restoration went to the restored state,
+                // which the reinstated one replaced.
+                if reinstated {
+                    cheats.persistent_writes.clear();
+                }
+                let depth = usize::from(message.depth);
+                cheats.frame_rollback = Some((depth, checkpoint.journal_len()));
+            }
         }
     }
 }

@@ -799,7 +799,7 @@ impl Cheatcode for dealCall {
         };
         // The balance survives reverts of the enclosing calls.
         let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
-        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
         EvmFactoryFor::<FEN>::default().refresh_transaction(ccx.evm);
@@ -851,7 +851,7 @@ impl Cheatcode for resetNonceCall {
         let write = PersistentWrite::nonce(&account, previous);
         drop(account);
         // Nonce cheatcodes survive reverts of the enclosing calls.
-        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
@@ -875,7 +875,7 @@ impl Cheatcode for setNonceCall {
         let write = PersistentWrite::nonce(&account, previous);
         drop(account);
         // Nonce cheatcodes survive reverts of the enclosing calls.
-        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         Ok(Default::default())
     }
 }
@@ -891,7 +891,7 @@ impl Cheatcode for setNonceUnsafeCall {
         let write = PersistentWrite::nonce(&account, previous);
         drop(account);
         // Nonce cheatcodes survive reverts of the enclosing calls.
-        ccx.state.persistent_writes.push((ccx.caller_depth(), write));
+        ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         Ok(Default::default())
     }
 }
@@ -1643,6 +1643,8 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         ExecutionPhase::InFlight,
     ) {
         ccx.state.snapshot_restores.capture(replaced);
+        // The restored state drops the persistent writes made since the snapshot, as on master.
+        ccx.state.persistent_writes.clear();
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1671,6 +1673,8 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         ExecutionPhase::InFlight,
     ) {
         ccx.state.snapshot_restores.capture(replaced);
+        // The restored state drops the persistent writes made since the snapshot, as on master.
+        ccx.state.persistent_writes.clear();
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)

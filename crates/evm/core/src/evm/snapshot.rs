@@ -94,23 +94,26 @@ impl SnapshotRestores {
 
     /// Closes the interpreter frame at `depth`, if one is open. If it failed, reinstates the state
     /// replaced by the first restoration made inside it, rolled back to the frame's checkpoint.
+    ///
+    /// Returns the checkpoint of the closed frame, and whether a restoration was reinstated.
     pub fn frame_end(
         &mut self,
         state: &mut State<'_>,
         depth: u16,
         failed: bool,
         features: EvmFeatures,
-    ) {
+    ) -> Option<(StateCheckpoint, bool)> {
         // Frames above `depth` aborted with an execution error and never ended.
         while self.frames.pop_if(|frame| frame.depth > depth).is_some() {}
-        let Some(frame) = self.frames.pop_if(|frame| frame.depth == depth) else { return };
-        if failed && self.replaced.len() > frame.replaced_len {
+        let frame = self.frames.pop_if(|frame| frame.depth == depth)?;
+        let reinstated = failed && self.replaced.len() > frame.replaced_len;
+        if reinstated {
             self.replaced.truncate(frame.replaced_len + 1);
             let replaced = self.replaced.pop().expect("a restoration was retained");
             let db = mem::replace(&mut state.overlay_db_mut().db, Box::new(EmptyDB::default()));
             *state = replaced.into_state(EmptyDB::default());
             state.overlay_db_mut().db = db;
-            state.rollback(frame.checkpoint, features);
+            state.rollback(frame.checkpoint.clone(), features);
         }
         // The caller only needs the first restoration made since it started.
         if let Some(caller) = self.frames.last() {
@@ -119,6 +122,7 @@ impl SnapshotRestores {
             self.kept |= !self.replaced.is_empty();
             self.replaced.clear();
         }
+        Some((frame.checkpoint, reinstated))
     }
 
     /// Returns whether a restoration survived the outermost frame.

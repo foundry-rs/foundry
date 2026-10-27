@@ -23,9 +23,11 @@ contract Reverter {
 contract Dealer {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     bool fails;
+    uint256 stored;
 
     fallback() external payable {
         vm.deal(address(0xA11CE), 100);
+        stored = 1;
         require(!fails);
     }
 }
@@ -101,10 +103,11 @@ contract PersistentWritesTest is Test {
         revert();
     }
 
-    function resetNonceAfterCreate() external {
+    function resetNonceAfterCreate(uint64 nonce) external {
         vm.prank(EOA);
         new Child();
         vm.resetNonce(EOA);
+        if (nonce != 0) vm.setNonceUnsafe(EOA, nonce);
         revert();
     }
 
@@ -115,7 +118,14 @@ contract PersistentWritesTest is Test {
     }
 
     function executeThenRevert() external {
+        vm.store(TARGET, bytes32(uint256(1)), bytes32(uint256(42)));
         vm.executeTransaction(RAW_TX);
+        revert();
+    }
+
+    function selectThenDeal() external {
+        vm.selectFork(otherFork);
+        vm.deal(FRESH, 100);
         revert();
     }
 
@@ -163,12 +173,16 @@ contract PersistentWritesTest is Test {
         callReverting(abi.encodeCall(this.setNonceOnCreated, ()));
         address created = vm.computeCreate2Address(0, keccak256(type(Child).creationCode));
         assertEq(vm.getNonce(created), 0, "setNonceOnCreated");
-        callReverting(abi.encodeCall(this.resetNonceAfterCreate, ()));
+        callReverting(abi.encodeCall(this.resetNonceAfterCreate, (0)));
         assertEq(vm.getNonce(EOA), 0, "resetNonceAfterCreate");
 
         // The broadcast nonce bump of a failed call belongs to its caller's frame.
         this.broadcastReverting();
         assertEq(vm.getNonce(EOA), 1, "broadcastReverting");
+
+        // The undone nonce changes add up before saturating.
+        callReverting(abi.encodeCall(this.resetNonceAfterCreate, (10)));
+        assertEq(vm.getNonce(EOA), 9, "setNonceUnsafeAfterCreate");
 
         // The executed transaction's own `deal` is part of its merged changes.
         vm.chainId(1);
@@ -177,6 +191,8 @@ contract PersistentWritesTest is Test {
         vm.etch(TARGET, type(Dealer).runtimeCode);
         callReverting(abi.encodeCall(this.executeThenRevert, ()));
         assertEq(A.balance, 100, "executeTransaction deal");
+        // Intentionally differs from master, whose revert restored the enclosing store over it.
+        assertEq(vm.load(TARGET, bytes32(uint256(1))), bytes32(uint256(1)), "executeTransaction store");
     }
 
     // A fork switch accepts the writes on the fork it leaves, so a later revert does not replay
@@ -188,5 +204,9 @@ contract PersistentWritesTest is Test {
         assertEq(FRESH.balance, 0, "selected fork");
         vm.selectFork(fork);
         assertEq(FRESH.balance, 100, "left fork");
+
+        // A write after the switch is undone with the frame only if its rollback reached it.
+        callReverting(abi.encodeCall(this.selectThenDeal, ()));
+        assertEq(FRESH.balance, 100, "dealt after the switch");
     }
 }
