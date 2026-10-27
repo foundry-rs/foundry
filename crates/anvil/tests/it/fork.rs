@@ -36,6 +36,7 @@ use anvil::{
     eth::{EthApi, fees::INITIAL_BASE_FEE},
     spawn, try_spawn,
 };
+use anvil_core::types::{ReorgOptions, TransactionData};
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
@@ -5410,4 +5411,117 @@ async fn test_fork_rollback_to_root() {
     api.mine_one().await.unwrap();
     let replacement = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(replacement.header.parent_hash, root.header.hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_to_root_restores_fee_and_gas_overrides() {
+    let (source_api, source) = spawn(
+        NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE)).with_gas_limit(Some(30_000_000)),
+    )
+    .await;
+    source_api.mine_one().await.unwrap();
+    let root = source.http_provider().get_block(1.into()).await.unwrap().unwrap();
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_mining(true)
+            .with_base_fee(Some(0))
+            .with_gas_limit(Some(100_000_000))
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let recipient = Address::repeat_byte(0x43);
+    let tx = || {
+        WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).gas_price(0).gas_limit(21_000),
+        )
+    };
+
+    let pending = provider.send_transaction(tx()).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().unwrap().status());
+    let child = provider.get_block(2.into()).await.unwrap().unwrap();
+    assert_eq!(child.header.base_fee_per_gas, Some(0));
+    assert_eq!(child.header.gas_limit, 100_000_000);
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.unwrap();
+    api.anvil_rollback(Some(1)).await.unwrap();
+    api.anvil_rollback(Some(0)).await.unwrap();
+    assert_eq!(provider.get_block(BlockId::latest()).await.unwrap().unwrap(), root);
+
+    let pending = provider.send_transaction(tx()).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().unwrap().status());
+    let replacement = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(replacement.header.base_fee_per_gas, Some(0));
+    assert_eq!(replacement.header.gas_limit, 100_000_000);
+
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::JSON(tx()), 0)],
+    })
+    .await
+    .unwrap();
+    let reorged = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(reorged.header.base_fee_per_gas, Some(0));
+    assert_eq!(reorged.header.gas_limit, 100_000_000);
+    assert_eq!(reorged.transactions.len(), 1);
+    assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().unwrap().status());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rollback_to_root_restores_disabled_block_gas_limit() {
+    let (source_api, source) =
+        spawn(NodeConfig::test().with_base_fee(Some(0)).with_gas_limit(Some(30_000_000))).await;
+    source_api.mine_one().await.unwrap();
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_mining(true)
+            .with_base_fee(Some(0))
+            .disable_block_gas_limit(true)
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let recipient = Address::repeat_byte(0x44);
+    let tx = || {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(recipient)
+                .gas_price(0)
+                .gas_limit(60_000_000),
+        )
+    };
+
+    let pending = provider.send_transaction(tx()).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().unwrap().status());
+    assert_eq!(provider.get_block(2.into()).await.unwrap().unwrap().header.gas_limit, u64::MAX);
+
+    api.anvil_rollback(Some(1)).await.unwrap();
+    api.anvil_rollback(Some(0)).await.unwrap();
+
+    let pending = provider.send_transaction(tx()).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().unwrap().status());
+    assert_eq!(
+        provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.gas_limit,
+        u64::MAX
+    );
+
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::JSON(tx()), 0)],
+    })
+    .await
+    .unwrap();
+    let reorged = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(reorged.header.gas_limit, u64::MAX);
+    assert_eq!(reorged.transactions.len(), 1);
+    assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().unwrap().status());
 }

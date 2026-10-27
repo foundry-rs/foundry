@@ -2368,6 +2368,83 @@ async fn monad_safe_and_finalized_block_tags_fall_back_to_genesis_before_epoch()
     assert_eq!(fee_history.oldest_block, genesis.header.number);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_fork_rollback_to_root_preserves_startup_overrides() {
+    let (source_api, source) = spawn(
+        monad_nine_config()
+            .with_no_mining(true)
+            .with_base_fee(Some(1_000_000_000))
+            .with_gas_limit(Some(30_000_000)),
+    )
+    .await;
+    source_api.mine_one().await.unwrap();
+    let root = source.http_provider().get_block(1.into()).await.unwrap().unwrap();
+    assert_eq!(root.header.base_fee_per_gas, Some(1_000_000_000));
+    assert_eq!(root.header.gas_limit, 30_000_000);
+
+    let (api, handle) = spawn(
+        monad_nine_config()
+            .with_no_mining(true)
+            .with_base_fee(Some(0))
+            .with_gas_limit(Some(100_000_000))
+            .with_eth_rpc_url(Some(source.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let request = TransactionRequest::default()
+        .from(sender)
+        .to(ROLLBACK_RECIPIENT)
+        .value(U256::ONE)
+        .gas_price(0)
+        .gas_limit(21_000);
+
+    for rollback in [false, true] {
+        if rollback {
+            api.anvil_rollback(Some(1)).await.unwrap();
+            // Repeating a rollback at the root must work after its child has been discarded.
+            api.anvil_rollback(Some(0)).await.unwrap();
+        }
+        assert_eq!(provider.get_block(BlockId::latest()).await.unwrap().unwrap(), root);
+
+        let pending = provider.send_transaction(request.clone().into()).await.unwrap();
+        let hash = *pending.tx_hash();
+        api.mine_one().await.unwrap();
+        assert!(provider.get_transaction_receipt(hash).await.unwrap().unwrap().status());
+        let child = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+        assert_eq!(child.header.number, 2);
+        assert_eq!(child.header.parent_hash, root.header.hash);
+        assert_eq!(child.header.base_fee_per_gas, Some(0));
+        assert_eq!(child.header.gas_limit, 100_000_000);
+        assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
+    }
+
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::JSON(request.into()), 0)],
+    })
+    .await
+    .unwrap();
+    let replacement = provider.get_block(BlockId::latest()).full().await.unwrap().unwrap();
+    assert_eq!(replacement.header.number, 2);
+    assert_eq!(replacement.header.parent_hash, root.header.hash);
+    assert_eq!(replacement.header.base_fee_per_gas, Some(0));
+    assert_eq!(replacement.header.gas_limit, 100_000_000);
+    let transactions = replacement.transactions.as_transactions().unwrap();
+    assert_eq!(transactions.len(), 1);
+    assert!(
+        provider
+            .get_transaction_receipt(transactions[0].tx_hash())
+            .await
+            .unwrap()
+            .unwrap()
+            .status()
+    );
+    assert_eq!(provider.get_balance(ROLLBACK_RECIPIENT).await.unwrap(), U256::ONE);
+    assert_eq!(provider.get_block(1.into()).await.unwrap().unwrap(), root);
+}
+
 fn monad_nine_config() -> NodeConfig {
     NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()))
 }
