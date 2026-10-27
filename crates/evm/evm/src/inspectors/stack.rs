@@ -1409,8 +1409,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         } else {
             // As on master, accounts a static call cooled stay cold if the running transaction
             // still holds them cold. Accounts it no longer holds, such as after a
-            // snapshot revert, are imported warm. After a failure, every account the running
-            // transaction holds cold stays cold.
+            // snapshot revert, are imported warm.
+            // After a failure, every account the running transaction holds cold stays cold.
             let state = evm.state_mut();
             let cooled = state
                 .loaded_accounts()

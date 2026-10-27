@@ -94,9 +94,17 @@ contract ExecuteTransactionStateTest is Test {
         assertEq(accessCost(plain), warm + 2500);
     }
 
-    function test_execute_warmth_after_reverted_call() public {
+    function callTargetThenRevert() external {
+        (bool success,) = TARGET.call("");
+        assertTrue(success);
+        revert("parent reverted");
+    }
+
+    // An account a reverted call loaded stays cold after a later reverted transaction touches it.
+    function test_execute_warmth_after_reverted_calls() public {
         vm.chainId(1);
-        revertBoth(TARGET);
+        try this.callTargetThenRevert() {} catch {}
+        try this.executeInParent("", true) {} catch {}
         uint256 warm = accessCost(address(this));
         assertEq(accessCost(SENDER), warm);
         assertEq(accessCost(TARGET), warm + 2500);
