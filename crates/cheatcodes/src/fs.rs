@@ -544,7 +544,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     let mut cost = if kind == MessageKind::Create2 {
         gas_params.create2_cost(init_code_len)
     } else {
-        gas_params.get(GasId::Create).into()
+        gas_params.get(GasId::Create)
     };
     if version.features.contains(EvmFeatures::EIP3860) {
         if init_code_len > version.max_initcode_size {

@@ -3804,7 +3804,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5376,7 +5376,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5481,7 +5481,7 @@ dependencies = [
 [[package]]
 name = "evm2"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=df0a8047c971ba12a4ab8def035d4f4f6856ac7a#df0a8047c971ba12a4ab8def035d4f4f6856ac7a"
+source = "git+https://github.com/DaniPopes/evm2?rev=ee1f36084a038cfcd2396164a2753eda1970b181#ee1f36084a038cfcd2396164a2753eda1970b181"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -5512,12 +5512,13 @@ dependencies = [
  "thiserror 2.0.21",
  "triomphe",
  "typeid",
+ "wincode",
 ]
 
 [[package]]
 name = "evm2-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=df0a8047c971ba12a4ab8def035d4f4f6856ac7a#df0a8047c971ba12a4ab8def035d4f4f6856ac7a"
+source = "git+https://github.com/DaniPopes/evm2?rev=ee1f36084a038cfcd2396164a2753eda1970b181#ee1f36084a038cfcd2396164a2753eda1970b181"
 dependencies = [
  "alloy-consensus",
  "alloy-eip2930",
@@ -5540,7 +5541,7 @@ dependencies = [
 [[package]]
 name = "evm2-macros"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=df0a8047c971ba12a4ab8def035d4f4f6856ac7a#df0a8047c971ba12a4ab8def035d4f4f6856ac7a"
+source = "git+https://github.com/DaniPopes/evm2?rev=ee1f36084a038cfcd2396164a2753eda1970b181#ee1f36084a038cfcd2396164a2753eda1970b181"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6327,7 +6328,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "path-slash",
  "rand 0.10.3",
  "rayon",
@@ -7980,7 +7981,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10235,7 +10236,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11552,9 +11553,9 @@ dependencies = [
 
 [[package]]
 name = "ruint"
-version = "1.20.1"
+version = "1.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2973657b5127d510e230f5c63d2d106af9c8f79393d8b9f4647323e8196bdde5"
+checksum = "a0de3fa9b4dac39cc2bd65679bacf9f531899d933605e2963b40c2129cdb55f2"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -11571,6 +11572,7 @@ dependencies = [
  "parity-scale-codec",
  "primitive-types",
  "proptest",
+ "rand 0.10.3",
  "rand 0.8.8",
  "rand 0.9.5",
  "rlp",
@@ -11672,7 +11674,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11731,7 +11733,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -13226,13 +13228,13 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "tempo-alloy"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -13272,7 +13274,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -13295,7 +13297,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy-contract",
  "alloy-network",
@@ -13311,8 +13313,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
-version = "1.16.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+version = "1.17.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -13322,8 +13324,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-evm"
-version = "1.16.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+version = "1.17.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -13357,7 +13359,7 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy-eips",
  "alloy-hardforks",
@@ -13369,8 +13371,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-nitro-attestation"
-version = "1.16.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+version = "1.17.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "arrayvec",
  "aws-lc-rs",
@@ -13384,8 +13386,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles"
-version = "1.16.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+version = "1.17.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy",
  "alloy-primitives",
@@ -13410,8 +13412,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles-macros"
-version = "1.16.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+version = "1.17.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -13422,7 +13424,7 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.16.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=572a6e91e055f22d9849fb1b611350ac9aff47b9#572a6e91e055f22d9849fb1b611350ac9aff47b9"
+source = "git+https://github.com/tempoxyz/tempo?rev=680082043ca40b6457f615101ca43bf8c1280b66#680082043ca40b6457f615101ca43bf8c1280b66"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -14723,7 +14725,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14731,6 +14733,31 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "wincode"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "063b5affe63fb4e584a33101d8808f01f2348b4f533db6223bf27263a0fdb9e9"
+dependencies = [
+ "pastey",
+ "proc-macro2",
+ "quote",
+ "thiserror 2.0.21",
+ "wincode-derive",
+]
+
+[[package]]
+name = "wincode-derive"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11d582d9fc9d813264407a9e16bfa16846ccf15ef032f9bbcd700741bdc00255"
+dependencies = [
+ "darling 0.23.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "windows"
