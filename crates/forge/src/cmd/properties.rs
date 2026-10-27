@@ -12,7 +12,10 @@ use crate::{
 use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
-use foundry_common::{fs::canonicalize_path, sh_println, sh_warn};
+use foundry_common::{
+    fs::{canonicalize_path, normalize_path},
+    sh_println, sh_warn,
+};
 use foundry_compilers::{
     Graph,
     cache::SOLIDITY_FILES_CACHE_FILENAME,
@@ -734,9 +737,8 @@ impl Campaign<'_> {
             for file in files {
                 let normalized =
                     COMMENT.replace_all(&file.content, "").split_whitespace().collect::<String>();
-                let imported = files
-                    .iter()
-                    .any(|other| other.path != file.path && imports(&other.content, &file.path));
+                let imported =
+                    files.iter().any(|other| other.path != file.path && imports(other, &file.path));
                 let path = self.config.root.join(&file.path);
                 // A linked directory on the path must not lead outside the project.
                 ensure_inside(&self.config.root, &path, &file.path)?;
@@ -1374,14 +1376,19 @@ fn collect_tests(
 
 /// Returns the comment right above a test function, without comment markers, as one line. The
 /// function is the first one with this name after the contract declaration and before the next
-/// one.
+/// one. Declarations are searched outside comments, so a claim such as `the contract pays twice`
+/// is not a declaration.
 fn test_claim(source: &str, contract: &str, function: &str) -> Option<String> {
-    let mut contracts = CONTRACT.captures_iter(source);
+    // Blanking each comment byte keeps the offsets of the code.
+    let code = COMMENT.replace_all(source, |comment: &regex::Captures<'_>| {
+        comment[0].bytes().map(|byte| if byte == b'\n' { '\n' } else { ' ' }).collect::<String>()
+    });
+    let mut contracts = CONTRACT.captures_iter(&code);
     let start = contracts.find(|captures| &captures[1] == contract)?.get(0)?.end();
-    let end = contracts.next().map_or(source.len(), |captures| captures.get(0).unwrap().start());
+    let end = contracts.next().map_or(code.len(), |captures| captures.get(0).unwrap().start());
     let declaration = Regex::new(&format!(r"\bfunction\s+{}\s*\(", regex::escape(function)))
         .ok()?
-        .find(&source[start..end])?;
+        .find(&code[start..end])?;
     let line_start = source[..start + declaration.start()].rfind('\n').map_or(0, |i| i + 1);
     let mut lines = source[..line_start]
         .lines()
@@ -1803,9 +1810,10 @@ fn group_files(sessions: &[Session], group: &BugGroup) -> Vec<TestFile> {
                 .iter()
                 .filter(|file| !paths.contains(&file.path))
                 .filter(|file| {
-                    session.files.iter().any(|other| {
-                        paths.contains(&other.path) && imports(&other.content, &file.path)
-                    })
+                    session
+                        .files
+                        .iter()
+                        .any(|other| paths.contains(&other.path) && imports(other, &file.path))
                 })
                 .map(|file| &file.path)
                 .collect::<Vec<_>>();
@@ -1819,9 +1827,20 @@ fn group_files(sessions: &[Session], group: &BugGroup) -> Vec<TestFile> {
     files
 }
 
-/// Returns whether the source has an import directive that names the file of `path`.
-fn imports(source: &str, path: &Path) -> bool {
-    IMPORT.captures_iter(source).any(|import| Path::new(&import[1]).file_name() == path.file_name())
+/// Returns whether a file has an import directive that names `path`, relative to the importing
+/// file or to the project root. A path with the same file name in a dependency, such as
+/// `forge-std/Test.sol` for `Test.sol`, is not a match.
+fn imports(file: &TestFile, path: &Path) -> bool {
+    let dir = file.path.parent().unwrap_or(Path::new(""));
+    IMPORT.captures_iter(&file.content).any(|import| {
+        let import = Path::new(&import[1]);
+        let resolved = if import.starts_with(".") || import.starts_with("..") {
+            normalize_path(&dir.join(import))
+        } else {
+            normalize_path(import)
+        };
+        resolved == path
+    })
 }
 
 /// Runs a session command in its own process group until it exits or reaches the timeout in
@@ -1929,7 +1948,7 @@ mod tests {
 
     // The claim is the comment right above the test function of the named contract, without
     // comment markers, NatSpec tags other than the bug tag, or inline config. A test without such a
-    // comment has none.
+    // comment has none, and the word `contract` in a comment declares no contract.
     #[test]
     fn test_claim_reads_the_comment_above_the_test() {
         let source = r#"
@@ -1950,6 +1969,9 @@ contract FeeTest {
 
     /// @custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.
     function testCustomTag() public {}
+
+    // @bug Fee.pay src/Fee.sol:20 — the contract pays twice.
+    function testPaysTwice() public {}
 }
 contract OtherTest {
     /* Rounds down: src/Fee.sol:6 */
@@ -1972,6 +1994,10 @@ contract OtherTest {
         assert_eq!(
             test_claim(source, "FeeTest", "testCustomTag").as_deref(),
             Some("@custom:bug Fee.fee src/Fee.sol:7 — the cap is 10 ether.")
+        );
+        assert_eq!(
+            test_claim(source, "FeeTest", "testPaysTwice").as_deref(),
+            Some("@bug Fee.pay src/Fee.sol:20 — the contract pays twice.")
         );
         assert_eq!(
             test_claim(source, "OtherTest", "testCap").as_deref(),
@@ -2028,5 +2054,20 @@ contract OtherTest {
                 "test/generated/agent-1/Seed.t.sol sets a seed in inline config",
             ]
         );
+    }
+
+    // An import names a file by its path relative to the importing file or to the project root.
+    // A dependency file with the same name, such as `forge-std/Test.sol`, is another file.
+    #[test]
+    fn imports_resolve_paths_not_file_names() {
+        let file = |content: &str| TestFile {
+            path: PathBuf::from("test/generated/agent-1/sub/Fee.t.sol"),
+            content: content.to_string(),
+        };
+        let test = Path::new("test/generated/agent-1/Test.sol");
+        assert!(!imports(&file(r#"import {Test} from "forge-std/Test.sol";"#), test));
+        assert!(imports(&file(r#"import {Test} from "../Test.sol";"#), test));
+        assert!(imports(&file(r#"import "test/generated/agent-1/Test.sol";"#), test));
+        assert!(!imports(&file(r#"import "./Test.sol";"#), test));
     }
 }
