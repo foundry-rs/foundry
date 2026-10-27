@@ -30,7 +30,7 @@ use foundry_evm_core::{
         FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor, MessageFor,
         MessageResultFor, PersistentWrite, PreparedTx, SnapshotRestores, TransactionRequestFor,
         TxEnvFor, TxFor, TxResultFor, TypesFor, cool_loaded, evm_env, merge_pending_changes,
-        merge_untracked_pending_changes_with_warmth, release_inspector, warm_set,
+        merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
 };
@@ -1257,6 +1257,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let outer_basefee = env.block.basefee;
         env.block.basefee = U256::ZERO;
         env.set_feature(EvmFeatures::FEE_CHARGE, false);
+        // As on master, a transaction without a fee charge skips the sender balance check, so an
+        // underfunded value transfer fails in the call and keeps the nonce increment.
+        env.set_feature(EvmFeatures::BALANCE_CHECK, false);
+        env.set_feature(EvmFeatures::BALANCE_TOP_UP, false);
 
         let nonce = evm
             .state_mut()
@@ -1432,19 +1436,31 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             // As on master, accounts a static call cooled stay cold if the running transaction
             // still holds them cold. Accounts it no longer holds, such as after a
             // snapshot revert, are imported warm.
+            // After a failure, every account the running transaction holds cold stays cold.
             let state = evm.state_mut();
             let cooled = state
                 .loaded_accounts()
                 .map(|(address, _)| *address)
-                .filter(|address| self.inner.static_cooled.contains(address))
+                .filter(|address| !result.status || self.inner.static_cooled.contains(address))
                 .collect::<Vec<_>>();
             let cold = cooled
                 .into_iter()
                 .filter(|address| !state.account(address).is_ok_and(|account| account.is_warm()))
                 .collect();
-            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state).is_ok()
-                && (!result.status
-                    || warm_accessed(evm.state_mut(), &executed.pending_state, &cold).is_ok());
+            let merged = merge_pending_changes(evm.state_mut(), &executed.pending_state)
+                .and_then(|()| {
+                    if result.status {
+                        warm_accessed(evm.state_mut(), &executed.pending_state, &cold)
+                    } else {
+                        warm_surviving(
+                            evm.state_mut(),
+                            child.state_mut(),
+                            &executed.pending_state,
+                            &cold,
+                        )
+                    }
+                })
+                .is_ok();
             // Keep cheatcode block changes and network extension state from the nested EVM.
             evm.set_block(*child.block());
             evm.ext_mut().replace_while_executing(child.ext().clone());
@@ -2409,6 +2425,36 @@ fn warm_accessed(state: &mut State<'_>, pending: &PendingState, cold: &AddressSe
             if slot.is_warm {
                 state.storage_slot(&change.address, *key)?.warm();
             }
+        }
+    }
+    Ok(())
+}
+
+/// Warms in `state` the accounts and storage slots still warm at the end of a failed nested
+/// transaction detached into `pending`, which reattaching it to `child` exposes. As on master,
+/// warmth no revert undid survives the failure, such as of the accounts a `vm.executeTransaction`
+/// within it touched, while accesses of its reverted frames do not. Accounts in `cold` stay cold,
+/// but not their slots.
+fn warm_surviving(
+    state: &mut State<'_>,
+    child: &mut State<'_>,
+    pending: &PendingState,
+    cold: &AddressSet,
+) -> DbResult<()> {
+    child.set_pending_state(pending.clone());
+    let warm = warm_accounts(child);
+    child.clear_transaction_state();
+    // As on master, the running transaction holds every account the nested one loaded, cold
+    // unless warmed below, so that a later failure leaves them cold.
+    for change in pending.account_changes() {
+        state.account(&change.address)?;
+    }
+    for (address, slots) in warm {
+        if !cold.contains(&address) {
+            state.account(&address)?.warm();
+        }
+        for key in slots {
+            state.storage_slot(&address, key)?.warm();
         }
     }
     Ok(())

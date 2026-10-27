@@ -1273,6 +1273,13 @@ pub enum ExecutionSpecContext {
         /// Exact hardfork reported by the endpoint.
         endpoint_hardfork: Option<FoundryHardfork>,
     },
+    /// Local script execution backed by a fork whose transactions are sent to the source chain.
+    Script {
+        /// Underlying source chain ID.
+        source_chain_id: ChainId,
+        /// Exact hardfork reported by the endpoint.
+        endpoint_hardfork: Option<FoundryHardfork>,
+    },
     /// Historical execution whose semantics must match the source block.
     Historical {
         /// Underlying source chain ID.
@@ -1303,6 +1310,18 @@ impl ExecutionSpecContext {
         }
     }
 
+    /// Returns the context for script execution with an optional fork source.
+    pub const fn local_or_script(
+        source_chain_id: Option<ChainId>,
+        endpoint_hardfork: Option<FoundryHardfork>,
+    ) -> Self {
+        if let Some(source_chain_id) = source_chain_id {
+            Self::Script { source_chain_id, endpoint_hardfork }
+        } else {
+            Self::Local
+        }
+    }
+
     /// Returns a historical execution context.
     pub const fn historical(
         source_chain_id: ChainId,
@@ -1311,12 +1330,22 @@ impl ExecutionSpecContext {
         Self::Historical { source_chain_id, endpoint_hardfork }
     }
 
-    fn hardfork<SPEC: ExecutionSpec>(self, timestamp: u64) -> Option<FoundryHardfork> {
+    fn hardfork<SPEC: ExecutionSpec>(
+        self,
+        timestamp: u64,
+        configured: SPEC,
+    ) -> Option<FoundryHardfork> {
         match self {
             Self::Local => None,
             Self::Fork { source_chain_id, endpoint_hardfork } => {
                 SPEC::fork_hardfork(source_chain_id, timestamp, endpoint_hardfork)
             }
+            Self::Script { source_chain_id, endpoint_hardfork } => SPEC::script_fork_hardfork(
+                source_chain_id,
+                timestamp,
+                endpoint_hardfork,
+                configured,
+            ),
             Self::Historical { source_chain_id, endpoint_hardfork } => endpoint_hardfork
                 .filter(|&hardfork| SPEC::from_foundry_hardfork(hardfork).is_some())
                 .or_else(|| SPEC::historical_hardfork(source_chain_id, timestamp)),
@@ -1328,8 +1357,9 @@ impl ExecutionSpecContext {
 ///
 /// A direct caller override takes precedence over a configured namespaced hardfork, followed by
 /// exact endpoint metadata and the hardfork selected from the source schedule. Local Ethereum
-/// forks retain Foundry's configured EVM version, namespaced local networks follow their source
-/// identity, and historical execution always follows the source block's identity.
+/// forks retain Foundry's configured EVM version unless a script's source chain is ahead of it,
+/// namespaced local networks follow their source identity, and historical execution always
+/// follows the source block's identity.
 ///
 /// Changing the spec keeps Foundry's execution policy (see
 /// [`FoundryEvmFactory::env_with_spec`]).
@@ -1344,21 +1374,19 @@ pub fn resolve_execution_spec<F: FoundryEvmFactory>(
     context: ExecutionSpecContext,
     explicit_spec: Option<crate::evm::SpecOf<F>>,
 ) -> Option<FoundryHardfork> {
+    let configured_spec = evm_spec_id::<crate::evm::SpecOf<F>>(evm_version);
     let (spec, hardfork) = if let Some(spec) = explicit_spec {
         (spec, spec.reported_hardfork())
     } else if let Some((hardfork, spec)) = configured_hardfork
         .filter(|&hardfork| crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).is_some())
-        .or_else(|| {
-            context.hardfork::<crate::evm::SpecOf<F>>(evm_env.block.timestamp.saturating_to())
-        })
+        .or_else(|| context.hardfork(evm_env.block.timestamp.saturating_to(), configured_spec))
         .and_then(|hardfork| {
             crate::evm::SpecOf::<F>::from_foundry_hardfork(hardfork).map(|spec| (hardfork, spec))
         })
     {
         (spec, Some(hardfork))
     } else {
-        let spec = evm_spec_id::<crate::evm::SpecOf<F>>(evm_version);
-        (spec, spec.reported_hardfork())
+        (configured_spec, configured_spec.reported_hardfork())
     };
     *evm_env = factory.env_with_spec(*evm_env, spec);
     hardfork
@@ -1439,6 +1467,7 @@ mod tests {
     use alloy_primitives::bytes;
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
+    use foundry_evm_hardforks::EthereumHardfork;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
         spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after,
@@ -1900,6 +1929,58 @@ mod tests {
             None
         );
         assert_eq!(env.spec, config.evm_spec_id::<evm2::SpecId>());
+    }
+
+    #[test]
+    fn resolve_execution_spec_follows_ethereum_chain_ahead_for_scripts() {
+        let amsterdam = EthereumHardfork::Amsterdam.sepolia_activation_timestamp().unwrap();
+        let sepolia = NamedChain::Sepolia as u64;
+        let resolve = |timestamp: u64, context| {
+            let mut env = env_at::<EthEvmNetwork>(sepolia, timestamp);
+            env.spec = evm2::SpecId::LONDON;
+            let resolved = resolve_execution_spec::<EvmFactoryFor<EthEvmNetwork>>(
+                &Default::default(),
+                EvmVersion::Prague,
+                None,
+                &mut env,
+                context,
+                None,
+            );
+            (resolved, env.spec)
+        };
+        let ethereum = |hardfork| Some(FoundryHardfork::Ethereum(hardfork));
+
+        // The source schedule applies once the chain is ahead of `evm_version`.
+        assert_eq!(
+            resolve(amsterdam, ExecutionSpecContext::local_or_script(Some(sepolia), None)),
+            (ethereum(EthereumHardfork::Amsterdam), evm2::SpecId::AMSTERDAM)
+        );
+        assert_eq!(
+            resolve(amsterdam - 1, ExecutionSpecContext::local_or_script(Some(sepolia), None)).1,
+            evm2::SpecId::OSAKA
+        );
+        // Anvil reports its hardfork for chains without a known schedule.
+        assert_eq!(
+            resolve(
+                amsterdam,
+                ExecutionSpecContext::local_or_script(
+                    Some(NamedChain::Dev as u64),
+                    ethereum(EthereumHardfork::Amsterdam)
+                )
+            ),
+            (ethereum(EthereumHardfork::Amsterdam), evm2::SpecId::AMSTERDAM)
+        );
+        // An endpoint that is not ahead keeps `evm_version` instead of the source schedule.
+        assert_eq!(
+            resolve(
+                amsterdam,
+                ExecutionSpecContext::local_or_script(
+                    Some(sepolia),
+                    ethereum(EthereumHardfork::Prague)
+                )
+            ),
+            (None, evm2::SpecId::PRAGUE)
+        );
     }
 
     #[test]

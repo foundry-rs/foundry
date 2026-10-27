@@ -51,7 +51,7 @@ jobs:
         run: pip --version && pip install vyper==0.4.3
       - name: Install Z3
         # Same pin as test.yml, for the symbolic suites below.
-        run: pip install z3-solver==5.1.0.0 && z3 --version
+        run: pip install z3-solver==5.3.2.0 && z3 --version
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test flaky tests

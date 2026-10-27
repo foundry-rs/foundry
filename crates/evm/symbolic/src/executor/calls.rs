@@ -395,6 +395,26 @@ impl SymbolicExecutor {
         Ok(Some(state.call_mocks[idx].next_outcome(&mut self.cx)))
     }
 
+    /// Returns whether a `vm.mockCall` answers this call.
+    fn has_call_mock(
+        &mut self,
+        state: &PathState,
+        callee: Address,
+        value: &SymExpr,
+        calldata: &SymBytes,
+    ) -> Result<bool, SymbolicError> {
+        if state.call_mocks.is_empty() {
+            return Ok(false);
+        }
+        let value = state.constrained_word(&mut self.cx, value);
+        for mock in &state.call_mocks {
+            if self.call_mock_match_constraints(state, mock, callee, value, calldata)?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn branch_symbolic_match_condition_if_needed(
         &mut self,
         state: &mut PathState,
@@ -849,9 +869,16 @@ impl SymbolicExecutor {
         }
         let call_context =
             (!matches!(kind, CallKind::DelegateCall)).then(|| state.prank_for_next_call());
+        // An isolated CALL is its own transaction, so it bumps the caller's nonce even when the
+        // call fails. Concrete Forge answers a mocked call before isolating it.
+        let isolated =
+            matches!(kind, CallKind::Call) && state.starts_isolated_transaction(executor);
         let transfer_to = if matches!(kind, CallKind::Call) { to } else { state.address };
         if matches!(kind, CallKind::Call | CallKind::CallCode) {
             let call_caller = call_context.as_ref().expect("value calls have a call context").0;
+            if isolated && !self.has_call_mock(state, code_address, &value, &call_input)? {
+                state.world.increment_nonce(executor, call_caller)?;
+            }
             if !self.prepare_value_transfer(
                 executor,
                 state,
@@ -1004,6 +1031,9 @@ impl SymbolicExecutor {
 
         let original_world = state.world.clone();
         let mut child = state.child(frame);
+        if isolated {
+            child.world.clear_transient_storage();
+        }
         if let Some((origin, origin_word)) = pranked_origin {
             child.origin = origin;
             child.origin_word = origin_word;
@@ -1039,6 +1069,9 @@ impl SymbolicExecutor {
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.world = child.world;
+                    if isolated {
+                        parent.world.restore_transient_storage(&original_world);
+                    }
                     parent.expected_emit = child.expected_emit;
                     parent.expected_creates = child.expected_creates;
                     parent.return_data = child.frame.return_data;
@@ -1403,6 +1436,9 @@ impl SymbolicExecutor {
                 return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
             }
             let (call_caller, _, _) = branch.prank_for_next_call();
+            if matches!(kind, CallKind::Call) && branch.starts_isolated_transaction(executor) {
+                branch.world.increment_nonce(executor, call_caller)?;
+            }
             if matches!(kind, CallKind::Call | CallKind::CallCode) {
                 let transfer_to = if matches!(kind, CallKind::Call) {
                     branch.world.symbolic_address_slot(target)

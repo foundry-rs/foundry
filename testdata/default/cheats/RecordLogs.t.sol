@@ -47,6 +47,71 @@ contract Emitterv2 {
     }
 }
 
+contract RevertingEmitter is Test {
+    event Emitted(uint256 value);
+
+    uint256 stored;
+
+    function emitValue(uint256 value) external {
+        emit Emitted(value);
+    }
+
+    function emitAndRevert(uint256 value) external {
+        emit Emitted(value);
+        revert("reverted");
+    }
+
+    function emitAndHalt(uint256 value) external {
+        emit Emitted(value);
+        assembly {
+            invalid()
+        }
+    }
+
+    function emitAroundCaughtRevert(uint256 value) external {
+        emit Emitted(value);
+        try this.emitAndRevert(value + 1) {} catch {}
+        emit Emitted(value + 2);
+    }
+
+    function drainEmitAndRevert(uint256 value) external {
+        vm.getRecordedLogs();
+        emit Emitted(value);
+        revert("reverted");
+    }
+
+    function drainInChildEmitAndRevert(uint256 value) external {
+        this.drain();
+        emit Emitted(value);
+        revert("reverted");
+    }
+
+    function drain() external {
+        vm.getRecordedLogsJson();
+    }
+
+    function storeEmitAndRevert(uint256 value) external {
+        emit Emitted(value);
+        stored = value;
+        revert("reverted");
+    }
+
+    function resetEmitAndRevert(uint256 value) external {
+        vm.recordLogs();
+        emit Emitted(value);
+        revert("reverted");
+    }
+}
+
+contract RevertingConstructorEmitter {
+    event Emitted(uint256 value);
+
+    constructor() {
+        emit Emitted(1);
+        revert("reverted");
+    }
+}
+
 contract RecordLogsTest is Test {
     Emitter emitter;
     bytes32 internal seedTestData = keccak256(abi.encodePacked("Some data"));
@@ -260,5 +325,64 @@ contract RecordLogsTest is Test {
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 4);
         assertEq(entries[0].emitter, address(emitter));
+    }
+
+    function testRecordLogsDiscardsRevertedCallLogs() public {
+        RevertingEmitter reverting = new RevertingEmitter();
+        vm.recordLogs();
+
+        reverting.emitAroundCaughtRevert(1);
+        try reverting.emitAndHalt(4) {} catch {}
+        vm.expectRevert("reverted");
+        reverting.emitAndRevert(5);
+        try new RevertingConstructorEmitter() {} catch {}
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 2);
+        assertEq(entries[0].emitter, address(reverting));
+        assertEq(entries[0].topics[0], keccak256("Emitted(uint256)"));
+        assertEq(abi.decode(entries[0].data, (uint256)), 1);
+        assertEq(entries[1].emitter, address(reverting));
+        assertEq(abi.decode(entries[1].data, (uint256)), 3);
+    }
+
+    function testRecordLogsDiscardsRevertedCallLogsAfterDrain() public {
+        RevertingEmitter reverting = new RevertingEmitter();
+        vm.recordLogs();
+
+        reverting.emitValue(1);
+        try reverting.drainEmitAndRevert(2) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        reverting.emitValue(3);
+        try reverting.drainInChildEmitAndRevert(4) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        reverting.emitValue(5);
+        try reverting.resetEmitAndRevert(6) {} catch {}
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        reverting.emitValue(7);
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 1);
+        assertEq(abi.decode(entries[0].data, (uint256)), 7);
+    }
+
+    function onStoreRecordLogs(address, bytes32, bytes32, bytes32) external {
+        require(msg.sender == address(vm), "only storage hook");
+        vm.recordLogs();
+    }
+
+    function testRecordLogsDiscardsRevertedCallLogsAfterStorageHook() public {
+        RevertingEmitter reverting = new RevertingEmitter();
+        vm.registerSstoreHook(address(reverting), this.onStoreRecordLogs.selector);
+        vm.recordLogs();
+
+        reverting.emitValue(1);
+        try reverting.storeEmitAndRevert(2) {} catch {}
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 1);
+        assertEq(abi.decode(entries[0].data, (uint256)), 1);
     }
 }
