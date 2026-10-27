@@ -70,7 +70,8 @@ impl UpdateArgs {
 
         // Update the submodules' tags if any overrides are present.
         let mut prev_dep_ids: DepMap = HashMap::default();
-        for (dep_path, override_tag) in &dep_overrides {
+        for (dep_path, dependency) in &dep_overrides {
+            let override_tag = dependency.tag.as_deref().expect("override has a ref");
             let rel_path = dep_path
                 .strip_prefix(&root)
                 .wrap_err("Dependency path is not relative to the repository root")?;
@@ -88,24 +89,13 @@ impl UpdateArgs {
                         rel_path.display()
                     );
                 }
-                let resolve = || -> Result<DepIdentifier> {
-                    let remote_branch = format!("origin/{override_tag}");
-                    if !git.has_tag(override_tag, dep_path)?
-                        && dependency_git
-                            .remote_branches()?
-                            .lines()
-                            .any(|branch| branch.trim() == remote_branch)
-                    {
-                        return Ok(DepIdentifier::Branch {
-                            name: override_tag.clone(),
-                            rev: git.get_rev(format!("refs/remotes/{remote_branch}"), dep_path)?,
-                            r#override: false,
-                        });
-                    }
-                    let dep_id = DepIdentifier::resolve_type(&git, dep_path, override_tag)?;
+                let resolve = || {
+                    let dep_id =
+                        DepIdentifier::resolve(&git, dep_path, override_tag, dependency.ref_kind)?;
                     if dep_id.is_branch() {
-                        // Branch updates below require a corresponding origin branch.
-                        git.get_rev(format!("refs/remotes/{remote_branch}"), dep_path)?;
+                        // Validate the origin branch before changing any dependency worktrees.
+                        dependency_git
+                            .resolve_ref(&format!("refs/remotes/origin/{}", dep_id.name()))?;
                     }
                     Ok(dep_id)
                 };
@@ -222,7 +212,7 @@ impl UpdateArgs {
 
         // checkout the submodules at the correct tags
         // Skip branches that were already updated above to avoid reverting to local branch
-        for (path, dep_id) in foundry_lock.iter() {
+        for (path, dep_id) in foundry_lock.iter_mut() {
             // Ignore other dependencies if single update.
             if !paths.is_empty() && !paths.contains(path) {
                 continue;
@@ -232,7 +222,7 @@ impl UpdateArgs {
             if dep_id.is_branch() && dep_id.overridden() {
                 continue;
             }
-            git.checkout_at(dep_id.checkout_id(), &root.join(path))?;
+            dep_id.checkout(git.root(&root.join(path)), false)?;
         }
 
         if !self.recursive && initialize_nested {
@@ -285,10 +275,10 @@ impl UpdateArgs {
 /// Returns `(root, paths, overridden_deps_with_abosolute_paths)` where `root` is the root of the
 /// Git repository and `paths` are the relative paths of the dependencies.
 #[allow(clippy::type_complexity)]
-pub fn dependencies_paths(
-    deps: &[Dependency],
+pub fn dependencies_paths<'a>(
+    deps: &'a [Dependency],
     config: &Config,
-) -> Result<(PathBuf, Vec<PathBuf>, HashMap<PathBuf, String>)> {
+) -> Result<(PathBuf, Vec<PathBuf>, HashMap<PathBuf, &'a Dependency>)> {
     let git_root = Git::root_of(&config.root)?;
     let libs = config.install_lib_dir();
 
@@ -308,8 +298,8 @@ pub fn dependencies_paths(
             .strip_prefix(&git_root)
             .wrap_err("Library directory is not relative to the repository root")?;
 
-        if let Some(tag) = &dep.tag {
-            overrides.insert(dep_path.clone(), tag.to_owned());
+        if dep.tag.is_some() {
+            overrides.insert(dep_path.clone(), dep);
         }
         paths.push(rel_path.to_owned());
     }

@@ -1096,14 +1096,23 @@ ignore them in the `.gitignore` file."
 
     /// Fetches a branch from origin and checks out a local tracking branch at the given path.
     pub fn fetch_and_checkout_branch(self, at: &Path, branch: &str) -> Result<()> {
-        self.cmd_at(at).args(["fetch", "--", "origin", branch]).exec().map_err(|e| {
-            eyre::eyre!(
-                "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
-                at.display()
-            )
-        })?;
         self.cmd_at(at)
-            .args(["checkout", "-B", branch, &format!("origin/{branch}")])
+            .args([
+                "fetch",
+                "--",
+                "origin",
+                &format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
+            ])
+            .exec()
+            .map_err(|e| {
+                eyre::eyre!(
+                    "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
+                    at.display()
+                )
+            })?;
+        let rev = self.root(at).resolve_ref(&format!("refs/remotes/origin/{branch}"))?;
+        self.cmd_at(at)
+            .args(["checkout", "-B", branch, &format!("{rev}^{{commit}}"), "--"])
             .exec()
             .map_err(|e| {
                 eyre::eyre!(
@@ -1111,6 +1120,18 @@ ignore them in the `.gitignore` file."
                     at.display()
                 )
             })?;
+        eyre::ensure!(self.root(at).head()? == rev, "Checked out commit does not match {rev}");
+        self.cmd_at(at)
+            .args(["config", "--local", &format!("branch.{branch}.remote"), "origin"])
+            .exec()?;
+        self.cmd_at(at)
+            .args([
+                "config",
+                "--local",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{branch}"),
+            ])
+            .exec()?;
         Ok(())
     }
 
@@ -1126,6 +1147,65 @@ ignore them in the `.gitignore` file."
             .args(["-b", branch, &format!("refs/remotes/origin/{branch}"), "--"])
             .exec()
             .map(drop)
+    }
+
+    /// Resolves a revision expression to the full hash of a commit, peeling annotated tags.
+    pub fn resolve_commit(self, revision: &str) -> Result<String> {
+        validate_checkout_ref(OsStr::new(revision))?;
+        self.cmd()
+            .args(["rev-parse", "--verify", "--end-of-options", &format!("{revision}^{{commit}}")])
+            .get_stdout_lossy()
+    }
+
+    /// Resolves an exact, fully qualified reference to its commit.
+    pub fn resolve_ref(self, reference: &str) -> Result<String> {
+        let object = self
+            .cmd()
+            .args(["show-ref", "--verify", "--hash", "--", reference])
+            .get_stdout_lossy()?;
+        self.resolve_commit(&object)
+    }
+
+    /// Resolves a branch from origin, falling back to an existing local branch.
+    pub fn resolve_branch(self, branch: &str) -> Result<String> {
+        self.cmd().args(["check-ref-format", "--branch", branch]).exec()?;
+        self.resolve_ref(&format!("refs/remotes/origin/{branch}"))
+            .or_else(|_| self.resolve_ref(&format!("refs/heads/{branch}")))
+    }
+
+    /// Resolves a full or abbreviated commit hash without consulting similarly named references.
+    pub fn resolve_commit_hash(self, revision: &str) -> Result<String> {
+        eyre::ensure!(
+            (4..=64).contains(&revision.len())
+                && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "Git revision must be a hexadecimal commit hash"
+        );
+        let objects = self
+            .cmd()
+            .args(["rev-parse", &format!("--disambiguate={revision}")])
+            .get_stdout_lossy()?;
+        let mut objects = objects.lines();
+        let object = objects
+            .next()
+            .ok_or_else(|| eyre::eyre!("Could not resolve commit hash {revision}"))?;
+        eyre::ensure!(objects.next().is_none(), "Ambiguous commit hash {revision}");
+        let kind = self.cmd().args(["cat-file", "-t", object]).get_stdout_lossy()?;
+        eyre::ensure!(kind == "commit", "Git object {revision} is not a commit");
+        Ok(object.to_string())
+    }
+
+    /// Checks out a commit hash and verifies that HEAD matches the requested commit.
+    pub fn checkout_commit(self, recursive: bool, revision: &str) -> Result<String> {
+        let rev = self.resolve_commit_hash(revision)?;
+        self.cmd()
+            .args(["checkout", "--detach"])
+            .args(recursive.then_some("--recurse-submodules"))
+            .arg(format!("{rev}^{{commit}}"))
+            .arg("--")
+            .exec()?;
+        let head = self.head()?;
+        eyre::ensure!(head == rev, "Checked out commit does not match {rev}");
+        Ok(head)
     }
 
     fn cmd(self) -> Command {
@@ -1666,6 +1746,99 @@ mod tests {
         let git = git.root(&worktree);
         assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
         assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn checkout_commit_ignores_colliding_refs() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("file"), "requested\n").unwrap();
+        git.add(["file"]).unwrap();
+        git.commit("requested commit").unwrap();
+        let requested = git.head().unwrap();
+        fs::write(tmp.path().join("file"), "other\n").unwrap();
+        git.add(["file"]).unwrap();
+        git.commit("other commit").unwrap();
+        let other = git.head().unwrap();
+
+        for name in [requested.as_str(), &requested[..8]] {
+            git.cmd().args(["branch", name, &other]).exec().unwrap();
+            git.cmd().args(["tag", name, &other]).exec().unwrap();
+            assert_eq!(git.resolve_commit_hash(name).unwrap(), requested);
+            git.checkout_commit(false, name).unwrap();
+            assert_eq!(git.head().unwrap(), requested);
+            assert_eq!(fs::read_to_string(tmp.path().join("file")).unwrap(), "requested\n");
+        }
+    }
+
+    #[test]
+    fn commit_hash_resolution_rejects_refs_and_other_objects() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("file"), "content\n").unwrap();
+        git.add(["file"]).unwrap();
+        git.commit("initial").unwrap();
+        git.cmd().args(["tag", "release"]).exec().unwrap();
+
+        assert_eq!(
+            git.resolve_commit_hash("release").unwrap_err().to_string(),
+            "Git revision must be a hexadecimal commit hash"
+        );
+        let nonexistent = "1111111111111111111111111111111111111111";
+        git.cmd().args(["branch", nonexistent]).exec().unwrap();
+        assert_eq!(
+            git.resolve_commit_hash(nonexistent).unwrap_err().to_string(),
+            format!("Could not resolve commit hash {nonexistent}")
+        );
+        let tree = git.commit_hash(false, "HEAD^{tree}").unwrap();
+        assert_eq!(
+            git.resolve_commit_hash(&tree).unwrap_err().to_string(),
+            format!("Git object {tree} is not a commit")
+        );
+        assert!(git.resolve_ref("refs/tags/release^0").is_err());
+        assert!(git.resolve_ref("refs/tags/rel*").is_err());
+        assert_eq!(git.resolve_commit("release~0").unwrap(), git.head().unwrap());
+    }
+
+    #[test]
+    fn branch_checkout_supports_restricted_fetch_refspec() {
+        let remote = tempdir().unwrap();
+        let remote_git = Git::new(remote.path());
+        remote_git.init().unwrap();
+        fs::write(remote.path().join("file"), "tag\n").unwrap();
+        remote_git.add(["file"]).unwrap();
+        remote_git.commit("initial").unwrap();
+        remote_git.cmd().args(["branch", "-M", "main"]).exec().unwrap();
+        remote_git.cmd().args(["tag", "origin/topic"]).exec().unwrap();
+        remote_git.cmd().args(["checkout", "-b", "topic"]).exec().unwrap();
+        fs::write(remote.path().join("file"), "branch\n").unwrap();
+        remote_git.add(["file"]).unwrap();
+        remote_git.commit("branch commit").unwrap();
+        let requested = remote_git.head().unwrap();
+        remote_git.checkout(false, "main").unwrap();
+
+        let tmp = tempdir().unwrap();
+        Git::clone(false, remote.path(), Some(tmp.path())).unwrap();
+        let git = Git::new(tmp.path());
+        git.cmd()
+            .args(["config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main"])
+            .exec()
+            .unwrap();
+        git.cmd().args(["update-ref", "-d", "refs/remotes/origin/topic"]).exec().unwrap();
+
+        git.fetch_and_checkout_branch(tmp.path(), "topic").unwrap();
+        assert_eq!(git.head().unwrap(), requested);
+        assert_eq!(fs::read_to_string(tmp.path().join("file")).unwrap(), "branch\n");
+        assert_eq!(
+            git.cmd().args(["config", "branch.topic.remote"]).get_stdout_lossy().unwrap(),
+            "origin"
+        );
+        assert_eq!(
+            git.cmd().args(["config", "branch.topic.merge"]).get_stdout_lossy().unwrap(),
+            "refs/heads/topic"
+        );
     }
 
     #[test]

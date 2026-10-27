@@ -130,7 +130,7 @@ impl DependencyInstallOpts {
         let git = self.git(config);
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
-        let (lockfile, out_of_sync_deps) = self.sync_lockfile(config, &git)?;
+        let (mut lockfile, out_of_sync_deps) = self.sync_lockfile(config, &git)?;
 
         if !self.no_git {
             // Use the root of the git repository to look for submodules.
@@ -142,37 +142,71 @@ impl DependencyInstallOpts {
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
 
+                    // Submodule update can move an initially correct worktree back to its gitlink.
+                    let mut out_of_sync = out_of_sync_deps.unwrap_or_default();
+                    if let Some(changed) = lockfile.sync(install_lib_dir)? {
+                        out_of_sync.extend(changed);
+                    }
+
                     // checkout submodules at the revs recorded in `foundry.lock`
-                    if let Some(out_of_sync) = &out_of_sync_deps {
-                        for (rel_path, dep_id) in out_of_sync {
+                    if !out_of_sync.is_empty() {
+                        let mut on_disk = Lockfile::new(&config.root);
+                        if on_disk.exists() {
+                            on_disk.read()?;
+                        }
+                        for (rel_path, dep_id) in &out_of_sync {
                             let path = git.root.join(rel_path);
-                            git.checkout_at(dep_id.checkout_id(), &path).wrap_err_with(|| {
+                            let restored = (|| -> Result<DepIdentifier> {
+                                if on_disk.get(rel_path).is_none()
+                                    && let DepIdentifier::Branch { name, .. } = dep_id
+                                {
+                                    // Validate inferred branch metadata without advancing its pin.
+                                    DepIdentifier::resolve(
+                                        &git,
+                                        &path,
+                                        name,
+                                        Some(DependencyRefKind::Branch),
+                                    )?;
+                                }
+                                let mut resolved = dep_id.clone();
+                                let dependency_git = git.root(&path);
+                                resolved.checkout(dependency_git, true)?;
+                                // Restore nested gitlinks and initialize children at the final pin.
+                                dependency_git.submodule_update(
+                                    false,
+                                    false,
+                                    false,
+                                    true,
+                                    std::iter::empty::<PathBuf>(),
+                                )?;
+                                Ok(resolved)
+                            })()
+                            .wrap_err_with(|| {
                                 let dep = rel_path.display();
                                 // `sync` also creates entries that are not recorded on disk.
-                                let mut on_disk = Lockfile::new(&config.root);
-                                let hint =
-                                    if on_disk.read().is_ok() && on_disk.get(rel_path).is_some() {
-                                        format!(
-                                            "\n`{dep}` is locked to {dep_id} in {FOUNDRY_LOCK}. If \
+                                let hint = if on_disk.get(rel_path).is_some() {
+                                    format!(
+                                        "\n`{dep}` is locked to {dep_id} in {FOUNDRY_LOCK}. If \
                                              that ref is no longer available from the dependency's \
                                              remote, update the `{dep}` entry in {FOUNDRY_LOCK}."
-                                        )
-                                    } else if let DepIdentifier::Branch { name, .. } = dep_id {
-                                        format!(
-                                            "\nBranch `{name}` comes from the `branch` setting for \
+                                    )
+                                } else if let DepIdentifier::Branch { name, .. } = dep_id {
+                                    format!(
+                                        "\nBranch `{name}` comes from the `branch` setting for \
                                              `{dep}` in .gitmodules. If it no longer exists on the \
                                              dependency's remote, update .gitmodules; if it does, \
                                              the local clone may be missing it, for example after \
                                              a `--shallow` install."
-                                        )
-                                    } else {
-                                        String::new()
-                                    };
+                                    )
+                                } else {
+                                    String::new()
+                                };
                                 format!(
                                     "Failed to check out `{}` for dependency `{dep}`{hint}",
-                                    dep_id.checkout_id()
+                                    dep_id.name()
                                 )
                             })?;
+                            lockfile.insert(rel_path.clone(), restored);
                         }
                     }
 
@@ -260,82 +294,38 @@ impl DependencyInstallOpts {
                 dep.tag.as_deref().unwrap_or("None")
             )?;
 
-            // this tracks the actual installed tag
-            let installed_tag;
-            let mut dep_id = None;
+            let dep_id;
             if no_git {
-                installed_tag = installer.install_as_folder(&dep, &path)?;
+                dep_id = installer.install_as_folder(&dep, &path)?;
             } else {
                 if commit {
                     git.ensure_clean()?;
                 }
-                installed_tag = installer.install_as_submodule(&dep, &path)?;
+                dep_id = installer.install_as_submodule(&dep, &path)?;
 
-                let mut new_insertion = false;
-                // Pin branch to submodule if branch is used
-                if let Some(tag_or_branch) = &installed_tag {
-                    dep_id = Some(match dep.ref_kind {
-                        Some(DependencyRefKind::Branch) => DepIdentifier::Branch {
-                            name: tag_or_branch.clone(),
-                            rev: git.root(&path).head()?,
-                            r#override: false,
-                        },
-                        Some(DependencyRefKind::Tag) => DepIdentifier::Tag {
-                            name: tag_or_branch.clone(),
-                            rev: git.root(&path).head()?,
-                            r#override: false,
-                        },
-                        Some(DependencyRefKind::Rev) => {
-                            DepIdentifier::Rev { rev: git.root(&path).head()?, r#override: false }
-                        }
-                        None => DepIdentifier::resolve_type(&git, &path, tag_or_branch)?,
-                    });
-                    if git.has_branch(tag_or_branch, &path)?
-                        && dep_id.as_ref().is_some_and(|id| id.is_branch())
-                    {
-                        // always work with relative paths when directly modifying submodules
-                        git.set_submodule_branch(rel_path, tag_or_branch)?;
+                if let Some(dep_id) = &dep_id {
+                    if let DepIdentifier::Branch { name, .. } = dep_id {
+                        // Keep branch update policy while pinning the installed commit.
+                        git.set_submodule_branch(rel_path, name)?;
                         let root = Git::root_of(git.root)?;
                         git.root(&root).add_literal(Path::new(".gitmodules"))?;
                     }
-
-                    trace!(?dep_id, ?tag_or_branch, "resolved dep id");
-                    if let Some(dep_id) = &dep_id {
-                        new_insertion = true;
-                        lockfile.insert(rel_path.to_path_buf(), dep_id.clone());
-                    }
-
-                    if commit {
-                        // update .gitmodules which is at the root of the repo,
-                        // not necessarily at the root of the current Foundry project
-                        let root = Git::root_of(git.root)?;
-                        git.root(&root).add(Some(".gitmodules"))?;
-                    }
+                    lockfile.insert(rel_path.to_path_buf(), dep_id.clone());
                 }
 
-                if new_insertion
+                if dep_id.is_some()
                     || out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty())
                     || !lockfile.exists()
                 {
                     lockfile.write()?;
                 }
 
-                // commit the installation
                 if commit {
-                    let mut msg = String::with_capacity(128);
-                    msg.push_str("forge install: ");
-                    msg.push_str(dep.name());
-
-                    if let Some(tag) = &installed_tag {
+                    let mut msg = format!("forge install: {}", dep.name());
+                    if let Some(dep_id) = &dep_id {
                         msg.push_str("\n\n");
-
-                        if let Some(dep_id) = &dep_id {
-                            msg.push_str(&dep_id.to_string());
-                        } else {
-                            msg.push_str(tag);
-                        }
+                        msg.push_str(&dep_id.to_string());
                     }
-
                     if !lockfile.is_empty() {
                         git.root(&config.root).add(Some(FOUNDRY_LOCK))?;
                     }
@@ -344,13 +334,12 @@ impl DependencyInstallOpts {
             }
 
             let mut msg = format!("    {} {}", "Installed".green(), dep.name);
-            if let Some(tag) = dep.tag.or(installed_tag) {
+            if let Some(dep_id) = &dep_id {
                 msg.push(' ');
-
-                if let Some(dep_id) = dep_id {
-                    msg.push_str(&dep_id.to_string());
+                if no_git {
+                    msg.push_str(dep_id.name());
                 } else {
-                    msg.push_str(tag.as_str());
+                    msg.push_str(&dep_id.to_string());
                 }
             }
             sh_status!("{msg}")?;
@@ -531,7 +520,7 @@ fn restore_file(path: &Path, contents: Option<&[u8]>) {
 
 impl Installer<'_> {
     /// Installs the dependency as an ordinary folder instead of a submodule
-    fn install_as_folder(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
+    fn install_as_folder(self, dep: &Dependency, path: &Path) -> Result<Option<DepIdentifier>> {
         let url = dep.require_url()?;
         let mut guard = NewFolderGuard::new(path)?;
         Git::clone(dep.tag.is_none(), url, Some(&path))?;
@@ -540,12 +529,13 @@ impl Installer<'_> {
         if dep.tag.is_none() {
             // try to find latest semver release tag
             dep.tag = self.last_tag(path);
+            dep.ref_kind = dep.tag.as_ref().map(|_| DependencyRefKind::Tag);
         }
 
         // checkout the tag if necessary, using recursive checkout to properly clean up
         // nested submodules that may exist on the default branch but not on the target tag.
         // See: https://github.com/foundry-rs/foundry/issues/13688
-        self.git_checkout(&dep, path, true)?;
+        let dep_id = self.git_checkout(&dep, path, true)?;
 
         trace!("updating dependency submodules recursively");
         self.git.root(path).submodule_update(
@@ -563,7 +553,7 @@ impl Installer<'_> {
         fs::remove_dir_all(path.join(".git"))?;
 
         guard.disarm();
-        Ok(dep.tag)
+        Ok(dep_id)
     }
 
     /// Recursively removes `.git` files/directories from nested submodules within `root`.
@@ -606,7 +596,7 @@ impl Installer<'_> {
     ///
     /// This will add the git submodule to the given dir, initialize it and checkout the tag if
     /// provided or try to find the latest semver, release tag.
-    fn install_as_submodule(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
+    fn install_as_submodule(self, dep: &Dependency, path: &Path) -> Result<Option<DepIdentifier>> {
         let root = Git::root_of(self.git.root)?;
         let relative_path = path.strip_prefix(&root)?;
         let git = self.git.root(&root);
@@ -660,10 +650,11 @@ impl Installer<'_> {
         if dep.tag.is_none() {
             // try to find latest semver release tag
             dep.tag = self.last_tag(path);
+            dep.ref_kind = dep.tag.as_ref().map(|_| DependencyRefKind::Tag);
         }
 
         // checkout the tag if necessary
-        self.git_checkout(&dep, path, true)?;
+        let dep_id = self.git_checkout(&dep, path, true)?;
 
         trace!("updating dependency submodules recursively");
         self.git.root(path).submodule_update(
@@ -684,7 +675,7 @@ impl Installer<'_> {
             self.git.add_literal(path)?;
         }
 
-        Ok(dep.tag)
+        Ok(dep_id)
     }
 
     fn last_tag(self, path: &Path) -> Option<String> {
@@ -739,49 +730,53 @@ impl Installer<'_> {
         self.git.submodule_add(true, url, path)
     }
 
-    fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<()> {
-        // no need to checkout if there is no tag
-        let Some(mut tag) = dep.tag.clone() else { return Ok(()) };
+    fn git_checkout(
+        self,
+        dep: &Dependency,
+        path: &Path,
+        recurse: bool,
+    ) -> Result<Option<DepIdentifier>> {
+        let Some(mut tag) = dep.tag.clone() else { return Ok(None) };
+        let mut kind = dep.ref_kind;
 
-        // Only disambiguate unqualified refs in interactive terminals.
-        if dep.ref_kind.is_none() && std::io::stdout().is_terminal() {
+        // Only implicit selectors may be expanded interactively.
+        if kind.is_none() && std::io::stdout().is_terminal() {
             if tag.is_empty() {
                 tag = self.match_tag(&tag, path)?;
-            } else if let Some(branch) = self.match_branch(&tag, path)? {
-                trace!(?tag, ?branch, "selecting branch for given tag");
-                tag = branch;
-            }
-        }
-        let url = dep.url.as_ref().unwrap();
-
-        // Preserve explicit ref kinds. Unqualified tags use their full ref so a local branch
-        // with the same name cannot shadow them.
-        let checkout_ref = match dep.ref_kind {
-            Some(DependencyRefKind::Tag) => format!("refs/tags/{tag}"),
-            Some(DependencyRefKind::Branch | DependencyRefKind::Rev) => tag.clone(),
-            None if dep.tag.as_deref() == Some(tag.as_str()) && self.git.has_tag(&tag, path)? => {
-                format!("refs/tags/{tag}")
-            }
-            None => tag.clone(),
-        };
-        let res = if dep.ref_kind == Some(DependencyRefKind::Branch) {
-            self.git.root(path).checkout_branch(recurse, &tag)
-        } else {
-            self.git.root(path).checkout(recurse, checkout_ref)
-        };
-        if let Err(mut e) = res {
-            // remove dependency on failed checkout
-            fs::remove_dir_all(path)?;
-            let error = e.to_string();
-            if error.contains("did not match any file(s) known to git")
-                || error.contains("fatal: invalid reference:")
+            } else if !self.git.has_tag(&tag, path)?
+                && let Some(branch) = self.match_branch(&tag, path)?
             {
-                e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
+                tag = branch;
+                kind = Some(DependencyRefKind::Branch);
             }
-            return Err(e);
         }
 
-        Ok(())
+        let mut dep_id = DepIdentifier::resolve(&self.git, path, &tag, kind).map_err(|err| {
+            if kind.is_none() {
+                eyre::eyre!(
+                    "Tag: \"{tag}\" not found for repo \"{}\"!",
+                    dep.url.as_deref().unwrap_or_default()
+                )
+            } else {
+                err
+            }
+        })?;
+        let dependency_git = self.git.root(path);
+        if let DepIdentifier::Branch { name, rev, .. } = &mut dep_id {
+            // Reinstalling a branch must preserve local commits and work without fetching.
+            *rev = dependency_git
+                .resolve_ref(&format!("refs/heads/{name}"))
+                .or_else(|_| dependency_git.resolve_ref(&format!("refs/remotes/origin/{name}")))?;
+            dependency_git.checkout_branch(recurse, name)?;
+            eyre::ensure!(
+                dependency_git.head()? == *rev,
+                "Checked out commit does not match {rev}"
+            );
+        } else {
+            // Checkout verifies HEAD against the same commit that is recorded in the lockfile.
+            dep_id.checkout(dependency_git, recurse)?;
+        }
+        Ok(Some(dep_id))
     }
 
     /// disambiguate tag if it is a version tag

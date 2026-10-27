@@ -1,6 +1,9 @@
 //! foundry.lock handler type.
 
-use crate::utils::{Git, SubmoduleCheckoutStatus};
+use crate::{
+    opts::DependencyRefKind,
+    utils::{Git, SubmoduleCheckoutStatus},
+};
 use alloy_primitives::map::HashMap;
 use eyre::{Context, OptionExt, Result};
 use foundry_common::fs::canonicalize_path;
@@ -425,28 +428,6 @@ pub enum DepIdentifier {
 }
 
 impl DepIdentifier {
-    /// Resolves the [`DepIdentifier`] for a submodule at a given path.
-    /// `lib_path` is the absolute path to the submodule.
-    pub fn resolve_type(git: &Git<'_>, lib_path: &Path, s: &str) -> Result<Self> {
-        trace!(lib_path = ?lib_path, resolving_type = ?s, "resolving submodule identifier");
-        // Get the tags for the submodule
-        if git.has_tag(s, lib_path)? {
-            let rev = git.get_rev(s, lib_path)?;
-            return Ok(Self::Tag { name: String::from(s), rev, r#override: false });
-        }
-
-        if git.has_branch(s, lib_path)? {
-            let rev = git.get_rev(s, lib_path)?;
-            return Ok(Self::Branch { name: String::from(s), rev, r#override: false });
-        }
-
-        if git.has_rev(s, lib_path)? {
-            return Ok(Self::Rev { rev: String::from(s), r#override: false });
-        }
-
-        Err(eyre::eyre!("Could not resolve tag type for submodule at path {}", lib_path.display()))
-    }
-
     /// Get the commit hash of the dependency.
     pub fn rev(&self) -> &str {
         match self {
@@ -464,17 +445,6 @@ impl DepIdentifier {
             Self::Branch { name, .. } => name,
             Self::Tag { name, .. } => name,
             Self::Rev { rev, .. } => rev,
-        }
-    }
-
-    /// Get the name/rev to checkout at.
-    ///
-    /// Tags are checked out at their locked revision, since a tag name can be shadowed by a
-    /// branch with the same name.
-    pub fn checkout_id(&self) -> &str {
-        match self {
-            Self::Branch { name, .. } => name,
-            Self::Tag { rev, .. } | Self::Rev { rev, .. } => rev,
         }
     }
 
@@ -499,6 +469,76 @@ impl DepIdentifier {
     /// Returns whether the dependency is a branch.
     pub const fn is_branch(&self) -> bool {
         matches!(self, Self::Branch { .. })
+    }
+
+    /// Resolves a dependency reference to its kind and canonical commit hash.
+    ///
+    /// Explicit kinds only resolve within the requested namespace. Untyped references retain
+    /// tag-first inference, followed by branches and Git revision expressions.
+    pub fn resolve(
+        git: &Git<'_>,
+        lib_path: &Path,
+        name: &str,
+        kind: Option<DependencyRefKind>,
+    ) -> Result<Self> {
+        trace!(?lib_path, ?name, ?kind, "resolving submodule identifier");
+        let git = git.root(lib_path);
+        if kind.is_none() || kind == Some(DependencyRefKind::Tag) {
+            let tag = git.resolve_ref(&format!("refs/tags/{name}"));
+            match tag {
+                Ok(rev) => return Ok(Self::Tag { name: name.to_string(), rev, r#override: false }),
+                Err(err) if kind.is_some() => {
+                    return Err(err).wrap_err_with(|| {
+                        format!(
+                            "Could not resolve tag {name} in submodule at {}",
+                            lib_path.display()
+                        )
+                    });
+                }
+                Err(_) => {}
+            }
+        }
+        if kind.is_none() || kind == Some(DependencyRefKind::Branch) {
+            let branch = git.resolve_branch(name);
+            match branch {
+                Ok(rev) => {
+                    return Ok(Self::Branch { name: name.to_string(), rev, r#override: false });
+                }
+                Err(err) if kind.is_some() => {
+                    return Err(err).wrap_err_with(|| {
+                        format!(
+                            "Could not resolve branch {name} in submodule at {}",
+                            lib_path.display()
+                        )
+                    });
+                }
+                Err(_) => {}
+            }
+        }
+
+        let rev = if kind == Some(DependencyRefKind::Rev)
+            || name.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            git.resolve_commit_hash(name)?
+        } else {
+            git.resolve_commit(name)?
+        };
+        Ok(Self::Rev { rev, r#override: false })
+    }
+
+    /// Checks out the recorded commit and records the verified, full HEAD revision.
+    pub fn checkout(&mut self, git: Git<'_>, recursive: bool) -> Result<()> {
+        // Older lockfiles stored untyped revision expressions instead of their resolved hashes.
+        let revision = match self {
+            Self::Rev { rev, .. } if !rev.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+                git.resolve_commit(rev)?
+            }
+            _ => self.rev().to_string(),
+        };
+        let head = git.checkout_commit(recursive, &revision)?;
+        let (Self::Branch { rev, .. } | Self::Tag { rev, .. } | Self::Rev { rev, .. }) = self;
+        *rev = head;
+        Ok(())
     }
 }
 
@@ -614,6 +654,30 @@ mod tests {
   }
 }"#;
         assert_eq!(contents.trim(), expected.trim());
+    }
+
+    #[test]
+    fn head_is_a_revision_not_a_remote_branch() {
+        let remote = tempdir().unwrap();
+        let git = Git::new(remote.path());
+        git.init().unwrap();
+        fs::write(remote.path().join("file"), "content\n").unwrap();
+        git.add(["file"]).unwrap();
+        git.commit("initial").unwrap();
+        let requested = git.head().unwrap();
+
+        let tmp = tempdir().unwrap();
+        Git::clone(false, remote.path(), Some(tmp.path())).unwrap();
+        let git = Git::new(tmp.path());
+        assert_eq!(git.resolve_ref("refs/remotes/origin/HEAD").unwrap(), requested);
+        assert_eq!(
+            DepIdentifier::resolve(&git, tmp.path(), "HEAD", None).unwrap(),
+            DepIdentifier::Rev { rev: requested, r#override: false }
+        );
+        assert!(
+            DepIdentifier::resolve(&git, tmp.path(), "HEAD", Some(DependencyRefKind::Branch))
+                .is_err()
+        );
     }
 
     #[test]

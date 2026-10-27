@@ -701,7 +701,7 @@ fn can_update_and_retain_tag_revs(prj: _, cmd: _) {
     let oz_init = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
     let solady_init = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
     assert_eq!(oz_init.name(), "v5.1.0");
-    assert_eq!(solady_init.rev(), "513f581");
+    assert_eq!(solady_init.rev(), "513f581675374706dbe947284d6b12d19ce35a2a");
     let submodules_init: Submodules = status.parse().unwrap();
 
     cmd.forge_fuse().arg("update").assert_success();
@@ -989,7 +989,7 @@ fn update_rejects_unresolved_ref_override(prj: _, cmd: _) {
 Error: Failed to resolve ref `DOES_NOT_EXIST` for dependency `lib/dependency`
 
 Context:
-- git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
+- git rev-parse exited with code 128: fatal: Needed a single revision
 
 "#]]);
     assert_eq!(dependency_git.head().unwrap(), first);
@@ -1017,7 +1017,7 @@ Context:
 Error: Failed to resolve ref `DOES_NOT_EXIST` for dependency `lib/dependency`
 
 Context:
-- git cat-file exited with code 128: fatal: Not a valid object name DOES_NOT_EXIST
+- git rev-parse exited with code 128: fatal: Needed a single revision
 
 "#]]);
     for (path, original_source) in [&path, &other_path].into_iter().zip(&original_sources) {
@@ -1101,7 +1101,7 @@ fn can_override_tag_in_update(prj: _, cmd: _) {
         lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
     assert_eq!(oz_init_lock.name(), "v5.0.2");
     let solady_init_lock = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
-    assert_eq!(solady_init_lock.rev(), "513f581");
+    assert_eq!(solady_init_lock.rev(), "513f581675374706dbe947284d6b12d19ce35a2a");
 
     // Update oz to a different release tag
     cmd.forge_fuse()
@@ -1766,7 +1766,7 @@ Error: Failed to check out `{stale_rev}` for dependency `lib/dep`
 `lib/dep` is locked to rev={stale_rev} in foundry.lock. If that ref is no longer available from the dependency's remote, update the `lib/dep` entry in foundry.lock.
 
 Context:
-- git checkout exited with code 128: fatal: [..]
+- Could not resolve commit hash {stale_rev}
 "
     ));
     assert_eq!(fs::read_to_string(prj.root().join(FOUNDRY_LOCK)).unwrap(), stale_lock);
@@ -1788,7 +1788,8 @@ Error: Failed to check out `missing` for dependency `lib/dep`
 Branch `missing` comes from the `branch` setting for `lib/dep` in .gitmodules. If it no longer exists on the dependency's remote, update .gitmodules; if it does, the local clone may be missing it, for example after a `--shallow` install.
 
 Context:
-- git checkout exited with code 128: fatal: [..]
+- Error #0: Could not resolve branch missing in submodule at [..]/lib/dep
+- Error #1: git show-ref exited with code 128: fatal: 'refs/heads/missing' - not a valid ref
 
 "#]]);
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
@@ -2030,4 +2031,430 @@ fn set_gitmodules_option(root: &Path, key: &str, value: &str) {
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[forgetest]
+fn install_explicit_tag_ignores_colliding_default_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let git = Git::new(source.path());
+    let tagged = git.head().unwrap();
+    for args in [["tag", "v1.0.0"].as_slice(), ["branch", "-M", "v1.0.0"].as_slice()] {
+        let output = Command::new("git").current_dir(source.path()).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+    fs::write(source.path().join("source.txt"), "branch source\n").unwrap();
+    git.add(["source.txt"]).unwrap();
+    git.commit("advance colliding branch").unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "fixture/parent@tag=v1.0.0"]).assert_success();
+
+    let installed = prj.root().join("lib/parent");
+    assert_eq!(Git::new(&installed).head().unwrap(), tagged);
+    assert_eq!(
+        lockfile_get(prj.root(), Path::new("lib/parent")),
+        Some(DepIdentifier::Tag { name: "v1.0.0".into(), rev: tagged.clone(), r#override: false })
+    );
+    let root_git = Git::new(prj.root());
+    assert!(Lockfile::new(prj.root()).with_git(&root_git).check().unwrap().is_empty());
+
+    // The staged gitlink still points to the clone's default branch until the user stages it.
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_success();
+    assert_eq!(Git::new(&installed).head().unwrap(), tagged);
+    assert!(Lockfile::new(prj.root()).with_git(&root_git).check().unwrap().is_empty());
+}
+
+#[forgetest]
+fn install_preserves_ref_kinds_with_colliding_names(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    let (tagged, branch) = init_colliding_install_source(source.path());
+    let short = &tagged[..8];
+
+    for (alias, requested, default_branch, expected) in [
+        (
+            "annotated",
+            "@tag=v2.0.0".to_string(),
+            "v2.0.0",
+            DepIdentifier::Tag { name: "v2.0.0".into(), rev: tagged.clone(), r#override: false },
+        ),
+        (
+            "branch",
+            "@branch=v1.0.0".to_string(),
+            "v1.0.0",
+            DepIdentifier::Branch { name: "v1.0.0".into(), rev: branch, r#override: false },
+        ),
+        (
+            "short",
+            format!("@rev={short}"),
+            short,
+            DepIdentifier::Rev { rev: tagged.clone(), r#override: false },
+        ),
+        (
+            "full",
+            format!("@rev={tagged}"),
+            tagged.as_str(),
+            DepIdentifier::Rev { rev: tagged.clone(), r#override: false },
+        ),
+        (
+            "automatic",
+            String::new(),
+            "v2.0.0",
+            DepIdentifier::Tag { name: "v2.0.0".into(), rev: tagged.clone(), r#override: false },
+        ),
+    ] {
+        local_install_git(
+            source.path(),
+            &["symbolic-ref", "HEAD", &format!("refs/heads/{default_branch}")],
+        );
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["install", &format!("{alias}=fixture/parent{requested}")])
+            .assert_success()
+            .stdout_eq(str![""]);
+
+        let path = PathBuf::from(format!("lib/{alias}"));
+        assert_eq!(Git::new(&prj.root().join(&path)).head().unwrap(), expected.rev());
+        assert_eq!(lockfile_get(prj.root(), &path), Some(expected));
+    }
+
+    let git = Git::new(prj.root());
+    assert!(Lockfile::new(prj.root()).with_git(&git).check().unwrap().is_empty());
+}
+
+#[forgetest]
+fn install_ref_collisions_with_shallow_and_no_git(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    let (tagged, branch) = init_colliding_install_source(source.path());
+    for (alias, option, requested, default_branch, expected) in [
+        ("shallow-branch", "--shallow", "branch=v1.0.0".to_string(), "v1.0.0", branch.as_str()),
+        ("folder-tag", "--no-git", "tag=v1.0.0".to_string(), "v1.0.0", tagged.as_str()),
+        ("folder-rev", "--no-git", format!("rev={tagged}"), tagged.as_str(), tagged.as_str()),
+    ] {
+        local_install_git(
+            source.path(),
+            &["symbolic-ref", "HEAD", &format!("refs/heads/{default_branch}")],
+        );
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["install", option, &format!("{alias}=fixture/parent@{requested}")])
+            .assert_success()
+            .stdout_eq(str![""]);
+
+        let path = PathBuf::from(format!("lib/{alias}"));
+        let installed = prj.root().join(&path);
+        assert_eq!(
+            read_string(installed.join("source.txt")).replace("\r\n", "\n"),
+            if expected == tagged { "dependency source\n" } else { "branch source\n" }
+        );
+        if option == "--no-git" {
+            assert!(!installed.join(".git").exists());
+        } else {
+            assert_eq!(Git::new(&installed).head().unwrap(), expected);
+            let locked = lockfile_get(prj.root(), &path).unwrap();
+            assert_eq!(locked.rev(), expected);
+            assert_eq!(locked.is_branch(), alias == "shallow-branch");
+        }
+    }
+
+    // Missing shallow history must fail instead of installing the colliding default branch.
+    let original_lock = fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap();
+    let original_modules = fs::read(prj.root().join(".gitmodules")).unwrap();
+    for (alias, requested, default_branch) in [
+        ("shallow-tag", "tag=v2.0.0".to_string(), "v2.0.0"),
+        ("shallow-rev", format!("rev={tagged}"), tagged.as_str()),
+    ] {
+        local_install_git(
+            source.path(),
+            &["symbolic-ref", "HEAD", &format!("refs/heads/{default_branch}")],
+        );
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["install", "--shallow", &format!("{alias}=fixture/parent@{requested}")])
+            .assert_failure()
+            .stdout_eq(str![""]);
+        assert!(!prj.root().join("lib").join(alias).exists());
+        assert!(!prj.root().join(".git/modules/lib").join(alias).exists());
+        assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
+        assert_eq!(fs::read(prj.root().join(".gitmodules")).unwrap(), original_modules);
+    }
+
+    let git = Git::new(prj.root());
+    assert!(Lockfile::new(prj.root()).with_git(&git).check().unwrap().is_empty());
+}
+
+#[forgetest]
+fn install_missing_explicit_refs_do_not_fall_back(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    local_install_git(source.path(), &["branch", "branch-only"]);
+    local_install_git(source.path(), &["tag", "tag-only"]);
+    local_install_git(source.path(), &["branch", "deadbeef"]);
+
+    for option in [None, Some("--no-git")] {
+        for requested in ["tag=branch-only", "branch=tag-only", "rev=deadbeef", "rev=HEAD"] {
+            configure_local_install(&mut cmd, source.path());
+            cmd.arg("install");
+            if let Some(option) = option {
+                cmd.arg(option);
+            }
+            cmd.arg(format!("fixture/parent@{requested}")).assert_failure().stdout_eq(str![""]);
+
+            assert!(!prj.root().join("lib/parent").exists());
+            assert!(!prj.root().join(".git/modules/lib/parent").exists());
+            assert!(!prj.root().join(".gitmodules").exists());
+            assert!(!prj.root().join(FOUNDRY_LOCK).exists());
+            assert!(Git::new(prj.root()).submodules().unwrap().is_empty());
+        }
+    }
+}
+
+#[forgetest]
+fn update_and_restore_preserve_explicit_ref_kinds(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    let (tagged, branch) = init_colliding_install_source(source.path());
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "fixture/parent@branch=v1.0.0"]).assert_success();
+    cmd.git_add();
+    cmd.git_commit("install branch dependency");
+    let path = Path::new("lib/parent");
+    let installed = prj.root().join(path);
+    let git = Git::new(&installed);
+    for name in [&tagged[..8], tagged.as_str()] {
+        local_install_git(&installed, &["branch", name, &branch]);
+    }
+
+    // A same-named ref of another kind cannot satisfy an explicit update request.
+    local_install_git(source.path(), &["branch", "branch-only", &format!("{branch}^{{commit}}")]);
+    local_install_git(source.path(), &["tag", "tag-only"]);
+    local_install_git(&installed, &["branch", "local-only", &format!("{branch}^{{commit}}")]);
+    let original_lock = fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap();
+    for requested in ["tag=branch-only", "branch=tag-only", "branch=local-only"] {
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["update", &format!("fixture/parent@{requested}")])
+            .assert_failure()
+            .stdout_eq(str![""]);
+        assert_eq!(git.head().unwrap(), branch);
+        assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), original_lock);
+    }
+
+    for (requested, expected) in [
+        (
+            "tag=v1.0.0".to_string(),
+            DepIdentifier::Tag { name: "v1.0.0".into(), rev: tagged.clone(), r#override: false },
+        ),
+        (
+            "branch=v1.0.0".to_string(),
+            DepIdentifier::Branch { name: "v1.0.0".into(), rev: branch.clone(), r#override: false },
+        ),
+        (
+            format!("rev={}", &tagged[..8]),
+            DepIdentifier::Rev { rev: tagged.clone(), r#override: false },
+        ),
+        (format!("rev={tagged}"), DepIdentifier::Rev { rev: tagged.clone(), r#override: false }),
+    ] {
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["update", &format!("fixture/parent@{requested}")]).assert_success();
+        assert_eq!(git.head().unwrap(), expected.rev());
+        assert_eq!(lockfile_get(prj.root(), path), Some(expected.clone()));
+
+        if !expected.is_branch() {
+            // Both install and update must restore the locked commit after local drift.
+            for command in ["install", "update"] {
+                git.checkout(false, format!("{branch}^{{commit}}")).unwrap();
+                configure_local_install(&mut cmd, source.path());
+                cmd.args([command]).assert_success();
+                assert_eq!(git.head().unwrap(), expected.rev());
+                assert_eq!(lockfile_get(prj.root(), path), Some(expected.clone()));
+            }
+        }
+    }
+
+    // Older locks stored abbreviated hashes or revision expressions; restore and normalize both.
+    for revision in [&tagged[..8], "refs/heads/v1.0.0~1", "HEAD~1"] {
+        for command in ["install", "update"] {
+            let mut lock = Lockfile::new(prj.root());
+            lock.insert(
+                path.to_path_buf(),
+                DepIdentifier::Rev { rev: revision.to_string(), r#override: false },
+            );
+            lock.write().unwrap();
+            git.checkout(false, format!("{branch}^{{commit}}")).unwrap();
+            configure_local_install(&mut cmd, source.path());
+            cmd.arg(command).assert_success();
+            assert_eq!(git.head().unwrap(), tagged);
+            assert_eq!(
+                lockfile_get(prj.root(), path),
+                Some(DepIdentifier::Rev { rev: tagged.clone(), r#override: false })
+            );
+            let root_git = Git::new(prj.root());
+            assert!(Lockfile::new(prj.root()).with_git(&root_git).check().unwrap().is_empty());
+        }
+    }
+
+    // Explicit branch selection must continue following the branch as it advances.
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["update", "fixture/parent@branch=v1.0.0"]).assert_success();
+    let source_git = Git::new(source.path());
+    fs::write(source.path().join("source.txt"), "updated branch source\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("advance branch again").unwrap();
+    let updated = source_git.head().unwrap();
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("update").assert_success();
+    assert_eq!(git.head().unwrap(), updated);
+    assert_eq!(
+        lockfile_get(prj.root(), path),
+        Some(DepIdentifier::Branch { name: "v1.0.0".into(), rev: updated, r#override: false })
+    );
+    let root_git = Git::new(prj.root());
+    assert!(Lockfile::new(prj.root()).with_git(&root_git).check().unwrap().is_empty());
+}
+
+fn init_colliding_install_source(path: &Path) -> (String, String) {
+    init_local_install_source(path);
+    let git = Git::new(path);
+    let tagged = git.head().unwrap();
+    local_install_git(path, &["tag", "v1.0.0"]);
+    local_install_git(path, &["tag", "-a", "v2.0.0", "-m", "annotated release"]);
+    local_install_git(path, &["branch", "-M", "v1.0.0"]);
+    fs::write(path.join("source.txt"), "branch source\n").unwrap();
+    git.add(["source.txt"]).unwrap();
+    git.commit("advance colliding branch").unwrap();
+    let branch = git.head().unwrap();
+    for name in ["v2.0.0", &tagged[..8], tagged.as_str()] {
+        local_install_git(path, &["branch", name, &format!("{branch}^{{commit}}")]);
+    }
+    (tagged, branch)
+}
+
+#[track_caller]
+fn local_install_git(path: &Path, args: &[&str]) {
+    let output = Command::new("git").current_dir(path).args(args).output().unwrap();
+    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[forgetest]
+fn install_preserves_gitlink_when_inheriting_branch(prj: _, cmd: _) {
+    cmd.git_init();
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let source_git = Git::new(source.path());
+    let initial = source_git.head().unwrap();
+    local_install_git(source.path(), &["branch", "-M", "v1"]);
+    fs::write(source.path().join("source.txt"), "updated branch source\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("advance branch").unwrap();
+    let latest = source_git.head().unwrap();
+
+    add_local_submodule(prj.root(), source.path());
+    let path = Path::new("lib/dep");
+    let installed = prj.root().join(path);
+    let git = Git::new(&installed);
+    git.checkout(false, &initial).unwrap();
+    set_gitmodules_option(prj.root(), "branch", "v1");
+    cmd.git_add();
+    cmd.git_commit("pin initial branch revision");
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_success().stdout_eq(str![""]);
+    assert_eq!(git.head().unwrap(), initial);
+    assert_eq!(
+        lockfile_get(prj.root(), path),
+        Some(DepIdentifier::Branch { name: "v1".into(), rev: initial, r#override: false })
+    );
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("update").assert_success().stdout_eq(str![""]);
+    assert_eq!(git.head().unwrap(), latest);
+    assert_eq!(
+        lockfile_get(prj.root(), path),
+        Some(DepIdentifier::Branch { name: "v1".into(), rev: latest, r#override: false })
+    );
+}
+
+#[forgetest]
+fn install_restores_nested_submodule_revision(prj: _, cmd: _) {
+    cmd.git_init();
+    let child = tempfile::tempdir().unwrap();
+    init_local_install_source(child.path());
+    let child_git = Git::new(child.path());
+    let initial_child = child_git.head().unwrap();
+
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    add_local_submodule(source.path(), child.path());
+    let source_git = Git::new(source.path());
+    source_git.commit("add nested dependency").unwrap();
+    let initial_parent = source_git.head().unwrap();
+    local_install_git(source.path(), &["tag", "v1.0.0"]);
+
+    fs::write(child.path().join("source.txt"), "updated child source\n").unwrap();
+    child_git.add(["source.txt"]).unwrap();
+    child_git.commit("advance child").unwrap();
+    let latest_child = child_git.head().unwrap();
+    let nested_source = source.path().join("lib/dep");
+    local_install_git(&nested_source, &["fetch", "origin"]);
+    Git::new(&nested_source).checkout(false, &latest_child).unwrap();
+    source_git.add(["lib/dep"]).unwrap();
+    source_git.commit("advance nested dependency").unwrap();
+    let latest_parent = source_git.head().unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "fixture/parent@tag=v1.0.0"]).assert_success().stdout_eq(str![""]);
+    let installed = prj.root().join("lib/parent");
+    let nested = installed.join("lib/dep");
+    assert_eq!(Git::new(&installed).head().unwrap(), initial_parent);
+    assert_eq!(Git::new(&nested).head().unwrap(), initial_child);
+    let root_git = Git::new(prj.root());
+    assert_eq!(root_git.commit_hash(false, ":lib/parent").unwrap(), latest_parent);
+
+    // Restoring the locked parent must also restore its nested dependency's revision.
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_success().stdout_eq(str![""]);
+    assert_eq!(Git::new(&installed).head().unwrap(), initial_parent);
+    assert_eq!(Git::new(&nested).head().unwrap(), initial_child);
+    assert_eq!(
+        lockfile_get(prj.root(), Path::new("lib/parent")),
+        Some(DepIdentifier::Tag { name: "v1.0.0".into(), rev: initial_parent, r#override: false })
+    );
+    assert!(Lockfile::new(prj.root()).with_git(&root_git).check().unwrap().is_empty());
+}
+
+#[forgetest]
+fn install_initializes_nested_submodule_at_locked_revision(prj: _, cmd: _) {
+    cmd.git_init();
+    let child = tempfile::tempdir().unwrap();
+    init_local_install_source(child.path());
+    let child_rev = Git::new(child.path()).head().unwrap();
+
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    add_local_submodule(source.path(), child.path());
+    let source_git = Git::new(source.path());
+    source_git.commit("add nested dependency").unwrap();
+    let parent_rev = source_git.head().unwrap();
+    local_install_git(source.path(), &["tag", "v1.0.0"]);
+    local_install_git(source.path(), &["rm", "-f", "lib/dep"]);
+    source_git.commit("remove nested dependency").unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "fixture/parent@tag=v1.0.0"]).assert_success().stdout_eq(str![""]);
+    let installed = prj.root().join("lib/parent");
+    let nested = installed.join("lib/dep");
+    assert_eq!(Git::new(&nested).head().unwrap(), child_rev);
+    local_install_git(&installed, &["submodule", "deinit", "--force", "lib/dep"]);
+    assert!(!nested.join(".git").exists());
+
+    // This child exists only in the locked parent, not in the staged parent gitlink.
+    configure_local_install(&mut cmd, source.path());
+    cmd.arg("install").assert_success().stdout_eq(str![""]);
+    assert_eq!(Git::new(&installed).head().unwrap(), parent_rev);
+    assert!(nested.join(".git").exists());
+    assert_eq!(Git::new(&nested).head().unwrap(), child_rev);
+    let root_git = Git::new(prj.root());
+    assert!(Lockfile::new(prj.root()).with_git(&root_git).check().unwrap().is_empty());
 }

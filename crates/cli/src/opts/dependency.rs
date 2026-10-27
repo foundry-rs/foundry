@@ -430,4 +430,20 @@ mod tests {
             Some("https://ghp_mytoken@github.com/private-org/precompiles-solidity".to_string())
         );
     }
+
+    #[test]
+    fn preserves_explicit_ref_kind() {
+        let tag = Dependency::from_str("owner/repo@tag=deadbeef").unwrap();
+        let branch = Dependency::from_str("owner/repo@branch=deadbeef").unwrap();
+        let rev = Dependency::from_str("owner/repo@rev=deadbeef").unwrap();
+        let implicit = Dependency::from_str("owner/repo@deadbeef").unwrap();
+
+        assert_ne!(tag, branch);
+        assert_ne!(tag, rev);
+        assert_ne!(branch, rev);
+        assert_ne!(tag, implicit);
+        assert_ne!(branch, implicit);
+        assert_ne!(rev, implicit);
+        assert_eq!(implicit.ref_kind, None);
+    }
 }
