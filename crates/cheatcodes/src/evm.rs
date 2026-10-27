@@ -1614,6 +1614,7 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     ccx.state.env_overrides.save_snapshot(id);
     ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
     ccx.state.snapshot_created_accounts(id, fork_id);
+    ccx.state.persistent_write_snapshots.insert(id, ccx.state.persistent_writes.len());
     Ok(id.abi_encode())
 }
 
@@ -1645,9 +1646,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.snapshot_restores.capture(replaced);
-        // The restored state drops the persistent writes made since the snapshot, as on master.
-        ccx.state.persistent_writes.clear();
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, false);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1675,9 +1674,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.snapshot_restores.capture(replaced);
-        // The restored state drops the persistent writes made since the snapshot, as on master.
-        ccx.state.persistent_writes.clear();
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
