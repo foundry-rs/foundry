@@ -11,9 +11,8 @@ contract CheckedXorBench {
         require(x[4] ^ x[5] == uint256(keccak256("edge-4")));
         require(x[5] ^ x[6] == uint256(keccak256("edge-5")));
         require(x[6] ^ x[7] == uint256(keccak256("edge-6")));
-        uint256 parity = uint256(keccak256("edge-0")) ^ uint256(keccak256("edge-1"))
-            ^ uint256(keccak256("edge-2")) ^ uint256(keccak256("edge-3"))
-            ^ uint256(keccak256("edge-4")) ^ uint256(keccak256("edge-5"))
+        uint256 parity = uint256(keccak256("edge-0")) ^ uint256(keccak256("edge-1")) ^ uint256(keccak256("edge-2"))
+            ^ uint256(keccak256("edge-3")) ^ uint256(keccak256("edge-4")) ^ uint256(keccak256("edge-5"))
             ^ uint256(keccak256("edge-6"));
         assert(x[0] ^ x[7] == parity);
     }
