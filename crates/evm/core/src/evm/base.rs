@@ -34,11 +34,7 @@ const _: fn() = || {
     assert_send_sync::<BaseEvmExt>();
 };
 
-impl FoundryEvmExt<BaseTxEnvelope> for BaseEvmExt {
-    fn clear_transaction_fee_cache(&mut self) {
-        self.clear_tx_l1_cost();
-    }
-}
+impl FoundryEvmExt<BaseTxEnvelope> for BaseEvmExt {}
 
 impl FoundryTxResultExt for BaseTxResultExt {
     fn is_failed_deposit(&self) -> bool {

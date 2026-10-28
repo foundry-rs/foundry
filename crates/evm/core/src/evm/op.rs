@@ -30,11 +30,7 @@ const _: fn() = || {
     assert_send_sync::<OpEvmExt>();
 };
 
-impl FoundryEvmExt<OpTxEnvelope> for OpEvmExt {
-    fn clear_transaction_fee_cache(&mut self) {
-        self.clear_tx_l1_cost();
-    }
-}
+impl FoundryEvmExt<OpTxEnvelope> for OpEvmExt {}
 
 impl FoundryTxResultExt for OpTxResultExt {
     fn is_failed_deposit(&self) -> bool {

@@ -207,9 +207,6 @@ pub struct TxContext {
 
 /// Anvil's binding of an evm2 network family.
 pub trait AnvilEvmNetwork: FoundryEvmNetwork {
-    /// The family this network executes with.
-    const FAMILY: EvmFamily;
-
     /// Returns the network spec executing `hardfork`.
     fn spec(hardfork: FoundryHardfork) -> SpecFor<Self>;
 
@@ -310,8 +307,6 @@ fn override_authorities(tx: &mut evm2::ethereum::LazyTxEip7702, overrides: &[(us
 }
 
 impl AnvilEvmNetwork for EthEvmNetwork {
-    const FAMILY: EvmFamily = EvmFamily::Eth;
-
     fn spec(hardfork: FoundryHardfork) -> evm2::SpecId {
         hardfork.into()
     }
@@ -328,8 +323,6 @@ impl AnvilEvmNetwork for EthEvmNetwork {
 
 #[cfg(feature = "monad")]
 impl AnvilEvmNetwork for MonadEvmNetwork {
-    const FAMILY: EvmFamily = EvmFamily::Monad;
-
     fn spec(hardfork: FoundryHardfork) -> monad_evm2::MonadHardfork {
         hardfork.into()
     }
@@ -360,8 +353,6 @@ impl AnvilEvmNetwork for MonadEvmNetwork {
 
 #[cfg(feature = "optimism")]
 impl AnvilEvmNetwork for OpEvmNetwork {
-    const FAMILY: EvmFamily = EvmFamily::Op;
-
     fn spec(hardfork: FoundryHardfork) -> op_evm2::OpSpecId {
         hardfork.into()
     }
@@ -375,8 +366,6 @@ impl AnvilEvmNetwork for OpEvmNetwork {
 
 #[cfg(feature = "base")]
 impl AnvilEvmNetwork for BaseEvmNetwork {
-    const FAMILY: EvmFamily = EvmFamily::Base;
-
     fn spec(hardfork: FoundryHardfork) -> base_evm2::BaseSpecId {
         hardfork.into()
     }
@@ -404,8 +393,6 @@ impl AnvilEvmNetwork for BaseEvmNetwork {
 }
 
 impl AnvilEvmNetwork for TempoEvmNetwork {
-    const FAMILY: EvmFamily = EvmFamily::Tempo;
-
     fn spec(hardfork: FoundryHardfork) -> tempo_hardfork::TempoHardfork {
         hardfork.into()
     }

@@ -73,22 +73,6 @@ pub enum EnvTransition {
     Deferred,
 }
 
-/// Environment, inspector and network state of a nested transaction.
-pub struct NestedTx<'a, T: EvmTypesHost> {
-    /// Environment to execute with; the running environment if `None`.
-    pub env: Option<EvmEnv<T>>,
-    /// Network extension state to execute with; derived from the running EVM if `None`.
-    pub ext: Option<T::EvmExt>,
-    /// Inspector observing the nested transaction.
-    pub inspector: Option<&'a mut dyn Inspector<T>>,
-}
-
-impl<T: EvmTypesHost> Default for NestedTx<'_, T> {
-    fn default() -> Self {
-        Self { env: None, ext: None, inspector: None }
-    }
-}
-
 /// A transaction prepared to execute as a nested transaction of the running one, such as for
 /// `vm.transact`, whose inspector may hold the lifecycle's owner while it runs.
 ///
@@ -209,10 +193,10 @@ impl<T: EvmTypesHost> ExecutedNested<T> {
     }
 }
 
-/// A write that must survive reverts of the enclosing calls, like the unjournaled state edits
-/// of cheatcodes under REVM. It is applied as a journaled write, and the owner replays it after
-/// each enclosing call that reverts. Balance and nonce writes replay as deltas, so they compose
-/// with value transfers and nonce bumps undone by the revert, as REVM's relative undo did.
+/// A write that must survive reverts of the enclosing calls, such as a cheatcode's state edit. It
+/// is applied as a journaled write, and the owner replays it after each enclosing call that
+/// reverts. Balance and nonce writes replay as deltas, so they compose with value transfers and
+/// nonce bumps undone by the revert.
 #[derive(Clone, Debug)]
 pub enum PersistentWrite {
     /// Adds a wrapping delta to an account's balance.
@@ -224,7 +208,7 @@ pub enum PersistentWrite {
         /// The change to the nonce.
         delta: i128,
         /// Whether the running transaction had created the account when the write was made. A
-        /// revert that undoes the creation also undoes the write, as on master.
+        /// revert that undoes the creation also undoes the write.
         created: bool,
     },
     /// Sets an account's code.
@@ -335,12 +319,10 @@ impl PersistentWrite {
 }
 
 /// Fork, snapshot and nested-execution lifecycle for one EVM network family.
-///
-/// `C` is caller-owned state captured with every snapshot, such as cheatcode state.
-pub struct ExecutionLifecycle<F: FoundryEvmFactory, C = ()> {
+pub struct ExecutionLifecycle<F: FoundryEvmFactory> {
     factory: F,
     forks: ForkRegistry<F::Types>,
-    snapshots: StateSnapshots<LifecycleSnapshot<F::Types, C>>,
+    snapshots: StateSnapshots<LifecycleSnapshot<F::Types>>,
     pending_env: Option<EvmEnv<F::Types>>,
     /// Base warm set of the running transaction from before a fork switch carried warmth into it.
     tx_prewarm: Option<PrewarmSet>,
@@ -351,7 +333,7 @@ pub struct ExecutionLifecycle<F: FoundryEvmFactory, C = ()> {
     switch_slots: AddressMap<HashSet<U256>>,
 }
 
-impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
+impl<F: FoundryEvmFactory> Clone for ExecutionLifecycle<F> {
     fn clone(&self) -> Self {
         Self {
             factory: self.factory.clone(),
@@ -365,13 +347,13 @@ impl<F: FoundryEvmFactory, C: Clone> Clone for ExecutionLifecycle<F, C> {
     }
 }
 
-impl<F: FoundryEvmFactory, C> std::fmt::Debug for ExecutionLifecycle<F, C> {
+impl<F: FoundryEvmFactory> std::fmt::Debug for ExecutionLifecycle<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExecutionLifecycle").field("forks", &self.forks).finish_non_exhaustive()
     }
 }
 
-impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
+impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     /// Creates a lifecycle whose active context is local execution over `db`.
     pub fn new(factory: F, db: impl BackingDb, env: EvmEnv<F::Types>) -> Self {
         let ext = factory.configure_for(&db, &env).evm_ext(&env);
@@ -442,7 +424,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
 
     /// Returns a database reading the active context's accepted state over its backing database,
     /// for reads between executions.
-    pub fn accepted_db(&self) -> impl BackingDb + use<F, C> {
+    pub fn accepted_db(&self) -> impl BackingDb + use<F> {
         let context = self.active();
         let backing = context.db.clone_backing();
         backing.set_eip161(context.env.version.feature(EvmFeatures::EIP161));
@@ -773,20 +755,19 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.apply_env(&factory, evm, env, phase)
     }
 
-    /// Captures the running context, every fork, and `extra`, and returns the snapshot ID.
-    pub fn snapshot(&mut self, evm: &mut Evm<'_, F::Types>, extra: C) -> U256 {
+    /// Captures the running context and every fork, and returns the snapshot ID.
+    pub fn snapshot(&mut self, evm: &mut Evm<'_, F::Types>) -> U256 {
         self.materialize(evm);
         self.snapshots.insert(LifecycleSnapshot {
             state: evm.state().snapshot(),
             forks: self.forks.clone(),
             env: evm_env(evm),
             ext: StoredExt::new(evm.ext()),
-            extra,
         })
     }
 
-    /// Restores snapshot `id` and returns its `extra` and the running state it replaced, or `None`
-    /// if it does not exist.
+    /// Restores snapshot `id` and returns the running state it replaced, or `None` if it does not
+    /// exist.
     ///
     /// Logs emitted since the snapshot are kept. As on master, only the context that was active at
     /// the snapshot gets its state back and becomes active again; other contexts, persistent
@@ -799,14 +780,14 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         id: U256,
         action: RevertStateSnapshotAction,
         phase: ExecutionPhase,
-    ) -> Option<(C, EnvTransition, StateSnapshot)> {
+    ) -> Option<(EnvTransition, StateSnapshot)> {
         let snapshot = if action.is_keep() {
             self.snapshots.get(id).cloned()
         } else {
             self.snapshots.remove(id)
         }?;
         self.materialize(evm);
-        let LifecycleSnapshot { state, mut forks, env, ext, extra } = snapshot;
+        let LifecycleSnapshot { state, mut forks, env, ext } = snapshot;
         let (replaced, logs) = if forks.active == self.forks.active {
             (None, evm.state().logs().to_vec())
         } else {
@@ -842,7 +823,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         evm.ext_mut().replace_while_executing(ext.into_inner());
         let factory = self.factory.configure_for(&db, &env);
         let transition = self.apply_env(&factory, evm, env, phase);
-        Some((extra, transition, replaced))
+        Some((transition, replaced))
     }
 
     /// Deletes a snapshot, returning whether it existed.
@@ -855,44 +836,9 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
         self.snapshots.clear();
     }
 
-    /// Executes `tx` as a separate transaction over the running transaction's current state, such
-    /// as for `vm.transact`, and merges its state changes into the running transaction.
-    ///
-    /// The merged writes are journaled, so they revert with the enclosing call. A failed
-    /// transaction only keeps its nonce increment and fee payment.
-    pub fn nested_transaction(
-        &self,
-        evm: &mut Evm<'_, F::Types>,
-        tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
-    ) -> eyre::Result<TxResult<F::Types>> {
-        self.nested_transaction_with(evm, tx, NestedTx::default())
-    }
-
-    /// Like [`Self::nested_transaction`], with an explicit environment, network extension state
-    /// and inspector.
-    pub fn nested_transaction_with(
-        &self,
-        evm: &mut Evm<'_, F::Types>,
-        tx: &Recovered<<F::Types as EvmTypesHost>::Tx>,
-        nested: NestedTx<'_, F::Types>,
-    ) -> eyre::Result<TxResult<F::Types>> {
-        let NestedTx { env, ext, inspector } = nested;
-        let mut executor = self.nested_evm(evm, tx, env, ext);
-        if let Some(inspector) = inspector {
-            executor.set_inspector(inspector);
-        }
-        let executed = executor.transact(tx).map_err(transaction_error)?;
-        merge_nested_changes(evm.state_mut(), &executed)?;
-        Ok(executed.result().clone())
-    }
-
     /// Builds the EVM a nested transaction of the running one executes on: a copy of the running
     /// transaction's current state, with `env` or the running environment, and `ext` or network
     /// extension state derived from the running EVM for `tx`.
-    ///
-    /// Merge a successful transaction's changes back with [`merge_nested_changes`]. Use this
-    /// instead of [`Self::nested_transaction_with`] when the nested inspector needs access to the
-    /// lifecycle's owner while it runs.
     pub fn nested_evm<'a>(
         &self,
         evm: &mut Evm<'_, F::Types>,
@@ -1386,15 +1332,6 @@ pub fn nested_frame<T: EvmTypes, R, E>(
 }
 
 /// Applies a nested transaction's changes to the running transaction's `state` as journaled
-/// writes, so they revert with the enclosing call.
-pub fn merge_nested_changes<T: EvmTypesHost>(
-    state: &mut State<'_>,
-    executed: &ExecutedTx<'_, '_, T>,
-) -> DbResult<()> {
-    merge_changes(state, executed.account_changes(), |_| true, None, None)
-}
-
-/// Applies a nested transaction's changes to the running transaction's `state` as journaled
 /// writes and returns them as [`PersistentWrite`]s, for the caller to replay when an enclosing
 /// call reverts, such as for `broadcastRawTransaction`.
 pub fn merge_untracked_nested_changes<T: EvmTypesHost>(
@@ -1469,7 +1406,7 @@ pub fn merge_untracked_pending_changes_with_warmth<T: EvmTypes>(
 }
 
 /// Applies the changes of a nested transaction detached into `pending` to the running
-/// transaction's `state` as journaled writes, like [`merge_nested_changes`].
+/// transaction's `state` as journaled writes, so they revert with the enclosing call.
 pub fn merge_pending_changes(state: &mut State<'_>, pending: &PendingState) -> DbResult<()> {
     merge_changes(state, pending.account_changes(), |_| true, None, None)
 }
