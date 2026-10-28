@@ -2683,7 +2683,7 @@ dependencies = [
 [[package]]
 name = "base-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=7781c8c5a931dec3016d95c9becd45fbc055aad1#7781c8c5a931dec3016d95c9becd45fbc055aad1"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=1d4b318e35c18bee282ba9b6c35b300ad6598ee1#1d4b318e35c18bee282ba9b6c35b300ad6598ee1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8669,7 +8669,7 @@ dependencies = [
 [[package]]
 name = "monad-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=7781c8c5a931dec3016d95c9becd45fbc055aad1#7781c8c5a931dec3016d95c9becd45fbc055aad1"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=1d4b318e35c18bee282ba9b6c35b300ad6598ee1#1d4b318e35c18bee282ba9b6c35b300ad6598ee1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9206,7 +9206,7 @@ dependencies = [
 [[package]]
 name = "op-evm2"
 version = "0.1.0"
-source = "git+https://github.com/mablr/evm2-networks?rev=7781c8c5a931dec3016d95c9becd45fbc055aad1#7781c8c5a931dec3016d95c9becd45fbc055aad1"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=1d4b318e35c18bee282ba9b6c35b300ad6598ee1#1d4b318e35c18bee282ba9b6c35b300ad6598ee1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
