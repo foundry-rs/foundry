@@ -1,14 +1,14 @@
 //! Fork registry: which backing databases exist, which one is active, and the accepted state each
 //! inactive one resumes with.
 
-use super::{BackingDb, EvmEnv, SendableExt, StoredExt};
+use super::{AcceptedView, BackingDb, EvmEnv, SendableExt, StoredExt};
 use crate::fork::{Fork, ForkId};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     Address, B256, U256,
     map::{AddressMap, AddressSet, HashMap, HashSet},
 };
-use evm2::{EvmTypesHost, evm::Cache};
+use evm2::{EvmFeatures, EvmTypesHost, evm::Cache};
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 /// Identity of a fork as Foundry users see it: its RPC endpoint and pinned block.
@@ -145,6 +145,14 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             originals: AddressMap::default(),
             switched: AddressMap::default(),
         }
+    }
+
+    /// Returns a database reading this context's accepted state over its backing database, with
+    /// the context's empty-account policy, for reads between executions.
+    pub fn accepted_db(&self) -> impl BackingDb + use<T> {
+        let backing = self.db.clone_backing();
+        backing.set_eip161(self.env.version.feature(EvmFeatures::EIP161));
+        AcceptedView { cache: self.cache.clone().unwrap_or_default(), backing }
     }
 
     /// Makes the `loaded` accounts and slots visible in this context and carries the `created`

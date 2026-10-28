@@ -27,9 +27,9 @@ use crate::{
     evm::{
         BackingDb, BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         ExecutionLifecycle, ExecutionPhase, ForkDb, ForkInfo, ForkPosition, FoundryDatabase,
-        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, Parked,
-        PersistentWrite, PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor, block_txs,
-        evm_env, merge_untracked_nested_changes,
+        FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, PersistentWrite,
+        PreparedTx, SpecFor, StoredExt, TxFor, TxResultFor, TypesFor, block_txs, evm_env,
+        merge_untracked_nested_changes,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::{EvmOpts, ExecutionSpecContext},
@@ -1141,7 +1141,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             .forks()
             .iter()
             .filter(|(id, entry)| {
-                *id != active && is_contract(context_account(&entry.context, &callee))
+                *id != active
+                    && is_contract(entry.context.accepted_db().get_account(&callee).ok().flatten())
             })
             .map(|(id, _)| id)
             .collect::<Vec<_>>();
@@ -1695,22 +1696,9 @@ fn parent_block(
     Ok(Some(parent))
 }
 
-/// Returns an account of a context that is not running.
-fn context_account<T: evm2::EvmTypesHost>(
-    context: &Parked<T>,
-    address: &Address,
-) -> Option<AccountInfo> {
-    if let Some(cache) = &context.cache
-        && let Some(account) = cache.accounts.get(address)
-    {
-        return account.clone();
-    }
-    context.db.clone_backing().get_account(address).ok().flatten()
-}
-
+/// Returns whether `account` has code. A zero code hash, which no code hashes to, is not code.
 fn is_contract(account: Option<AccountInfo>) -> bool {
-    account
-        .is_some_and(|account| account.code_hash != KECCAK256_EMPTY && !account.code_hash.is_zero())
+    account.is_some_and(|account| !account.is_empty_code_hash() && !account.code_hash.is_zero())
 }
 
 /// Returns `account` as execution at `spec` loads it.

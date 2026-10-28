@@ -431,10 +431,7 @@ impl<F: FoundryEvmFactory, C: Clone> ExecutionLifecycle<F, C> {
     /// Returns a database reading the active context's accepted state over its backing database,
     /// for reads between executions.
     pub fn accepted_db(&self) -> impl BackingDb + use<F, C> {
-        let context = self.active();
-        let backing = context.db.clone_backing();
-        backing.set_eip161(context.env.version.feature(EvmFeatures::EIP161));
-        AcceptedView { cache: context.cache.clone().unwrap_or_default(), backing }
+        self.active().accepted_db()
     }
 
     /// Returns whether a snapshot exists.
