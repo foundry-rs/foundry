@@ -1295,14 +1295,7 @@ impl<N: Network> Backend<N> {
     /// Updates memory limits that should be more strict when auto-mine is enabled
     pub(crate) fn update_interval_mine_block_time(&self, block_time: Duration) {
         self.states.write().update_interval_mine_block_time(block_time);
-        let proof_states = self
-            .blockchain
-            .storage
-            .read()
-            .tempo
-            .as_ref()
-            .map(|tempo| Arc::clone(&tempo.proof_states));
-        if let Some(states) = proof_states {
+        if let Some(states) = self.tempo_proof_states() {
             states.write().update_interval_mine_block_time(block_time);
         }
     }
@@ -2005,14 +1998,7 @@ impl<N: Network> Backend<N> {
         let num = self.best_number();
         let hash = self.best_hash();
         let id = db.snapshot_state();
-        let proof_states = self
-            .blockchain
-            .storage
-            .read()
-            .tempo
-            .as_ref()
-            .map(|tempo| Arc::clone(&tempo.proof_states));
-        let proof_state = proof_states.and_then(|states| {
+        let proof_state = self.tempo_proof_states().and_then(|states| {
             // Explicit snapshots keep the sealed head independently of bounded proof history.
             // Live execution may already contain unmined development edits.
             let states = states.upgradable_read();
@@ -5677,14 +5663,7 @@ impl<N: Network> Backend<N> {
         }
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
         self.states.write().remove_block_states(&removed_hashes);
-        let proof_states = self
-            .blockchain
-            .storage
-            .read()
-            .tempo
-            .as_ref()
-            .map(|tempo| Arc::clone(&tempo.proof_states));
-        if let Some(states) = proof_states {
+        if let Some(states) = self.tempo_proof_states() {
             states.write().remove_block_states(&removed_hashes);
         }
         if !removed_logs.is_empty() {
@@ -5711,6 +5690,10 @@ impl<N: Network> Backend<N> {
         }
         self.fees.restore(fees);
         Ok(true)
+    }
+
+    fn tempo_proof_states(&self) -> Option<Arc<RwLock<InMemoryBlockStates>>> {
+        self.blockchain.storage.read().tempo.as_ref().map(|tempo| Arc::clone(&tempo.proof_states))
     }
 }
 
@@ -6535,16 +6518,8 @@ where
                 // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
                 if let Some(proof_state) = proof_state {
-                    let proof_states = Arc::clone(
-                        &self
-                            .blockchain
-                            .storage
-                            .read()
-                            .tempo
-                            .as_ref()
-                            .expect("Tempo chain is initialized")
-                            .proof_states,
-                    );
+                    let proof_states =
+                        self.tempo_proof_states().expect("Tempo chain is initialized");
                     let mut proof_states = proof_states.write();
                     // Re-mining after a rewind can produce an already cached hash.
                     proof_states.remove_block_states(&[block_hash]);
@@ -7896,14 +7871,7 @@ where
             let removed_hashes: Vec<_> =
                 removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
             self.states.write().remove_block_states(&removed_hashes);
-            let proof_states = self
-                .blockchain
-                .storage
-                .read()
-                .tempo
-                .as_ref()
-                .map(|tempo| Arc::clone(&tempo.proof_states));
-            if let Some(states) = proof_states {
+            if let Some(states) = self.tempo_proof_states() {
                 states.write().remove_block_states(&removed_hashes);
             }
 

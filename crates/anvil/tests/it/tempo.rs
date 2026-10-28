@@ -7993,10 +7993,7 @@ async fn tempo_consensus_fork_state_root_verifies_storage_proofs() {
     let config = NodeConfig::test_tempo().with_no_mining(true);
     let (source_api, source) = spawn(config.clone()).await;
     source_api.mine_one().await.unwrap();
-    let (api, handle) = spawn(
-        config.with_eth_rpc_url(Some(source.http_endpoint())).with_fork_block_number(Some(1u64)),
-    )
-    .await;
+    let (api, handle) = spawn(tempo_fork_config(config, &source)).await;
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
     let nonce = provider.get_transaction_count(sender).await.unwrap();
@@ -8050,6 +8047,10 @@ fn assert_tempo_state_proof(root: B256, proof: &EIP1186AccountProofResponse) {
     }
 }
 
+fn tempo_fork_config(config: NodeConfig, source: &anvil::NodeHandle) -> NodeConfig {
+    config.with_eth_rpc_url(Some(source.http_endpoint())).with_fork_block_number(Some(1u64))
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_consensus_fork_state_root_survives_late_reads_and_writes() {
     let config = NodeConfig::test_tempo().with_no_mining(true);
@@ -8059,13 +8060,8 @@ async fn tempo_consensus_fork_state_root_survives_late_reads_and_writes() {
     source_api.anvil_set_code(remote, bytes!("60005460005260206000f3")).await.unwrap();
     source_api.anvil_set_storage_at(remote, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
     source_api.mine_one().await.unwrap();
-    let (api, handle) = spawn(
-        config
-            .with_eth_rpc_url(Some(source.http_endpoint()))
-            .with_fork_block_number(Some(1u64))
-            .with_no_storage_caching(true),
-    )
-    .await;
+    let (api, handle) =
+        spawn(tempo_fork_config(config.with_no_storage_caching(true), &source)).await;
     let provider = handle.http_provider();
     let local = Address::repeat_byte(0x52);
     api.anvil_set_code(local, bytes!("00")).await.unwrap();
@@ -8133,14 +8129,8 @@ async fn tempo_consensus_fork_state_root_respects_history_pruning() {
     source_api.mine_one().await.unwrap();
 
     for history in [Some(None), Some(Some(1))] {
-        let (api, handle) = spawn(
-            config
-                .clone()
-                .with_eth_rpc_url(Some(source.http_endpoint()))
-                .with_fork_block_number(Some(1u64))
-                .set_pruned_history(history),
-        )
-        .await;
+        let (api, handle) =
+            spawn(tempo_fork_config(config.clone().set_pruned_history(history), &source)).await;
         let provider = handle.http_provider();
         let local = Address::repeat_byte(0x53);
         api.anvil_set_code(local, bytes!("00")).await.unwrap();
@@ -8171,13 +8161,8 @@ async fn tempo_consensus_fork_state_root_survives_rollback() {
     let config = NodeConfig::test_tempo().with_no_mining(true);
     let (source_api, source) = spawn(config.clone()).await;
     source_api.mine_one().await.unwrap();
-    let (api, handle) = spawn(
-        config
-            .with_eth_rpc_url(Some(source.http_endpoint()))
-            .with_fork_block_number(Some(1u64))
-            .set_pruned_history(Some(Some(1))),
-    )
-    .await;
+    let (api, handle) =
+        spawn(tempo_fork_config(config.set_pruned_history(Some(Some(1))), &source)).await;
     let provider = handle.http_provider();
     let local = Address::repeat_byte(0x54);
     api.anvil_set_code(local, bytes!("00")).await.unwrap();

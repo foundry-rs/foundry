@@ -92,14 +92,14 @@ impl TempoChain {
     /// Resets local trust at an unsigned chain head and clears saved consensus histories.
     pub(super) fn reanchor(&mut self, height: u64) {
         self.invalidate_state(height);
+        self.proof_states.write().clear();
         self.snapshots.clear();
     }
 
-    /// Invalidates the current sealed state while retaining explicit snapshots that can restore it.
+    /// Invalidates certificates while retaining proof history for explicit snapshot restoration.
     pub(super) fn invalidate_state(&mut self, height: u64) {
         self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
         self.latest_block = None;
-        self.proof_states.write().clear();
     }
 
     pub(super) fn snapshot(&mut self, id: U256, proof_state: Option<Arc<AddressMap<DbAccount>>>) {
@@ -395,7 +395,7 @@ mod tests {
         spawn,
     };
     use alloy_primitives::keccak256;
-    use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, anvil::Forking};
+    use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
     use alloy_serde::WithOtherFields;
     use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
     use anvil_core::types::ReorgOptions;
@@ -861,31 +861,34 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn tempo_data_only_state_import_invalidates_sealed_proof() {
+    async fn tempo_fork_data_only_state_import_restores_historical_proof() {
         let config = NodeConfig::test_tempo().with_no_mining(true);
         let (source_api, source) = spawn(config.clone()).await;
         source_api.mine_one().await.unwrap();
-        let (api, _handle) = spawn(
-            config
-                .with_eth_rpc_url(Some(source.http_endpoint()))
-                .with_fork_block_number(Some(1u64)),
-        )
-        .await;
+        let (api, _handle) = spawn(tempo_fork_config(config, &source)).await;
         let account = Address::repeat_byte(0x23);
         api.anvil_set_balance(account, U256::ONE).await.unwrap();
         api.mine_one().await.unwrap();
 
-        let original = api.get_proof(account, Vec::new(), None).await.unwrap();
+        let original = api.get_proof(account, Vec::new(), Some(BlockId::number(2))).await.unwrap();
         assert_eq!(original.balance, U256::ONE);
+        api.mine_one().await.unwrap();
+        let snapshot = api.evm_snapshot().await.unwrap();
         let mut state = api.backend.serialized_state(false).await.unwrap();
         state.accounts.get_mut(&account).unwrap().balance = U256::from(2);
 
         api.backend.load_state(state).await.unwrap();
         assert!(consensus(&api).latest().is_none());
-        assert!(consensus(&api).finalization(1).is_none());
+        assert!(consensus(&api).finalization(2).is_none());
 
         let updated = api.get_proof(account, Vec::new(), None).await.unwrap();
         assert_eq!(updated.balance, U256::from(2));
+        assert!(api.evm_revert(snapshot).await.unwrap());
+        assert!(consensus(&api).finalization(2).is_some());
+        assert_eq!(
+            api.get_proof(account, Vec::new(), Some(BlockId::number(2))).await.unwrap(),
+            original
+        );
     }
 
     #[tokio::test]
@@ -996,16 +999,8 @@ mod tests {
             .with_max_persisted_states(Some(4usize));
         let (source_api, source) = spawn(config.clone()).await;
         source_api.mine_one().await.unwrap();
-        let (api, _handle) = spawn(
-            config
-                .with_eth_rpc_url(Some(source.http_endpoint()))
-                .with_fork_block_number(Some(1u64)),
-        )
-        .await;
-        let proof_states = {
-            let storage = api.backend.blockchain.storage.read();
-            Arc::clone(&storage.tempo.as_ref().unwrap().proof_states)
-        };
+        let (api, _handle) = spawn(tempo_fork_config(config, &source)).await;
+        let proof_states = api.backend.tempo_proof_states().unwrap();
         let address = Address::repeat_byte(0x31);
         let absent = Address::repeat_byte(0x32);
         let keys = [B256::ZERO, B256::with_last_byte(1)];
@@ -1086,13 +1081,8 @@ mod tests {
         let config = NodeConfig::test_tempo().with_no_mining(true).set_pruned_history(Some(None));
         let (source_api, source) = spawn(config.clone()).await;
         source_api.mine_one().await.unwrap();
-        let (api, handle) = spawn(
-            config
-                .with_eth_rpc_url(Some(source.http_endpoint()))
-                .with_fork_block_number(Some(1u64))
-                .with_no_storage_caching(true),
-        )
-        .await;
+        let (api, handle) =
+            spawn(tempo_fork_config(config.with_no_storage_caching(true), &source)).await;
         let provider = handle.http_provider();
         let address = Address::repeat_byte(0x33);
         api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
@@ -1112,5 +1102,9 @@ mod tests {
         );
         assert_eq!(provider.get_proof(address, vec![B256::ZERO]).await.unwrap(), original);
         assert_eq!(provider.get_storage_at(address, U256::ZERO).await.unwrap(), U256::from(9));
+    }
+
+    fn tempo_fork_config(config: NodeConfig, source: &crate::NodeHandle) -> NodeConfig {
+        config.with_eth_rpc_url(Some(source.http_endpoint())).with_fork_block_number(Some(1u64))
     }
 }
