@@ -91,15 +91,10 @@ impl TempoChain {
 
     /// Resets local trust at an unsigned chain head and clears saved consensus histories.
     pub(super) fn reanchor(&mut self, height: u64) {
-        self.invalidate_state(height);
-        self.proof_states.write().clear();
-        self.snapshots.clear();
-    }
-
-    /// Invalidates certificates while retaining proof history for explicit snapshot restoration.
-    pub(super) fn invalidate_state(&mut self, height: u64) {
         self.consensus = TempoConsensus::at_height(self.seed, self.epoch_length, height);
         self.latest_block = None;
+        self.proof_states.write().clear();
+        self.snapshots.clear();
     }
 
     pub(super) fn snapshot(&mut self, id: U256, proof_state: Option<Arc<AddressMap<DbAccount>>>) {
@@ -823,7 +818,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_unchanged_history_import_invalidates_consensus_but_preserves_snapshots() {
+    async fn tempo_unchanged_history_import_preserves_consensus_and_snapshots() {
         for include_history in [false, true] {
             let (api, _handle) = spawn(tempo_config(4)).await;
             api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
@@ -831,7 +826,7 @@ mod tests {
             let head = consensus(&api).finalization(2).unwrap().clone();
             let account = Address::repeat_byte(0x22);
             api.anvil_set_balance(account, U256::ONE).await.unwrap();
-            rotate_consensus(&api).await;
+            let scheduled = rotate_consensus(&api).await;
             let snapshot = api.evm_snapshot().await.unwrap();
             let next_rotation = consensus(&api).rotate().unwrap();
             let mut state = api.backend.serialized_state(false).await.unwrap();
@@ -847,10 +842,13 @@ mod tests {
             }
 
             api.backend.load_state(state).await.unwrap();
-            assert!(consensus(&api).latest().is_none());
+            assert_eq!(consensus(&api).finalization(1), Some(&first));
+            assert_eq!(consensus(&api).finalization(2), Some(&head));
+            assert_eq!(consensus(&api).rotate().unwrap(), next_rotation);
             assert_eq!(api.balance(account, None).await.unwrap(), U256::from(2));
-            api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
             assert_certified_head(&api);
+            api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+            assert_eq!(consensus(&api).identity(), scheduled);
             assert!(api.evm_revert(snapshot).await.unwrap());
             assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
             assert_eq!(consensus(&api).finalization(1), Some(&first));
@@ -861,34 +859,69 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn tempo_fork_data_only_state_import_restores_historical_proof() {
+    async fn tempo_fork_unchanged_history_import_preserves_certified_proofs() {
         let config = NodeConfig::test_tempo().with_no_mining(true);
         let (source_api, source) = spawn(config.clone()).await;
         source_api.mine_one().await.unwrap();
-        let (api, _handle) = spawn(tempo_fork_config(config, &source)).await;
-        let account = Address::repeat_byte(0x23);
-        api.anvil_set_balance(account, U256::ONE).await.unwrap();
-        api.mine_one().await.unwrap();
+        for include_history in [false, true] {
+            let (api, _handle) = spawn(tempo_fork_config(config.clone(), &source)).await;
+            let account = Address::repeat_byte(0x23);
+            let keys = vec![B256::ZERO];
+            api.anvil_set_balance(account, U256::ONE).await.unwrap();
+            api.anvil_set_storage_at(account, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+            api.mine_one().await.unwrap();
 
-        let original = api.get_proof(account, Vec::new(), Some(BlockId::number(2))).await.unwrap();
-        assert_eq!(original.balance, U256::ONE);
-        api.mine_one().await.unwrap();
-        let snapshot = api.evm_snapshot().await.unwrap();
-        let mut state = api.backend.serialized_state(false).await.unwrap();
-        state.accounts.get_mut(&account).unwrap().balance = U256::from(2);
+            let first = consensus(&api).finalization(2).unwrap().clone();
+            let original =
+                api.get_proof(account, keys.clone(), Some(BlockId::number(2))).await.unwrap();
+            assert_eq!(original.balance, U256::ONE);
+            assert_eq!(original.storage_proof[0].value, U256::ONE);
+            api.mine_one().await.unwrap();
+            let head = consensus(&api).finalization(3).unwrap().clone();
+            let head_proof = api.get_proof(account, keys.clone(), None).await.unwrap();
+            let snapshot = api.evm_snapshot().await.unwrap();
+            let mut state = api.backend.serialized_state(false).await.unwrap();
+            let imported = state.accounts.get_mut(&account).unwrap();
+            imported.balance = U256::from(2);
+            imported.storage.insert(B256::ZERO, B256::with_last_byte(2));
+            if !include_history {
+                state = SerializableState { accounts: state.accounts, ..Default::default() };
+            }
 
-        api.backend.load_state(state).await.unwrap();
-        assert!(consensus(&api).latest().is_none());
-        assert!(consensus(&api).finalization(2).is_none());
+            api.backend.load_state(state).await.unwrap();
+            assert_eq!(consensus(&api).finalization(2), Some(&first));
+            assert_eq!(consensus(&api).finalization(3), Some(&head));
+            assert_eq!(api.get_proof(account, keys.clone(), None).await.unwrap(), head_proof);
+            assert_eq!(
+                api.get_proof(account, keys.clone(), Some(BlockId::number(2))).await.unwrap(),
+                original
+            );
 
-        let updated = api.get_proof(account, Vec::new(), None).await.unwrap();
-        assert_eq!(updated.balance, U256::from(2));
-        assert!(api.evm_revert(snapshot).await.unwrap());
-        assert!(consensus(&api).finalization(2).is_some());
-        assert_eq!(
-            api.get_proof(account, Vec::new(), Some(BlockId::number(2))).await.unwrap(),
-            original
-        );
+            // Imported state belongs to pending execution and the next certified block.
+            assert_eq!(
+                api.balance(account, Some(BlockId::pending())).await.unwrap(),
+                U256::from(2)
+            );
+            assert_eq!(
+                api.storage_at(account, U256::ZERO, Some(BlockId::pending())).await.unwrap(),
+                B256::with_last_byte(2)
+            );
+            api.mine_one().await.unwrap();
+            let updated = api.get_proof(account, keys.clone(), None).await.unwrap();
+            assert_eq!(updated.balance, U256::from(2));
+            assert_eq!(updated.storage_proof[0].value, U256::from(2));
+            assert_certified_head(&api);
+
+            assert!(api.evm_revert(snapshot).await.unwrap());
+            assert_eq!(api.balance(account, None).await.unwrap(), U256::ONE);
+            assert_eq!(consensus(&api).finalization(2), Some(&first));
+            assert_eq!(consensus(&api).finalization(3), Some(&head));
+            assert_eq!(api.get_proof(account, keys.clone(), None).await.unwrap(), head_proof);
+            assert_eq!(
+                api.get_proof(account, keys, Some(BlockId::number(2))).await.unwrap(),
+                original
+            );
+        }
     }
 
     #[tokio::test]

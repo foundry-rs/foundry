@@ -8182,3 +8182,70 @@ async fn tempo_consensus_fork_state_root_survives_rollback() {
         assert_eq!(provider.get_proof(local, vec![B256::ZERO]).await.unwrap(), original);
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_dump_load_preserves_consensus() {
+    assert_tempo_consensus_dump_load_preserves_consensus(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_consensus_fork_dump_load_preserves_consensus() {
+    assert_tempo_consensus_dump_load_preserves_consensus(true).await;
+}
+
+async fn assert_tempo_consensus_dump_load_preserves_consensus(fork: bool) {
+    let config = NodeConfig::test_tempo()
+        .with_no_mining(true)
+        .with_tempo_epoch_length(NonZeroU64::new(3).unwrap());
+    let source = if fork {
+        let (api, handle) = spawn(config.clone()).await;
+        api.mine_one().await.unwrap();
+        Some(handle)
+    } else {
+        None
+    };
+    let config =
+        if let Some(source) = &source { tempo_fork_config(config, source) } else { config };
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let account = Address::repeat_byte(0x55);
+    api.anvil_set_code(account, bytes!("00")).await.unwrap();
+    api.anvil_set_storage_at(account, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let height = provider.get_block_number().await.unwrap();
+    let original = tempo_finalization(&provider, height).await;
+    let proof = provider.get_proof(account, vec![B256::ZERO]).number(height).await.unwrap();
+    assert_eq!(proof.storage_proof[0].value, U256::from(7));
+    assert_tempo_state_proof(original.block.header.state_root(), &proof);
+    let initial = tempo_consensus_identity(&provider).await;
+    let rotated = tempo_rotate_identity(&provider).await;
+    assert_ne!(rotated.identity, initial.identity);
+
+    for activated in [false, true] {
+        if activated {
+            let activation_height = rotated.from_epoch * rotated.epoch_length;
+            api.anvil_mine(Some(U256::from(activation_height - height)), None).await.unwrap();
+        }
+        let identity = if activated { &rotated } else { &initial };
+        let current_height = provider.get_block_number().await.unwrap();
+        let current = tempo_finalization(&provider, current_height).await;
+        assert_tempo_certificate(identity, &current);
+        assert_eq!(tempo_consensus_identity(&provider).await, *identity);
+
+        let saved: Bytes = provider.client().request("anvil_dumpState", ()).await.unwrap();
+        assert!(provider.client().request::<_, bool>("anvil_loadState", (saved,)).await.unwrap());
+
+        assert_eq!(provider.get_block_number().await.unwrap(), current_height);
+        assert_eq!(tempo_finalization(&provider, height).await, original);
+        assert_eq!(tempo_finalization(&provider, current_height).await, current);
+        let latest: TempoConsensusState =
+            provider.client().request("consensus_getLatest", ()).await.unwrap();
+        assert_eq!(latest.finalized.as_ref(), Some(&current));
+        assert!(latest.notarized.is_none());
+        assert_eq!(tempo_consensus_identity(&provider).await, *identity);
+        assert_eq!(
+            provider.get_proof(account, vec![B256::ZERO]).number(height).await.unwrap(),
+            proof
+        );
+    }
+}

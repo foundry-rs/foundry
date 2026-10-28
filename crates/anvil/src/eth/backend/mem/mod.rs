@@ -8663,10 +8663,6 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         // Stage the complete chain update first. Besides keeping blocks and transactions atomic for
         // concurrent readers, this ensures validation failures cannot leave a partially loaded
         // chain behind.
-        // Account imports can change the state at an unchanged canonical block height. Keep this
-        // separate from history replacement so Tempo certificates can be invalidated without
-        // discarding explicit snapshots that restore the pre-import state.
-        let imports_account_state = !state.accounts.is_empty();
         let blocks = std::mem::take(&mut state.blocks);
         let transactions = std::mem::take(&mut state.transactions);
         let mut storage = self.blockchain.storage.read().clone();
@@ -8788,19 +8784,16 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 .collect()
         };
 
-        let (reanchor_tempo, invalidate_tempo_state) = {
+        let reanchor_tempo = {
             // The database guard keeps chain identity stable until publication. Compare under a
             // read guard so existing chain readers need not wait for a large history comparison.
             let live_storage = self.blockchain.storage.read();
-            let history_changed = storage.best_number != live_storage.best_number
-                || storage.best_hash != live_storage.best_hash
-                || storage.genesis_number != live_storage.genesis_number
-                || storage.genesis_hash != live_storage.genesis_hash
-                || storage.hashes != live_storage.hashes;
-            (
-                live_storage.tempo.is_some() && history_changed,
-                live_storage.tempo.is_some() && imports_account_state && !history_changed,
-            )
+            live_storage.tempo.is_some()
+                && (storage.best_number != live_storage.best_number
+                    || storage.best_hash != live_storage.best_hash
+                    || storage.genesis_number != live_storage.genesis_number
+                    || storage.genesis_hash != live_storage.genesis_hash
+                    || storage.hashes != live_storage.hashes)
         };
         {
             let mut live_storage = self.blockchain.storage.write();
@@ -8808,8 +8801,6 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             storage.tempo = live_storage.tempo.take();
             if reanchor_tempo && let Some(tempo) = &mut storage.tempo {
                 tempo.reanchor(storage.best_number);
-            } else if invalidate_tempo_state && let Some(tempo) = &mut storage.tempo {
-                tempo.invalidate_state(storage.best_number);
             }
             *live_storage = storage;
         }
