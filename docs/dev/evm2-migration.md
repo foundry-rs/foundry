@@ -67,16 +67,16 @@ explicitly or is documented as different; none falls back to REVM.
 ## Dependencies
 
 Foundry and its satellites share
-[`mablr/evm2@mablr/foundry-completion`](https://github.com/mablr/evm2/tree/mablr/foundry-completion),
-pinned at `ee1f360`. It merges alloy-rs/evm2 up to `5652ca0` and carries Foundry's host APIs:
-`loaded_accounts` (alloy-rs/evm2#821), `PrewarmSet::remove` (#820), `frame_checkpoint` (#822),
-`mark_created_keeping_storage` (#823), `initial_call_depth` (#824), touched-account metadata
-(#825), an independent `BLOB_BASE_FEE_CHECK` policy (#819) and JS call steps that end before the
-child runs (#827). All of these are merged upstream (#820 as `b151a16`); #744, which includes
-forwarded gas in call opcode costs, is still open. Foundry no longer calls the fork's unjournaled
-account setters (`set_balance_untracked`, `set_nonce_untracked`) since the persistent-write ledger
-(foundry-rs/foundry#17872). Its four `State::set_prewarm_set` calls become `*state.prewarm_set_mut() = set` from #820
-when Foundry switches its pin to upstream.
+[`mablr/evm2@mablr/upstream-main-744`](https://github.com/mablr/evm2/tree/mablr/upstream-main-744),
+pinned at `41d81b9`: alloy-rs/evm2 `main` at `f93318f` plus alloy-rs/evm2#744, which includes
+forwarded gas in call opcode costs and is still open, as one squashed commit. Upstream `main`
+already carries Foundry's host APIs: `loaded_accounts` (#821), `PrewarmSet::remove` and
+`State::prewarm_set_mut` (#820), `frame_checkpoint` (#822), `mark_created_keeping_storage` (#823),
+`initial_call_depth` (#824), touched-account metadata (#825), an independent `BLOB_BASE_FEE_CHECK`
+policy (#819) and JS call steps that end before the child runs (#827). Foundry uses no fork-only
+evm2 API; once #744 merges, the pin can move to alloy-rs/evm2 `main`. evm2-networks is pinned to
+`2d57372`, the merge of foundry-rs/evm2-networks#9, which bumps it to alloy-rs/evm2 `main` and reads
+Monad's destroyed state from the `previous_flags` that #830 introduced.
 `mark_created_keeping_storage` keeps an account created for EIP-6780 when a suspended or isolated
 transaction continues on a fresh overlay, without reading its storage as discarded. Foundry
 enables `EIP7702` on every spec so that already-present delegation code resolves before Prague,
