@@ -2009,6 +2009,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        // A frame handed off to a frame EVM already ran its end hooks there.
+        if mem::take(&mut self.inner.env_handoff_ended) {
+            return;
+        }
         self.end_snapshot_frame(interp, message, result);
 
         // The root frame of a nested transaction duplicates a frame whose hooks run in the
@@ -2016,9 +2020,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if self.inner.is_inner_context_root(message.depth) {
             self.capture_switch_warmth(interp, result);
             self.capture_executed_destructs(interp);
-            return;
-        }
-        if mem::take(&mut self.inner.env_handoff_ended) {
             return;
         }
 
@@ -2139,6 +2140,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
+        // A frame handed off to a frame EVM already ran its end hooks there.
         if mem::take(&mut self.inner.env_handoff_ended) {
             return;
         }
