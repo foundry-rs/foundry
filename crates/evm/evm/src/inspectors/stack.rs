@@ -4,7 +4,6 @@ use super::{
     ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_consensus::transaction::Recovered;
-use alloy_eips::eip2930::AccessList;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
@@ -35,6 +34,7 @@ use foundry_evm_core::{
         merge_untracked_pending_changes_with_warmth, release_inspector, warm_accounts, warm_set,
     },
     precompiles::P256_VERIFY,
+    utils::tx_warm_addresses,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -614,7 +614,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // The mined transaction starts with its own block's coinbase and its access list.
         let tx_warm_addresses = mem::replace(
             &mut cheats.tx_warm_addresses,
-            tx_warm_addresses::<FEN>(&prepared.env(), prepared.access_list()),
+            tx_warm_addresses(&prepared.env(), prepared.access_list()),
         );
         let executed = self.replay(cheats, &mut replay, evm, depth, prepared, false);
         cheats.tx_warm_addresses = tx_warm_addresses;
@@ -1342,7 +1342,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             );
             let tx_warm_addresses = mem::replace(
                 &mut cheats.tx_warm_addresses,
-                tx_warm_addresses::<FEN>(&env, access_list.as_ref()),
+                tx_warm_addresses(&env, access_list.as_ref()),
             );
             (previous, root_call_target, tx_warm_addresses)
         });
@@ -1526,7 +1526,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         self.inner.tx_created.clear();
         if let Some(cheatcodes) = &mut self.cheatcodes {
             // Transactions run from the test or script carry no access list.
-            cheatcodes.tx_warm_addresses = tx_warm_addresses::<FEN>(&evm_env(interp.host()), None);
+            cheatcodes.tx_warm_addresses = tx_warm_addresses(&evm_env(interp.host()), None);
             cheatcodes.clear_storage_hook_mapping_slots();
             cheatcodes.snapshot_restores = SnapshotRestores::default();
             // A transaction that ended with an error did not drop its persistent writes.
@@ -1577,13 +1577,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return false;
         };
         warm_arbitrum_system_contract::<FEN>(interp);
-        // Nested transactions that cheatcodes execute install their own coinbase and access list.
-        if arbitrum::is_arbitrum_chain(interp.host().version().chain_id)
-            && let Some(cheatcodes) = self.cheatcodes.as_deref_mut()
-            && !cheatcodes.tx_warm_addresses.contains(&arbitrum::ARB_SYS_ADDRESS)
-        {
-            cheatcodes.tx_warm_addresses.push(arbitrum::ARB_SYS_ADDRESS);
-        }
         if !root.observe
             && !matches!(message.kind, MessageKind::Create | MessageKind::Create2)
             && let Some(cheatcodes) = self.cheatcodes.as_deref()
@@ -2543,20 +2536,6 @@ fn warm_arbitrum_system_contract<FEN: FoundryEvmNetwork>(interp: &mut Interprete
     }
     // Other selectors can still execute code at the address.
     evm.state_mut().prewarm(&arbitrum::ARB_SYS_ADDRESS);
-}
-
-/// Returns the addresses a transaction in `env` with `access_list` warms when it starts and that
-/// `vm.cool` keeps warm, like REVM's `WarmAddresses`: the EIP-3651 coinbase, the access list and
-/// Arbitrum's ArbSys.
-fn tx_warm_addresses<FEN: FoundryEvmNetwork>(
-    env: &EvmEnvFor<FEN>,
-    access_list: Option<&AccessList>,
-) -> Vec<Address> {
-    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
-    let arb_sys =
-        arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
-    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
-    coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
 }
 
 /// Answers `ArbSys.arbBlockNumber()` on Arbitrum chains.

@@ -10,7 +10,7 @@ use foundry_config::NamedChain::{
     self, Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Polygon,
     PolygonAmoy,
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
@@ -518,4 +518,18 @@ mod tests {
             assert_eq!(get_blob_params_by_hardfork(hardfork.into()), expected);
         }
     }
+}
+
+/// Returns the addresses a transaction in `env` with `access_list` warms when it starts and that
+/// `vm.cool` keeps warm, like REVM's `WarmAddresses`: the EIP-3651 coinbase, Arbitrum's ArbSys on
+/// Arbitrum chains, and the access list.
+pub fn tx_warm_addresses<T: EvmTypesHost>(
+    env: &EvmEnv<T>,
+    access_list: Option<&alloy_eips::eip2930::AccessList>,
+) -> Vec<alloy_primitives::Address> {
+    let coinbase = env.version.feature(EvmFeatures::EIP3651).then_some(env.block.beneficiary);
+    let arb_sys =
+        arbitrum::is_arbitrum_chain(env.version.chain_id).then_some(arbitrum::ARB_SYS_ADDRESS);
+    let access_list = access_list.into_iter().flat_map(|list| list.iter().map(|item| item.address));
+    coinbase.into_iter().chain(arb_sys).chain(access_list).collect()
 }
