@@ -71,10 +71,12 @@ Foundry and its satellites share
 pinned at `ee1f360`. It merges alloy-rs/evm2 up to `5652ca0` and carries Foundry's host APIs:
 `loaded_accounts` (alloy-rs/evm2#821), `PrewarmSet::remove` (#820), `frame_checkpoint` (#822),
 `mark_created_keeping_storage` (#823), `initial_call_depth` (#824), touched-account metadata
-(#825), an independent `BLOB_BASE_FEE_CHECK` policy (#819), JS call steps that end before the child
-runs (#827), `set_prewarm_set`, and unjournaled writes and overrides. #819 to #825 and #827 are
-merged upstream (#820 as `b151a16`), and #744, which includes forwarded gas in call opcode costs,
-is still open. `set_prewarm_set` and the unjournaled account setters are not upstream yet.
+(#825), an independent `BLOB_BASE_FEE_CHECK` policy (#819) and JS call steps that end before the
+child runs (#827). All of these are merged upstream (#820 as `b151a16`); #744, which includes
+forwarded gas in call opcode costs, is still open. Foundry no longer calls the fork's unjournaled
+account setters (`set_balance_untracked`, `set_nonce_untracked`) since the persistent-write ledger
+(foundry-rs/foundry#17872). Its four `State::set_prewarm_set` calls become `*state.prewarm_set_mut() = set` from #820
+when Foundry switches its pin to upstream.
 `mark_created_keeping_storage` keeps an account created for EIP-6780 when a suspended or isolated
 transaction continues on a fresh overlay, without reading its storage as discarded. Foundry
 enables `EIP7702` on every spec so that already-present delegation code resolves before Prague,
