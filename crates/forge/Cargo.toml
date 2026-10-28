@@ -134,7 +134,6 @@ rexpect.workspace = true
 alloy-provider = { workspace = true, features = ["anvil-api"] }
 blst.workspace = true
 commonware-codec.workspace = true
-tempo-dkg-onchain-artifacts.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]

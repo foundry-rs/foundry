@@ -5767,7 +5767,6 @@ dependencies = [
  "svm-rs",
  "tempfile",
  "tempo-alloy",
- "tempo-dkg-onchain-artifacts",
  "thiserror 2.0.21",
  "tokio",
  "toml_edit",

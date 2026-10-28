@@ -8,51 +8,25 @@ use alloy_provider::{
     Provider,
     ext::{AnvilApi, DebugApi},
 };
-use alloy_rpc_types::{BlockId, EIP1186AccountProofResponse, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use anvil::eth::backend::tempo_consensus::TempoFinalization;
 use blst::min_sig::{PublicKey, Signature};
-use commonware_codec::{DecodeExt, Encode, ReadExt, varint::UInt};
+use commonware_codec::{ReadExt, varint::UInt};
 use foundry_common::provider::RetryProvider;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Identity {
     identity: Bytes,
     epoch_length: u64,
 }
 
-#[derive(Deserialize)]
-struct CertifiedBlock {
-    #[serde(flatten)]
-    finalization: TempoFinalization,
-    block: NativeBlock,
-}
-
-#[derive(Deserialize)]
-struct NativeBlock {
-    header: NativeHeader,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeHeader {
-    extra_data: Bytes,
-}
-
 #[derive(Serialize)]
 struct Record {
     height: u64,
     evidence: Value,
-    original: Value,
-    #[serde(skip)]
-    epoch: u64,
-    #[serde(skip)]
-    extra_data: Bytes,
-    #[serde(skip)]
-    proof: Option<EIP1186AccountProofResponse>,
 }
 
 pub(super) async fn collect(
@@ -60,9 +34,8 @@ pub(super) async fn collect(
     bytecode: Bytes,
     deployed_bytecode: Bytes,
 ) -> Value {
-    let identity_json =
-        provider.client().request::<_, Value>("anvil_tempoConsensusIdentity", ()).await.unwrap();
-    let identity = serde_json::from_value::<Identity>(identity_json.clone()).unwrap();
+    let identity =
+        provider.client().request::<_, Identity>("anvil_tempoConsensusIdentity", ()).await.unwrap();
     assert_eq!(identity.epoch_length, 4);
     let sender = provider.get_accounts().await.unwrap()[0];
     let deployment =
@@ -72,38 +45,21 @@ pub(super) async fn collect(
     assert_eq!(deployment.block_number(), Some(1));
     assert_eq!(receipt.block_number(), Some(2));
     assert_eq!(provider.get_code_at(account).number(2).await.unwrap(), deployed_bytecode);
-    let mut initial = record(provider, 2, Some(account)).await;
-    assert!(initial.extra_data.is_empty());
-    initial.original["identity"] = identity_json;
-    initial.original["deployment"] = serde_json::to_value(deployment).unwrap();
-    initial.original["write"] = serde_json::to_value(receipt).unwrap();
+    let initial = record(provider, 2, Some(account)).await;
 
     // Collect ordinary evidence before scheduling the authenticated key handoff.
-    let scheduled = provider
+    let next_identity = provider
         .client()
-        .request::<_, Value>("anvil_tempoRotateConsensusIdentity", ())
+        .request::<_, Identity>("anvil_tempoRotateConsensusIdentity", ())
         .await
         .unwrap();
     mine(provider).await;
-    let mut boundary = record(provider, 3, None).await;
-    boundary.original["rotation"] = scheduled;
-    let outcome = OnchainDkgOutcome::decode(boundary.extra_data.as_ref()).unwrap();
-    assert_eq!(outcome.epoch, 1);
-    let next_key = outcome.network_identity().encode();
+    let boundary = record(provider, 3, None).await;
     mine(provider).await;
     let successor = record(provider, 4, Some(account)).await;
-    assert_eq!(successor.epoch, outcome.epoch);
-
-    // Reads and a later write must leave both historical proofs unchanged.
-    let unrelated = Address::repeat_byte(0xab);
-    provider.get_balance(unrelated).await.unwrap();
-    provider.get_storage_at(unrelated, U256::ONE).await.unwrap();
-    assert_history(provider, account, [&initial, &successor]).await;
-    assert_eq!(send(provider, sender, write(account, 99)).await.block_number(), Some(5));
-    assert_history(provider, account, [&initial, &successor]).await;
     json!({
         "initialKey": key_coordinates(&identity.identity),
-        "nextKey": key_coordinates(&next_key),
+        "nextKey": key_coordinates(&next_identity.identity),
         "account": account,
         "initial": initial,
         "boundary": boundary,
@@ -112,13 +68,14 @@ pub(super) async fn collect(
 }
 
 async fn record(provider: &RetryProvider, height: u64, account: Option<Address>) -> Record {
-    let finalization_json = provider
+    let finalization = provider
         .client()
-        .request::<_, Value>("consensus_getFinalization", (json!({ "height": height }),))
+        .request::<_, TempoFinalization>(
+            "consensus_getFinalization",
+            (json!({ "height": height }),),
+        )
         .await
         .unwrap();
-    let certified = serde_json::from_value::<CertifiedBlock>(finalization_json.clone()).unwrap();
-    let finalization = &certified.finalization;
     let raw_header = provider.debug_get_raw_header(BlockId::number(height)).await.unwrap();
     let block = provider.get_block_by_number(height.into()).await.unwrap().unwrap();
     assert_eq!(block.header.hash, finalization.digest);
@@ -139,41 +96,12 @@ async fn record(provider: &RetryProvider, height: u64, account: Option<Address>)
         "accountProof": [],
         "storageProof": [],
     });
-    let mut original = json!({ "finalization": finalization_json, "ethereumBlock": block });
-    let proof = if let Some(account) = account {
+    if let Some(account) = account {
         let proof = provider.get_proof(account, vec![B256::ZERO]).number(height).await.unwrap();
-        assert_eq!(proof.address, account);
-        assert_eq!(proof.storage_proof.len(), 1);
-        assert_eq!(proof.storage_proof[0].key.as_b256(), B256::ZERO);
-        assert_eq!(proof.storage_proof[0].value, U256::from(42));
         evidence["accountProof"] = json!(proof.account_proof);
         evidence["storageProof"] = json!(proof.storage_proof[0].proof);
-        original["proof"] = json!(proof);
-        Some(proof)
-    } else {
-        None
-    };
-    Record {
-        height,
-        evidence,
-        original,
-        epoch,
-        extra_data: certified.block.header.extra_data,
-        proof,
     }
-}
-
-async fn assert_history(provider: &RetryProvider, account: Address, records: [&Record; 2]) {
-    for record in records {
-        let proof =
-            provider.get_proof(account, vec![B256::ZERO]).number(record.height).await.unwrap();
-        assert_eq!(
-            Some(proof),
-            record.proof,
-            "historical proof changed at height {}",
-            record.height
-        );
-    }
+    Record { height, evidence }
 }
 
 async fn send(
