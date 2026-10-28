@@ -758,7 +758,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                     "Failed to execute transaction: {tx_hash:?} in block {block_number}: {err:?}"
                 )
             })?;
-            evm.ext_mut().set_protocol_replay(false);
             backend.park(evm);
             if result.status
                 && let Some(address) = result.created_address
@@ -1185,10 +1184,8 @@ fn execute<FEN: FoundryEvmNetwork>(
         evm.transact(tx).map(|executed| executed.detach())
     };
     // SAFETY: The EVM was created by the backend's lifecycle over its owned databases.
-    let mut evm: Evm<'_, _> = unsafe { release_inspector(evm) };
+    let evm: Evm<'_, _> = unsafe { release_inspector(evm) };
     let TxResultWithState { result, pending_state, .. } = executed.map_err(handler_error)?;
-    // Permission to replay protocol history belongs to this transaction, not the parked backend.
-    evm.ext_mut().set_protocol_replay(false);
 
     // A spec or chain ID change deferred by a cheatcode applies from the next transaction.
     let mut env = evm_env(&evm);

@@ -471,7 +471,9 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         let is_view = AcceptedView::is(evm.database());
         let local = mem::take(&mut evm.state_mut().overlay_db_mut().cache);
         let env = evm_env(&evm);
-        let ext = evm.ext().clone();
+        let mut ext = evm.ext().clone();
+        // Permission to replay protocol history belongs to one transaction, not to the context.
+        ext.set_protocol_replay(false);
         // Release the EVM's handle on the accepted state before updating it in place.
         drop(evm);
         let context = self.active_mut();
