@@ -87,7 +87,15 @@ contract ExecuteTransactionStateTest is Test {
         uint64 nonce = vm.getNonce(sender);
         try this.transactUsdtTransfer() {
             revert("expected lack of funds");
-        } catch {}
+        } catch (bytes memory reason) {
+            assertEq(
+                reason,
+                abi.encodeWithSignature(
+                    "CheatcodeError(string)",
+                    "vm.transact: backend: failed committing transaction; transaction validation error: lack of funds (0) for max fee (592758857807418)"
+                )
+            );
+        }
         assertEq(vm.getNonce(sender), nonce);
         vm.deal(sender, balance);
         this.transactUsdtTransfer();

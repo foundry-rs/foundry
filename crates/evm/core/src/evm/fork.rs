@@ -205,6 +205,12 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             }
         }
     }
+
+    /// Returns the accounts and slots the running transaction is warm in this context from its
+    /// earlier visits, which fork switches carry back in when it resumes.
+    pub const fn carried_warmth(&self) -> &AddressMap<HashSet<U256>> {
+        &self.warm
+    }
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for Parked<T> {
